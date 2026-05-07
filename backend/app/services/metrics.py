@@ -28,8 +28,17 @@ from app.db.models import (
 from app.services.periods import Period, PeriodKey, get_period
 
 Mode = Literal["preliminary", "final"]
+# Final-mode aggregations match the WB seller cabinet «Выкупы» / «Возвраты»
+# columns 1:1. Two pieces matter:
+#   1) Filter Продажа / Возврат on `supplier_oper_name` (not doc_type_name).
+#      doc_type=Продажа also catches «Возмещение за выдачу...», «Программа
+#      лояльности», «Добровольная компенсация», which WB cabinet shows in its
+#      own buckets (Потери/подмены, Лояльность) — not in «Выкупы».
+#   2) WB further subtracts the ppvz_for_pay of «Добровольная компенсация при
+#      возврате» from «Выкупы» (it counts as a buyback fee). Mirror that.
 _SALE_NAMES = ("Продажа", "продажа")
 _RETURN_NAMES = ("Возврат", "возврат")
+_COMPENSATION_NAMES = ("Добровольная компенсация при возврате",)
 
 D0 = Decimal("0")
 
@@ -172,17 +181,19 @@ async def _final_orders_aggregate(
     revenue_field = func.coalesce(
         WbReportDetail.retail_price_withdisc_rub, WbReportDetail.retail_amount
     )
+    is_sale = WbReportDetail.supplier_oper_name.in_(_SALE_NAMES)
+    is_compensation = WbReportDetail.supplier_oper_name.in_(_COMPENSATION_NAMES)
     stmt = select(
+        # qty: count of Продажа rows minus voluntary compensations
         func.coalesce(
-            func.sum(case((WbReportDetail.doc_type_name.in_(_SALE_NAMES), 1), else_=0)), 0
+            func.sum(case((is_sale, WbReportDetail.quantity), else_=0))
+            - func.sum(case((is_compensation, WbReportDetail.quantity), else_=0)),
+            0,
         ).label("orders"),
+        # revenue: retail_price_withdisc_rub of Продажа minus ppvz_for_pay of compensations
         func.coalesce(
-            func.sum(
-                case(
-                    (WbReportDetail.doc_type_name.in_(_SALE_NAMES), revenue_field),
-                    else_=0,
-                )
-            ),
+            func.sum(case((is_sale, revenue_field), else_=0))
+            - func.sum(case((is_compensation, WbReportDetail.ppvz_for_pay), else_=0)),
             0,
         ).label("revenue_gross"),
     ).where(WbReportDetail.rr_dt >= rd_start, WbReportDetail.rr_dt < rd_end)
@@ -205,13 +216,17 @@ async def _final_sales_aggregate(
     end: datetime,
     brands: set[str] | None = None,
 ) -> dict[str, float]:
-    """Final-mode sales: count and net payout from wb_report_detail."""
+    """Final-mode sales: count and net payout from wb_report_detail.
+
+    Filtered on supplier_oper_name (not doc_type_name) — same logic as
+    _final_orders_aggregate.
+    """
     rd_start, rd_end = start.date(), end.date()
-    is_sale = WbReportDetail.doc_type_name.in_(_SALE_NAMES)
-    is_return = WbReportDetail.doc_type_name.in_(_RETURN_NAMES)
+    is_sale = WbReportDetail.supplier_oper_name.in_(_SALE_NAMES)
+    is_return = WbReportDetail.supplier_oper_name.in_(_RETURN_NAMES)
     stmt = select(
-        func.coalesce(func.sum(case((is_sale, 1), else_=0)), 0).label("sales"),
-        func.coalesce(func.sum(case((is_return, 1), else_=0)), 0).label("returns"),
+        func.coalesce(func.sum(case((is_sale, WbReportDetail.quantity), else_=0)), 0).label("sales"),
+        func.coalesce(func.sum(case((is_return, WbReportDetail.quantity), else_=0)), 0).label("returns"),
         func.coalesce(
             func.sum(case((is_sale, WbReportDetail.ppvz_for_pay), else_=0))
             - func.sum(case((is_return, WbReportDetail.ppvz_for_pay), else_=0)),
@@ -504,7 +519,8 @@ async def revenue_timeseries(
 
     if mode == "final":
         bucket = WbReportDetail.rr_dt.label("day")
-        is_sale = WbReportDetail.doc_type_name.in_(_SALE_NAMES)
+        is_sale = WbReportDetail.supplier_oper_name.in_(_SALE_NAMES)
+        is_compensation = WbReportDetail.supplier_oper_name.in_(_COMPENSATION_NAMES)
         revenue_field = func.coalesce(
             WbReportDetail.retail_price_withdisc_rub, WbReportDetail.retail_amount
         )
@@ -512,9 +528,15 @@ async def revenue_timeseries(
             select(
                 bucket,
                 func.coalesce(
-                    func.sum(case((is_sale, revenue_field), else_=0)), 0
+                    func.sum(case((is_sale, revenue_field), else_=0))
+                    - func.sum(case((is_compensation, WbReportDetail.ppvz_for_pay), else_=0)),
+                    0,
                 ).label("revenue"),
-                func.coalesce(func.sum(case((is_sale, 1), else_=0)), 0).label("orders"),
+                func.coalesce(
+                    func.sum(case((is_sale, WbReportDetail.quantity), else_=0))
+                    - func.sum(case((is_compensation, WbReportDetail.quantity), else_=0)),
+                    0,
+                ).label("orders"),
             )
             .where(WbReportDetail.rr_dt >= start.date(), WbReportDetail.rr_dt < end.date())
             .group_by(bucket)
@@ -574,8 +596,9 @@ async def top_skus(
     top_nm_sub = _nm_id_subq(brands)
 
     if mode == "final":
-        is_sale = WbReportDetail.doc_type_name.in_(_SALE_NAMES)
-        is_return = WbReportDetail.doc_type_name.in_(_RETURN_NAMES)
+        is_sale = WbReportDetail.supplier_oper_name.in_(_SALE_NAMES)
+        is_return = WbReportDetail.supplier_oper_name.in_(_RETURN_NAMES)
+        is_compensation = WbReportDetail.supplier_oper_name.in_(_COMPENSATION_NAMES)
         revenue_field = func.coalesce(
             WbReportDetail.retail_price_withdisc_rub, WbReportDetail.retail_amount
         )
@@ -584,10 +607,15 @@ async def top_skus(
                 WbReportDetail.nm_id,
                 func.coalesce(
                     func.sum(case((is_sale, revenue_field), else_=0))
-                    - func.sum(case((is_return, revenue_field), else_=0)),
+                    - func.sum(case((is_return, revenue_field), else_=0))
+                    - func.sum(case((is_compensation, WbReportDetail.ppvz_for_pay), else_=0)),
                     0,
                 ).label("revenue"),
-                func.coalesce(func.sum(case((is_sale, 1), else_=0)), 0).label("orders"),
+                func.coalesce(
+                    func.sum(case((is_sale, WbReportDetail.quantity), else_=0))
+                    - func.sum(case((is_compensation, WbReportDetail.quantity), else_=0)),
+                    0,
+                ).label("orders"),
             )
             .where(
                 WbReportDetail.rr_dt >= period.start.date(),
