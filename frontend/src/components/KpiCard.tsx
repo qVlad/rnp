@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { fmtChange, formatValue } from "@/lib/format";
 
 interface Kpi {
@@ -32,19 +33,18 @@ export default function KpiCard({ kpi }: { kpi: Kpi }) {
           ? "text-success"
           : "text-danger";
   return (
-    <div
-      className="card flex flex-col gap-2 min-h-[110px] relative cursor-help"
-      title={kpi.tooltip || undefined}
-    >
+    <div className="card flex flex-col gap-2 min-h-[110px] relative group">
       <div className="text-xs text-muted uppercase tracking-wide flex items-center gap-1">
-        {kpi.label}
+        <span>{kpi.label}</span>
         {kpi.tooltip && (
-          <span
-            className="text-muted opacity-60 ml-auto text-[10px]"
-            aria-hidden="true"
+          <Link
+            to={`/glossary#${kpi.key}`}
+            className="ml-auto text-muted hover:text-accent text-[11px] no-underline"
+            aria-label="что это?"
+            onClick={(e: any) => e.stopPropagation()}
           >
             ⓘ
-          </span>
+          </Link>
         )}
       </div>
       <div className="text-2xl font-semibold">
@@ -59,6 +59,20 @@ export default function KpiCard({ kpi }: { kpi: Kpi }) {
           `${fmtChange(kpi.change_pct)} к пред. периоду (${formatValue(kpi.prev_value, kpi.unit)})`
         )}
       </div>
+      {kpi.tooltip && (
+        <div
+          className="invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-opacity duration-150
+                     absolute z-20 left-0 top-full mt-1
+                     bg-surface border border-border rounded-md p-3
+                     text-xs leading-relaxed whitespace-pre-line text-white
+                     w-[320px] shadow-xl pointer-events-none"
+        >
+          {kpi.tooltip}
+          <div className="text-accent mt-2 text-[11px]">
+            подробнее → /glossary
+          </div>
+        </div>
+      )}
     </div>
   );
 }

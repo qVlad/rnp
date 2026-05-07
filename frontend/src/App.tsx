@@ -21,6 +21,7 @@ import AuditLog from "./pages/AuditLog";
 import Login from "./pages/Login";
 import Users from "./pages/Users";
 import Brands from "./pages/Brands";
+import Glossary from "./pages/Glossary";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, needsBootstrap } = useAuth();
@@ -113,6 +114,7 @@ export default function App() {
               </DirectorOrHead>
             }
           />
+          <Route path="glossary" element={<Glossary />} />
           <Route path="settings" element={<Settings />} />
         </Route>
       </Routes>

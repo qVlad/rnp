@@ -26,6 +26,7 @@ const links: Link[] = [
   { to: "/revenue-corrections", label: "Корректировки", directorOrHead: true },
   { to: "/opex", label: "OPEX", directorOrHead: true },
   { to: "/brands", label: "Бренды", directorOrHead: true },
+  { to: "/glossary", label: "Глоссарий" },
   { to: "/audit-log", label: "Audit log", directorOnly: true },
   { to: "/users", label: "Пользователи", directorOnly: true },
   { to: "/settings", label: "Настройки", directorOnly: true },
