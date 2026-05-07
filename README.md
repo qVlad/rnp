@@ -34,17 +34,13 @@ docker-compose.yml
    - Бэк: http://localhost:8000/api/health
    - UI: http://localhost:8080
 
-3. **Первая синхронизация**
-   ```bash
-   docker compose exec backend python -c "from app.sync.tasks import sync_all; print(sync_all())"
-   ```
-   Дальше всё крутится по расписанию (Celery beat):
-   - orders / sales — каждые 15 мин
-   - stocks — каждые 30 мин
-   - реклама — каждый час
-   - отчёт реализации — раз в сутки
+3. **Первая синхронизация и beat**
+   Beat-расписание калибровано под **Base** WB-токен (orders/sales каждые 2-3 часа, stocks 2x/день, report_detail в 04:15 MSK ежедневно). Подробности в `WB_API_REFERENCE.md` § 3 + `sync/celery_app.py`. Для Personal-токена лимиты на порядок мягче — расписание можно ускорить.
 
-4. **Загрузка себестоимости**
+4. **Bootstrap первого пользователя**
+   Открой `http://localhost:8080` — на пустой БД увидишь форму «Первый запуск», создашь admin (роль `director`). Дальше через `/users` создаёшь `head_of_sales` / `manager` и через `/brands` — назначаешь бренды менеджерам. Без назначения бренда manager увидит пустой дашборд.
+
+5. **Загрузка себестоимости**
    На странице «Настройки» загрузите CSV в формате
    `nmId;cost_rub;packaging_rub;fulfillment_rub`
 
@@ -76,9 +72,12 @@ docker compose logs -f worker
 docker compose restart beat
 ```
 
-## Roadmap (после MVP)
-- ABC-анализ
-- Telegram-бот с ежедневной сводкой
-- Прогноз остатков и автозаказ
-- OZON / Yandex.Market
-- Биддер рекламы
+## Документация
+
+- [`CLAUDE.md`](CLAUDE.md) — архитектура, RBAC матрица, эндпоинты, подводные камни
+- [`OPERATIONS.md`](OPERATIONS.md) — команды (запуск, БД, бэкап, troubleshoot)
+- [`ADMIN_GUIDE.md`](ADMIN_GUIDE.md) — для администратора
+- [`MANAGER_GUIDE.md`](MANAGER_GUIDE.md) — для менеджеров команды
+- [`OWNER_GUIDE.md`](OWNER_GUIDE.md) — для собственника
+- [`WB_API_REFERENCE.md`](WB_API_REFERENCE.md) — справочник по WB API
+- [`ROADMAP.md`](ROADMAP.md) — что делать дальше

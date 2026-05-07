@@ -9,11 +9,11 @@
 | Документ | Кому | Когда читать |
 |----------|------|--------------|
 | **ADMIN_GUIDE.md** (этот) | тебе | первый запуск + раз в неделю |
+| [`OPERATIONS.md`](OPERATIONS.md) | тебе | команды, troubleshoot, backup/restore |
 | [`MANAGER_GUIDE.md`](MANAGER_GUIDE.md) | твоим менеджерам | раздать в день когда даёшь им логины |
 | [`CLAUDE.md`](CLAUDE.md) | разработчику / AI-агенту | когда правишь код |
 | [`WB_API_REFERENCE.md`](WB_API_REFERENCE.md) | разработчику | при работе с WB-интеграцией |
 | [`ROADMAP.md`](ROADMAP.md) | тебе | планирование развития |
-| [`QA_REPORT.md`](QA_REPORT.md) | тебе | после крупных изменений |
 
 ---
 
@@ -77,38 +77,55 @@ AUTH_COOKIE_SECURE=true
 
 ---
 
-## 2. Создание менеджеров
+## 2. Роли и создание пользователей
 
-### 2.1 Создать manager-аккаунт
+### 2.1 Три роли
+
+| Роль | Видит | Может |
+|---|---|---|
+| **director** | всё | всё CUD: налоги, OPEX-категории, юзеры, audit log, brand_assignments |
+| **head_of_sales** | всё (как директор по чтению) | brand_assignments CUD, plans CUD, OPEX entries; **НЕ видит** Users / Settings / Audit log |
+| **manager** | только свои бренды | редактирует COGS / OPEX entries / off-platform / plans (по своим брендам) |
+
+### 2.2 Brand assignments (1:1 бренд → менеджер)
+
+`/brands` (доступно director и head_of_sales) — таблица всех брендов из `products.brand` с числом SKU и select для назначения ответственного. Один бренд назначается одному manager.
+
+**Как это работает на сервере**: при каждом аналитическом запросе backend подмешивает `WHERE products.brand IN (бренды текущего юзера)` через helper `services/auth.current_brands_filter`. Для director / head_of_sales фильтр не применяется (`None` = unrestricted). Manager без назначений видит **0** во всех аналитических разделах — это by design.
+
+### 2.3 Создать пользователя
 
 Зайди под director → `/users` → форма «Создать пользователя»:
 - Логин (нижний регистр, английскими)
 - Пароль ≥ 8 символов
-- Роль: **manager**
+- Роль: **director / head_of_sales / manager**
 - Имя
 
 → Передай менеджеру логин+пароль через защищённый канал (НЕ почту).
+→ Если роль `manager` — назначь ему хотя бы один бренд через `/brands`, иначе он будет видеть пустой дашборд.
 
-### 2.2 Дать менеджеру [`MANAGER_GUIDE.md`](MANAGER_GUIDE.md)
+### 2.4 Дать менеджеру [`MANAGER_GUIDE.md`](MANAGER_GUIDE.md)
 
-Там расписано что делать в день 1 / неделю 1 / месяц.
+Там расписано что он видит и что делает в день 1 / неделю 1 / месяц.
 
-### 2.3 Что менеджер НЕ сможет (роль `manager`)
-
-```
-❌ /users — управление пользователями
-❌ PUT /settings — налоги, НДС, пороги
-❌ /settings/timeline — расписание налогов
-❌ OPEX-категории CUD (только записи)
-❌ Через UI: меню «Пользователи», «Настройки», «Audit log» скрыты
-```
+### 2.5 Что менеджер НЕ сможет (роль `manager`)
 
 ```
-✅ Просмотр: дашборд, P&L, ДДС, реcon, units, ABC, supply, plans, cost-history,
-   корректировки, внеш-маркетинг, OPEX-записи, off-platform, группы
-✅ Редактирование: COGS, OPEX-записи, корректировки выручки, внеш-маркетинг,
-   планы, off-platform-движения, группы товаров (создать/удалить)
+❌ Финансовые non-SKU разделы: /cash-flow, /opex/categories, /external-ad-costs,
+   /artificial-orders, /off-platform — все 403
+❌ /users, PUT /settings, /settings/timeline, /audit-log, /brands — все 403
+❌ POST/PUT/DELETE /plans — 403 (только просмотр, и только своих брендов)
+❌ В UI меню скрывает: ДДС, Капитализация, Внеш. маркетинг, Корректировки,
+   OPEX, Бренды, План-Факт CUD, Audit log, Пользователи, Настройки
 ```
+
+```
+✅ Просмотр (по своим брендам): дашборд, P&L (contribution-margin вид без OPEX/налогов),
+   реcon, units, ABC, supply, plans (свои nm/group), cost-history
+✅ Редактирование: COGS своих SKU (через /cost-history), группы товаров
+```
+
+> **Контракт ролей (2026-05)**: фильтрация по брендам применяется к чтению аналитики. Финансовые non-SKU разделы (cash-flow / opex / external-marketing / revenue-corrections / capitalization) и planning CUD доступны только `director` и `head_of_sales`. Если бизнесу нужен другой паттерн (например, чтобы менеджер мог заносить OPEX по своему бренду) — попроси разработчика.
 
 ---
 
@@ -328,45 +345,9 @@ docker compose exec -T postgres psql -U app -d rnp -c "SELECT count(*) FROM wb_r
 
 ---
 
-## 9. Краткая шпаргалка команд
+## 9. Команды
 
-```bash
-# Старт всего
-docker compose up -d
-
-# Стоп всего
-docker compose down
-
-# Перезапуск только backend (после правки .env или кода)
-docker compose up -d --force-recreate backend
-
-# Логи
-docker compose logs backend -f
-docker compose logs worker-stats -f
-docker compose logs -f --tail 50
-
-# DB
-docker compose exec postgres psql -U app -d rnp
-
-# Очистить cooldown (только если знаешь что WB реально остыл!)
-docker compose exec redis redis-cli DEL wb:cooldown:statistics wb:cooldown:advert
-
-# Сбросить пароль admin
-docker compose exec backend python -c "
-from app.services.auth import hash_password
-import sys
-print(hash_password(sys.argv[1]))
-" "новыйпароль" 
-# → скопировать хэш в SQL UPDATE
-
-# Backfill report_detail
-docker compose exec backend python -m scripts.backfill_report_detail --from YYYY-MM-DD --to YYYY-MM-DD
-
-# Триггер любого sync (расходует WB-квоту!)
-curl -s -b /tmp/cookies.txt -X POST -H "Content-Type: application/json" \
-  -d '{"entity":"report_detail"}' \
-  http://localhost:8000/api/settings/sync/trigger
-```
+См. [`OPERATIONS.md`](OPERATIONS.md) — там собраны все команды (запуск, БД, бэкап/restore, сброс пароля, backfill, troubleshoot).
 
 ---
 
