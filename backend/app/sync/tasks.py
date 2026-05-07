@@ -587,7 +587,7 @@ def sync_ad_campaign_details(limit: int = 50) -> int:
     return asyncio.run(_sync_ad_campaign_details_async(limit=limit))
 
 
-async def _sync_ad_stats_async(days_back: int = 30) -> int:
+async def _sync_ad_stats_async(days_back: int = 60) -> int:
     end = date.today()
     start = end - timedelta(days=days_back)
     async with session_scope() as session, WbApiClient() as wb:
@@ -746,7 +746,7 @@ async def _sync_ad_stats_async(days_back: int = 30) -> int:
 
 
 @celery_app.task(name="app.sync.tasks.sync_ad_stats")
-def sync_ad_stats(days_back: int = 30) -> int:
+def sync_ad_stats(days_back: int = 60) -> int:
     return asyncio.run(_sync_ad_stats_async(days_back=days_back))
 
 
