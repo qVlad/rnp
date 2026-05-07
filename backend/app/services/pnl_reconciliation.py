@@ -43,8 +43,14 @@ async def build_reconciliation(
 ) -> dict[str, Any]:
     cutoff = date.today() - timedelta(weeks=weeks_back)
 
-    sale_filter = WbReportDetail.doc_type_name.in_(("Продажа", "продажа"))
-    return_filter = WbReportDetail.doc_type_name.in_(("Возврат", "возврат"))
+    # Filter on supplier_oper_name and use retail_price_withdisc_rub —
+    # same convention as build_pnl(), so WB-side and our-side compare
+    # apples to apples (and 1:1 with the WB seller cabinet).
+    sale_filter = WbReportDetail.supplier_oper_name == "Продажа"
+    return_filter = WbReportDetail.supplier_oper_name == "Возврат"
+    revenue_field = func.coalesce(
+        WbReportDetail.retail_price_withdisc_rub, WbReportDetail.retail_amount
+    )
     nm_filter = (
         select(Product.nm_id).where(Product.brand.in_(list(brands)))
         if brands is not None
@@ -61,22 +67,17 @@ async def build_reconciliation(
         select(
             WbReportDetail.report_date_from,
                 WbReportDetail.report_date_to,
+                func.sum(case((sale_filter, revenue_field), else_=0)).label("revenue_gross"),
+                func.sum(case((return_filter, revenue_field), else_=0)).label("revenue_returns"),
                 func.sum(
-                    case((sale_filter, WbReportDetail.retail_amount), else_=0)
-                ).label("revenue_gross"),
-                func.sum(
-                    case((return_filter, WbReportDetail.retail_amount), else_=0)
-                ).label("revenue_returns"),
-                func.sum(
-                    case(
-                        (
-                            sale_filter,
-                            WbReportDetail.retail_amount - WbReportDetail.ppvz_for_pay,
-                        ),
-                        else_=0,
-                    )
+                    case((sale_filter, revenue_field - WbReportDetail.ppvz_for_pay), else_=0)
+                    + case((return_filter, -(revenue_field - WbReportDetail.ppvz_for_pay)), else_=0)
                 ).label("commission"),
-                func.sum(WbReportDetail.ppvz_for_pay).label("payout"),
+                # payout net = sales − returns of ppvz_for_pay (matches «Итог по товарам» logic).
+                (
+                    func.sum(case((sale_filter, WbReportDetail.ppvz_for_pay), else_=0))
+                    - func.sum(case((return_filter, WbReportDetail.ppvz_for_pay), else_=0))
+                ).label("payout"),
                 func.sum(WbReportDetail.delivery_rub).label("delivery"),
                 func.sum(WbReportDetail.storage_fee).label("storage"),
                 func.sum(WbReportDetail.penalty).label("penalty"),

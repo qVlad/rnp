@@ -654,7 +654,7 @@ async def compute_dashboard(
         KPI("returns", "Возвраты", curr["returns"], prev["returns"],
             _pct_change(curr["returns"], prev["returns"]), "шт",
             f"Кол-во возвратов за период.\nИсточник: {src_returns}."),
-        KPI("ad_cost", "Реклама (расход)", curr["ad_cost"], prev["ad_cost"],
+        KPI("ad_cost", "Реклама", curr["ad_cost"], prev["ad_cost"],
             _pct_change(curr["ad_cost"], prev["ad_cost"]), "₽",
             "Реклама = WB-кампании (advert API) + внешний маркетинг (блогеры, баннеры).\n"
             f"WB: {curr['ad_cost_wb']:,.0f} ₽   Внеш.: {curr['ad_cost_external']:,.0f} ₽.\n"

@@ -20,7 +20,7 @@ type Line = {
 
 const lines: Line[] = [
   { kind: "section", label: "Выручка" },
-  { key: "revenue_gross", label: "Выручка WB (gross)" },
+  { key: "revenue_gross", label: "Выручка (gross)" },
   { key: "revenue_returns", label: "Возвраты" },
   { key: "dbs_revenue", label: "DBS / rFBS выручка" },
   { key: "selfbuy_adjustment", label: "Самовыкупы / раздачи (вычитаем)" },
@@ -29,14 +29,14 @@ const lines: Line[] = [
 
   { kind: "section", label: "Расходы маркетплейса" },
   { key: "commission", label: "Комиссия WB" },
-  { key: "delivery", label: "Логистика" },
-  { key: "storage", label: "Хранение" },
+  { key: "delivery", label: "Логистика WB" },
+  { key: "storage", label: "Хранение WB" },
   { key: "penalty", label: "Штрафы" },
   { key: "deduction", label: "Удержания" },
   { key: "acquiring", label: "Эквайринг" },
 
   { kind: "section", label: "Маркетинг и подрядчики" },
-  { key: "ad_cost", label: "Реклама WB" },
+  { key: "ad_cost", label: "Реклама" },
   { key: "external_ad_cost", label: "Внешний маркетинг (блогеры/инфографика)" },
   { key: "contractor_fees", label: "Услуги подрядчиков (самовыкуп/DBS)" },
 
@@ -48,7 +48,7 @@ const lines: Line[] = [
   { kind: "section", label: "Налоги" },
   { key: "tax", label: "Налог" },
 
-  { key: "profit", label: "Чистая (опер.) прибыль", emphasize: true },
+  { key: "profit", label: "Чистая прибыль", emphasize: true },
 
   { kind: "section", label: "Cash flow" },
   { key: "opex_cashflow_only", label: "Не-операционные оттоки (тело кредита, дивиденды и пр.)" },

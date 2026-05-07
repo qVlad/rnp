@@ -251,33 +251,39 @@ async def build_pnl(
     company_scope = brands is None  # keep OPEX/taxes/fixed only for org-wide view
 
     # ── A) WB report-detail aggregations (source of truth for revenue/commissions) ──
+    # IMPORTANT: revenue uses `retail_price_withdisc_rub` (price the buyer
+    # actually paid after WB SPP/promo) — that matches the «Выкупы»/«Возвраты»
+    # columns in the WB seller cabinet. retail_amount is the pre-SPP price and
+    # is ~30% lower for marketplace data.
+    # Filter on supplier_oper_name (not doc_type_name) — same logic as in
+    # services/metrics.py: doc_type 'Продажа' also catches compensations and
+    # loyalty bonuses which the cabinet shows in separate buckets.
+    revenue_field = func.coalesce(
+        WbReportDetail.retail_price_withdisc_rub, WbReportDetail.retail_amount
+    )
+    is_sale = WbReportDetail.supplier_oper_name == "Продажа"
+    is_return = WbReportDetail.supplier_oper_name == "Возврат"
     rd_stmt = (
         select(
             WbReportDetail.rr_dt,
-            func.sum(
-                case(
-                    (
-                        WbReportDetail.doc_type_name.in_(("Продажа", "продажа")),
-                        WbReportDetail.retail_amount,
-                    ),
-                    else_=0,
-                )
-            ).label("revenue_gross"),
-            func.sum(
-                case(
-                    (
-                        WbReportDetail.doc_type_name.in_(("Возврат", "возврат")),
-                        WbReportDetail.retail_amount,
-                    ),
-                    else_=0,
-                )
-            ).label("revenue_returns"),
-            func.sum(WbReportDetail.ppvz_for_pay).label("ppvz_for_pay"),
+            func.sum(case((is_sale, revenue_field), else_=0)).label("revenue_gross"),
+            func.sum(case((is_return, revenue_field), else_=0)).label("revenue_returns"),
+            # ppvz / acquiring are summed only on Продажа − Возврат rows. WB
+            # also stamps these fields on Возмещения / Компенсации rows, but
+            # those go into separate cabinet buckets (Лояльность / Потери),
+            # not into the «Комиссия» line.
+            (
+                func.sum(case((is_sale, WbReportDetail.ppvz_for_pay), else_=0))
+                - func.sum(case((is_return, WbReportDetail.ppvz_for_pay), else_=0))
+            ).label("ppvz_for_pay"),
+            (
+                func.sum(case((is_sale, WbReportDetail.acquiring_fee), else_=0))
+                - func.sum(case((is_return, WbReportDetail.acquiring_fee), else_=0))
+            ).label("acquiring"),
             func.sum(WbReportDetail.delivery_rub).label("delivery"),
             func.sum(WbReportDetail.storage_fee).label("storage"),
             func.sum(WbReportDetail.penalty).label("penalty"),
             func.sum(WbReportDetail.deduction).label("deduction"),
-            func.sum(WbReportDetail.acquiring_fee).label("acquiring"),
             func.sum(WbReportDetail.additional_payment).label("additional"),
         )
         .where(WbReportDetail.rr_dt >= date_from, WbReportDetail.rr_dt <= date_to)
@@ -445,7 +451,12 @@ async def build_pnl(
         b = get_bucket(r.rr_dt)
         b.revenue_gross += _f(r.revenue_gross)
         b.revenue_returns += _f(r.revenue_returns)
-        b.commission += _f(r.revenue_gross) - _f(r.ppvz_for_pay)
+        # commission (без эквайринга — эквайринг отдельной строкой). Все
+        # компоненты тут уже net (Продажа − Возврат).
+        b.commission += (
+            _f(r.revenue_gross) - _f(r.revenue_returns)
+            - _f(r.ppvz_for_pay) - _f(r.acquiring)
+        )
         b.delivery += _f(r.delivery)
         b.storage += _f(r.storage)
         b.penalty += _f(r.penalty)

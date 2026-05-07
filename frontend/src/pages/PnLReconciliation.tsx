@@ -17,10 +17,24 @@ export default function PnLReconciliation() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-end gap-4">
-        <h1 className="text-xl font-semibold">Сверка P&L с ЛК WB</h1>
+        <h1 className="text-xl font-semibold">Сверка с WB</h1>
         <span className="text-xs text-muted">
-          сравниваем выручку и комиссии в нашей БД с тем, что лежит в{" "}
-          <code>wb_report_detail</code> по неделям ЛК WB
+          сравнение нашей P&L с финальным отчётом WB по каждой неделе
+        </span>
+      </div>
+
+      <div className="card text-xs text-muted leading-relaxed">
+        <div className="font-medium text-white mb-1">Как пользоваться</div>
+        Каждая строка — закрытая неделя WB (понедельник→воскресенье).
+        В столбцах <span className="text-warn">WB:</span> — то что WB прислал в
+        отчёте реализации, наша «истина в последней инстанции». В столбцах{" "}
+        <span className="text-success">Наша:</span> — наш расчёт P&L за тот же
+        период. Если <b>Δ Выручка</b> &gt; порога — строка подсвечена красным
+        (несовпадение, копать в audit-log или backfill). <b>Доля выплаты</b>{" "}
+        (Payout / gross) — какой % gross-выручки реально дошёл до селлера после
+        WB-удержаний; норма 25-40 % для маркетплейса.
+        <span className="text-accent ml-2">
+          Все термины → <a href="/glossary" className="underline">/glossary</a>
         </span>
       </div>
 
@@ -52,10 +66,10 @@ export default function PnLReconciliation() {
         </label>
         {totals && (
           <div className="ml-auto text-sm flex gap-4">
-            <Stat label="WB выручка (gross)" value={totals.wb_revenue_gross} />
-            <Stat label="WB к перечислению" value={totals.wb_payout} />
-            <Stat label="Наша выручка (gross)" value={totals.ours_revenue_gross} />
-            <Stat label="Наша прибыль" value={totals.ours_profit} />
+            <Stat label="WB: Выручка (gross)" value={totals.wb_revenue_gross} />
+            <Stat label="WB: К перечислению" value={totals.wb_payout} />
+            <Stat label="Наша: Выручка (gross)" value={totals.ours_revenue_gross} />
+            <Stat label="Наша: Чистая прибыль" value={totals.ours_profit} />
             <Stat
               label="Алертов"
               value={totals.alerts_count}
@@ -87,18 +101,33 @@ export default function PnLReconciliation() {
             <thead className="text-muted text-xs uppercase">
               <tr>
                 <th className="text-left p-2 sticky left-0 bg-surface">Период</th>
-                <th className="text-left p-2">Realizations</th>
-                <th className="text-right p-2 text-warn">WB gross</th>
-                <th className="text-right p-2 text-warn">WB returns</th>
-                <th className="text-right p-2 text-warn">WB commission</th>
-                <th className="text-right p-2 text-warn">WB payout</th>
-                <th className="text-right p-2">+услуги (д/х/ш/у/э)</th>
-                <th className="text-right p-2 text-success">Наша gross</th>
-                <th className="text-right p-2 text-success">Наша net</th>
-                <th className="text-right p-2 text-success">Наша прибыль</th>
-                <th className="text-right p-2">Δ gross, ₽</th>
-                <th className="text-right p-2">Δ gross, %</th>
-                <th className="text-right p-2">Payout / gross</th>
+                <th
+                  className="text-left p-2"
+                  title="ID отчётов реализации WB за неделю (если их несколько — WB разбил период на части)"
+                >
+                  ID отчёта
+                </th>
+                <th className="text-right p-2 text-warn">WB: Выручка (gross)</th>
+                <th className="text-right p-2 text-warn">WB: Возвраты</th>
+                <th className="text-right p-2 text-warn">WB: Комиссия</th>
+                <th className="text-right p-2 text-warn">WB: К перечислению</th>
+                <th
+                  className="text-right p-2"
+                  title="WB удержания: логистика + хранение + штрафы + удержания + эквайринг − доплаты"
+                >
+                  WB удержания
+                </th>
+                <th className="text-right p-2 text-success">Наша: Выручка</th>
+                <th className="text-right p-2 text-success">Наша: Чистая выручка</th>
+                <th className="text-right p-2 text-success">Наша: Чистая прибыль</th>
+                <th className="text-right p-2" title="Расхождение нашей gross-выручки с WB, в рублях">Δ Выручка, ₽</th>
+                <th className="text-right p-2" title="Расхождение нашей gross-выручки с WB, в %">Δ Выручка, %</th>
+                <th
+                  className="text-right p-2"
+                  title="Payout / gross — какой % gross-выручки реально дошёл до селлера после WB-удержаний"
+                >
+                  Доля выплаты
+                </th>
               </tr>
             </thead>
             <tbody>
