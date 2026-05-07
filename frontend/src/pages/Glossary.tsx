@@ -145,6 +145,15 @@ const KPIS: Entry[] = [
     source: "wb_report_detail",
   },
   {
+    id: "net_profit",
+    title: "Чистая прибыль",
+    unit: "₽",
+    formula:
+      "= revenue_net − все_удержания_WB − COGS − реклама − OPEX − налоги − НДС − fixed_costs",
+    body:
+      "Финальная прибыль компании после ВСЕХ расходов. Это та цифра, которая остаётся у бизнеса в конце месяца.\n\nВключает в себя: чистую выручку (после WB-комиссии), минус логистику, хранение, штрафы, удержания, COGS, рекламу (WB+внешнюю), OPEX (зарплаты/аренда/прочее), налоги/НДС, fixed_costs.\n\nИсточник — build_pnl() из wb_report_detail, не зависит от режима Preliminary/Final дашборда.\n\nДля менеджера в scope=brands вычитаются только attributable (по nm_id) расходы — это contribution margin вид, OPEX и налоги не вычитаются (они компанейские).\n\nСовпадает со строкой PROFIT на странице /pnl за тот же период.",
+  },
+  {
     id: "stock_units",
     title: "Остатки (шт)",
     unit: "шт",

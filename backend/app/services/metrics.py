@@ -595,6 +595,26 @@ async def compute_dashboard(
     else:
         fin = _empty_finance()
         prev_fin = _empty_finance()
+
+    # Чистая прибыль (full P&L profit) — нужен build_pnl. Он использует
+    # wb_report_detail независимо от режима дашборда, так что результат
+    # одинаков для preliminary/final. Lazy import чтобы не было кругового
+    # импорта (pnl_builder сам импортирует metrics в reconciliation).
+    from app.services.pnl_builder import build_pnl  # noqa: WPS433
+
+    pnl_from = period.start.date()
+    pnl_to = (period.end - timedelta(days=1)).date()
+    pnl_curr = await build_pnl(
+        session, date_from=pnl_from, date_to=pnl_to, granularity="month", brands=brands
+    )
+    pnl_prev_from = period.prev_start.date()
+    pnl_prev_to = (period.prev_end - timedelta(days=1)).date()
+    pnl_prev = await build_pnl(
+        session, date_from=pnl_prev_from, date_to=pnl_prev_to, granularity="month", brands=brands
+    )
+    net_profit = _f(pnl_curr.get("totals", {}).get("profit", 0))
+    prev_net_profit = _f(pnl_prev.get("totals", {}).get("profit", 0))
+
     margin_value = curr["revenue_net"] - sold_cogs - curr["ad_cost"]
     margin_pct = (margin_value / curr["revenue_net"] * 100) if curr["revenue_net"] > 0 else 0.0
     prev_margin_value = prev["revenue_net"] - prev_sold_cogs - prev["ad_cost"]
@@ -696,6 +716,19 @@ async def compute_dashboard(
             "Совпадает со строкой «Итог по товарам» в WB-кабинете.\n"
             "Это «то, что физически придёт на банк» — не путать с маржой и не путать с чистой выручкой.\n"
             "Доступно только в Final режиме."),
+        KPI("net_profit", "Чистая прибыль", net_profit, prev_net_profit,
+            _pct_change(net_profit, prev_net_profit), "₽",
+            "Финальная прибыль компании после ВСЕХ расходов:\n"
+            "  + Чистая выручка (после WB-комиссии)\n"
+            "  − Логистика, хранение, штрафы, удержания, эквайринг\n"
+            "  − COGS (себестоимость проданных товаров)\n"
+            "  − Реклама (WB advert + внешний маркетинг)\n"
+            "  − OPEX (зарплаты, аренда, бухгалтерия и т.д.)\n"
+            "  − Налоги и НДС (по timeline-ставкам)\n"
+            "  − fixed_costs/30 (постоянные расходы pro-rata)\n\n"
+            "Совпадает со строкой PROFIT на странице P&L за тот же период.\n"
+            "Источник всегда wb_report_detail (не зависит от режима Preliminary/Final).\n"
+            "Для manager scope (свой бренд) — contribution margin (без OPEX/налогов)."),
         # Stocks are a current snapshot (no historical series yet) — show only current.
         KPI("stock_units", "Остатки (шт)", stocks["stock_units"], None, None, "шт",
             "Сколько единиц товара сейчас на складах WB (последний snapshot).\n"
