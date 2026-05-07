@@ -18,6 +18,7 @@ from typing import Literal
 
 from app.db.models import (
     Cogs,
+    ExternalAdCost,
     Product,
     WbAdStatsDaily,
     WbOrder,
@@ -77,6 +78,7 @@ class KPI:
     prev_value: float | None
     change_pct: float | None
     unit: str = ""
+    tooltip: str = ""  # human-readable formula explanation, shown on hover
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -86,6 +88,7 @@ class KPI:
             "prev_value": round(self.prev_value, 2) if self.prev_value is not None else None,
             "change_pct": self.change_pct,
             "unit": self.unit,
+            "tooltip": self.tooltip,
         }
 
 
@@ -331,8 +334,25 @@ async def _ad_aggregate(
     if sub is not None:
         stmt = stmt.where(WbAdStatsDaily.nm_id.in_(sub))
     row = (await session.execute(stmt)).one()
+    wb_ad_cost = _f(row.ad_cost)
+
+    # External (off-WB) ad costs — bloggers, infographics, banners.
+    ext_stmt = select(
+        func.coalesce(func.sum(ExternalAdCost.amount), 0).label("ext_cost")
+    ).where(
+        ExternalAdCost.spend_date >= start.date(),
+        ExternalAdCost.spend_date < end.date() + timedelta(days=1),
+    )
+    if sub is not None:
+        # Manager scope: only nm_id-attributed external ads. Brand-level
+        # rows (nm_id IS NULL) are not split per-brand.
+        ext_stmt = ext_stmt.where(ExternalAdCost.nm_id.in_(sub))
+    ext_cost = _f((await session.execute(ext_stmt)).scalar_one())
+
     return {
-        "ad_cost": _f(row.ad_cost),
+        "ad_cost": wb_ad_cost + ext_cost,
+        "ad_cost_wb": wb_ad_cost,
+        "ad_cost_external": ext_cost,
         "ad_clicks": _f(row.ad_clicks),
         "ad_views": _f(row.ad_views),
         "ad_orders": _f(row.ad_orders),
@@ -400,10 +420,13 @@ def _compute_window_kpis(orders: dict, sales: dict, ad: dict) -> dict[str, float
 
     # buyout %: WB seller cabinet defines it as
     #   выкупленные / заказанные (включая отменённые покупателем) × 100.
-    # So the denominator must be ALL orders, not only non-cancelled.
     total_orders = orders_count + cancellations
     buyout = (sales_count - returns) / total_orders * 100 if total_orders > 0 else 0.0
-    drr = ad_cost / revenue_gross * 100 if revenue_gross > 0 else 0.0
+    # ДРР (доля рекламных расходов) — два варианта смотрят на одно и то же:
+    #   - от заказов: реклама/выручка-по-заказам (как смотрят маркетологи)
+    #   - от выкупов: реклама/чистая-выручка (как смотрит финансист)
+    drr_orders = ad_cost / revenue_gross * 100 if revenue_gross > 0 else 0.0
+    drr_sales = ad_cost / revenue_net * 100 if revenue_net > 0 else 0.0
     return_rate = returns / sales_count * 100 if sales_count > 0 else 0.0
 
     return {
@@ -413,8 +436,12 @@ def _compute_window_kpis(orders: dict, sales: dict, ad: dict) -> dict[str, float
         "sales": sales_count,
         "returns": returns,
         "ad_cost": ad_cost,
+        "ad_cost_wb": ad.get("ad_cost_wb", ad_cost),
+        "ad_cost_external": ad.get("ad_cost_external", 0.0),
         "buyout_pct": buyout,
-        "drr_pct": drr,
+        "drr_pct": drr_orders,        # legacy alias = drr from orders
+        "drr_orders_pct": drr_orders,
+        "drr_sales_pct": drr_sales,
         "return_rate_pct": return_rate,
     }
 
@@ -470,29 +497,74 @@ async def compute_dashboard(
     prev_margin_pct = (
         (prev_margin_value / prev["revenue_net"] * 100) if prev["revenue_net"] > 0 else 0.0
     )
+    # ROI / Рентабельность по COGS — сколько прибыли с каждого вложенного рубля себестоимости
+    roi = (margin_value / sold_cogs * 100) if sold_cogs > 0 else 0.0
+    prev_roi = (prev_margin_value / prev_sold_cogs * 100) if prev_sold_cogs > 0 else 0.0
+
+    src_orders = "wb_orders по order_dt" if mode == "preliminary" else "wb_report_detail.Продажа по sale_dt"
+    src_revenue = "Σ retail_with_disc активных wb_orders" if mode == "preliminary" else (
+        "Σ retail_price_withdisc_rub Продаж − ppvz_for_pay добровольных компенсаций"
+    )
+    src_returns = "wb_sales.is_return по sale_dt" if mode == "preliminary" else "wb_report_detail.Возврат по sale_dt"
 
     kpis = [
         KPI("revenue_gross", "Выручка (gross)", curr["revenue_gross"], prev["revenue_gross"],
-            _pct_change(curr["revenue_gross"], prev["revenue_gross"]), "₽"),
+            _pct_change(curr["revenue_gross"], prev["revenue_gross"]), "₽",
+            f"Сумма заказанных товаров за период.\nИсточник ({mode}): {src_revenue}.\n"
+            "Это «брутто» выручка — до WB-комиссии, логистики и налогов."),
         KPI("revenue_net", "Чистая выручка", curr["revenue_net"], prev["revenue_net"],
-            _pct_change(curr["revenue_net"], prev["revenue_net"]), "₽"),
+            _pct_change(curr["revenue_net"], prev["revenue_net"]), "₽",
+            "Выплата селлеру после WB-комиссии (до логистики/хранения/налогов).\n"
+            f"Σ ppvz_for_pay (Продажи − Возвраты) за период.\nИсточник: {src_orders}."),
         KPI("orders", "Заказы", curr["orders"], prev["orders"],
-            _pct_change(curr["orders"], prev["orders"]), "шт"),
+            _pct_change(curr["orders"], prev["orders"]), "шт",
+            f"Кол-во активных заказов (без отмен).\nИсточник ({mode}): {src_orders}."),
         KPI("buyout_pct", "Выкуп", curr["buyout_pct"], prev["buyout_pct"],
-            _pct_change(curr["buyout_pct"], prev["buyout_pct"]), "%"),
+            _pct_change(curr["buyout_pct"], prev["buyout_pct"]), "%",
+            "% заказов которые покупатели выкупили из всех заказов (включая отменённые).\n"
+            "Формула: (sales − returns) / (orders + cancellations) × 100.\n"
+            "Совпадает с «% выкупа» в WB-кабинете."),
         KPI("returns", "Возвраты", curr["returns"], prev["returns"],
-            _pct_change(curr["returns"], prev["returns"]), "шт"),
+            _pct_change(curr["returns"], prev["returns"]), "шт",
+            f"Кол-во возвратов за период.\nИсточник: {src_returns}."),
         KPI("ad_cost", "Реклама (расход)", curr["ad_cost"], prev["ad_cost"],
-            _pct_change(curr["ad_cost"], prev["ad_cost"]), "₽"),
-        KPI("drr_pct", "ДРР", curr["drr_pct"], prev["drr_pct"],
-            _pct_change(curr["drr_pct"], prev["drr_pct"]), "%"),
+            _pct_change(curr["ad_cost"], prev["ad_cost"]), "₽",
+            "Реклама = WB-кампании (advert API) + внешний маркетинг (блогеры, баннеры).\n"
+            f"WB: {curr['ad_cost_wb']:,.0f} ₽   Внеш.: {curr['ad_cost_external']:,.0f} ₽.\n"
+            "WB-кабинет «Реклама» в фин-отчёте может быть на 20-40 % больше — туда WB включает "
+            "Boost / промо-инструменты которых нет в /adv/v3/fullstats. Это known issue WB API."),
+        KPI("drr_pct", "ДРР (от заказов)", curr["drr_orders_pct"], prev["drr_orders_pct"],
+            _pct_change(curr["drr_orders_pct"], prev["drr_orders_pct"]), "%",
+            "Доля рекламных расходов от gross-выручки заказов.\n"
+            "Формула: ad_cost / revenue_gross × 100.\n"
+            "Используется маркетологами — показывает «съедает ли реклама заказы»."),
+        KPI("drr_sales_pct", "ДРР (от выкупов)", curr["drr_sales_pct"], prev["drr_sales_pct"],
+            _pct_change(curr["drr_sales_pct"], prev["drr_sales_pct"]), "%",
+            "Доля рекламных расходов от чистой выручки (после WB-комиссии).\n"
+            "Формула: ad_cost / revenue_net × 100.\n"
+            "Используется финансистом — показывает «сколько % реальных денег уходит на рекламу»."),
         KPI("margin", "Маржинальная прибыль", margin_value, prev_margin_value,
-            _pct_change(margin_value, prev_margin_value), "₽"),
+            _pct_change(margin_value, prev_margin_value), "₽",
+            "Маржинальная прибыль = чистая выручка − COGS (закупка+упаковка+фулфилмент) − реклама.\n"
+            "Формула: revenue_net − sold_cogs − ad_cost.\n"
+            "Это contribution-margin: НЕ включает OPEX (зарплаты/аренда), налоги, НДС, fixed-costs.\n"
+            "Полная прибыль компании — на странице P&L."),
         KPI("margin_pct", "Маржа", margin_pct, prev_margin_pct,
-            _pct_change(margin_pct, prev_margin_pct), "%"),
+            _pct_change(margin_pct, prev_margin_pct), "%",
+            "Маржа в % от чистой выручки.\nФормула: маржинальная прибыль / revenue_net × 100.\n"
+            "Норма для маркетплейса: 5-25 %."),
+        KPI("roi_pct", "Рентабельность (ROI)", roi, prev_roi,
+            _pct_change(roi, prev_roi), "%",
+            "Рентабельность инвестиций в товар.\nФормула: маржинальная прибыль / sold_cogs × 100.\n"
+            "Сколько копеек прибыли приносит каждый рубль вложенный в закупку.\n"
+            "100 % = удвоение, < 30 % — низкая, > 200 % — отличная."),
         # Stocks are a current snapshot (no historical series yet) — show only current.
-        KPI("stock_units", "Остатки (шт)", stocks["stock_units"], None, None, "шт"),
-        KPI("stock_value", "Остатки в COGS", stocks["stock_value_at_cogs"], None, None, "₽"),
+        KPI("stock_units", "Остатки (шт)", stocks["stock_units"], None, None, "шт",
+            "Сколько единиц товара сейчас на складах WB (последний snapshot).\n"
+            "Источник: wb_stocks (FBO + FBS объединённо). Обновляется 2 раза в день."),
+        KPI("stock_value", "Остатки в COGS", stocks["stock_value_at_cogs"], None, None, "₽",
+            "Стоимость остатков в закупочных ценах (current COGS × qty).\n"
+            "Это «замороженный капитал» в товарах на складе."),
     ]
 
     return {
