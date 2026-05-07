@@ -38,23 +38,29 @@ async def get_dashboard(
     period: Literal["day", "week", "month"] = "day",
     start_date: Annotated[date | None, Query()] = None,
     end_date: Annotated[date | None, Query()] = None,
+    mode: Literal["preliminary", "final"] = "preliminary",
     session: AsyncSession = Depends(get_db),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
     return await compute_dashboard(
-        session, _resolve_period(period, start_date, end_date), brands=brands
+        session,
+        _resolve_period(period, start_date, end_date),
+        brands=brands,
+        mode=mode,
     )
 
 
 @router.get("/timeseries")
 async def get_timeseries(
     days: Annotated[int, Query(ge=1, le=365)] = 30,
+    mode: Literal["preliminary", "final"] = "preliminary",
     session: AsyncSession = Depends(get_db),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
     return {
         "days": days,
-        "rows": await revenue_timeseries(session, days=days, brands=brands),
+        "mode": mode,
+        "rows": await revenue_timeseries(session, days=days, brands=brands, mode=mode),
     }
 
 
@@ -65,11 +71,15 @@ async def get_top_skus(
     end_date: Annotated[date | None, Query()] = None,
     by: Literal["revenue", "margin"] = "revenue",
     limit: Annotated[int, Query(ge=1, le=50)] = 5,
+    mode: Literal["preliminary", "final"] = "preliminary",
     session: AsyncSession = Depends(get_db),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
     p = _resolve_period(period, start_date, end_date)
-    return {"items": await top_skus(session, p, by=by, limit=limit, brands=brands)}
+    return {
+        "mode": mode,
+        "items": await top_skus(session, p, by=by, limit=limit, brands=brands, mode=mode),
+    }
 
 
 @router.get("/alerts")

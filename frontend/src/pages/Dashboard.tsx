@@ -16,6 +16,7 @@ import { fmtNum, fmtRub } from "@/lib/format";
 
 type Period = "day" | "week" | "month";
 type Mode = { kind: "preset"; period: Period } | { kind: "custom"; start: string; end: string };
+type DataMode = "preliminary" | "final";
 
 const periodLabels: Record<Period, string> = {
   day: "Сегодня",
@@ -32,6 +33,7 @@ const daysAgo = (n: number) => {
 
 export default function Dashboard() {
   const [mode, setMode] = useState<Mode>({ kind: "preset", period: "day" });
+  const [dataMode, setDataMode] = useState<DataMode>("preliminary");
   const [customStart, setCustomStart] = useState(daysAgo(6));
   const [customEnd, setCustomEnd] = useState(today());
   const [tsDays, setTsDays] = useState(30);
@@ -45,16 +47,16 @@ export default function Dashboard() {
     mode.kind === "preset" ? `p:${mode.period}` : `c:${mode.start}:${mode.end}`;
 
   const dashQ = useQuery({
-    queryKey: ["dashboard", rangeKey],
-    queryFn: () => api.dashboard(range) as Promise<any>,
+    queryKey: ["dashboard", rangeKey, dataMode],
+    queryFn: () => api.dashboard(range, dataMode) as Promise<any>,
   });
   const tsQ = useQuery({
-    queryKey: ["timeseries", tsDays],
-    queryFn: () => api.timeseries(tsDays),
+    queryKey: ["timeseries", tsDays, dataMode],
+    queryFn: () => api.timeseries(tsDays, dataMode),
   });
   const topQ = useQuery({
-    queryKey: ["top", rangeKey, topBy],
-    queryFn: () => api.topSkus(range, topBy, 5) as Promise<any>,
+    queryKey: ["top", rangeKey, topBy, dataMode],
+    queryFn: () => api.topSkus(range, topBy, 5, dataMode) as Promise<any>,
   });
   const alertsQ = useQuery({ queryKey: ["alerts"], queryFn: () => api.alerts() });
 
@@ -69,18 +71,40 @@ export default function Dashboard() {
       <AlertsBar alerts={alertsQ.data?.alerts ?? []} />
 
       <div className="flex items-center justify-between">
-        <div className="flex items-baseline gap-3">
+        <div className="flex items-baseline gap-3 flex-wrap">
           <h1 className="text-xl font-semibold">Главное</h1>
-          <span
-            className="text-xs text-muted bg-surface border border-border rounded-md px-2 py-0.5 cursor-help"
-            title={
-              "Источник: WB Statistics /orders /sales (preliminary). " +
-              "Цифры обновляются раз в 30 минут, могут отличаться от финального P&L " +
-              "на 5-15% из-за лага «выкупа» (отмены, возвраты, ретро-корректировки). " +
-              "Для точных финансов смотри P&L и сверку (источник — WB report_detail, final)."
-            }
-          >
-            preliminary · скользящее окно
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              className={`btn text-xs ${
+                dataMode === "preliminary" ? "border-accent text-accent" : ""
+              }`}
+              onClick={() => setDataMode("preliminary")}
+              title={
+                "Источник: WB Statistics /orders /sales. Обновляется раз в 30 мин, " +
+                "включает свежие заказы (часть из них ещё не выкуплена)."
+              }
+            >
+              Preliminary
+            </button>
+            <button
+              type="button"
+              className={`btn text-xs ${
+                dataMode === "final" ? "border-accent text-accent" : ""
+              }`}
+              onClick={() => setDataMode("final")}
+              title={
+                "Источник: WB report_detail (финальный недельный отчёт). " +
+                "Совпадает с WB-кабинетом 1:1. Лаг ~14 дней."
+              }
+            >
+              Final
+            </button>
+          </div>
+          <span className="text-xs text-muted">
+            {dataMode === "preliminary"
+              ? "preliminary · скользящее окно (orders/sales)"
+              : "final · WB report_detail (как в кабинете)"}
           </span>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">

@@ -14,15 +14,22 @@ from typing import Any
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from typing import Literal
+
 from app.db.models import (
     Cogs,
     Product,
     WbAdStatsDaily,
     WbOrder,
+    WbReportDetail,
     WbSale,
     WbStockSnapshot,
 )
 from app.services.periods import Period, PeriodKey, get_period
+
+Mode = Literal["preliminary", "final"]
+_SALE_NAMES = ("Продажа", "продажа")
+_RETURN_NAMES = ("Возврат", "возврат")
 
 D0 = Decimal("0")
 
@@ -146,6 +153,122 @@ async def _sales_aggregate(
     }
 
 
+async def _final_orders_aggregate(
+    session: AsyncSession,
+    start: datetime,
+    end: datetime,
+    brands: set[str] | None = None,
+) -> dict[str, float]:
+    """Final-mode orders: from wb_report_detail by rr_dt.
+
+    `report_detail` doesn't model "cancelled order" — only Продажа / Возврат rows.
+    So orders = sales count, cancellations = 0. Revenue uses
+    `retail_price_withdisc_rub` (price the buyer actually paid after WB SPP /
+    promo discount) — that matches what the WB seller cabinet shows under
+    «Продажи». Falls back to `retail_amount` for older rows where the field
+    wasn't populated yet.
+    """
+    rd_start, rd_end = start.date(), end.date()
+    revenue_field = func.coalesce(
+        WbReportDetail.retail_price_withdisc_rub, WbReportDetail.retail_amount
+    )
+    stmt = select(
+        func.coalesce(
+            func.sum(case((WbReportDetail.doc_type_name.in_(_SALE_NAMES), 1), else_=0)), 0
+        ).label("orders"),
+        func.coalesce(
+            func.sum(
+                case(
+                    (WbReportDetail.doc_type_name.in_(_SALE_NAMES), revenue_field),
+                    else_=0,
+                )
+            ),
+            0,
+        ).label("revenue_gross"),
+    ).where(WbReportDetail.rr_dt >= rd_start, WbReportDetail.rr_dt < rd_end)
+    sub = _nm_id_subq(brands)
+    if sub is not None:
+        stmt = stmt.where(WbReportDetail.nm_id.in_(sub))
+    row = (await session.execute(stmt)).one()
+    orders = _f(row.orders)
+    return {
+        "orders": orders,
+        "orders_active": orders,
+        "revenue_gross": _f(row.revenue_gross),
+        "cancellations": 0.0,
+    }
+
+
+async def _final_sales_aggregate(
+    session: AsyncSession,
+    start: datetime,
+    end: datetime,
+    brands: set[str] | None = None,
+) -> dict[str, float]:
+    """Final-mode sales: count and net payout from wb_report_detail."""
+    rd_start, rd_end = start.date(), end.date()
+    is_sale = WbReportDetail.doc_type_name.in_(_SALE_NAMES)
+    is_return = WbReportDetail.doc_type_name.in_(_RETURN_NAMES)
+    stmt = select(
+        func.coalesce(func.sum(case((is_sale, 1), else_=0)), 0).label("sales"),
+        func.coalesce(func.sum(case((is_return, 1), else_=0)), 0).label("returns"),
+        func.coalesce(
+            func.sum(case((is_sale, WbReportDetail.ppvz_for_pay), else_=0))
+            - func.sum(case((is_return, WbReportDetail.ppvz_for_pay), else_=0)),
+            0,
+        ).label("for_pay_net"),
+        func.coalesce(
+            func.sum(case((is_return, WbReportDetail.ppvz_for_pay), else_=0)), 0
+        ).label("for_pay_returns"),
+    ).where(WbReportDetail.rr_dt >= rd_start, WbReportDetail.rr_dt < rd_end)
+    sub = _nm_id_subq(brands)
+    if sub is not None:
+        stmt = stmt.where(WbReportDetail.nm_id.in_(sub))
+    row = (await session.execute(stmt)).one()
+    return {
+        "sales": _f(row.sales),
+        "returns": _f(row.returns),
+        "for_pay_net": _f(row.for_pay_net),
+        "for_pay_returns": _f(row.for_pay_returns),
+    }
+
+
+async def _final_sold_units_and_cogs(
+    session: AsyncSession,
+    start: datetime,
+    end: datetime,
+    cogs_map: dict[int, float],
+    brands: set[str] | None = None,
+) -> tuple[float, float]:
+    """Net sold quantity and COGS from wb_report_detail (sales − returns)."""
+    rd_start, rd_end = start.date(), end.date()
+    stmt = (
+        select(
+            WbReportDetail.nm_id,
+            func.sum(
+                case(
+                    (WbReportDetail.doc_type_name.in_(_SALE_NAMES), WbReportDetail.quantity),
+                    (WbReportDetail.doc_type_name.in_(_RETURN_NAMES), -WbReportDetail.quantity),
+                    else_=0,
+                )
+            ).label("units"),
+        )
+        .where(WbReportDetail.rr_dt >= rd_start, WbReportDetail.rr_dt < rd_end)
+        .group_by(WbReportDetail.nm_id)
+    )
+    sub = _nm_id_subq(brands)
+    if sub is not None:
+        stmt = stmt.where(WbReportDetail.nm_id.in_(sub))
+    rows = (await session.execute(stmt)).all()
+    units = sum(int(r.units or 0) for r in rows if r.nm_id is not None)
+    cogs = sum(
+        int(r.units or 0) * cogs_map.get(int(r.nm_id), 0.0)
+        for r in rows
+        if r.nm_id is not None
+    )
+    return float(units), float(cogs)
+
+
 async def _ad_aggregate(
     session: AsyncSession,
     start: datetime,
@@ -257,14 +380,33 @@ async def compute_dashboard(
     session: AsyncSession,
     period_or_key: "PeriodKey | Period",
     brands: set[str] | None = None,
+    mode: Mode = "preliminary",
 ) -> dict[str, Any]:
+    """Build dashboard KPIs.
+
+    `mode='preliminary'` (default) — orders/sales come from wb_orders/wb_sales,
+    fast-updating but with cancellation noise on the right edge of the period.
+
+    `mode='final'` — read from wb_report_detail by rr_dt. Final WB numbers,
+    matches the WB seller cabinet exactly. Updated weekly, ~14 day lag for the
+    most recent week.
+    """
     period: Period = (
         period_or_key if isinstance(period_or_key, Period) else get_period(period_or_key)
     )
-    curr_orders = await _orders_aggregate(session, period.start, period.end, brands)
-    prev_orders = await _orders_aggregate(session, period.prev_start, period.prev_end, brands)
-    curr_sales = await _sales_aggregate(session, period.start, period.end, brands)
-    prev_sales = await _sales_aggregate(session, period.prev_start, period.prev_end, brands)
+    if mode == "final":
+        orders_fn = _final_orders_aggregate
+        sales_fn = _final_sales_aggregate
+        sold_fn = _final_sold_units_and_cogs
+    else:
+        orders_fn = _orders_aggregate
+        sales_fn = _sales_aggregate
+        sold_fn = _sold_units_and_cogs
+
+    curr_orders = await orders_fn(session, period.start, period.end, brands)
+    prev_orders = await orders_fn(session, period.prev_start, period.prev_end, brands)
+    curr_sales = await sales_fn(session, period.start, period.end, brands)
+    prev_sales = await sales_fn(session, period.prev_start, period.prev_end, brands)
     curr_ad = await _ad_aggregate(session, period.start, period.end, brands)
     prev_ad = await _ad_aggregate(session, period.prev_start, period.prev_end, brands)
     stocks = await _stocks_aggregate(session, brands)
@@ -273,10 +415,10 @@ async def compute_dashboard(
     prev = _compute_window_kpis(prev_orders, prev_sales, prev_ad)
 
     cogs_map = await _latest_cogs_map(session, brands=brands)
-    sold_units, sold_cogs = await _sold_units_and_cogs(
+    sold_units, sold_cogs = await sold_fn(
         session, period.start, period.end, cogs_map, brands=brands
     )
-    _, prev_sold_cogs = await _sold_units_and_cogs(
+    _, prev_sold_cogs = await sold_fn(
         session, period.prev_start, period.prev_end, cogs_map, brands=brands
     )
     margin_value = curr["revenue_net"] - sold_cogs - curr["ad_cost"]
@@ -311,6 +453,7 @@ async def compute_dashboard(
     ]
 
     return {
+        "mode": mode,
         "period": {
             "key": period.key,
             "start": period.start.isoformat(),
@@ -347,15 +490,46 @@ async def _sold_units_and_cogs(
 
 
 async def revenue_timeseries(
-    session: AsyncSession, days: int = 30, brands: set[str] | None = None
+    session: AsyncSession,
+    days: int = 30,
+    brands: set[str] | None = None,
+    mode: Mode = "preliminary",
 ) -> list[dict[str, Any]]:
     end = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(
         days=1
     )
     start = end - timedelta(days=days)
+
+    nm_sub = _nm_id_subq(brands)
+
+    if mode == "final":
+        bucket = WbReportDetail.rr_dt.label("day")
+        is_sale = WbReportDetail.doc_type_name.in_(_SALE_NAMES)
+        revenue_field = func.coalesce(
+            WbReportDetail.retail_price_withdisc_rub, WbReportDetail.retail_amount
+        )
+        stmt = (
+            select(
+                bucket,
+                func.coalesce(
+                    func.sum(case((is_sale, revenue_field), else_=0)), 0
+                ).label("revenue"),
+                func.coalesce(func.sum(case((is_sale, 1), else_=0)), 0).label("orders"),
+            )
+            .where(WbReportDetail.rr_dt >= start.date(), WbReportDetail.rr_dt < end.date())
+            .group_by(bucket)
+            .order_by(bucket)
+        )
+        if nm_sub is not None:
+            stmt = stmt.where(WbReportDetail.nm_id.in_(nm_sub))
+        rows = (await session.execute(stmt)).all()
+        return [
+            {"date": r.day.isoformat(), "revenue": _f(r.revenue), "orders": int(r.orders or 0)}
+            for r in rows
+        ]
+
     bucket = func.date_trunc("day", WbOrder.order_dt).label("day")
-    # Exclude cancelled orders — same convention as WB seller cabinet so the
-    # daily chart matches what you see in WB.
+    # preliminary: orders feed, exclude cancelled (matches WB cabinet semantics).
     stmt = (
         select(
             bucket,
@@ -376,7 +550,6 @@ async def revenue_timeseries(
         .group_by(bucket)
         .order_by(bucket)
     )
-    nm_sub = _nm_id_subq(brands)
     if nm_sub is not None:
         stmt = stmt.where(WbOrder.nm_id.in_(nm_sub))
     rows = (await session.execute(stmt)).all()
@@ -392,30 +565,59 @@ async def top_skus(
     by: str = "revenue",
     limit: int = 5,
     brands: set[str] | None = None,
+    mode: Mode = "preliminary",
 ) -> list[dict[str, Any]]:
     period = (
         period_or_key if isinstance(period_or_key, Period) else get_period(period_or_key)
     )
     cogs_map = await _latest_cogs_map(session, brands=brands)
-    top_stmt = (
-        select(
-            WbOrder.nm_id,
-            func.coalesce(
-                func.sum(WbOrder.total_price * (1 - WbOrder.discount_percent / 100)), 0
-            ).label("revenue"),
-            func.count(WbOrder.srid).label("orders"),
-        )
-        .where(
-            WbOrder.order_dt >= period.start,
-            WbOrder.order_dt < period.end,
-            WbOrder.is_cancel.is_(False),
-        )
-        .group_by(WbOrder.nm_id)
-    )
     top_nm_sub = _nm_id_subq(brands)
-    if top_nm_sub is not None:
-        top_stmt = top_stmt.where(WbOrder.nm_id.in_(top_nm_sub))
-    rows = (await session.execute(top_stmt)).all()
+
+    if mode == "final":
+        is_sale = WbReportDetail.doc_type_name.in_(_SALE_NAMES)
+        is_return = WbReportDetail.doc_type_name.in_(_RETURN_NAMES)
+        revenue_field = func.coalesce(
+            WbReportDetail.retail_price_withdisc_rub, WbReportDetail.retail_amount
+        )
+        top_stmt = (
+            select(
+                WbReportDetail.nm_id,
+                func.coalesce(
+                    func.sum(case((is_sale, revenue_field), else_=0))
+                    - func.sum(case((is_return, revenue_field), else_=0)),
+                    0,
+                ).label("revenue"),
+                func.coalesce(func.sum(case((is_sale, 1), else_=0)), 0).label("orders"),
+            )
+            .where(
+                WbReportDetail.rr_dt >= period.start.date(),
+                WbReportDetail.rr_dt < period.end.date(),
+                WbReportDetail.nm_id.is_not(None),
+            )
+            .group_by(WbReportDetail.nm_id)
+        )
+        if top_nm_sub is not None:
+            top_stmt = top_stmt.where(WbReportDetail.nm_id.in_(top_nm_sub))
+        rows = (await session.execute(top_stmt)).all()
+    else:
+        top_stmt = (
+            select(
+                WbOrder.nm_id,
+                func.coalesce(
+                    func.sum(WbOrder.total_price * (1 - WbOrder.discount_percent / 100)), 0
+                ).label("revenue"),
+                func.count(WbOrder.srid).label("orders"),
+            )
+            .where(
+                WbOrder.order_dt >= period.start,
+                WbOrder.order_dt < period.end,
+                WbOrder.is_cancel.is_(False),
+            )
+            .group_by(WbOrder.nm_id)
+        )
+        if top_nm_sub is not None:
+            top_stmt = top_stmt.where(WbOrder.nm_id.in_(top_nm_sub))
+        rows = (await session.execute(top_stmt)).all()
     products = {p.nm_id: p for p in (await session.execute(select(Product))).scalars().all()}
 
     items = []

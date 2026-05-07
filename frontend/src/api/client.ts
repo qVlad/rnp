@@ -112,27 +112,31 @@ export const api = {
 
   dashboard: (
     range: { period: "day" | "week" | "month" } | { start: string; end: string },
+    mode: "preliminary" | "final" = "preliminary",
   ) => {
     const qs =
       "period" in range
         ? `period=${range.period}`
         : `start_date=${range.start}&end_date=${range.end}`;
-    return request(`/api/dashboard?${qs}`);
+    return request(`/api/dashboard?${qs}&mode=${mode}`);
   },
-  timeseries: (days: number) =>
-    request<{ days: number; rows: { date: string; revenue: number; orders: number }[] }>(
-      `/api/dashboard/timeseries?days=${days}`,
-    ),
+  timeseries: (days: number, mode: "preliminary" | "final" = "preliminary") =>
+    request<{
+      days: number;
+      mode: "preliminary" | "final";
+      rows: { date: string; revenue: number; orders: number }[];
+    }>(`/api/dashboard/timeseries?days=${days}&mode=${mode}`),
   topSkus: (
     range: { period: "day" | "week" | "month" } | { start: string; end: string },
     by: "revenue" | "margin",
     limit = 5,
+    mode: "preliminary" | "final" = "preliminary",
   ) => {
     const qs =
       "period" in range
         ? `period=${range.period}`
         : `start_date=${range.start}&end_date=${range.end}`;
-    return request(`/api/dashboard/top-skus?${qs}&by=${by}&limit=${limit}`);
+    return request(`/api/dashboard/top-skus?${qs}&by=${by}&limit=${limit}&mode=${mode}`);
   },
   alerts: () => request<{ alerts: any[] }>("/api/dashboard/alerts"),
 
