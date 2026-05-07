@@ -1,18 +1,58 @@
-"""Products: list + archive/unarchive."""
+"""Products: list + archive/unarchive + WB photo proxy."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
+import httpx
+import redis.asyncio as redis_async
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings as cfg
 from app.db.models import Product
 from app.db.session import get_db
 from app.services.auth import current_brands_filter
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/products", tags=["products"])
+
+# Photo cache TTL — 24 hours.
+_PHOTO_CACHE_TTL = 86400
+_PHOTO_NEGATIVE_TTL = 3600  # negative cache (404) — shorter, in case WB adds it
+_PHOTO_KEY_FMT = "wb:photo:{nm_id}"
+_PHOTO_NEG_FMT = "wb:photo404:{nm_id}"
+
+
+def _wb_photo_urls(nm_id: int) -> list[str]:
+    """Candidate WB CDN URLs for a product's main photo.
+
+    WB partitions images across «basket-NN.wb.ru» CDNs by `nm_id // 100000`
+    (vol). The mapping changes as new baskets are added; rather than maintain
+    an exact range table that drifts every quarter, we pre-compute an ordered
+    candidate list (most-likely basket first based on vol heuristic, then
+    fallbacks) and try them in turn. First 200 wins; the result is cached for
+    24 h so subsequent requests skip the probing.
+    """
+    vol = nm_id // 100000
+    part = nm_id // 1000
+    # Heuristic primary basket (covers vol up to ~4500). The candidate list
+    # then expands outward by ±1, ±2, ... so usually we hit on the 1st or
+    # 2nd try.
+    primary = max(1, min(28, (vol // 144) + 1))
+    order: list[int] = [primary]
+    for delta in range(1, 28):
+        for sign in (-1, 1):
+            n = primary + sign * delta
+            if 1 <= n <= 28 and n not in order:
+                order.append(n)
+    return [
+        f"https://basket-{b:02d}.wb.ru/vol{vol}/part{part}/{nm_id}/images/big/1.webp"
+        for b in order
+    ]
 
 
 def _row(p: Product) -> dict[str, Any]:
@@ -94,3 +134,48 @@ async def unarchive_product(nm_id: int, session: AsyncSession = Depends(get_db))
     await session.commit()
     await session.refresh(obj)
     return _row(obj)
+
+
+@router.get("/{nm_id}/photo")
+async def get_product_photo(nm_id: int) -> Response:
+    """Return the WB main photo for a SKU. Cached in Redis for 24 h."""
+    key = _PHOTO_KEY_FMT.format(nm_id=nm_id)
+    neg_key = _PHOTO_NEG_FMT.format(nm_id=nm_id)
+    r = redis_async.from_url(cfg.redis_url, decode_responses=False)
+    try:
+        cached = await r.get(key)
+        if cached:
+            return Response(
+                content=cached,
+                media_type="image/webp",
+                headers={"Cache-Control": "public, max-age=86400", "X-Cache": "HIT"},
+            )
+        # Negative cache: don't hammer WB CDN if we just probed and got 404.
+        if await r.get(neg_key):
+            raise HTTPException(404, "WB photo not in public CDN (cached)")
+        body: bytes | None = None
+        last_status = 0
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+            for url in _wb_photo_urls(nm_id):
+                try:
+                    resp = await client.get(url, headers={"User-Agent": "rnp/1.0"})
+                except httpx.HTTPError:
+                    continue
+                last_status = resp.status_code
+                if resp.status_code == 200 and resp.content:
+                    body = resp.content
+                    break
+        if body is None:
+            await r.set(neg_key, b"1", ex=_PHOTO_NEGATIVE_TTL)
+            raise HTTPException(404, f"WB photo not found (last status {last_status})")
+        await r.set(key, body, ex=_PHOTO_CACHE_TTL)
+        return Response(
+            content=body,
+            media_type="image/webp",
+            headers={"Cache-Control": "public, max-age=86400", "X-Cache": "MISS"},
+        )
+    except httpx.HTTPError as e:
+        log.warning("photo proxy failed for nm_id=%s: %s", nm_id, e)
+        raise HTTPException(502, f"WB CDN error: {e}") from e
+    finally:
+        await r.aclose()

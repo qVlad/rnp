@@ -73,7 +73,14 @@ async def auth_gate(request: Request, call_next):
     so anonymous users get 401 immediately without hitting handler code.
     """
     path = request.url.path
-    if not path.startswith("/api/") or path in PUBLIC_PATHS:
+    # Public: explicit list + WB photo proxy (so <img> tags work without
+    # sending cookie). Photo endpoint is read-only and only proxies WB CDN
+    # which is itself public.
+    if (
+        not path.startswith("/api/")
+        or path in PUBLIC_PATHS
+        or (path.startswith("/api/products/") and path.endswith("/photo"))
+    ):
         return await call_next(request)
     token = request.cookies.get(cfg.auth_cookie_name)
     if not token or not decode_session_token(token):

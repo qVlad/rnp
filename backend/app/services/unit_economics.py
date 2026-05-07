@@ -14,6 +14,7 @@ from app.db.models import (
     Product,
     WbAdStatsDaily,
     WbOrder,
+    WbReportDetail,
     WbSale,
     WbStockSnapshot,
 )
@@ -84,6 +85,34 @@ async def build_unit_economics(
     if nm_filter is not None:
         sales_stmt = sales_stmt.where(WbSale.nm_id.in_(nm_filter))
     sales_rows = (await session.execute(sales_stmt)).all()
+
+    # Real commission % per nm_id from wb_report_detail (sales-side).
+    # WbSale.commission_percent comes from /sales feed and is often 0 in
+    # production for some seller token types. report_detail is the source
+    # of truth: commission_pct = (retail_with_disc − ppvz_for_pay) / retail × 100.
+    rd_revenue_field = func.coalesce(
+        WbReportDetail.retail_price_withdisc_rub, WbReportDetail.retail_amount
+    )
+    rd_is_sale = WbReportDetail.supplier_oper_name == "Продажа"
+    rd_stmt = (
+        select(
+            WbReportDetail.nm_id,
+            func.coalesce(func.sum(case((rd_is_sale, rd_revenue_field), else_=0)), 0).label("rev"),
+            func.coalesce(
+                func.sum(case((rd_is_sale, WbReportDetail.ppvz_for_pay), else_=0)), 0
+            ).label("ppvz"),
+        )
+        .where(WbReportDetail.sale_dt >= start, WbReportDetail.sale_dt < end)
+        .group_by(WbReportDetail.nm_id)
+    )
+    if nm_filter is not None:
+        rd_stmt = rd_stmt.where(WbReportDetail.nm_id.in_(nm_filter))
+    rd_rows = (await session.execute(rd_stmt)).all()
+    commission_by_nm: dict[int, float] = {}
+    for r in rd_rows:
+        rev = _f(r.rev)
+        if rev > 0:
+            commission_by_nm[int(r.nm_id)] = (rev - _f(r.ppvz)) / rev * 100
 
     orders_stmt = (
         select(
@@ -211,7 +240,10 @@ async def build_unit_economics(
         avg_price = (
             _f(sale.price_with_disc) / max(1, int(sale.rows or 0)) if sale and sale.rows else 0.0
         )
-        commission_pct = _f(sale.commission_pct) if sale else 0.0
+        # Prefer commission_pct calculated from wb_report_detail (real WB %).
+        # Fall back to wb_sales.commission_percent for older periods where
+        # report_detail hasn't arrived yet.
+        commission_pct = commission_by_nm.get(nm) or (_f(sale.commission_pct) if sale else 0.0)
 
         orders = orders_by_nm.get(nm, {}).get("orders", 0)
         revenue = revenue_by_nm.get(nm, 0.0)

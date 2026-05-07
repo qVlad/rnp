@@ -54,6 +54,38 @@ export default function Units() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["units"] }),
   });
 
+  // Подсказка для каждой колонки — какая формула / источник.
+  const COL_TOOLTIPS: Record<string, string> = {
+    photo: "Главное фото SKU из WB. Кешируется локально на 24 часа.",
+    nm_id: "Артикул WB (nm_id) и артикул продавца / название.",
+    orders:
+      "Кол-во заказов за выбранный период (без отменённых покупателем).\nИсточник: wb_orders по order_dt.",
+    units_sold:
+      "Чистое кол-во проданных единиц = sales − returns за период.\nИсточник: wb_sales по sale_dt.",
+    revenue:
+      "Сумма заказов в gross-выручке (то что покупатель заплатил с учётом СПП).\nФормула: Σ retail_with_disc для активных заказов.",
+    avg_price:
+      "Средняя цена 1 единицы (с учётом скидок WB).\nФормула: Σ price_with_disc / Σ rows.",
+    commission_pct:
+      "Средний % WB-комиссии по продажам этого SKU.\nИсточник: wb_sales.commission_percent. Если 0 — WB не вернул это поле в этом периоде; смотри страницу P&L для финального значения.",
+    ad_per_order:
+      "Расход на рекламу в среднем на 1 заказ этого SKU.\nФормула: (WB реклама + внеш. маркетинг) / orders.",
+    cogs_unit:
+      "Себестоимость 1 единицы (закупочная цена + упаковка + фулфилмент).\nИсточник: cost-history с датой ≤ середины периода.",
+    margin_unit:
+      "Маржинальная прибыль на 1 единицу.\n" +
+      "Формула: (for_pay / units_sold) − cogs_unit − (ad_cost / orders).\n" +
+      "Это «contribution margin per unit»: после WB-комиссии (она уже вычтена в for_pay), за вычетом себестоимости и рекламы. НЕ включает OPEX и налоги.",
+    margin_pct:
+      "Маржа в % от чистой выручки за единицу.\nФормула: margin_unit / (for_pay/units_sold) × 100.",
+    roi_pct:
+      "Рентабельность инвестиций.\nФормула: margin_unit / cogs_unit × 100.\nСколько копеек прибыли с каждого рубля закупки.",
+    stock: "Текущий остаток на складах WB (FBO+FBS) на момент последнего snapshot.",
+    days_to_stockout:
+      "Прогноз дней до стокаута.\nФормула: stock / velocity_14d, где velocity = sales за последние 14 дней / 14.",
+    actions: "Архивировать / вернуть из архива.",
+  };
+
   const filtered = useMemo(() => {
     if (!q.data) return [];
     const s = filter.trim().toLowerCase();
@@ -68,6 +100,22 @@ export default function Units() {
 
   const columns = useMemo<ColumnDef<UnitRow>[]>(
     () => [
+      {
+        header: "Фото",
+        id: "photo",
+        enableSorting: false,
+        cell: (c) => (
+          <img
+            src={`/api/products/${c.row.original.nm_id}/photo`}
+            alt=""
+            loading="lazy"
+            className="w-12 h-12 object-cover rounded border border-border bg-bg"
+            onError={(e: any) => {
+              e.currentTarget.style.display = "none";
+            }}
+          />
+        ),
+      },
       {
         header: "Артикул",
         accessorKey: "nm_id",
@@ -116,30 +164,46 @@ export default function Units() {
       {
         header: "",
         id: "actions",
+        enableSorting: false,
         cell: (c) => {
           const r = c.row.original;
           if (r.is_archived) {
             return (
               <button
-                className="btn text-xs"
-                title="Вернуть из архива"
+                className="btn text-xs whitespace-nowrap"
+                title="Вернуть SKU из архива — снова появится во всех аналитических разделах"
                 onClick={() => unarchiveMut.mutate(r.nm_id)}
               >
-                ↩
+                ↩ Вернуть
               </button>
             );
           }
           return (
             <button
-              className="btn text-xs"
-              title="В архив"
+              className="btn text-xs whitespace-nowrap"
+              title={
+                "Архивировать SKU.\n\n" +
+                "Архивный SKU исчезает из дашборда / юнит-экономики / ABC / поставок " +
+                "(снимается с радара). Исторические продажи и P&L по нему остаются — " +
+                "цифры прошлых периодов не пересчитываются.\n\n" +
+                "Используй когда: товар окончательно снят с продажи или дублируется. " +
+                "Если SKU снова появится в свежем WB-фиде — он автоматически вернётся " +
+                "из архива."
+              }
               onClick={() => {
-                if (confirm(`Архивировать SKU ${r.nm_id}? SKU вернётся автоматически если снова появится в WB-данных.`)) {
+                if (
+                  confirm(
+                    `Архивировать SKU ${r.nm_id}?\n\n` +
+                    `Скроется из аналитики (дашборд, юнит-эконоlika, ABC и т.п.). ` +
+                    `Исторические данные сохранятся. Если снова появится в WB-фиде — ` +
+                    `вернётся из архива автоматически.`,
+                  )
+                ) {
                   archiveMut.mutate(r.nm_id);
                 }
               }}
             >
-              📦
+              📦 В архив
             </button>
           );
         },
@@ -197,17 +261,24 @@ export default function Units() {
             <thead>
               {table.getHeaderGroups().map((hg) => (
                 <tr key={hg.id} className="text-muted text-xs uppercase">
-                  {hg.headers.map((h) => (
-                    <th
-                      key={h.id}
-                      onClick={h.column.getToggleSortingHandler()}
-                      className="text-left p-2 cursor-pointer select-none whitespace-nowrap hover:text-white"
-                    >
-                      {flexRender(h.column.columnDef.header, h.getContext())}
-                      {h.column.getIsSorted() === "asc" && " ▲"}
-                      {h.column.getIsSorted() === "desc" && " ▼"}
-                    </th>
-                  ))}
+                  {hg.headers.map((h) => {
+                    const tip = COL_TOOLTIPS[h.column.id];
+                    return (
+                      <th
+                        key={h.id}
+                        onClick={h.column.getToggleSortingHandler()}
+                        title={tip}
+                        className={`text-left p-2 select-none whitespace-nowrap hover:text-white ${
+                          h.column.getCanSort() ? "cursor-pointer" : ""
+                        } ${tip ? "cursor-help" : ""}`}
+                      >
+                        {flexRender(h.column.columnDef.header, h.getContext())}
+                        {tip && <span className="ml-1 opacity-50 text-[10px]">ⓘ</span>}
+                        {h.column.getIsSorted() === "asc" && " ▲"}
+                        {h.column.getIsSorted() === "desc" && " ▼"}
+                      </th>
+                    );
+                  })}
                 </tr>
               ))}
             </thead>
