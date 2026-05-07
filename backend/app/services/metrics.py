@@ -272,6 +272,103 @@ async def _final_sales_aggregate(
     }
 
 
+async def _final_finance_aggregate(
+    session: AsyncSession,
+    start: datetime,
+    end: datetime,
+    brands: set[str] | None = None,
+) -> dict[str, float]:
+    """WB-кабинет «Доходы и расходы» по карточкам — финансовые поля.
+
+    Все из wb_report_detail.* по sale_dt в периоде. Для preliminary mode
+    возвращается dict с нулями (этих полей нет в orders/sales API).
+
+    Колонки соответствуют WB-кабинету:
+      Логистика  — Σ delivery_rub
+      Хранение   — Σ storage_fee
+      Штрафы     — Σ penalty
+      Удержания  — Σ deduction
+      Эквайринг  — Σ acquiring_fee
+      Доплаты    — Σ additional_payment
+      Комиссия   — Σ (retail_price_withdisc_rub − ppvz_for_pay − acquiring_fee)
+                   для Продаж минус для Возвратов
+    «Итог по товарам» = ppvz_net − (логистика+хранение+штрафы+удержания+эквайринг)
+                      + доплаты — деньги на счёт за период.
+    """
+    rd_start, rd_end = start.date(), end.date()
+    is_sale = WbReportDetail.supplier_oper_name.in_(_SALE_NAMES)
+    is_return = WbReportDetail.supplier_oper_name.in_(_RETURN_NAMES)
+    revenue_field = func.coalesce(
+        WbReportDetail.retail_price_withdisc_rub, WbReportDetail.retail_amount
+    )
+    # Net commission = (retail − ppvz − acquiring) for sales − returns.
+    # The cabinet rolls acquiring into «Комиссия WB и эквайринг», so we
+    # report commission *plus* acquiring separately and let the UI label them.
+    commission_expr = revenue_field - WbReportDetail.ppvz_for_pay - func.coalesce(WbReportDetail.acquiring_fee, 0)
+    stmt = select(
+        func.coalesce(func.sum(WbReportDetail.delivery_rub), 0).label("logistics"),
+        func.coalesce(func.sum(WbReportDetail.storage_fee), 0).label("storage"),
+        func.coalesce(func.sum(WbReportDetail.penalty), 0).label("penalty"),
+        func.coalesce(func.sum(WbReportDetail.deduction), 0).label("deduction"),
+        func.coalesce(func.sum(WbReportDetail.acquiring_fee), 0).label("acquiring"),
+        func.coalesce(func.sum(WbReportDetail.additional_payment), 0).label("additional"),
+        func.coalesce(
+            func.sum(case((is_sale, commission_expr), else_=0))
+            - func.sum(case((is_return, commission_expr), else_=0)),
+            0,
+        ).label("commission"),
+        # ppvz net (Продажа − Возврат) — already provided by _final_sales_aggregate
+        # but we duplicate here to compute «Итог по товарам» self-contained.
+        func.coalesce(
+            func.sum(case((is_sale, WbReportDetail.ppvz_for_pay), else_=0))
+            - func.sum(case((is_return, WbReportDetail.ppvz_for_pay), else_=0)),
+            0,
+        ).label("ppvz_net"),
+    ).where(
+        WbReportDetail.sale_dt >= datetime.combine(rd_start, datetime.min.time(), tzinfo=timezone.utc),
+        WbReportDetail.sale_dt < datetime.combine(rd_end, datetime.min.time(), tzinfo=timezone.utc),
+    )
+    sub = _nm_id_subq(brands)
+    if sub is not None:
+        stmt = stmt.where(WbReportDetail.nm_id.in_(sub))
+    row = (await session.execute(stmt)).one()
+    logistics = _f(row.logistics)
+    storage = _f(row.storage)
+    penalty = _f(row.penalty)
+    deduction = _f(row.deduction)
+    acquiring = _f(row.acquiring)
+    additional = _f(row.additional)
+    commission = _f(row.commission)
+    ppvz_net = _f(row.ppvz_net)
+    # Деньги на счёт по итогам периода: то что WB перечислит после всех удержаний.
+    payout = ppvz_net - logistics - storage - penalty - deduction + additional
+    return {
+        "commission": commission,
+        "commission_plus_acquiring": commission + acquiring,
+        "logistics": logistics,
+        "storage": storage,
+        "penalty": penalty,
+        "deduction": deduction,
+        "acquiring": acquiring,
+        "additional": additional,
+        "payout_to_account": payout,
+    }
+
+
+def _empty_finance() -> dict[str, float]:
+    return {
+        "commission": 0.0,
+        "commission_plus_acquiring": 0.0,
+        "logistics": 0.0,
+        "storage": 0.0,
+        "penalty": 0.0,
+        "deduction": 0.0,
+        "acquiring": 0.0,
+        "additional": 0.0,
+        "payout_to_account": 0.0,
+    }
+
+
 async def _final_sold_units_and_cogs(
     session: AsyncSession,
     start: datetime,
@@ -491,6 +588,13 @@ async def compute_dashboard(
     _, prev_sold_cogs = await sold_fn(
         session, period.prev_start, period.prev_end, cogs_map, brands=brands
     )
+    # Финансовые поля из wb_report_detail доступны только в final mode.
+    if mode == "final":
+        fin = await _final_finance_aggregate(session, period.start, period.end, brands)
+        prev_fin = await _final_finance_aggregate(session, period.prev_start, period.prev_end, brands)
+    else:
+        fin = _empty_finance()
+        prev_fin = _empty_finance()
     margin_value = curr["revenue_net"] - sold_cogs - curr["ad_cost"]
     margin_pct = (margin_value / curr["revenue_net"] * 100) if curr["revenue_net"] > 0 else 0.0
     prev_margin_value = prev["revenue_net"] - prev_sold_cogs - prev["ad_cost"]
@@ -558,6 +662,40 @@ async def compute_dashboard(
             "Рентабельность инвестиций в товар.\nФормула: маржинальная прибыль / sold_cogs × 100.\n"
             "Сколько копеек прибыли приносит каждый рубль вложенный в закупку.\n"
             "100 % = удвоение, < 30 % — низкая, > 200 % — отличная."),
+        # ─── Финансовые поля из wb_report_detail (только final mode) ─────
+        KPI("commission_wb", "Комиссия WB", fin["commission_plus_acquiring"],
+            prev_fin["commission_plus_acquiring"] if mode == "final" else None,
+            _pct_change(fin["commission_plus_acquiring"], prev_fin["commission_plus_acquiring"]) if mode == "final" else None,
+            "₽",
+            "Комиссия WB + эквайринг — то что WB удерживает с каждого выкупа.\n"
+            "Формула: Σ (retail_price_withdisc_rub − ppvz_for_pay) для Продаж − для Возвратов.\n"
+            "Совпадает со столбцом «Комиссия WB и эквайринг» в WB-кабинете.\n"
+            "Доступно только в Final режиме (источник — wb_report_detail)."),
+        KPI("logistics_wb", "Логистика WB", fin["logistics"],
+            prev_fin["logistics"] if mode == "final" else None,
+            _pct_change(fin["logistics"], prev_fin["logistics"]) if mode == "final" else None,
+            "₽",
+            "Расходы на логистику WB за период (доставка до ПВЗ, обратная логистика).\n"
+            "Формула: Σ wb_report_detail.delivery_rub.\n"
+            "Совпадает со столбцом «Логистика» в WB-кабинете.\n"
+            "Доступно только в Final режиме."),
+        KPI("storage_wb", "Хранение WB", fin["storage"],
+            prev_fin["storage"] if mode == "final" else None,
+            _pct_change(fin["storage"], prev_fin["storage"]) if mode == "final" else None,
+            "₽",
+            "Плата за хранение товара на FBO-складах WB.\n"
+            "Формула: Σ wb_report_detail.storage_fee.\n"
+            "Совпадает со столбцом «Хранение» в WB-кабинете.\n"
+            "Доступно только в Final режиме."),
+        KPI("payout_to_account", "Деньги на счёт", fin["payout_to_account"],
+            prev_fin["payout_to_account"] if mode == "final" else None,
+            _pct_change(fin["payout_to_account"], prev_fin["payout_to_account"]) if mode == "final" else None,
+            "₽",
+            "Деньги, которые WB реально переведёт на расчётный счёт за период.\n"
+            "Формула: ppvz_net − логистика − хранение − штрафы − удержания + доплаты.\n"
+            "Совпадает со строкой «Итог по товарам» в WB-кабинете.\n"
+            "Это «то, что физически придёт на банк» — не путать с маржой и не путать с чистой выручкой.\n"
+            "Доступно только в Final режиме."),
         # Stocks are a current snapshot (no historical series yet) — show only current.
         KPI("stock_units", "Остатки (шт)", stocks["stock_units"], None, None, "шт",
             "Сколько единиц товара сейчас на складах WB (последний snapshot).\n"

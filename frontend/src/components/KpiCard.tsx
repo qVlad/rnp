@@ -17,6 +17,9 @@ const LOWER_IS_BETTER = new Set([
   "drr_pct",
   "drr_sales_pct",
   "returns",
+  "commission_wb",
+  "logistics_wb",
+  "storage_wb",
 ]);
 
 export default function KpiCard({ kpi }: { kpi: Kpi }) {

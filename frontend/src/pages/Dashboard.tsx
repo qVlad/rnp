@@ -37,6 +37,8 @@ export default function Dashboard() {
   const [customStart, setCustomStart] = useState(daysAgo(6));
   const [customEnd, setCustomEnd] = useState(today());
   const [tsDays, setTsDays] = useState(30);
+  const [showRevenue, setShowRevenue] = useState(true);
+  const [showOrders, setShowOrders] = useState(true);
   const [topBy, setTopBy] = useState<"revenue" | "margin">("revenue");
 
   const range =
@@ -164,18 +166,50 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
         <div className="card lg:col-span-2">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <div className="font-medium">Динамика выручки</div>
-            <div className="flex gap-1">
-              {[7, 30, 90].map((d) => (
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex gap-1 text-xs">
                 <button
-                  key={d}
-                  className={`btn ${tsDays === d ? "border-accent text-accent" : ""}`}
-                  onClick={() => setTsDays(d)}
+                  type="button"
+                  onClick={() => setShowRevenue((v: boolean) => !v)}
+                  className={`btn flex items-center gap-1 ${
+                    showRevenue ? "border-accent text-accent" : "opacity-50"
+                  }`}
+                  title="Показать/скрыть линию выручки"
                 >
-                  {d} дн
+                  <span
+                    className="inline-block w-3 h-3 rounded-sm"
+                    style={{ background: "#7c5cff" }}
+                  />
+                  Выручка
                 </button>
-              ))}
+                <button
+                  type="button"
+                  onClick={() => setShowOrders((v: boolean) => !v)}
+                  className={`btn flex items-center gap-1 ${
+                    showOrders ? "border-accent text-accent" : "opacity-50"
+                  }`}
+                  title="Показать/скрыть линию заказов"
+                >
+                  <span
+                    className="inline-block w-3 h-3 rounded-sm"
+                    style={{ background: "#3ddc97" }}
+                  />
+                  Заказы
+                </button>
+              </div>
+              <div className="flex gap-1">
+                {[7, 30, 90].map((d) => (
+                  <button
+                    key={d}
+                    className={`btn ${tsDays === d ? "border-accent text-accent" : ""}`}
+                    onClick={() => setTsDays(d)}
+                  >
+                    {d} дн
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
           <div style={{ width: "100%", height: 280 }}>
@@ -197,6 +231,7 @@ export default function Dashboard() {
                     stroke="#7c5cff"
                     strokeWidth={2}
                     dot={false}
+                    hide={!showRevenue}
                   />
                   <Line
                     type="monotone"
@@ -204,6 +239,7 @@ export default function Dashboard() {
                     stroke="#3ddc97"
                     strokeWidth={2}
                     dot={false}
+                    hide={!showOrders}
                   />
                 </LineChart>
               </ResponsiveContainer>
