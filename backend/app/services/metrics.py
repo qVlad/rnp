@@ -418,6 +418,9 @@ async def _ad_aggregate(
     end: datetime,
     brands: set[str] | None = None,
 ) -> dict[str, float]:
+    # NB: period.end is exclusive (next day at 00:00). For Date columns we
+    # want stat_date < end.date() — NOT end.date() + 1day, which used to
+    # include an extra day past the user's selection.
     stmt = select(
         func.coalesce(func.sum(WbAdStatsDaily.sum_spent), 0).label("ad_cost"),
         func.coalesce(func.sum(WbAdStatsDaily.clicks), 0).label("ad_clicks"),
@@ -425,7 +428,7 @@ async def _ad_aggregate(
         func.coalesce(func.sum(WbAdStatsDaily.orders), 0).label("ad_orders"),
     ).where(
         WbAdStatsDaily.stat_date >= start.date(),
-        WbAdStatsDaily.stat_date < end.date() + timedelta(days=1),
+        WbAdStatsDaily.stat_date < end.date(),
     )
     sub = _nm_id_subq(brands)
     if sub is not None:
@@ -438,7 +441,7 @@ async def _ad_aggregate(
         func.coalesce(func.sum(ExternalAdCost.amount), 0).label("ext_cost")
     ).where(
         ExternalAdCost.spend_date >= start.date(),
-        ExternalAdCost.spend_date < end.date() + timedelta(days=1),
+        ExternalAdCost.spend_date < end.date(),
     )
     if sub is not None:
         # Manager scope: only nm_id-attributed external ads. Brand-level
