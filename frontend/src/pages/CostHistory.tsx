@@ -251,6 +251,7 @@ export default function CostHistory() {
                               fulfillment_rub: r.fulfillment_rub,
                             });
                             setEditingId(r.id);
+                            window.scrollTo({ top: 0, behavior: "smooth" });
                           }}
                         >
                           ✎

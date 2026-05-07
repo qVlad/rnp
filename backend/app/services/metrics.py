@@ -79,23 +79,27 @@ async def _orders_aggregate(
     end: datetime,
     brands: set[str] | None = None,
 ) -> dict[str, float]:
+    # NB: revenue_gross and orders both EXCLUDE cancelled orders. WB seller
+    # cabinet does the same — including cancels here would double-count.
+    # `cancellations` is exposed separately for transparency.
     stmt = select(
-        func.coalesce(func.count(WbOrder.srid), 0).label("orders"),
         func.coalesce(
-            func.sum(
-                case((WbOrder.is_cancel, 0), else_=1)
-            ),
-            0,
+            func.sum(case((WbOrder.is_cancel, 0), else_=1)), 0
+        ).label("orders"),
+        func.coalesce(
+            func.sum(case((WbOrder.is_cancel, 0), else_=1)), 0
         ).label("orders_active"),
         func.coalesce(
             func.sum(
-                WbOrder.total_price * (1 - WbOrder.discount_percent / 100)
+                case(
+                    (WbOrder.is_cancel, 0),
+                    else_=WbOrder.total_price * (1 - WbOrder.discount_percent / 100),
+                )
             ),
             0,
         ).label("revenue_gross"),
         func.coalesce(
-            func.sum(case((WbOrder.is_cancel, 1), else_=0)),
-            0,
+            func.sum(case((WbOrder.is_cancel, 1), else_=0)), 0
         ).label("cancellations"),
     ).where(WbOrder.order_dt >= start, WbOrder.order_dt < end)
     sub = _nm_id_subq(brands)
@@ -228,9 +232,10 @@ def _compute_window_kpis(orders: dict, sales: dict, ad: dict) -> dict[str, float
     sales_count = sales["sales"]
     ad_cost = ad["ad_cost"]
 
-    # buyout: of orders that were not cancelled, how many actually shipped & not returned
-    eligible = max(0.0, orders_count - cancellations)
-    buyout = (sales_count - returns) / eligible * 100 if eligible > 0 else 0.0
+    # buyout: of orders that were not cancelled, how many actually shipped & not returned.
+    # `orders_count` here is already non-cancelled (cancellations are excluded in
+    # _orders_aggregate), so use it directly as the denominator.
+    buyout = (sales_count - returns) / orders_count * 100 if orders_count > 0 else 0.0
     drr = ad_cost / revenue_gross * 100 if revenue_gross > 0 else 0.0
     return_rate = returns / sales_count * 100 if sales_count > 0 else 0.0
 
@@ -348,14 +353,23 @@ async def revenue_timeseries(
     )
     start = end - timedelta(days=days)
     bucket = func.date_trunc("day", WbOrder.order_dt).label("day")
+    # Exclude cancelled orders — same convention as WB seller cabinet so the
+    # daily chart matches what you see in WB.
     stmt = (
         select(
             bucket,
             func.coalesce(
-                func.sum(WbOrder.total_price * (1 - WbOrder.discount_percent / 100)),
+                func.sum(
+                    case(
+                        (WbOrder.is_cancel, 0),
+                        else_=WbOrder.total_price * (1 - WbOrder.discount_percent / 100),
+                    )
+                ),
                 0,
             ).label("revenue"),
-            func.count(WbOrder.srid).label("orders"),
+            func.coalesce(
+                func.sum(case((WbOrder.is_cancel, 0), else_=1)), 0
+            ).label("orders"),
         )
         .where(WbOrder.order_dt >= start, WbOrder.order_dt < end)
         .group_by(bucket)
