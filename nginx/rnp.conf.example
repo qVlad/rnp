@@ -1,0 +1,44 @@
+# Example reverse-proxy config for production deployment behind a host nginx
+# (with HTTPS termination). Place into /etc/nginx/sites-available/ on your VPS,
+# adjust server_name, and enable via symlink to sites-enabled.
+#
+# In dev mode the bundled `frontend` service already runs nginx internally on
+# port 8080; this config is only useful if you put a host-level nginx in front
+# of Docker Compose for HTTPS.
+
+server {
+    listen 80;
+    server_name rnp.example.com;
+
+    # ACME http-01 challenge for certbot
+    location /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name rnp.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/rnp.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/rnp.example.com/privkey.pem;
+
+    client_max_body_size 25m;
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 300s;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}

@@ -1,0 +1,121 @@
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import Layout from "./components/Layout";
+import Dashboard from "./pages/Dashboard";
+import PnL from "./pages/PnL";
+import PnLReconciliation from "./pages/PnLReconciliation";
+import Units from "./pages/Units";
+import Settings from "./pages/Settings";
+import RevenueCorrections from "./pages/RevenueCorrections";
+import ExternalMarketing from "./pages/ExternalMarketing";
+import Opex from "./pages/Opex";
+import CostHistory from "./pages/CostHistory";
+import AbcAnalysis from "./pages/AbcAnalysis";
+import Supply from "./pages/Supply";
+import Plans from "./pages/Plans";
+import CashFlow from "./pages/CashFlow";
+import UnitCalculator from "./pages/UnitCalculator";
+import Capitalization from "./pages/Capitalization";
+import ProductGroups from "./pages/ProductGroups";
+import AuditLog from "./pages/AuditLog";
+import Login from "./pages/Login";
+import Users from "./pages/Users";
+import Brands from "./pages/Brands";
+
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { user, loading, needsBootstrap } = useAuth();
+  const location = useLocation();
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-muted">
+        Загрузка…
+      </div>
+    );
+  }
+  if (!user || needsBootstrap) {
+    return (
+      <Navigate
+        to="/login"
+        state={{ from: location.pathname + location.search }}
+        replace
+      />
+    );
+  }
+  return <>{children}</>;
+}
+
+function DirectorOnly({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  if (user?.role !== "director") {
+    return (
+      <div className="card text-warn">
+        Эта страница доступна только пользователю с ролью <code>director</code>.
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
+
+function DirectorOrHead({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  if (user?.role !== "director" && user?.role !== "head_of_sales") {
+    return (
+      <div className="card text-warn">
+        Доступ только для ролей <code>director</code> и{" "}
+        <code>head_of_sales</code>.
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route
+          element={
+            <ProtectedRoute>
+              <Layout />
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<Dashboard />} />
+          <Route path="pnl" element={<PnL />} />
+          <Route path="pnl-reconciliation" element={<PnLReconciliation />} />
+          <Route path="units" element={<Units />} />
+          <Route path="revenue-corrections" element={<RevenueCorrections />} />
+          <Route path="external-marketing" element={<ExternalMarketing />} />
+          <Route path="opex" element={<Opex />} />
+          <Route path="cost-history" element={<CostHistory />} />
+          <Route path="abc" element={<AbcAnalysis />} />
+          <Route path="supply" element={<Supply />} />
+          <Route path="plans" element={<Plans />} />
+          <Route path="cash-flow" element={<CashFlow />} />
+          <Route path="capitalization" element={<Capitalization />} />
+          <Route path="product-groups" element={<ProductGroups />} />
+          <Route path="audit-log" element={<AuditLog />} />
+          <Route path="calc" element={<UnitCalculator />} />
+          <Route
+            path="users"
+            element={
+              <DirectorOnly>
+                <Users />
+              </DirectorOnly>
+            }
+          />
+          <Route
+            path="brands"
+            element={
+              <DirectorOrHead>
+                <Brands />
+              </DirectorOrHead>
+            }
+          />
+          <Route path="settings" element={<Settings />} />
+        </Route>
+      </Routes>
+    </AuthProvider>
+  );
+}
