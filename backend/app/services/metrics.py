@@ -232,10 +232,11 @@ def _compute_window_kpis(orders: dict, sales: dict, ad: dict) -> dict[str, float
     sales_count = sales["sales"]
     ad_cost = ad["ad_cost"]
 
-    # buyout: of orders that were not cancelled, how many actually shipped & not returned.
-    # `orders_count` here is already non-cancelled (cancellations are excluded in
-    # _orders_aggregate), so use it directly as the denominator.
-    buyout = (sales_count - returns) / orders_count * 100 if orders_count > 0 else 0.0
+    # buyout %: WB seller cabinet defines it as
+    #   выкупленные / заказанные (включая отменённые покупателем) × 100.
+    # So the denominator must be ALL orders, not only non-cancelled.
+    total_orders = orders_count + cancellations
+    buyout = (sales_count - returns) / total_orders * 100 if total_orders > 0 else 0.0
     drr = ad_cost / revenue_gross * 100 if revenue_gross > 0 else 0.0
     return_rate = returns / sales_count * 100 if sales_count > 0 else 0.0
 
