@@ -203,11 +203,28 @@ async def _final_orders_aggregate(
         stmt = stmt.where(WbReportDetail.nm_id.in_(sub))
     row = (await session.execute(stmt)).one()
     orders = _f(row.orders)
+
+    # report_detail has no "cancelled order" concept. To compute a sensible
+    # buyout % (which the WB cabinet shows as buyouts / orders_total), we
+    # need the order denominator from wb_orders (cohort by order_dt). We
+    # expose it through the standard `cancellations` field so the existing
+    # _compute_window_kpis formula does the right thing without branching.
+    cancel_stmt = select(
+        func.coalesce(func.sum(case((WbOrder.is_cancel, 1), else_=0)), 0).label("cancellations"),
+        func.coalesce(func.sum(case((WbOrder.is_cancel, 0), else_=1)), 0).label("active"),
+    ).where(WbOrder.order_dt >= start, WbOrder.order_dt < end)
+    if sub is not None:
+        cancel_stmt = cancel_stmt.where(WbOrder.nm_id.in_(sub))
+    crow = (await session.execute(cancel_stmt)).one()
+    # Buyout denominator = orders_count + cancellations = total wb_orders.
+    # We set cancellations so that orders_count + cancellations = total wb_orders.
+    total_orders = _f(crow.cancellations) + _f(crow.active)
     return {
         "orders": orders,
         "orders_active": orders,
         "revenue_gross": _f(row.revenue_gross),
-        "cancellations": 0.0,
+        # synthetic: buyout = sales / (orders + cancellations) = sales / total_wb_orders
+        "cancellations": max(0.0, total_orders - orders),
     }
 
 
