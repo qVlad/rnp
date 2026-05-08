@@ -49,10 +49,17 @@ def _wb_photo_urls(nm_id: int) -> list[str]:
             n = primary + sign * delta
             if 1 <= n <= 28 and n not in order:
                 order.append(n)
-    return [
+    # WB switched the CDN domain in 2026 from `wb.ru` to `wbbasket.ru`.
+    # Probe new domain first across all baskets, then legacy domain as fallback.
+    new_urls = [
+        f"https://basket-{b:02d}.wbbasket.ru/vol{vol}/part{part}/{nm_id}/images/big/1.webp"
+        for b in order
+    ]
+    old_urls = [
         f"https://basket-{b:02d}.wb.ru/vol{vol}/part{part}/{nm_id}/images/big/1.webp"
         for b in order
     ]
+    return new_urls + old_urls
 
 
 def _row(p: Product) -> dict[str, Any]:
