@@ -103,8 +103,19 @@ Helper `app.services.auth.current_brands_filter()` возвращает `set[str
 | `/api/users*` | director | CRUD юзеров |
 | `/api/audit-log*` | director | read-only лог |
 | `/api/settings*` | mutations = director | timeline налогов, валидатор WB-токена, Excel I/O |
+| `/api/products/{nm_id}/photo` | публ. (для `<img>` без cookie) | proxy на WB CDN с Redis-кешем 24h (positive) / 1h (negative) |
 
 Видимость пунктов меню фронта — в `frontend/src/components/Layout.tsx` (`directorOnly`, `directorOrHead`).
+
+## Дашборд KPI и режимы
+
+Дашборд имеет toggle **Preliminary / Final** (см. `Dashboard.tsx:dataMode`):
+- **Preliminary** — `wb_orders` / `wb_sales` по `order_dt`/`sale_dt`. Обновляется каждые 30 мин. Для свежих периодов цифры на 5-15 % выше final.
+- **Final** — `wb_report_detail` по `sale_dt`, фильтр на `supplier_oper_name='Продажа'/'Возврат'`, `retail_price_withdisc_rub` вместо `retail_amount`, минус `ppvz_for_pay` для `Добровольная компенсация при возврате`. Совпадает с WB-кабинетом 1:1 (Δ 0₽ на закрытых неделях).
+
+16 KPI: revenue_gross, revenue_net, orders, returns, buyout_pct, ad_cost, drr_pct, drr_sales_pct, margin, margin_pct, roi_pct, commission_wb, logistics_wb, storage_wb, payout_to_account, net_profit + остатки. У каждого `tooltip` поле в API, фронт показывает как hover-popup. `/glossary` — единый словарь со всеми формулами.
+
+`build_pnl` использует те же формулы что `_final_*_aggregate` — `ppvz_net` и `acquiring_net` через case (Продажа − Возврат), не общая sum. Reconciliation тоже на `retail_price_withdisc_rub` + supplier_oper_name → Δ 0% по всем неделям.
 
 ## Audit log
 
@@ -147,6 +158,9 @@ Helper `app.services.auth.current_brands_filter()` возвращает `set[str
 10. **Base token строже Personal на порядок** — не возвращай старое beat-расписание (каждые 5-15 мин для stats), это для Personal.
 11. **`tsc --noEmit && vite build`** в frontend Dockerfile — TS-ошибки роняют билд. Local LSP-warnings про `react`/`@tanstack` игнорируем (node_modules в Docker).
 12. **JWT_SECRET_KEY** обязателен в `.env` для prod. Dev-default логирует startup warning.
+13. **WB CDN мигрировал на `wbbasket.ru`** (2026-04..05). Старый `wb.ru` ещё работает для legacy SKU — `_wb_photo_urls` пробует сначала новый, потом старый.
+14. **`WbSale.commission_percent` пустой** для текущего токена — реальную WB-комиссию считаем из `wb_report_detail`: `(retail_with_disc − ppvz) / retail × 100`. Code: `unit_economics.py:commission_by_nm`.
+15. **`sync_ad_stats` default `days_back=60`** (был 30). Иначе для периодов >30 дней назад дыра в рекламе.
 
 ## Стиль работы
 

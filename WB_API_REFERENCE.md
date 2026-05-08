@@ -772,6 +772,47 @@ class TokenBucketLimiter:
 
 ---
 
+## 12. CDN миграция: wb.ru → wbbasket.ru (2026-04..05)
+
+WB сменили домен basket-CDN. Картинки товаров теперь:
+
+```
+https://basket-{NN}.wbbasket.ru/vol{nm_id // 100000}/part{nm_id // 1000}/{nm_id}/images/big/1.webp
+```
+
+Старый формат `https://basket-{NN}.wb.ru/...` всё ещё работает для legacy SKU (загруженных до миграции), но новые загрузки доступны **только** на `wbbasket.ru`.
+
+### Наша реализация
+
+`backend/app/api/products.py:_wb_photo_urls()` строит candidate-list:
+1. Сначала все 28 basket'ов на `wbbasket.ru`
+2. Потом fallback на `wb.ru`
+
+Probe stops on first 200. Результат кешируется в Redis: 24h positive, 1h negative. Endpoint `/api/products/{nm_id}/photo` (public path, без auth).
+
+Точный mapping `vol → basket-NN` менялся не раз; чтобы не поддерживать table — heuristic `(vol // 144) + 1` плюс ±1, ±2, … расширение.
+
+### Card API остаётся на старом домене
+
+```
+https://card.wb.ru/cards/v2/detail?appType=1&curr=rub&dest=-1257786&nm={nm_id}
+```
+
+Возвращает 404 если товар приватный или продавец отключил публичную видимость. Это не сломанный API — это намеренная политика WB.
+
+### Альтернатива через Content API (для приватных SKU)
+
+Если у токена есть scope `content`, можно получить полный список mediaFiles:
+
+```
+POST https://content-api.wildberries.ru/content/v2/get/cards/list
+Body: {"settings":{"cursor":{"limit":100},"filter":{"withPhoto":-1}}}
+```
+
+В response: `cards[].mediaFiles[]` — массив URL уже на правильном CDN. Это надёжнее перебора basket'ов и работает для приватных карточек тоже. Не реализовано в RNP (P1 в `ROADMAP.md`).
+
+---
+
 ## Quick Reference
 
 ```
