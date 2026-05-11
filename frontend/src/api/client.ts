@@ -29,7 +29,8 @@ async function request<T>(
       on401Handler &&
       !path.startsWith("/api/auth/login") &&
       !path.startsWith("/api/auth/bootstrap") &&
-      !path.startsWith("/api/auth/needs-bootstrap")
+      !path.startsWith("/api/auth/needs-bootstrap") &&
+      !path.startsWith("/api/auth/signup")
     ) {
       on401Handler();
     }
@@ -69,6 +70,34 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  authSignup: (body: {
+    company_name: string;
+    username: string;
+    password: string;
+    full_name?: string;
+  }) =>
+    request<Me & { tenant_id: number; tenant_name: string; tenant_slug: string }>(
+      "/api/auth/signup",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+
+  // ── Tenant WB token ──
+  getWbTokenStatus: () =>
+    request<{ set: boolean; seller_id: string | null; validated_at: string | null }>(
+      "/api/tenant/wb-token",
+    ),
+  setWbToken: (token: string) =>
+    request<{ set: boolean; seller_id: string | null; validated_at: string }>(
+      "/api/tenant/wb-token",
+      { method: "PUT", body: JSON.stringify({ token }) },
+    ),
+  testTenantWbToken: (token: string) =>
+    request<{ valid: boolean; error: string | null; seller_id: string | null }>(
+      "/api/tenant/wb-token/validate",
+      { method: "POST", body: JSON.stringify({ token }) },
+    ),
+  clearWbToken: () =>
+    request<{ cleared: boolean }>("/api/tenant/wb-token", { method: "DELETE" }),
 
   // ── Users (director-only) ──
   listUsers: () =>
@@ -109,6 +138,8 @@ export const api = {
   health: () => request<{ status: string }>("/api/health"),
   whoami: () =>
     request<{ wb_token_configured: boolean; debug: boolean }>("/api/whoami"),
+  version: () =>
+    request<{ version: string; build_time: string; name: string }>("/api/version"),
 
   dashboard: (
     range: { period: "day" | "week" | "month" } | { start: string; end: string },
@@ -168,10 +199,21 @@ export const api = {
       `/api/pnl/reconciliation?weeks=${weeks}&diff_threshold_pct=${diff_threshold_pct}`,
     ),
 
-  units: (daysBack: number, includeArchived = false) =>
-    request(
-      `/api/units?days_back=${daysBack}&include_archived=${includeArchived}`,
-    ),
+  units: (
+    range: { period: "day" | "week" | "month" } | { start: string; end: string },
+    includeArchived = false,
+  ) => {
+    const qs = new URLSearchParams();
+    if ("period" in range) {
+      const days = range.period === "day" ? 1 : range.period === "week" ? 7 : 30;
+      qs.set("days_back", String(days));
+    } else {
+      qs.set("start_date", range.start);
+      qs.set("end_date", range.end);
+    }
+    qs.set("include_archived", String(includeArchived));
+    return request(`/api/units?${qs}`);
+  },
 
   // ── Products (archive) ──
   listProducts: (params: { include_archived?: boolean; only_archived?: boolean; search?: string } = {}) => {
@@ -640,5 +682,24 @@ export const api = {
       items: any[];
     }>(
       `/api/forecast/stockout?velocity_window=${velocity_window}&target_days=${target_days}&warning_days=${warning_days}&include_archived=${includeArchived}`,
+    ),
+
+  // ── Cluster supply distribution (ИЛ/ИРП) ──
+  supplyDistribution: (
+    velocity_window = 14,
+    target_days = 30,
+    irp_window = 30,
+    includeArchived = false,
+  ) =>
+    request<{
+      velocity_window: number;
+      irp_window: number;
+      target_days: number;
+      aggregate_il_pct: number;
+      cluster_order: string[];
+      cluster_labels: Record<string, string>;
+      items: any[];
+    }>(
+      `/api/forecast/supply-distribution?velocity_window=${velocity_window}&target_days=${target_days}&irp_window=${irp_window}&include_archived=${includeArchived}`,
     ),
 };

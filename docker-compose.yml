@@ -1,5 +1,18 @@
 name: rnp
 
+# Production-ready compose. Frontend nginx exposed on host:4098 (matches the
+# external port forward 4098 → 192.168.31.61:4098).
+# Backend, postgres, redis — internal-only, недоступны снаружи docker network.
+#
+# До запуска:
+#   1. Создай `.env` на основе `.env.example` (важно: WB_TOKEN, JWT_SECRET_KEY).
+#   2. `docker compose up -d --build`
+#   3. Открой `http://<host>:4098/` — там Bootstrap-форма первого админа
+#      (если ни одного юзера ещё нет; иначе обычный логин).
+#
+# Логи:
+#   docker compose logs -f backend frontend beat worker-stats
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -40,10 +53,11 @@ services:
       redis:
         condition: service_healthy
     command: >
-      sh -c "alembic upgrade head &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000"
-    ports:
-      - "127.0.0.1:8000:8000"
+      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips=*"
+    # No host port mapping — frontend nginx proxies /api/* to backend:8000
+    # via docker internal network. Backend stays out of the public internet.
+    expose:
+      - "8000"
 
   worker-stats:
     image: rnp-app:latest
@@ -113,8 +127,10 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
+    # 4098 — внешний порт (= внутренний на сервере), на него настроен port forward
+    # 4098 → 192.168.31.61:4098 в роутере 94.198.130.185.
     ports:
-      - "8080:80"
+      - "4098:80"
 
 volumes:
   pgdata:

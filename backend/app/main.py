@@ -23,6 +23,7 @@ from app.api import (
     product_groups,
     products,
     settings,
+    tenant_settings,
     units,
     users,
     wb_token,
@@ -45,6 +46,30 @@ async def lifespan(app: FastAPI):
             "before exposing this service beyond localhost. Using the default "
             "means anyone who reads the code can forge sessions."
         )
+
+    # Multi-tenant миграция: если в .env задан WB_TOKEN, а у default tenant
+    # (id=1) его ещё нет в БД — копируем. Это одноразовая миграция legacy
+    # установки в новую multi-tenant схему.
+    if cfg.wb_token:
+        from app.db.models import Tenant  # noqa: WPS433
+        from app.db.session import session_scope  # noqa: WPS433
+        from app.services.secrets_crypto import encrypt  # noqa: WPS433
+        from datetime import datetime, timezone  # noqa: WPS433
+
+        async with session_scope() as s:
+            tenant = await s.get(Tenant, 1)
+            if tenant is not None and not tenant.wb_token:
+                tenant.wb_token = encrypt(cfg.wb_token)
+                tenant.wb_token_validated_at = datetime.now(timezone.utc)
+                log.info("Migrated WB_TOKEN from .env to tenants.id=1")
+
+    # Fernet migration: если SECRETS_ENCRYPTION_KEY задан, шифруем все
+    # plaintext-токены в БД. Идемпотентно (no-op если уже зашифровано).
+    from app.services.secrets_crypto import migrate_plaintext_tokens  # noqa: WPS433
+    n = await migrate_plaintext_tokens()
+    if n:
+        log.info("Encrypted %d plaintext WB-tokens at startup", n)
+
     yield
 
 
@@ -97,6 +122,21 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/version")
+async def version() -> dict[str, str]:
+    """Версия сервиса (git short hash + дата сборки/деплоя).
+
+    Подставляется скриптом `./scripts/remote.sh deploy` через env-переменные
+    APP_VERSION и BUILD_TIME. UI забирает один раз при загрузке и показывает
+    в нижнем правом углу.
+    """
+    return {
+        "version": cfg.app_version,
+        "build_time": cfg.build_time,
+        "name": cfg.app_name,
+    }
+
+
 @app.get("/api/whoami")
 async def whoami() -> dict[str, object]:
     return {
@@ -128,3 +168,4 @@ app.include_router(audit.router)
 app.include_router(auth_api.router)
 app.include_router(users.router)
 app.include_router(brands.router)
+app.include_router(tenant_settings.router)

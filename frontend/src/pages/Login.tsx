@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import VersionBadge from "@/components/VersionBadge";
 
 export default function Login() {
   const { login, bootstrap, needsBootstrap } = useAuth();
@@ -38,6 +39,7 @@ export default function Login() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-bg">
+      <VersionBadge floating />
       <form
         onSubmit={submit}
         className="card w-full max-w-md flex flex-col gap-4"
@@ -112,6 +114,15 @@ export default function Login() {
               ? "Создать аккаунт администратора"
               : "Войти"}
         </button>
+
+        {!needsBootstrap && (
+          <div className="text-xs text-muted text-center mt-2">
+            Нет аккаунта?{" "}
+            <a href="/signup" className="underline text-accent">
+              Зарегистрировать компанию
+            </a>
+          </div>
+        )}
       </form>
 
       <style>{`

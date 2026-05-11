@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import User
+from app.db.models import Tenant, User
 from app.db.session import get_db
 from app.services.auth import (
     CurrentUser,
@@ -21,6 +21,7 @@ from app.services.auth import (
     set_session_cookie,
     verify_password,
 )
+from app.services.rate_limit import rate_limit_login, rate_limit_signup
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -31,6 +32,15 @@ class LoginPayload(BaseModel):
 
 
 class BootstrapPayload(BaseModel):
+    username: str
+    password: str
+    full_name: str | None = None
+
+
+class SignupPayload(BaseModel):
+    """Регистрация новой компании: создаёт tenant + первого director'а."""
+
+    company_name: str  # отображаемое имя компании
     username: str
     password: str
     full_name: str | None = None
@@ -73,6 +83,8 @@ async def bootstrap(
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 
+    # Bootstrap создаёт первого юзера в default tenant (id=1) — это
+    # legacy данные. Новые компании регистрируются через /api/auth/signup.
     user = User(
         username=username,
         password_hash=pwd_hash,
@@ -80,6 +92,7 @@ async def bootstrap(
         full_name=payload.full_name,
         is_active=True,
         last_login_at=datetime.now(timezone.utc),
+        tenant_id=1,
     )
     session.add(user)
     await session.commit()
@@ -95,10 +108,95 @@ async def bootstrap(
     }
 
 
+# ─── Signup (новая компания + директор) ───────────────────────────────────
+
+
+def _slugify(name: str) -> str:
+    """Простая генерация slug для tenant'а из company_name."""
+    import re
+
+    s = name.strip().lower()
+    s = re.sub(r"[^a-z0-9а-я]+", "-", s)
+    s = s.strip("-") or "tenant"
+    return s[:64]
+
+
+@router.post("/signup", dependencies=[Depends(rate_limit_signup)])
+async def signup(
+    payload: SignupPayload,
+    response: Response,
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Зарегистрировать новую компанию: создаётся `tenants` row + первый
+    юзер с role='director'. Авто-логин.
+
+    Пока без email-подтверждения. Username уникален в рамках tenant'а,
+    но НЕ глобально — для login используется первое совпадение.
+    """
+    company_name = payload.company_name.strip()
+    username = payload.username.strip().lower()
+    if not company_name or not username or not payload.password:
+        raise HTTPException(400, "company_name, username, password — обязательные поля")
+    if len(username) < 3 or len(username) > 64:
+        raise HTTPException(400, "username 3-64 chars")
+    if len(payload.password) < 8:
+        raise HTTPException(400, "password >= 8 chars")
+
+    # Глобальная проверка username — для безопасности login (ищет по
+    # username без tenant_id в форме). Можно убрать после внедрения
+    # tenant-scoped login.
+    if (await session.execute(select(User).where(User.username == username))).scalar_one_or_none():
+        raise HTTPException(409, "username уже занят — выберите другой")
+
+    # Уникальный slug. Если совпадение — дописываем числовой суффикс.
+    base_slug = _slugify(company_name)
+    slug = base_slug
+    n = 1
+    while (
+        await session.execute(select(Tenant).where(Tenant.slug == slug))
+    ).scalar_one_or_none():
+        n += 1
+        slug = f"{base_slug}-{n}"
+
+    tenant = Tenant(name=company_name, slug=slug)
+    session.add(tenant)
+    await session.flush()  # получаем tenant.id
+
+    try:
+        pwd_hash = hash_password(payload.password)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+    user = User(
+        username=username,
+        password_hash=pwd_hash,
+        role="director",
+        full_name=payload.full_name,
+        is_active=True,
+        last_login_at=datetime.now(timezone.utc),
+        tenant_id=tenant.id,
+    )
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+
+    token = create_session_token(user)
+    set_session_cookie(response, token)
+    return {
+        "id": user.id,
+        "username": user.username,
+        "role": user.role,
+        "full_name": user.full_name,
+        "tenant_id": user.tenant_id,
+        "tenant_name": tenant.name,
+        "tenant_slug": tenant.slug,
+    }
+
+
 # ─── Login / logout / me ──────────────────────────────────────────────────
 
 
-@router.post("/login")
+@router.post("/login", dependencies=[Depends(rate_limit_login)])
 async def login(
     payload: LoginPayload,
     response: Response,
@@ -135,12 +233,20 @@ async def logout(response: Response) -> dict[str, str]:
 
 
 @router.get("/me")
-async def me(user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+async def me(
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    tenant = await session.get(Tenant, user.tenant_id)
     return {
         "id": user.id,
         "username": user.username,
         "role": user.role,
         "full_name": user.full_name,
+        "tenant_id": user.tenant_id,
+        "tenant_name": tenant.name if tenant else None,
+        "tenant_slug": tenant.slug if tenant else None,
+        "wb_token_set": bool(tenant and tenant.wb_token),
     }
 
 

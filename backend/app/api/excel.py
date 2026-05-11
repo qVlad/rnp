@@ -10,6 +10,7 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.services.auth import get_db_tenant_scoped
 from app.services import excel_io
 
 router = APIRouter(prefix="/api/excel", tags=["excel"])
@@ -33,7 +34,7 @@ async def list_entities() -> dict[str, list[dict[str, object]]]:
 
 @router.get("/{entity}/export")
 async def export_entity(
-    entity: str, session: AsyncSession = Depends(get_db)
+    entity: str, session: AsyncSession = Depends(get_db_tenant_scoped)
 ) -> Response:
     try:
         data = await excel_io.export_excel(session, entity=entity)
@@ -50,7 +51,7 @@ async def export_entity(
 async def import_entity(
     entity: str,
     file: UploadFile,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, object]:
     if entity not in excel_io.SCHEMAS:
         raise HTTPException(404, f"unknown entity: {entity}")

@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ArtificialOrder
 from app.db.session import get_db
+from app.services.auth import get_db_tenant_scoped
 from app.services.auth import require_director_or_head
 
 router = APIRouter(
@@ -72,7 +73,7 @@ async def list_orders(
     nm_id: Annotated[int | None, Query()] = None,
     date_from: Annotated[date | None, Query()] = None,
     date_to: Annotated[date | None, Query()] = None,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     stmt = select(ArtificialOrder).order_by(ArtificialOrder.order_dt.desc(), ArtificialOrder.id.desc())
     if type:
@@ -94,7 +95,7 @@ async def list_orders(
 
 @router.post("")
 async def create_order(
-    payload: ArtificialOrderIn, session: AsyncSession = Depends(get_db)
+    payload: ArtificialOrderIn, session: AsyncSession = Depends(get_db_tenant_scoped)
 ) -> dict[str, Any]:
     obj = ArtificialOrder(
         type=payload.type,
@@ -116,7 +117,7 @@ async def create_order(
 async def update_order(
     order_id: int,
     payload: ArtificialOrderIn,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     obj = await session.get(ArtificialOrder, order_id)
     if not obj:
@@ -135,7 +136,7 @@ async def update_order(
 
 
 @router.delete("/{order_id}")
-async def delete_order(order_id: int, session: AsyncSession = Depends(get_db)) -> dict[str, str]:
+async def delete_order(order_id: int, session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, str]:
     obj = await session.get(ArtificialOrder, order_id)
     if not obj:
         raise HTTPException(404, "not found")

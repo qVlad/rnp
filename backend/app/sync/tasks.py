@@ -26,6 +26,7 @@ from app.db.models import (
     WbAdCampaign,
     WbAdStatsDaily,
     WbOrder,
+    WbPaidStorage,
     WbReportDetail,
     WbSale,
     WbStockSnapshot,
@@ -38,6 +39,7 @@ from app.integrations.wb.advert import (
     fetch_campaigns_overview,
     fetch_fullstats,
 )
+from app.integrations.wb.paid_storage import fetch_paid_storage
 from app.integrations.wb.statistics import (
     fetch_orders,
     fetch_report_detail,
@@ -46,6 +48,31 @@ from app.integrations.wb.statistics import (
 )
 from app.sync.celery_app import celery_app
 from app.sync.checkpoints import get_date_from, update_checkpoint
+from app.sync.tenants import (
+    get_active_tenants,
+    get_tenant_token,
+    tenant_sync_context,
+)
+from app.services.tenant_context import set_tenant
+
+
+async def _list_active_tenants() -> list[int]:
+    """Helper для dispatcher'ов: список tenants с WB-токеном."""
+    from app.db.session import session_scope as _ss  # noqa: WPS433
+
+    async with _ss() as session:
+        return await get_active_tenants(session)
+
+
+def _fanout(per_tenant_task) -> dict[str, Any]:
+    """Запустить per-tenant task для каждого активного tenant'а."""
+    tenants = asyncio.run(_list_active_tenants())
+    if not tenants:
+        log.info("dispatcher: no active tenants (no WB token set)")
+        return {"tenants_scheduled": 0}
+    for tid in tenants:
+        per_tenant_task.delay(tid)
+    return {"tenants_scheduled": len(tenants), "tenant_ids": tenants}
 
 log = get_logger(__name__)
 
@@ -67,6 +94,23 @@ def _parse_dt(value: Any) -> datetime | None:
 _BULK_CHUNK_ROWS = 1000
 
 
+def _stamp_tenant(session: AsyncSession, model: Any, values: list[dict[str, Any]]) -> None:
+    """Auto-проставить tenant_id в values если:
+      1) сессия знает tenant_id (set_tenant() был вызван), и
+      2) модель имеет колонку tenant_id (наследник TenantScopedMixin).
+
+    Это нужно потому что Core pg_insert(...).values(...) минует ORM events,
+    поэтому before_flush hook не срабатывает. Помещаем tenant_id явно в dict.
+    """
+    tid = session.sync_session.info.get("tenant_id")
+    if tid is None:
+        return
+    if not hasattr(model, "tenant_id"):
+        return
+    for row in values:
+        row.setdefault("tenant_id", tid)
+
+
 async def _bulk_upsert(
     session: AsyncSession,
     model: Any,
@@ -79,6 +123,7 @@ async def _bulk_upsert(
     columns get overwritten by the new row."""
     if not values:
         return
+    _stamp_tenant(session, model, values)
     for start in range(0, len(values), _BULK_CHUNK_ROWS):
         chunk = values[start : start + _BULK_CHUNK_ROWS]
         stmt = pg_insert(model).values(chunk)
@@ -98,6 +143,7 @@ async def _bulk_insert(
     truncated for the date range — e.g. snapshots that get fully replaced."""
     if not values:
         return
+    _stamp_tenant(session, model, values)
     for start in range(0, len(values), _BULK_CHUNK_ROWS):
         chunk = values[start : start + _BULK_CHUNK_ROWS]
         await session.execute(pg_insert(model).values(chunk))
@@ -141,6 +187,7 @@ async def _ensure_products(session: AsyncSession, rows: list[dict[str, Any]]) ->
     if not seen:
         return
     rows = list(seen.values())
+    _stamp_tenant(session, Product, rows)
     for start in range(0, len(rows), _BULK_CHUNK_ROWS):
         chunk = rows[start : start + _BULK_CHUNK_ROWS]
         stmt = pg_insert(Product).values(chunk)
@@ -163,8 +210,12 @@ async def _ensure_products(session: AsyncSession, rows: list[dict[str, Any]]) ->
 # ---------------------------------------------------------------------------
 
 
-async def _sync_orders_async() -> int:
-    async with session_scope() as session, WbApiClient() as wb:
+async def _sync_orders_async(tenant_id: int) -> int:
+    async with tenant_sync_context(tenant_id) as ctx:
+        if ctx is None:
+            log.info("orders: tenant %s no WB token, skip", tenant_id)
+            return 0
+        session, wb = ctx
         date_from = await get_date_from(session, "orders")
         try:
             rows = await fetch_orders(wb, date_from=date_from, flag=0)
@@ -212,6 +263,8 @@ async def _sync_orders_async() -> int:
                     "brand": r.get("brand"),
                     "is_supply": bool(r.get("isSupply")),
                     "is_realization": bool(r.get("isRealization")),
+                    "chrt_id": int(r["chrtId"]) if r.get("chrtId") else None,
+                    "tech_size": r.get("techSize"),
                 }
             )
 
@@ -223,9 +276,15 @@ async def _sync_orders_async() -> int:
         return len(values)
 
 
+@celery_app.task(name="app.sync.tasks.sync_orders_for_tenant")
+def sync_orders_for_tenant(tenant_id: int) -> int:
+    return asyncio.run(_sync_orders_async(tenant_id))
+
+
 @celery_app.task(name="app.sync.tasks.sync_orders")
-def sync_orders() -> int:
-    return asyncio.run(_sync_orders_async())
+def sync_orders() -> dict[str, Any]:
+    """Beat dispatcher: fanout sync_orders_for_tenant для всех active tenants."""
+    return _fanout(sync_orders_for_tenant)
 
 
 # ---------------------------------------------------------------------------
@@ -233,8 +292,12 @@ def sync_orders() -> int:
 # ---------------------------------------------------------------------------
 
 
-async def _sync_sales_async() -> int:
-    async with session_scope() as session, WbApiClient() as wb:
+async def _sync_sales_async(tenant_id: int) -> int:
+    async with tenant_sync_context(tenant_id) as ctx:
+        if ctx is None:
+            log.info("sales: tenant %s no WB token, skip", tenant_id)
+            return 0
+        session, wb = ctx
         date_from = await get_date_from(session, "sales")
         try:
             rows = await fetch_sales(wb, date_from=date_from, flag=0)
@@ -278,6 +341,8 @@ async def _sync_sales_async() -> int:
                     "warehouse_name": r.get("warehouseName"),
                     "region_name": r.get("regionName"),
                     "oblast": r.get("oblastOkrugName") or r.get("oblast"),
+                    "chrt_id": int(r["chrtId"]) if r.get("chrtId") else None,
+                    "tech_size": r.get("techSize"),
                 }
             )
 
@@ -289,9 +354,14 @@ async def _sync_sales_async() -> int:
         return len(values)
 
 
+@celery_app.task(name="app.sync.tasks.sync_sales_for_tenant")
+def sync_sales_for_tenant(tenant_id: int) -> int:
+    return asyncio.run(_sync_sales_async(tenant_id))
+
+
 @celery_app.task(name="app.sync.tasks.sync_sales")
-def sync_sales() -> int:
-    return asyncio.run(_sync_sales_async())
+def sync_sales() -> dict[str, Any]:
+    return _fanout(sync_sales_for_tenant)
 
 
 # ---------------------------------------------------------------------------
@@ -299,9 +369,13 @@ def sync_sales() -> int:
 # ---------------------------------------------------------------------------
 
 
-async def _sync_stocks_async() -> int:
+async def _sync_stocks_async(tenant_id: int) -> int:
     snapshot_dt = datetime.now(timezone.utc).replace(microsecond=0)
-    async with session_scope() as session, WbApiClient() as wb:
+    async with tenant_sync_context(tenant_id) as ctx:
+        if ctx is None:
+            log.info("stocks: tenant %s no WB token, skip", tenant_id)
+            return 0
+        session, wb = ctx
         try:
             rows = await fetch_stocks(wb)
         except Exception as e:
@@ -341,6 +415,8 @@ async def _sync_stocks_async() -> int:
                     "quantity_full": int(r.get("quantityFull") or 0),
                     "price": r.get("Price") or r.get("price"),
                     "discount": r.get("Discount") or r.get("discount"),
+                    "chrt_id": int(r["chrtId"]) if r.get("chrtId") else None,
+                    "tech_size": r.get("techSize"),
                 }
             )
         await _bulk_insert(session, WbStockSnapshot, values)
@@ -351,9 +427,121 @@ async def _sync_stocks_async() -> int:
         return len(values)
 
 
+@celery_app.task(name="app.sync.tasks.sync_stocks_for_tenant")
+def sync_stocks_for_tenant(tenant_id: int) -> int:
+    return asyncio.run(_sync_stocks_async(tenant_id))
+
+
 @celery_app.task(name="app.sync.tasks.sync_stocks")
-def sync_stocks() -> int:
-    return asyncio.run(_sync_stocks_async())
+def sync_stocks() -> dict[str, Any]:
+    return _fanout(sync_stocks_for_tenant)
+
+
+# ---------------------------------------------------------------------------
+# Paid storage (per-SKU/per-day storage cost)
+# ---------------------------------------------------------------------------
+
+
+async def _sync_paid_storage_async(tenant_id: int, days_back: int = 7) -> int:
+    """Тянем `paid_storage` за последние `days_back` дней и upsert по
+    (date, nm_id, chrt_id, warehouse). Окно WB до 8 дней включительно;
+    дефолтный sync = 7 дней (с запасом перекрытия).
+    """
+    end_date = datetime.now(timezone.utc).replace(hour=23, minute=59, second=59, microsecond=0)
+    start_date = (end_date - timedelta(days=days_back)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    async with tenant_sync_context(tenant_id) as ctx:
+        if ctx is None:
+            log.info("paid_storage: tenant %s no WB token, skip", tenant_id)
+            return 0
+        session, wb = ctx
+        try:
+            rows = await fetch_paid_storage(wb, date_from=start_date, date_to=end_date)
+        except Exception as e:
+            log.warning("paid_storage: fetch failed (%s) — skipping this run", e)
+            await update_checkpoint(
+                session, "paid_storage", rows_processed=0, status="skipped", error=str(e)[:500]
+            )
+            return 0
+        if not rows:
+            await update_checkpoint(session, "paid_storage", rows_processed=0)
+            return 0
+
+        # WB иногда возвращает несколько строк за один (date, nm_id, chrt_id,
+        # warehouse) — разный officeId/calc_type/тарифы. Склеиваем через
+        # суммирование warehousePrice и barcodesCount, остальные поля — из
+        # первой встретившейся строки.
+        agg: dict[tuple, dict[str, Any]] = {}
+        for r in rows:
+            nm_id_raw = r.get("nmId")
+            if not nm_id_raw:
+                continue
+            d = _parse_date(r.get("date")) or _parse_date(r.get("originalDate"))
+            if d is None:
+                continue
+            # NULL в составном UNIQUE constraint ломает ON CONFLICT в Postgres
+            # (NULL != NULL). Подменяем на 0/«—» — у WB chrtId/warehouse
+            # фактически всегда есть, но defensively cover edge cases.
+            chrt = int(r["chrtId"]) if r.get("chrtId") else 0
+            warehouse = r.get("warehouse") or "—"
+            key = (d, int(nm_id_raw), chrt, warehouse)
+            if key in agg:
+                agg[key]["warehouse_price"] = float(agg[key]["warehouse_price"]) + float(
+                    r.get("warehousePrice") or 0
+                )
+                agg[key]["barcodes_count"] = int(agg[key]["barcodes_count"]) + int(
+                    r.get("barcodesCount") or 0
+                )
+                continue
+            agg[key] = {
+                "date": d,
+                "nm_id": int(nm_id_raw),
+                "chrt_id": chrt,
+                "tech_size": r.get("size"),
+                "barcode": r.get("barcode"),
+                "vendor_code": r.get("vendorCode"),
+                "brand": r.get("brand"),
+                "subject": r.get("subject"),
+                "warehouse": warehouse,
+                "office_id": int(r["officeId"]) if r.get("officeId") else None,
+                "calc_type": r.get("calcType"),
+                "warehouse_price": float(r.get("warehousePrice") or 0),
+                "barcodes_count": int(r.get("barcodesCount") or 0),
+                "volume": r.get("volume"),
+                "warehouse_coef": r.get("warehouseCoef"),
+                "log_warehouse_coef": r.get("logWarehouseCoef"),
+                "loyalty_discount": r.get("loyaltyDiscount"),
+                "pallet_place_code": (
+                    str(r["palletPlaceCode"])
+                    if r.get("palletPlaceCode") not in (None, "")
+                    else None
+                ),
+                "pallet_count": int(r["palletCount"]) if r.get("palletCount") not in (None, "") else None,
+                "original_date": _parse_date(r.get("originalDate")),
+                "tariff_fix_date": _parse_date(r.get("tariffFixDate")),
+                "tariff_lower_date": _parse_date(r.get("tariffLowerDate")),
+            }
+        values: list[dict[str, Any]] = list(agg.values())
+
+        await _bulk_upsert(
+            session,
+            WbPaidStorage,
+            values,
+            pk_cols=["date", "nm_id", "chrt_id", "warehouse"],
+        )
+        await update_checkpoint(session, "paid_storage", rows_processed=len(values))
+        return len(values)
+
+
+@celery_app.task(name="app.sync.tasks.sync_paid_storage_for_tenant")
+def sync_paid_storage_for_tenant(tenant_id: int) -> int:
+    return asyncio.run(_sync_paid_storage_async(tenant_id))
+
+
+@celery_app.task(name="app.sync.tasks.sync_paid_storage")
+def sync_paid_storage() -> dict[str, Any]:
+    return _fanout(sync_paid_storage_for_tenant)
 
 
 # ---------------------------------------------------------------------------
@@ -361,12 +549,16 @@ def sync_stocks() -> int:
 # ---------------------------------------------------------------------------
 
 
-async def _sync_report_detail_async(days_back: int = 14) -> int:
+async def _sync_report_detail_async(tenant_id: int, days_back: int = 14) -> int:
     """Re-pull report detail for the last `days_back` days (rows continue arriving)."""
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=days_back)
     total = 0
-    async with session_scope() as session, WbApiClient() as wb:
+    async with tenant_sync_context(tenant_id) as ctx:
+        if ctx is None:
+            log.info("report_detail: tenant %s no WB token, skip", tenant_id)
+            return 0
+        session, wb = ctx
         try:
             chunks_iter = fetch_report_detail(wb, date_from=start, date_to=end)
         except Exception as e:
@@ -453,9 +645,17 @@ async def _sync_report_detail_async(days_back: int = 14) -> int:
     return total
 
 
+@celery_app.task(name="app.sync.tasks.sync_report_detail_for_tenant")
+def sync_report_detail_for_tenant(tenant_id: int, days_back: int = 14) -> int:
+    return asyncio.run(_sync_report_detail_async(tenant_id, days_back))
+
+
 @celery_app.task(name="app.sync.tasks.sync_report_detail")
-def sync_report_detail(days_back: int = 14) -> int:
-    return asyncio.run(_sync_report_detail_async(days_back=days_back))
+def sync_report_detail_dispatch() -> dict[str, Any]:
+    """Beat dispatcher: fanout sync_report_detail_for_tenant для активных tenants."""
+    return _fanout(sync_report_detail_for_tenant)
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -463,7 +663,7 @@ def sync_report_detail(days_back: int = 14) -> int:
 # ---------------------------------------------------------------------------
 
 
-async def _sync_ad_campaigns_async() -> int:
+async def _sync_ad_campaigns_async(tenant_id: int) -> int:
     """Refresh campaign list (IDs + status/type/changeTime) via `/promotion/count`.
 
     This task makes EXACTLY ONE call to advert-api. Detailed metadata
@@ -472,7 +672,11 @@ async def _sync_ad_campaigns_async() -> int:
     triggers WB's burst-protection (penalty up to ~50 min) regardless of
     inter-call delay. See WB_API_REFERENCE.md §10 P-X (advert burst).
     """
-    async with session_scope() as session, WbApiClient() as wb:
+    async with tenant_sync_context(tenant_id) as ctx:
+        if ctx is None:
+            log.info("ad_campaigns: tenant %s no WB token, skip", tenant_id)
+            return 0
+        session, wb = ctx
         try:
             overview = await fetch_campaigns_overview(wb)
         except Exception as e:
@@ -500,6 +704,7 @@ async def _sync_ad_campaigns_async() -> int:
         # Custom upsert: do NOT overwrite name/daily_budget/start_time/end_time
         # on conflict — those are filled by sync_ad_campaign_details and we
         # don't want /count to wipe them back to NULL.
+        _stamp_tenant(session, WbAdCampaign, values)
         for start in range(0, len(values), 1000):
             chunk = values[start : start + 1000]
             stmt = pg_insert(WbAdCampaign).values(chunk)
@@ -517,9 +722,16 @@ async def _sync_ad_campaigns_async() -> int:
         return len(values)
 
 
+@celery_app.task(name="app.sync.tasks.sync_ad_campaigns_for_tenant")
+def sync_ad_campaigns_for_tenant(tenant_id: int) -> int:
+    return asyncio.run(_sync_ad_campaigns_async(tenant_id))
+
+
 @celery_app.task(name="app.sync.tasks.sync_ad_campaigns")
-def sync_ad_campaigns() -> int:
-    return asyncio.run(_sync_ad_campaigns_async())
+def sync_ad_campaigns_dispatch() -> dict[str, Any]:
+    return _fanout(sync_ad_campaigns_for_tenant)
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -529,14 +741,18 @@ def sync_ad_campaigns() -> int:
 # ---------------------------------------------------------------------------
 
 
-async def _sync_ad_campaign_details_async(limit: int = 50) -> int:
+async def _sync_ad_campaign_details_async(tenant_id: int, limit: int = 50) -> int:
     """Fill in name/daily_budget/start_time/end_time for campaigns lacking them.
 
     Picks up to `limit` campaign IDs whose `name IS NULL` (= /adverts was never
     successfully called for them) and fetches via `/api/advert/v2/adverts`.
     `limit` defaults to 50 = exactly one chunk = exactly one WB call.
     """
-    async with session_scope() as session, WbApiClient() as wb:
+    async with tenant_sync_context(tenant_id) as ctx:
+        if ctx is None:
+            log.info("ad_campaign_details: tenant %s no WB token, skip", tenant_id)
+            return 0
+        session, wb = ctx
         rows = (
             await session.execute(
                 select(WbAdCampaign.advert_id)
@@ -582,15 +798,24 @@ async def _sync_ad_campaign_details_async(limit: int = 50) -> int:
         return updated
 
 
+@celery_app.task(name="app.sync.tasks.sync_ad_campaign_details_for_tenant")
+def sync_ad_campaign_details_for_tenant(tenant_id: int, limit: int = 50) -> int:
+    return asyncio.run(_sync_ad_campaign_details_async(tenant_id, limit))
+
+
 @celery_app.task(name="app.sync.tasks.sync_ad_campaign_details")
-def sync_ad_campaign_details(limit: int = 50) -> int:
-    return asyncio.run(_sync_ad_campaign_details_async(limit=limit))
+def sync_ad_campaign_details_dispatch() -> dict[str, Any]:
+    return _fanout(sync_ad_campaign_details_for_tenant)
 
 
-async def _sync_ad_stats_async(days_back: int = 60) -> int:
+async def _sync_ad_stats_async(tenant_id: int, days_back: int = 60) -> int:
     end = date.today()
     start = end - timedelta(days=days_back)
-    async with session_scope() as session, WbApiClient() as wb:
+    async with tenant_sync_context(tenant_id) as ctx:
+        if ctx is None:
+            log.info("ad_stats: tenant %s no WB token, skip", tenant_id)
+            return 0
+        session, wb = ctx
         # Read advert ids from local DB; sync_ad_campaigns refreshes them hourly.
         ids_rows = (
             await session.execute(select(WbAdCampaign.advert_id))
@@ -745,9 +970,14 @@ async def _sync_ad_stats_async(days_back: int = 60) -> int:
         return len(values)
 
 
+@celery_app.task(name="app.sync.tasks.sync_ad_stats_for_tenant")
+def sync_ad_stats_for_tenant(tenant_id: int, days_back: int = 60) -> int:
+    return asyncio.run(_sync_ad_stats_async(tenant_id, days_back))
+
+
 @celery_app.task(name="app.sync.tasks.sync_ad_stats")
-def sync_ad_stats(days_back: int = 60) -> int:
-    return asyncio.run(_sync_ad_stats_async(days_back=days_back))
+def sync_ad_stats() -> dict[str, Any]:
+    return _fanout(sync_ad_stats_for_tenant)
 
 
 # ---------------------------------------------------------------------------
@@ -792,13 +1022,15 @@ def send_daily_digest() -> bool:
 
 
 @celery_app.task(name="app.sync.tasks.sync_all")
-def sync_all() -> dict[str, int]:
+def sync_all() -> dict[str, Any]:
+    """Запустить все dispatcher'ы (fanout per-tenant для каждого синка)."""
     return {
         "orders": sync_orders(),
         "sales": sync_sales(),
         "stocks": sync_stocks(),
-        "ad_campaigns": sync_ad_campaigns(),
-        "ad_campaign_details": sync_ad_campaign_details(),
+        "ad_campaigns": sync_ad_campaigns_dispatch(),
+        "ad_campaign_details": sync_ad_campaign_details_dispatch(),
         "ad_stats": sync_ad_stats(),
-        "report_detail": sync_report_detail(),
+        "report_detail": sync_report_detail_dispatch(),
+        "paid_storage": sync_paid_storage(),
     }

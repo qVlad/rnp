@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import OffPlatformStockMovement
 from app.db.session import get_db
+from app.services.auth import get_db_tenant_scoped
 from app.services import off_platform
 from app.services.auth import require_director_or_head
 
@@ -34,7 +35,7 @@ async def list_movements(
     date_to: date | None = Query(default=None),
     nm_id: int | None = Query(default=None),
     kind: str | None = Query(default=None),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     items = await off_platform.list_movements(
         session, date_from=date_from, date_to=date_to, nm_id=nm_id, kind=kind
@@ -48,7 +49,7 @@ async def list_movements(
 
 @router.post("/movements")
 async def create_movement(
-    payload: MovementPayload, session: AsyncSession = Depends(get_db)
+    payload: MovementPayload, session: AsyncSession = Depends(get_db_tenant_scoped)
 ) -> dict[str, Any]:
     try:
         row = await off_platform.create_movement(
@@ -70,7 +71,7 @@ async def create_movement(
 async def update_movement(
     movement_id: int,
     payload: MovementPayload,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, str]:
     row = await session.get(OffPlatformStockMovement, movement_id)
     if not row:
@@ -94,7 +95,7 @@ async def update_movement(
 
 @router.delete("/movements/{movement_id}")
 async def delete_movement(
-    movement_id: int, session: AsyncSession = Depends(get_db)
+    movement_id: int, session: AsyncSession = Depends(get_db_tenant_scoped)
 ) -> dict[str, str]:
     row = await session.get(OffPlatformStockMovement, movement_id)
     if not row:
@@ -107,6 +108,6 @@ async def delete_movement(
 @router.get("/summary")
 async def get_summary(
     as_of: date | None = Query(default=None),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     return await off_platform.summary(session, as_of=as_of)

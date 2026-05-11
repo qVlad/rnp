@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ExternalAdCost
 from app.db.session import get_db
+from app.services.auth import get_db_tenant_scoped
 from app.services.auth import require_director_or_head
 
 router = APIRouter(
@@ -61,7 +62,7 @@ async def list_costs(
     channel: Annotated[str | None, Query()] = None,
     date_from: Annotated[date | None, Query()] = None,
     date_to: Annotated[date | None, Query()] = None,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     stmt = select(ExternalAdCost).order_by(
         ExternalAdCost.spend_date.desc(), ExternalAdCost.id.desc()
@@ -80,7 +81,7 @@ async def list_costs(
 
 @router.post("")
 async def create_cost(
-    payload: ExternalAdCostIn, session: AsyncSession = Depends(get_db)
+    payload: ExternalAdCostIn, session: AsyncSession = Depends(get_db_tenant_scoped)
 ) -> dict[str, Any]:
     obj = ExternalAdCost(**payload.model_dump())
     session.add(obj)
@@ -93,7 +94,7 @@ async def create_cost(
 async def update_cost(
     cost_id: int,
     payload: ExternalAdCostIn,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     obj = await session.get(ExternalAdCost, cost_id)
     if not obj:
@@ -106,7 +107,7 @@ async def update_cost(
 
 
 @router.delete("/{cost_id}")
-async def delete_cost(cost_id: int, session: AsyncSession = Depends(get_db)) -> dict[str, str]:
+async def delete_cost(cost_id: int, session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, str]:
     obj = await session.get(ExternalAdCost, cost_id)
     if not obj:
         raise HTTPException(404, "not found")

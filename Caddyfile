@@ -1,0 +1,42 @@
+# Caddyfile — HTTPS reverse proxy в Docker.
+#
+# Два режима через env-переменные:
+#
+# (A) С доменом + Let's Encrypt:
+#     DEPLOY_DOMAIN=rnp.example.com
+#     DEPLOY_EMAIL=you@example.com
+#     → Автоматически получит и обновит сертификат, redirect HTTP→HTTPS.
+#
+# (B) Без домена (по IP, self-signed):
+#     DEPLOY_DOMAIN= (пусто)
+#     → Слушает :443 со self-signed cert. Браузер ругается при первом заходе,
+#       пользователь жмёт "продолжить". JWT-cookie с Secure=true работает.
+#
+# DNS: A-запись DEPLOY_DOMAIN → ваш публичный IP, проброс портов 80+443
+# на 192.168.31.61:80,443.
+
+{
+	admin off
+	{$ACME_EMAIL_DIRECTIVE}
+}
+
+{$SITE_ADDRESS::443} {
+	{$TLS_DIRECTIVE}
+
+	# Frontend nginx сам проксирует /api/* → backend:8000.
+	reverse_proxy frontend:80
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+		level INFO
+	}
+}

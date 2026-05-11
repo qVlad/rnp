@@ -281,6 +281,8 @@ async def build_pnl(
                 - func.sum(case((is_return, WbReportDetail.acquiring_fee), else_=0))
             ).label("acquiring"),
             func.sum(WbReportDetail.delivery_rub).label("delivery"),
+            # storage_fee остаётся как fallback; реальное хранение пер-день
+            # приходит из wb_paid_storage и заменяется ниже (по date).
             func.sum(WbReportDetail.storage_fee).label("storage"),
             func.sum(WbReportDetail.penalty).label("penalty"),
             func.sum(WbReportDetail.deduction).label("deduction"),
@@ -293,6 +295,27 @@ async def build_pnl(
     if nm_filter is not None:
         rd_stmt = rd_stmt.where(WbReportDetail.nm_id.in_(nm_filter))
     rd_rows = (await session.execute(rd_stmt)).all()
+
+    # ── A2) Storage from paid_storage (per-day, per-nm). Если данные за
+    # период есть — используем их вместо storage_fee из RD (последний идёт
+    # фолбэком когда paid_storage не sync'нулся). Это согласовывает
+    # P&L с Dashboard и Units (см. storage_resolver).
+    from app.db.models import WbPaidStorage  # noqa: WPS433
+
+    storage_paid_stmt = (
+        select(
+            WbPaidStorage.date,
+            func.coalesce(func.sum(WbPaidStorage.warehouse_price), 0).label("amount"),
+        )
+        .where(WbPaidStorage.date >= date_from, WbPaidStorage.date <= date_to)
+        .group_by(WbPaidStorage.date)
+    )
+    if nm_filter is not None:
+        storage_paid_stmt = storage_paid_stmt.where(WbPaidStorage.nm_id.in_(nm_filter))
+    storage_paid_by_date: dict[date, float] = {
+        r.date: _f(r.amount) for r in (await session.execute(storage_paid_stmt)).all()
+    }
+    storage_paid_total = sum(storage_paid_by_date.values())
 
     # ── B) WB ad costs by day ──
     ad_stmt = (
@@ -458,11 +481,26 @@ async def build_pnl(
             - _f(r.ppvz_for_pay) - _f(r.acquiring)
         )
         b.delivery += _f(r.delivery)
-        b.storage += _f(r.storage)
+        # storage временно не добавляем — берём из paid_storage ниже.
+        # Если paid_storage пуст за период → fallback на storage_fee из RD.
         b.penalty += _f(r.penalty)
         b.deduction += _f(r.deduction)
         b.acquiring += _f(r.acquiring)
         b.additional += _f(r.additional)
+
+    # Storage из paid_storage по date — это согласует с Dashboard и Units.
+    if storage_paid_total > 0:
+        for d, amount in storage_paid_by_date.items():
+            b = get_bucket(d)
+            b.storage += amount
+    else:
+        # Fallback: paid_storage за период не sync'нулся → берём storage_fee
+        # из report_detail (агрегатно по неделе на rr_dt).
+        for r in rd_rows:
+            if r.rr_dt is None:
+                continue
+            b = get_bucket(r.rr_dt)
+            b.storage += _f(r.storage)
 
     # Per-day extras: ads, ext-ads, COGS, opex, fixed, manual adjustments
     cursor = date_from

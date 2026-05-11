@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings as cfg
 from app.db.models import AppSetting, Cogs, Product, SettingTimeline, SyncCheckpoint
 from app.db.session import get_db
+from app.services.auth import get_db_tenant_scoped
 from app.integrations.telegram import get_me as tg_get_me, send_message as tg_send
 from app.integrations.wb import cooldown as wb_cooldown
 from app.services.audit import actor_from_request, audit_log
@@ -66,7 +67,7 @@ class SettingsPayload(BaseModel):
 
 
 @router.get("")
-async def get_settings_view(session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def get_settings_view(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     rows = (await session.execute(select(AppSetting))).scalars().all()
     cfg = {r.key: r.value for r in rows}
     cps = (await session.execute(select(SyncCheckpoint))).scalars().all()
@@ -89,7 +90,7 @@ async def get_settings_view(session: AsyncSession = Depends(get_db)) -> dict[str
 async def put_settings(
     payload: SettingsPayload,
     request: Request,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, str]:
     data = payload.model_dump(exclude_none=True)
 
@@ -136,7 +137,7 @@ async def put_settings(
 
 @router.post("/cogs")
 async def upload_cogs(
-    file: UploadFile, session: AsyncSession = Depends(get_db)
+    file: UploadFile, session: AsyncSession = Depends(get_db_tenant_scoped)
 ) -> dict[str, Any]:
     """Upload COGS CSV: `nmId;cost_rub;packaging_rub;fulfillment_rub`."""
     content = (await file.read()).decode("utf-8-sig", errors="replace")
@@ -198,7 +199,7 @@ async def upload_cogs(
 
 
 @router.get("/cogs")
-async def list_cogs(session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def list_cogs(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     stmt = select(
         Cogs.nm_id,
         Cogs.cost_rub,
@@ -283,7 +284,7 @@ class TimelineEntryPayload(BaseModel):
 
 
 @router.get("/timeline")
-async def list_timeline(session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def list_timeline(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     rows = (
         await session.execute(
             select(SettingTimeline).order_by(
@@ -311,7 +312,7 @@ async def list_timeline(session: AsyncSession = Depends(get_db)) -> dict[str, An
 async def create_timeline_entry(
     payload: TimelineEntryPayload,
     request: Request,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     if payload.key not in TIMELINEABLE_KEYS:
         raise HTTPException(
@@ -390,7 +391,7 @@ async def create_timeline_entry(
 async def delete_timeline_entry(
     entry_id: int,
     request: Request,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, str]:
     row = await session.get(SettingTimeline, entry_id)
     if not row:
@@ -426,7 +427,7 @@ async def clear_cooldown(category: str) -> dict[str, str]:
 
 
 @router.get("/telegram/status")
-async def telegram_status(session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def telegram_status(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     """Show bot configuration & link status."""
     chat_row = (
         await session.execute(select(AppSetting).where(AppSetting.key == "tg_chat_id"))
@@ -452,7 +453,7 @@ async def telegram_status(session: AsyncSession = Depends(get_db)) -> dict[str, 
 
 
 @router.post("/telegram/test")
-async def telegram_test(session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def telegram_test(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     """Send a test message to the linked chat."""
     if not cfg.tg_bot_token:
         raise HTTPException(400, "TG_BOT_TOKEN not configured (.env)")
@@ -474,7 +475,7 @@ class TgDigestPayload(BaseModel):
 
 @router.put("/telegram/digest")
 async def set_digest_enabled(
-    payload: TgDigestPayload, session: AsyncSession = Depends(get_db)
+    payload: TgDigestPayload, session: AsyncSession = Depends(get_db_tenant_scoped)
 ) -> dict[str, str]:
     value = "1" if payload.enabled else "0"
     stmt = pg_insert(AppSetting).values(key="tg_digest_enabled", value=value)
@@ -485,7 +486,7 @@ async def set_digest_enabled(
 
 
 @router.delete("/telegram/chat")
-async def unlink_telegram_chat(session: AsyncSession = Depends(get_db)) -> dict[str, str]:
+async def unlink_telegram_chat(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, str]:
     """Forget the linked chat — next /start binds to a new chat."""
     chat_row = (
         await session.execute(select(AppSetting).where(AppSetting.key == "tg_chat_id"))

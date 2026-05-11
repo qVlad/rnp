@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import OpexCategory, OpexEntry
 from app.db.session import get_db
+from app.services.auth import get_db_tenant_scoped
 from app.services.audit import actor_from_request, audit_log, snapshot
 from app.services.auth import require_director, require_director_or_head
 
@@ -80,7 +81,7 @@ def _entry_row(e: OpexEntry) -> dict[str, Any]:
 
 
 @router.get("/categories")
-async def list_categories(session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def list_categories(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     stmt = select(OpexCategory).order_by(
         OpexCategory.kind.desc(),  # expense first
         OpexCategory.is_fixed.desc(),
@@ -92,7 +93,7 @@ async def list_categories(session: AsyncSession = Depends(get_db)) -> dict[str, 
 
 @router.post("/categories", dependencies=[Depends(require_director)])
 async def create_category(
-    payload: OpexCategoryIn, session: AsyncSession = Depends(get_db)
+    payload: OpexCategoryIn, session: AsyncSession = Depends(get_db_tenant_scoped)
 ) -> dict[str, Any]:
     existing = (
         await session.execute(select(OpexCategory).where(OpexCategory.name == payload.name))
@@ -108,7 +109,7 @@ async def create_category(
 
 @router.put("/categories/{cat_id}", dependencies=[Depends(require_director)])
 async def update_category(
-    cat_id: int, payload: OpexCategoryIn, session: AsyncSession = Depends(get_db)
+    cat_id: int, payload: OpexCategoryIn, session: AsyncSession = Depends(get_db_tenant_scoped)
 ) -> dict[str, Any]:
     obj = await session.get(OpexCategory, cat_id)
     if not obj:
@@ -121,7 +122,7 @@ async def update_category(
 
 
 @router.delete("/categories/{cat_id}", dependencies=[Depends(require_director)])
-async def delete_category(cat_id: int, session: AsyncSession = Depends(get_db)) -> dict[str, str]:
+async def delete_category(cat_id: int, session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, str]:
     obj = await session.get(OpexCategory, cat_id)
     if not obj:
         raise HTTPException(404, "not found")
@@ -145,7 +146,7 @@ async def list_entries(
     date_from: Annotated[date | None, Query()] = None,
     date_to: Annotated[date | None, Query()] = None,
     category_id: Annotated[int | None, Query()] = None,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     from sqlalchemy.orm import selectinload
 
@@ -168,7 +169,7 @@ async def list_entries(
 async def create_entry(
     payload: OpexEntryIn,
     request: Request,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     cat = await session.get(OpexCategory, payload.category_id)
     if not cat:
@@ -192,7 +193,7 @@ async def update_entry(
     entry_id: int,
     payload: OpexEntryIn,
     request: Request,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     obj = await session.get(OpexEntry, entry_id)
     if not obj:
@@ -218,7 +219,7 @@ async def update_entry(
 async def delete_entry(
     entry_id: int,
     request: Request,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, str]:
     obj = await session.get(OpexEntry, entry_id)
     if not obj:

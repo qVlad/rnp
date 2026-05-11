@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.services.auth import get_db_tenant_scoped
 from app.services.auth import current_brands_filter
 from app.services.pnl_builder import build_pnl
 from app.services.pnl_reconciliation import build_reconciliation
@@ -17,7 +18,7 @@ async def get_pnl(
     date_from: date | None = Query(default=None, alias="from"),
     date_to: date | None = Query(default=None, alias="to"),
     granularity: Literal["day", "week", "month"] = "day",
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
     if date_to is None:
@@ -39,7 +40,7 @@ async def get_pnl(
 async def get_reconciliation(
     weeks: int = Query(default=12, ge=1, le=52),
     diff_threshold_pct: float = Query(default=1.0, ge=0.0, le=100.0),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
     """Weekly reconciliation: WB seller-cabinet view vs our derived P&L."""

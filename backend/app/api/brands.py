@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import BrandAssignment, Product, User
 from app.db.session import get_db
+from app.services.auth import get_db_tenant_scoped
 from app.services.audit import actor_from_request, audit_log, snapshot
 from app.services.auth import require_director_or_head
 
@@ -43,7 +44,7 @@ def _ba_snap(row: BrandAssignment | None) -> dict[str, Any] | None:
 
 
 @router.get("")
-async def list_brands(session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def list_brands(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     """All distinct WB brands with SKU count and current responsible user."""
     # 1) brand → nm_count from products
     rows = (
@@ -97,7 +98,7 @@ async def set_assignee(
     brand: str,
     payload: AssigneeIn,
     request: Request,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     # Validate the brand actually exists in the catalog (avoid orphan rows).
     has_brand = (

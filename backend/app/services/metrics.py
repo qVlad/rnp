@@ -310,7 +310,13 @@ async def _final_finance_aggregate(
         func.coalesce(func.sum(WbReportDetail.storage_fee), 0).label("storage"),
         func.coalesce(func.sum(WbReportDetail.penalty), 0).label("penalty"),
         func.coalesce(func.sum(WbReportDetail.deduction), 0).label("deduction"),
-        func.coalesce(func.sum(WbReportDetail.acquiring_fee), 0).label("acquiring"),
+        # Acquiring net = Σ(Продажа) − Σ(Возврат). Без учёта rows-aggregate
+        # (Корректировка эквайринга, Удержание, ...) — те идут отдельными KPI.
+        func.coalesce(
+            func.sum(case((is_sale, WbReportDetail.acquiring_fee), else_=0))
+            - func.sum(case((is_return, WbReportDetail.acquiring_fee), else_=0)),
+            0,
+        ).label("acquiring"),
         func.coalesce(func.sum(WbReportDetail.additional_payment), 0).label("additional"),
         func.coalesce(
             func.sum(case((is_sale, commission_expr), else_=0))
@@ -333,7 +339,14 @@ async def _final_finance_aggregate(
         stmt = stmt.where(WbReportDetail.nm_id.in_(sub))
     row = (await session.execute(stmt)).one()
     logistics = _f(row.logistics)
-    storage = _f(row.storage)
+    # Хранение: предпочитаем paid_storage (точные суточные начисления per nm)
+    # с fallback на storage_fee из report_detail. Это даёт совпадение между
+    # Dashboard / P&L / Units (раньше каждый брал свой источник).
+    from app.services.storage_resolver import resolve_period_storage  # noqa: WPS433
+
+    storage, _storage_src = await resolve_period_storage(
+        session, start=start, end=end, brands_subq=sub
+    )
     penalty = _f(row.penalty)
     deduction = _f(row.deduction)
     acquiring = _f(row.acquiring)
@@ -645,7 +658,13 @@ async def compute_dashboard(
             f"Σ ppvz_for_pay (Продажи − Возвраты) за период.\nИсточник: {src_orders}."),
         KPI("orders", "Заказы", curr["orders"], prev["orders"],
             _pct_change(curr["orders"], prev["orders"]), "шт",
-            f"Кол-во активных заказов (без отмен).\nИсточник ({mode}): {src_orders}."),
+            (
+                "В режиме PRELIMINARY: активные заказы из wb_orders (без отменённых).\n"
+                "В режиме FINAL: количество выкупленных единиц из wb_report_detail "
+                "(supplier_oper_name='Продажа').\nЭто **разные** метрики; для total_orders "
+                "(включая cancellations) смотрите страницу Юнит-экономика."
+                f"\nИсточник ({mode}): {src_orders}."
+            )),
         KPI("buyout_pct", "Выкуп", curr["buyout_pct"], prev["buyout_pct"],
             _pct_change(curr["buyout_pct"], prev["buyout_pct"]), "%",
             "% заказов которые покупатели выкупили из всех заказов (включая отменённые).\n"
@@ -686,9 +705,9 @@ async def compute_dashboard(
             "Сколько копеек прибыли приносит каждый рубль вложенный в закупку.\n"
             "100 % = удвоение, < 30 % — низкая, > 200 % — отличная."),
         # ─── Финансовые поля из wb_report_detail (только final mode) ─────
-        KPI("commission_wb", "Комиссия WB", fin["commission_plus_acquiring"],
-            prev_fin["commission_plus_acquiring"] if mode == "final" else None,
-            _pct_change(fin["commission_plus_acquiring"], prev_fin["commission_plus_acquiring"]) if mode == "final" else None,
+        KPI("commission_wb", "Комиссия WB", fin["commission"],
+            prev_fin["commission"] if mode == "final" else None,
+            _pct_change(fin["commission"], prev_fin["commission"]) if mode == "final" else None,
             "₽",
             "Комиссия WB + эквайринг — то что WB удерживает с каждого выкупа.\n"
             "Формула: Σ (retail_price_withdisc_rub − ppvz_for_pay) для Продаж − для Возвратов.\n"

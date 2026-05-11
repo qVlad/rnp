@@ -12,15 +12,61 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, declared_attr, mapped_column, relationship
 
 from app.db.base import Base
 
 
-class Product(Base):
+class Tenant(Base):
+    """Tenant = одна селлерская компания.
+
+    У каждого tenant'а свой WB-токен, свои данные (orders/sales/...), свои
+    юзеры (User.tenant_id). Default tenant с id=1 содержит «legacy» данные
+    (созданные до multi-tenant миграции 0016).
+    """
+
+    __tablename__ = "tenants"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    # WB-токен per-tenant. TODO: зашифровать Fernet'ом.
+    wb_token: Mapped[str | None] = mapped_column(Text)
+    # Когда последний раз убедились, что токен валиден (WB вернул 200 на ping).
+    wb_token_validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Seller ID извлечённый из токена (sid claim в JWT) — для отображения.
+    wb_token_seller_id: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class TenantScopedMixin:
+    """Mixin: добавляет tenant_id FK в любую модель.
+
+    Используется через множественное наследование (Base, TenantScopedMixin).
+    Использует @declared_attr чтобы каждый класс получил свою колонку, а не
+    одну shared instance (иначе SQLAlchemy ругается «column already attached»).
+    """
+
+    @declared_attr
+    def tenant_id(cls) -> Mapped[int]:
+        return mapped_column(
+            BigInteger,
+            ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+
+
+class Product(Base, TenantScopedMixin):
     __tablename__ = "products"
 
     nm_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -40,7 +86,7 @@ class Product(Base):
     cogs_entries: Mapped[list["Cogs"]] = relationship(back_populates="product")
 
 
-class Cogs(Base):
+class Cogs(Base, TenantScopedMixin):
     __tablename__ = "cogs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -56,7 +102,7 @@ class Cogs(Base):
     product: Mapped[Product] = relationship(back_populates="cogs_entries")
 
 
-class WbOrder(Base):
+class WbOrder(Base, TenantScopedMixin):
     __tablename__ = "wb_orders"
 
     srid: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -80,11 +126,19 @@ class WbOrder(Base):
     brand: Mapped[str | None] = mapped_column(String(255))
     is_supply: Mapped[bool] = mapped_column(Boolean, default=False)
     is_realization: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Размер товара: tech_size (строка как у WB) и chrt_id (числовой ID размера).
+    # techSize всегда приходит из /orders; chrt_id — заранее, под переход
+    # на /api/analytics/v1/stocks-report/wb-warehouses.
+    chrt_id: Mapped[int | None] = mapped_column(BigInteger)
+    tech_size: Mapped[str | None] = mapped_column(String(64))
 
-    __table_args__ = (Index("ix_orders_date_nm", "order_dt", "nm_id"),)
+    __table_args__ = (
+        Index("ix_orders_date_nm", "order_dt", "nm_id"),
+        Index("ix_wb_orders_nm_size", "nm_id", "tech_size"),
+    )
 
 
-class WbSale(Base):
+class WbSale(Base, TenantScopedMixin):
     __tablename__ = "wb_sales"
 
     sale_id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -104,11 +158,16 @@ class WbSale(Base):
     warehouse_name: Mapped[str | None] = mapped_column(String(255))
     region_name: Mapped[str | None] = mapped_column(String(255))
     oblast: Mapped[str | None] = mapped_column(String(255))
+    chrt_id: Mapped[int | None] = mapped_column(BigInteger)
+    tech_size: Mapped[str | None] = mapped_column(String(64))
 
-    __table_args__ = (Index("ix_sales_date_nm", "sale_dt", "nm_id"),)
+    __table_args__ = (
+        Index("ix_sales_date_nm", "sale_dt", "nm_id"),
+        Index("ix_wb_sales_nm_size", "nm_id", "tech_size"),
+    )
 
 
-class WbStockSnapshot(Base):
+class WbStockSnapshot(Base, TenantScopedMixin):
     __tablename__ = "wb_stocks_snapshot"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -123,11 +182,62 @@ class WbStockSnapshot(Base):
     quantity_full: Mapped[int] = mapped_column(Integer, default=0)
     price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     discount: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    chrt_id: Mapped[int | None] = mapped_column(BigInteger)
+    tech_size: Mapped[str | None] = mapped_column(String(64))
 
-    __table_args__ = (Index("ix_stocks_dt_nm_warehouse", "snapshot_dt", "nm_id", "warehouse_name"),)
+    __table_args__ = (
+        Index("ix_stocks_dt_nm_warehouse", "snapshot_dt", "nm_id", "warehouse_name"),
+        Index("ix_wb_stocks_snapshot_nm_size", "nm_id", "tech_size"),
+        Index("ix_stocks_dt_nm_wh_size", "snapshot_dt", "nm_id", "warehouse_name", "tech_size"),
+    )
 
 
-class WbReportDetail(Base):
+class WbPaidStorage(Base, TenantScopedMixin):
+    """WB paid storage report: per-day, per-SKU, per-warehouse storage cost.
+
+    Источник: `seller-analytics-api.wildberries.ru/api/v1/paid_storage`
+    (async-task). Используется в unit_economics для точного отнесения
+    хранения на nm_id вместо пропорционального распределения общего
+    storage_fee из wb_report_detail.
+    """
+
+    __tablename__ = "wb_paid_storage"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    date: Mapped[date] = mapped_column(Date, nullable=False)
+    nm_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    chrt_id: Mapped[int | None] = mapped_column(BigInteger)
+    tech_size: Mapped[str | None] = mapped_column(String(64))
+    barcode: Mapped[str | None] = mapped_column(String(64))
+    vendor_code: Mapped[str | None] = mapped_column(String(255))
+    brand: Mapped[str | None] = mapped_column(String(255))
+    subject: Mapped[str | None] = mapped_column(String(255))
+    warehouse: Mapped[str | None] = mapped_column(String(255))
+    office_id: Mapped[int | None] = mapped_column(BigInteger)
+    calc_type: Mapped[str | None] = mapped_column(String(128))
+    warehouse_price: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=0)
+    barcodes_count: Mapped[int] = mapped_column(Integer, default=0)
+    volume: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    warehouse_coef: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    log_warehouse_coef: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    loyalty_discount: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    pallet_place_code: Mapped[str | None] = mapped_column(String(64))
+    pallet_count: Mapped[int | None] = mapped_column(Integer)
+    original_date: Mapped[date | None] = mapped_column(Date)
+    tariff_fix_date: Mapped[date | None] = mapped_column(Date)
+    tariff_lower_date: Mapped[date | None] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_paid_storage_date_nm", "date", "nm_id"),
+        Index("ix_paid_storage_nm_size", "nm_id", "tech_size"),
+        UniqueConstraint("date", "nm_id", "chrt_id", "warehouse", name="uq_paid_storage_key"),
+    )
+
+
+class WbReportDetail(Base, TenantScopedMixin):
     __tablename__ = "wb_report_detail"
 
     rrd_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -171,7 +281,7 @@ class WbReportDetail(Base):
     supplier_reward: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
 
 
-class WbAdCampaign(Base):
+class WbAdCampaign(Base, TenantScopedMixin):
     __tablename__ = "wb_ad_campaigns"
 
     advert_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -185,7 +295,7 @@ class WbAdCampaign(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class WbAdStatsDaily(Base):
+class WbAdStatsDaily(Base, TenantScopedMixin):
     __tablename__ = "wb_ad_stats_daily"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -209,6 +319,10 @@ class WbAdStatsDaily(Base):
 class AppSetting(Base):
     __tablename__ = "settings"
 
+    # Composite PK (tenant_id, key) — настройки per-tenant.
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True
+    )
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str | None] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(
@@ -216,7 +330,7 @@ class AppSetting(Base):
     )
 
 
-class User(Base):
+class User(Base, TenantScopedMixin):
     """Local users with role-based access.
 
     `password_hash` is bcrypt with built-in salt. `role` controls what the
@@ -230,7 +344,8 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    # Username уникален в рамках tenant (UNIQUE(tenant_id, username)).
+    username: Mapped[str] = mapped_column(String(64), index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(16), default="manager")
     full_name: Mapped[str | None] = mapped_column(String(128))
@@ -241,7 +356,7 @@ class User(Base):
     )
 
 
-class BrandAssignment(Base):
+class BrandAssignment(Base, TenantScopedMixin):
     """Maps a WB brand (text from products.brand) to a responsible user.
 
     1:1 — UNIQUE(brand). user_id may be NULL when an assignment row exists
@@ -251,7 +366,8 @@ class BrandAssignment(Base):
     __tablename__ = "brand_assignments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    brand: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    # Brand уникален в рамках tenant.
+    brand: Mapped[str] = mapped_column(Text, nullable=False)
     user_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -263,7 +379,7 @@ class BrandAssignment(Base):
     )
 
 
-class ProductGroup(Base):
+class ProductGroup(Base, TenantScopedMixin):
     """Group of products with an optional responsible manager.
 
     Lets the user organize the SKU portfolio by brand/category/responsibility
@@ -275,7 +391,8 @@ class ProductGroup(Base):
     __tablename__ = "product_groups"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(128), unique=True)
+    # Name уникален в рамках tenant (UNIQUE(tenant_id, name)).
+    name: Mapped[str] = mapped_column(String(128))
     manager_name: Mapped[str | None] = mapped_column(String(128))
     color: Mapped[str | None] = mapped_column(String(16))  # hex like "#4f46e5", optional UI hint
     comment: Mapped[str | None] = mapped_column(Text)
@@ -284,7 +401,7 @@ class ProductGroup(Base):
     )
 
 
-class ProductGroupAssignment(Base):
+class ProductGroupAssignment(Base, TenantScopedMixin):
     """Many-to-many: nm_id → product_group_id.
 
     A SKU may belong to multiple groups (e.g. one for the manager filter,
@@ -308,7 +425,7 @@ class ProductGroupAssignment(Base):
     )
 
 
-class AuditLog(Base):
+class AuditLog(Base, TenantScopedMixin):
     """Audit log of CRUD operations on reference data.
 
     For each mutation in tables like cogs/opex/plans/settings/etc we record:
@@ -339,7 +456,7 @@ class AuditLog(Base):
     comment: Mapped[str | None] = mapped_column(Text)
 
 
-class OffPlatformStockMovement(Base):
+class OffPlatformStockMovement(Base, TenantScopedMixin):
     """Off-WB warehouse movements — for tracking inventory that lives outside
     Wildberries (own warehouse, supplier consignment, in-transit) and the
     capital tied up in it.
@@ -377,7 +494,7 @@ class OffPlatformStockMovement(Base):
     )
 
 
-class SettingTimeline(Base):
+class SettingTimeline(Base, TenantScopedMixin):
     """Future-dated overrides for date-sensitive settings (tax_system, tax_rate,
     tax_min_rate, reduce_by_insurance, vat_payer, vat_rate).
 
@@ -415,6 +532,10 @@ class SettingTimeline(Base):
 class SyncCheckpoint(Base):
     __tablename__ = "sync_checkpoints"
 
+    # Composite PK (tenant_id, entity).
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True
+    )
     entity: Mapped[str] = mapped_column(String(64), primary_key=True)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_change_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -433,7 +554,7 @@ class SyncCheckpoint(Base):
 #   rfbs      — rFBS: real sale via own warehouse, ADDED to revenue
 # In all cases, contractor_fee is added as an OPEX-like cost.
 # ----------------------------------------------------------------------
-class ArtificialOrder(Base):
+class ArtificialOrder(Base, TenantScopedMixin):
     __tablename__ = "artificial_orders"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -453,7 +574,7 @@ class ArtificialOrder(Base):
 # infographics, photography, banners, etc.). nm_id may be NULL — that means
 # brand-level spend, distributed pro-rata by revenue across SKUs in P&L.
 # ----------------------------------------------------------------------
-class ExternalAdCost(Base):
+class ExternalAdCost(Base, TenantScopedMixin):
     __tablename__ = "external_ad_costs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -472,11 +593,12 @@ class ExternalAdCost(Base):
 # `is_fixed`     постоянные ли расходы (для сегментации в отчёте)
 # `in_operating` идёт ли строкой в опер.прибыль (P&L) или только в ДДС
 # ----------------------------------------------------------------------
-class OpexCategory(Base):
+class OpexCategory(Base, TenantScopedMixin):
     __tablename__ = "opex_categories"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(128), unique=True)
+    # Name уникален в рамках tenant.
+    name: Mapped[str] = mapped_column(String(128))
     kind: Mapped[str] = mapped_column(String(16), default="expense")  # expense | income
     is_fixed: Mapped[bool] = mapped_column(Boolean, default=True)
     in_operating: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -491,7 +613,7 @@ class OpexCategory(Base):
     entries: Mapped[list["OpexEntry"]] = relationship(back_populates="category")
 
 
-class OpexEntry(Base):
+class OpexEntry(Base, TenantScopedMixin):
     __tablename__ = "opex_entries"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -531,7 +653,7 @@ class WbTariffCategory(Base):
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
 
 
-class SalesPlan(Base):
+class SalesPlan(Base, TenantScopedMixin):
     __tablename__ = "sales_plans"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

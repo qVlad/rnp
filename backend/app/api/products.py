@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings as cfg
 from app.db.models import Product
 from app.db.session import get_db
+from app.services.auth import get_db_tenant_scoped
 from app.services.auth import current_brands_filter
 
 log = logging.getLogger(__name__)
@@ -81,7 +82,7 @@ async def list_products(
     include_archived: Annotated[bool, Query()] = False,
     only_archived: Annotated[bool, Query()] = False,
     search: Annotated[str | None, Query()] = None,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict[str, Any]:
     stmt = select(Product).order_by(Product.is_archived, Product.nm_id)
@@ -120,7 +121,7 @@ async def list_products(
 
 
 @router.post("/{nm_id}/archive")
-async def archive_product(nm_id: int, session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def archive_product(nm_id: int, session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     obj = await session.get(Product, nm_id)
     if not obj:
         raise HTTPException(404, "product not found")
@@ -132,7 +133,7 @@ async def archive_product(nm_id: int, session: AsyncSession = Depends(get_db)) -
 
 
 @router.post("/{nm_id}/unarchive")
-async def unarchive_product(nm_id: int, session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def unarchive_product(nm_id: int, session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     obj = await session.get(Product, nm_id)
     if not obj:
         raise HTTPException(404, "product not found")

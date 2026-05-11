@@ -10,6 +10,13 @@ class Settings(BaseSettings):
     app_name: str = "RNP Wildberries"
     debug: bool = False
 
+    # Версия сервиса для отображения в UI и логах. Подставляется в .env
+    # скриптом deploy (`./scripts/remote.sh deploy`) как `git rev-parse --short HEAD`.
+    # Локально без deploy — будет 'dev'.
+    app_version: str = "dev"
+    # Дата сборки/деплоя (ISO 8601). Тоже подставляется deploy-скриптом.
+    build_time: str = ""
+
     database_url: str = Field(
         default="postgresql+asyncpg://app:app@postgres:5432/rnp",
         description="Async DSN for application code",

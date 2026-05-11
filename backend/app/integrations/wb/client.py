@@ -12,7 +12,7 @@ from app.integrations.wb.rate_limiter import TokenBucketLimiter
 
 log = get_logger(__name__)
 
-Category = Literal["statistics", "advert", "common"]
+Category = Literal["statistics", "advert", "common", "analytics"]
 
 
 class WbApiError(Exception):
@@ -74,9 +74,16 @@ class WbApiClient:
         token: str | None = None,
         timeout: float | None = None,
     ):
+        # Multi-tenant: токен **должен** приходить явно (из БД tenant'а).
+        # `.env` WB_TOKEN остаётся **только** как fallback для default-tenant
+        # (legacy установка). Все sync-задачи теперь fanout per-tenant и
+        # передают token явно.
         self.token = token or settings.wb_token
         if not self.token:
-            raise RuntimeError("WB token is not configured (settings.wb_token / WB_TOKEN env)")
+            raise RuntimeError(
+                "WB token is not configured. Pass `token=` explicitly, "
+                "or set WB_TOKEN in .env for default-tenant fallback."
+            )
         self.timeout = timeout or settings.wb_request_timeout
 
         # Per WB_API_REFERENCE.md §3:
@@ -91,11 +98,14 @@ class WbApiClient:
                 settings.wb_advert_rate_per_min, min_interval_s=20.0
             ),
             "common": TokenBucketLimiter(60),
+            # seller-analytics-api: stocks-report и paid_storage — 3/мин с 20с между.
+            "analytics": TokenBucketLimiter(3, min_interval_s=20.0),
         }
         self._bases: dict[Category, str] = {
             "statistics": settings.wb_statistics_base,
             "advert": settings.wb_advert_base,
             "common": settings.wb_common_base,
+            "analytics": settings.wb_analytics_base,
         }
         self._client: httpx.AsyncClient | None = None
 

@@ -44,6 +44,7 @@ class CurrentUser:
     username: str
     role: str
     full_name: str | None
+    tenant_id: int
 
     @property
     def is_director(self) -> bool:
@@ -87,6 +88,9 @@ def create_session_token(user: User) -> str:
         "sub": str(user.id),
         "u": user.username,
         "r": user.role,
+        # tenant_id — обязательное поле в multi-tenant; все API
+        # фильтруют запросы по этому значению.
+        "t": int(user.tenant_id),
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(hours=cfg.jwt_expires_hours)).timestamp()),
     }
@@ -135,9 +139,11 @@ def clear_session_cookie(response: Response) -> None:
 PUBLIC_PATHS: frozenset[str] = frozenset({
     "/api/health",
     "/api/whoami",
+    "/api/version",
     "/api/auth/login",
     "/api/auth/bootstrap",
     "/api/auth/needs-bootstrap",
+    "/api/auth/signup",
 })
 
 
@@ -172,6 +178,7 @@ async def get_current_user(
         username=user.username,
         role=user.role,
         full_name=user.full_name,
+        tenant_id=int(user.tenant_id),
     )
 
 
@@ -201,6 +208,34 @@ require_director = require_role("director")
 require_director_or_head = require_role("director", "head_of_sales")
 
 
+async def get_db_tenant_scoped(
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> AsyncSession:
+    """FastAPI dependency: вернуть session с уже выставленным tenant_id.
+
+    Все ORM SELECT через эту сессию автоматически фильтруются по
+    `tenant_id` текущего юзера (event listener в `tenant_context.py`).
+    Новые объекты тоже получают tenant_id автоматически (before_flush).
+
+    Используй вместо `Depends(get_db)` во **всех** protected endpoints,
+    кроме `/api/auth/*` — там tenant ещё не известен.
+    """
+    from app.services.tenant_context import set_tenant  # noqa: WPS433
+
+    set_tenant(session, user.tenant_id)
+    return session
+
+
+async def current_tenant_id(user: CurrentUser = Depends(get_current_user)) -> int:
+    """Хелпер: возвращает tenant_id текущего юзера из JWT.
+
+    Удобно подключать как `Depends(current_tenant_id)` в API endpoint'ах
+    и использовать в фильтрах SQL: `.where(Model.tenant_id == tenant_id)`.
+    """
+    return user.tenant_id
+
+
 async def current_brands_filter(
     user: "CurrentUser" = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
@@ -218,7 +253,10 @@ async def current_brands_filter(
 
     rows = (
         await session.execute(
-            select(BrandAssignment.brand).where(BrandAssignment.user_id == user.id)
+            select(BrandAssignment.brand).where(
+                BrandAssignment.user_id == user.id,
+                BrandAssignment.tenant_id == user.tenant_id,
+            )
         )
     ).scalars().all()
     return {b for b in rows if b}

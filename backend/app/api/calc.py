@@ -14,12 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import AppSetting, WbTariffCategory
 from app.db.session import get_db
+from app.services.auth import get_db_tenant_scoped
 
 router = APIRouter(prefix="/api/calc", tags=["calc"])
 
 
 @router.get("/categories")
-async def list_categories(session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def list_categories(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     rows = (
         await session.execute(
             select(WbTariffCategory).order_by(
@@ -41,7 +42,7 @@ async def list_categories(session: AsyncSession = Depends(get_db)) -> dict[str, 
 
 
 @router.get("/defaults")
-async def calc_defaults(session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def calc_defaults(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     """Return the user's tax/VAT settings so the calculator can pre-fill them."""
     rows = (await session.execute(select(AppSetting))).scalars().all()
     cfg = {r.key: r.value or "" for r in rows}

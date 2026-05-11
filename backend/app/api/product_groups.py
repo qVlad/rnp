@@ -16,6 +16,7 @@ from app.db.models import (
     ProductGroupAssignment,
 )
 from app.db.session import get_db
+from app.services.auth import get_db_tenant_scoped
 from app.services.audit import actor_from_request, audit_log, snapshot
 
 router = APIRouter(prefix="/api/product-groups", tags=["product-groups"])
@@ -42,7 +43,7 @@ GROUP_FIELDS = ["id", "name", "manager_name", "color", "comment"]
 
 
 @router.get("")
-async def list_groups(session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def list_groups(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     """List all groups with member count."""
     rows = (
         await session.execute(
@@ -76,7 +77,7 @@ async def list_groups(session: AsyncSession = Depends(get_db)) -> dict[str, Any]
 
 @router.get("/{group_id}/members")
 async def list_members(
-    group_id: int, session: AsyncSession = Depends(get_db)
+    group_id: int, session: AsyncSession = Depends(get_db_tenant_scoped)
 ) -> dict[str, Any]:
     g = await session.get(ProductGroup, group_id)
     if not g:
@@ -123,7 +124,7 @@ async def list_members(
 async def create_group(
     payload: GroupPayload,
     request: Request,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     name = payload.name.strip()
     if not name:
@@ -158,7 +159,7 @@ async def update_group(
     group_id: int,
     payload: GroupPayload,
     request: Request,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, str]:
     g = await session.get(ProductGroup, group_id)
     if not g:
@@ -185,7 +186,7 @@ async def update_group(
 async def delete_group(
     group_id: int,
     request: Request,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, str]:
     g = await session.get(ProductGroup, group_id)
     if not g:
@@ -212,7 +213,7 @@ async def assign_skus(
     group_id: int,
     payload: AssignPayload,
     request: Request,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     """Add SKUs to the group. Idempotent — already-assigned ids are skipped."""
     g = await session.get(ProductGroup, group_id)
@@ -261,7 +262,7 @@ async def unassign_skus(
     group_id: int,
     payload: AssignPayload,
     request: Request,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     g = await session.get(ProductGroup, group_id)
     if not g:
@@ -294,7 +295,7 @@ async def unassign_skus(
 
 
 @router.get("/membership-map")
-async def membership_map(session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def membership_map(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     """Return {nm_id: [group_id, ...]} for client-side filtering."""
     rows = (
         await session.execute(

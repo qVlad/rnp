@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.services.auth import get_db_tenant_scoped
 from app.services.anomaly import collect_alerts
 from app.services.auth import current_brands_filter
 from app.services.metrics import compute_dashboard, revenue_timeseries, top_skus
@@ -39,7 +40,7 @@ async def get_dashboard(
     start_date: Annotated[date | None, Query()] = None,
     end_date: Annotated[date | None, Query()] = None,
     mode: Literal["preliminary", "final"] = "preliminary",
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
     return await compute_dashboard(
@@ -54,7 +55,7 @@ async def get_dashboard(
 async def get_timeseries(
     days: Annotated[int, Query(ge=1, le=365)] = 30,
     mode: Literal["preliminary", "final"] = "preliminary",
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
     return {
@@ -72,7 +73,7 @@ async def get_top_skus(
     by: Literal["revenue", "margin"] = "revenue",
     limit: Annotated[int, Query(ge=1, le=50)] = 5,
     mode: Literal["preliminary", "final"] = "preliminary",
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
     p = _resolve_period(period, start_date, end_date)
@@ -84,7 +85,7 @@ async def get_top_skus(
 
 @router.get("/alerts")
 async def get_alerts(
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
     return {"alerts": await collect_alerts(session, brands=brands)}

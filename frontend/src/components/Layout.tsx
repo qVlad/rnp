@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import VersionBadge from "@/components/VersionBadge";
 
 type Link = {
   to: string;
@@ -43,6 +44,7 @@ export default function Layout() {
     return true;
   });
 
+
   return (
     <div className="min-h-screen flex flex-col">
       <header className="border-b border-border bg-surface">
@@ -66,6 +68,7 @@ export default function Layout() {
             ))}
           </nav>
           <div className="ml-auto flex items-center gap-3 text-xs">
+            <VersionBadge />
             {user && (
               <>
                 <span className="text-muted">

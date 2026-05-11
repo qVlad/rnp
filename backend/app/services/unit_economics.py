@@ -14,9 +14,17 @@ from app.db.models import (
     Product,
     WbAdStatsDaily,
     WbOrder,
+    WbPaidStorage,
     WbReportDetail,
     WbSale,
     WbStockSnapshot,
+)
+from app.services.pnl_builder import DEFAULT_MIN_TAX_RATE, DEFAULT_TAX_RATE, _compute_tax
+from app.services.settings_timeline import (
+    load_static_settings,
+    load_timeline,
+    parse_value,
+    value_for_date,
 )
 
 
@@ -57,11 +65,25 @@ async def build_unit_economics(
     session: AsyncSession,
     *,
     days_back: int = 30,
+    start_date: date | None = None,
+    end_date: date | None = None,
     include_archived: bool = False,
     brands: set[str] | None = None,
 ) -> dict[str, Any]:
-    end = datetime.now(timezone.utc)
-    start = end - timedelta(days=days_back)
+    """Per-SKU unit economics with full P&L breakdown.
+
+    Args:
+        days_back: rolling window (used if start_date/end_date are not provided).
+        start_date / end_date: explicit calendar range (inclusive). If both
+            provided, override days_back.
+    """
+    if start_date is not None and end_date is not None:
+        start = datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc)
+        end = datetime.combine(end_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+        days_back = max(1, (end_date - start_date).days + 1)
+    else:
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(days=days_back)
     nm_filter = (
         select(Product.nm_id).where(Product.brand.in_(list(brands)))
         if brands is not None
@@ -72,6 +94,8 @@ async def build_unit_economics(
         select(
             WbSale.nm_id,
             func.count().label("rows"),
+            func.sum(case((WbSale.is_return, 0), else_=1)).label("gross_units"),
+            func.sum(case((WbSale.is_return, 1), else_=0)).label("returns"),
             func.sum(case((WbSale.is_return, -1), else_=1)).label("units"),
             func.sum(case((WbSale.is_return, 0), else_=WbSale.for_pay)).label("for_pay"),
             func.sum(case((WbSale.is_return, 0), else_=WbSale.price_with_disc)).label(
@@ -86,53 +110,236 @@ async def build_unit_economics(
         sales_stmt = sales_stmt.where(WbSale.nm_id.in_(nm_filter))
     sales_rows = (await session.execute(sales_stmt)).all()
 
-    # Real commission % per nm_id from wb_report_detail (sales-side).
-    # WbSale.commission_percent comes from /sales feed and is often 0 in
-    # production for some seller token types. report_detail is the source
-    # of truth: commission_pct = (retail_with_disc − ppvz_for_pay) / retail × 100.
+    # Aggregate full P&L picture per nm from wb_report_detail — same logic
+    # as build_pnl: ppvz/acquiring on (Продажа − Возврат), delivery/storage/
+    # penalty summed across all rows. Plus extra categories that the user
+    # spreadsheet uses as separate columns (платная приёмка / списание баллов /
+    # коррекция эквайринга).
     rd_revenue_field = func.coalesce(
         WbReportDetail.retail_price_withdisc_rub, WbReportDetail.retail_amount
     )
     rd_is_sale = WbReportDetail.supplier_oper_name == "Продажа"
+    rd_is_return = WbReportDetail.supplier_oper_name == "Возврат"
+    rd_is_acceptance = WbReportDetail.supplier_oper_name.in_(
+        [
+            "Возмещение за выдачу и возврат товаров на ПВЗ",
+            "Платная приемка",
+            "Платная приёмка",
+        ]
+    )
+    rd_is_loyalty = WbReportDetail.supplier_oper_name.in_(
+        [
+            "Компенсация скидки по программе лояльности",
+            "Списание за баллы",
+        ]
+    )
+    rd_is_acquiring_correction = (
+        WbReportDetail.supplier_oper_name == "Корректировка эквайринга"
+    )
     rd_stmt = (
         select(
             WbReportDetail.nm_id,
-            func.coalesce(func.sum(case((rd_is_sale, rd_revenue_field), else_=0)), 0).label("rev"),
+            func.coalesce(
+                func.sum(case((rd_is_sale, rd_revenue_field), else_=0)), 0
+            ).label("rev_sale"),
+            func.coalesce(
+                func.sum(case((rd_is_return, rd_revenue_field), else_=0)), 0
+            ).label("rev_return"),
             func.coalesce(
                 func.sum(case((rd_is_sale, WbReportDetail.ppvz_for_pay), else_=0)), 0
-            ).label("ppvz"),
+            ).label("ppvz_sale"),
+            func.coalesce(
+                func.sum(case((rd_is_return, WbReportDetail.ppvz_for_pay), else_=0)), 0
+            ).label("ppvz_return"),
+            func.coalesce(
+                func.sum(case((rd_is_sale, WbReportDetail.acquiring_fee), else_=0)), 0
+            ).label("acq_sale"),
+            func.coalesce(
+                func.sum(case((rd_is_return, WbReportDetail.acquiring_fee), else_=0)), 0
+            ).label("acq_return"),
+            func.coalesce(func.sum(WbReportDetail.delivery_rub), 0).label("delivery"),
+            func.coalesce(func.sum(WbReportDetail.storage_fee), 0).label("storage"),
+            func.coalesce(func.sum(WbReportDetail.penalty), 0).label("penalty"),
+            func.coalesce(
+                func.sum(case((rd_is_acceptance, WbReportDetail.delivery_rub), else_=0))
+                + func.sum(case((rd_is_acceptance, WbReportDetail.deduction), else_=0)),
+                0,
+            ).label("acceptance_fee"),
+            func.coalesce(
+                func.sum(case((rd_is_loyalty, WbReportDetail.deduction), else_=0)),
+                0,
+            ).label("loyalty_writeoff"),
+            func.coalesce(
+                func.sum(case((rd_is_acquiring_correction, WbReportDetail.acquiring_fee), else_=0)),
+                0,
+            ).label("acquiring_correction"),
+            func.coalesce(
+                func.sum(case((rd_is_sale, 1), else_=0))
+                - func.sum(case((rd_is_return, 1), else_=0)),
+                0,
+            ).label("rd_units_net"),
+            func.coalesce(
+                func.sum(case((rd_is_sale, 1), else_=0)), 0
+            ).label("rd_units_sale"),
+            func.coalesce(
+                func.sum(case((rd_is_return, 1), else_=0)), 0
+            ).label("rd_units_return"),
         )
-        .where(WbReportDetail.sale_dt >= start, WbReportDetail.sale_dt < end)
+        .where(
+            WbReportDetail.sale_dt >= start,
+            WbReportDetail.sale_dt < end,
+            WbReportDetail.nm_id.isnot(None),
+        )
         .group_by(WbReportDetail.nm_id)
     )
     if nm_filter is not None:
         rd_stmt = rd_stmt.where(WbReportDetail.nm_id.in_(nm_filter))
     rd_rows = (await session.execute(rd_stmt)).all()
-    commission_by_nm: dict[int, float] = {}
-    for r in rd_rows:
-        rev = _f(r.rev)
-        if rev > 0:
-            commission_by_nm[int(r.nm_id)] = (rev - _f(r.ppvz)) / rev * 100
 
+    # Aggregate-only (nm_id IS NULL) buckets that WB не привязывает к SKU:
+    # Хранение, Платная приёмка (через ppvz_vw), Удержания, Лояльность.
+    # Распределим их пропорционально remaining stock / fact продаж per nm
+    # ниже в основном цикле.
+    rd_unallocated_stmt = select(
+        func.coalesce(func.sum(WbReportDetail.storage_fee), 0).label("storage_unalloc"),
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        WbReportDetail.supplier_oper_name == "Возмещение за выдачу и возврат товаров на ПВЗ",
+                        # ppvz_vw + ppvz_vw_nds приходят отрицательными для удержания —
+                        # переводим в положительное «расход для нас».
+                        -(func.coalesce(WbReportDetail.ppvz_vw, 0)
+                          + func.coalesce(WbReportDetail.ppvz_vw_nds, 0)),
+                    ),
+                    else_=0,
+                )
+            ),
+            0,
+        ).label("acceptance_unalloc"),
+        func.coalesce(
+            func.sum(
+                case(
+                    (WbReportDetail.supplier_oper_name == "Удержание", WbReportDetail.deduction),
+                    else_=0,
+                )
+            ),
+            0,
+        ).label("deduction_unalloc"),
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        WbReportDetail.supplier_oper_name.in_(
+                            [
+                                "Компенсация скидки по программе лояльности",
+                                "Коррекция компенсации скидки по программе лояльности",
+                            ]
+                        ),
+                        WbReportDetail.deduction,
+                    ),
+                    else_=0,
+                )
+            ),
+            0,
+        ).label("loyalty_unalloc"),
+    ).where(
+        WbReportDetail.sale_dt >= start,
+        WbReportDetail.sale_dt < end,
+        WbReportDetail.nm_id.is_(None),
+    )
+    # Brand filter не применяется к unallocated buckets — WB их шлёт без nm и
+    # без brand. Распределение идёт по тому же brand-set что и products.
+    unalloc_row = (await session.execute(rd_unallocated_stmt)).one()
+    storage_unalloc = _f(unalloc_row.storage_unalloc)
+    acceptance_unalloc = _f(unalloc_row.acceptance_unalloc)
+    deduction_unalloc = _f(unalloc_row.deduction_unalloc)
+    loyalty_unalloc = _f(unalloc_row.loyalty_unalloc)
+
+    commission_by_nm: dict[int, float] = {}
+    rd_metrics_by_nm: dict[int, dict[str, float]] = {}
+    for r in rd_rows:
+        rev_sale = _f(r.rev_sale)
+        rev_return = _f(r.rev_return)
+        ppvz_sale = _f(r.ppvz_sale)
+        ppvz_return = _f(r.ppvz_return)
+        acq_sale = _f(r.acq_sale)
+        acq_return = _f(r.acq_return)
+        ppvz_net = ppvz_sale - ppvz_return
+        acq_net = acq_sale - acq_return
+        delivery = _f(r.delivery)
+        storage = _f(r.storage)
+        penalty = _f(r.penalty)
+        acceptance_fee = _f(r.acceptance_fee)
+        loyalty_writeoff = _f(r.loyalty_writeoff)
+        acquiring_correction = _f(r.acquiring_correction)
+        # Net WB-комиссия = (ppvz_net вычтенный из revenue_net), показываем
+        # отдельной колонкой как в WB-кабинете.
+        revenue_net = rev_sale - rev_return
+        commission_wb = revenue_net - ppvz_net
+        if rev_sale > 0:
+            commission_by_nm[int(r.nm_id)] = (rev_sale - ppvz_sale) / rev_sale * 100
+        rd_metrics_by_nm[int(r.nm_id)] = {
+            "rev_sale": rev_sale,
+            "rev_return": rev_return,
+            "revenue_net": revenue_net,
+            "ppvz_sale": ppvz_sale,
+            "ppvz_return": ppvz_return,
+            "ppvz_net": ppvz_net,
+            "acquiring_net": acq_net,
+            "commission_wb": commission_wb,
+            "delivery": delivery,
+            "storage": storage,
+            "penalty": penalty,
+            "acceptance_fee": acceptance_fee,
+            "loyalty_writeoff": loyalty_writeoff,
+            "acquiring_correction": acquiring_correction,
+            "rd_units_net": int(r.rd_units_net or 0),
+            "rd_units_sale": int(r.rd_units_sale or 0),
+            "rd_units_return": int(r.rd_units_return or 0),
+            # Final payout to bank account per nm (matches WB cabinet payout).
+            "payout": (
+                ppvz_net - acq_net - delivery - storage - penalty
+                - acceptance_fee - loyalty_writeoff - acquiring_correction
+            ),
+        }
+
+    # Active orders (is_cancel=False) — это "Заказы" в UI и знаменатель ДРР.
+    # Total orders (active + cancellations) — знаменатель «выкупа», как в WB-кабинете
+    # и на дашборде (см. metrics._compute_window_kpis): отменённые покупателем
+    # тоже учитываются в total_orders.
     orders_stmt = (
         select(
             WbOrder.nm_id,
-            func.count().label("orders"),
+            func.coalesce(func.sum(case((WbOrder.is_cancel, 0), else_=1)), 0).label("active"),
+            func.coalesce(func.sum(case((WbOrder.is_cancel, 1), else_=0)), 0).label("cancelled"),
             func.coalesce(
-                func.sum(WbOrder.total_price * (1 - WbOrder.discount_percent / 100)), 0
+                func.sum(
+                    case(
+                        (
+                            WbOrder.is_cancel,
+                            0,
+                        ),
+                        else_=WbOrder.total_price * (1 - WbOrder.discount_percent / 100),
+                    )
+                ),
+                0,
             ).label("revenue"),
         )
-        .where(
-            WbOrder.order_dt >= start,
-            WbOrder.order_dt < end,
-            WbOrder.is_cancel.is_(False),
-        )
+        .where(WbOrder.order_dt >= start, WbOrder.order_dt < end)
         .group_by(WbOrder.nm_id)
     )
     if nm_filter is not None:
         orders_stmt = orders_stmt.where(WbOrder.nm_id.in_(nm_filter))
     orders_rows = (await session.execute(orders_stmt)).all()
-    orders_by_nm = {int(r.nm_id): {"orders": int(r.orders), "revenue": _f(r.revenue)} for r in orders_rows}
+    orders_by_nm = {
+        int(r.nm_id): {
+            "orders": int(r.active),
+            "total_orders": int(r.active) + int(r.cancelled),
+            "revenue": _f(r.revenue),
+        }
+        for r in orders_rows
+    }
 
     ad_stmt = (
         select(
@@ -197,12 +404,72 @@ async def build_unit_economics(
     stock_rows = (await session.execute(stock_stmt)).all()
     stock_by_nm = {int(r.nm_id): int(r.qty or 0) for r in stock_rows}
 
+    # Точное хранение per nm из WB Analytics API (`/api/v1/paid_storage`).
+    # Заполняется celery-таской `sync_paid_storage` (раз в день за 7 дней).
+    # Если за период есть данные — используем их вместо пропорционального
+    # распределения общего storage_fee из report_detail.
+    paid_storage_stmt = (
+        select(
+            WbPaidStorage.nm_id,
+            func.coalesce(func.sum(WbPaidStorage.warehouse_price), 0).label("amount"),
+        )
+        .where(
+            WbPaidStorage.date >= start.date(),
+            # `end` уже exclusive (datetime midnight следующего дня), поэтому
+            # `WbPaidStorage.date < end.date()` исключает день `end.date()`.
+            # Без `+ 1 day` — иначе захватим лишний календарный день.
+            WbPaidStorage.date < end.date(),
+        )
+        .group_by(WbPaidStorage.nm_id)
+    )
+    if nm_filter is not None:
+        paid_storage_stmt = paid_storage_stmt.where(WbPaidStorage.nm_id.in_(nm_filter))
+    paid_storage_rows = (await session.execute(paid_storage_stmt)).all()
+    paid_storage_by_nm: dict[int, float] = {
+        int(r.nm_id): _f(r.amount) for r in paid_storage_rows
+    }
+    has_paid_storage_data = bool(paid_storage_by_nm)
+
     # Use the historical cost lookup so old sales get the cost that was valid then.
     # Lazy import to avoid circular module imports.
     from app.services.pnl_builder import build_cogs_lookup, cost_for_date  # noqa: WPS433
 
     cogs_lookup = await build_cogs_lookup(session)
     midpoint = (start + (end - start) / 2).date()  # representative date for the window
+
+    # Tax/VAT settings effective at midpoint of the window.
+    timeline = await load_timeline(session)
+    static_settings = await load_static_settings(session)
+    tax_system = (
+        parse_value("tax_system", value_for_date(timeline, static_settings, "tax_system", midpoint))
+        or "none"
+    )
+    tax_rate_v = parse_value(
+        "tax_rate", value_for_date(timeline, static_settings, "tax_rate", midpoint)
+    )
+    tax_rate = (
+        float(tax_rate_v) if tax_rate_v is not None else DEFAULT_TAX_RATE.get(tax_system, 0.0)
+    )
+    tax_min_rate_v = parse_value(
+        "tax_min_rate", value_for_date(timeline, static_settings, "tax_min_rate", midpoint)
+    )
+    tax_min_rate = (
+        float(tax_min_rate_v) if tax_min_rate_v is not None else DEFAULT_MIN_TAX_RATE.get(tax_system, 0.0)
+    )
+    reduce_by_insurance = bool(
+        parse_value(
+            "reduce_by_insurance",
+            value_for_date(timeline, static_settings, "reduce_by_insurance", midpoint),
+        )
+    )
+    vat_payer = bool(
+        parse_value("vat_payer", value_for_date(timeline, static_settings, "vat_payer", midpoint))
+    )
+    vat_rate_v = parse_value(
+        "vat_rate", value_for_date(timeline, static_settings, "vat_rate", midpoint)
+    )
+    vat_rate = float(vat_rate_v) if vat_rate_v is not None else 0.0
+
     products_stmt = select(Product)
     if brands is not None:
         products_stmt = products_stmt.where(Product.brand.in_(list(brands)))
@@ -226,6 +493,27 @@ async def build_unit_economics(
     }
     total_revenue = sum(revenue_by_nm.values())
 
+    # Aggregate distribution bases (для разнесения unallocated buckets):
+    # хранение → пропорционально текущему остатку (товар занимает место);
+    # платная приёмка / удержание / лояльность → пропорционально продажам.
+    total_stock_for_alloc = sum(stock_by_nm.get(nm, 0) for nm in nm_set)
+    units_sold_by_nm: dict[int, int] = {}
+    for sr in sales_rows:
+        nm_v = int(sr.nm_id)
+        if nm_v in nm_set:
+            units_sold_by_nm[nm_v] = max(0, int(sr.units or 0))
+    total_units_sold_for_alloc = sum(units_sold_by_nm.values())
+
+    def share_by_stock(nm: int) -> float:
+        if total_stock_for_alloc <= 0:
+            return (1.0 / len(nm_set)) if nm_set else 0.0
+        return stock_by_nm.get(nm, 0) / total_stock_for_alloc
+
+    def share_by_sold(nm: int) -> float:
+        if total_units_sold_for_alloc <= 0:
+            return (1.0 / len(nm_set)) if nm_set else 0.0
+        return units_sold_by_nm.get(nm, 0) / total_units_sold_for_alloc
+
     def brand_share_for(nm: int) -> float:
         if total_revenue <= 0 or brand_ext_total <= 0:
             return 0.0
@@ -236,6 +524,8 @@ async def build_unit_economics(
         prod = products.get(nm)
         sale = next((r for r in sales_rows if int(r.nm_id) == nm), None)
         units_sold = int(sale.units or 0) if sale else 0
+        gross_units = int(sale.gross_units or 0) if sale else 0
+        returns_count = int(sale.returns or 0) if sale else 0
         for_pay = _f(sale.for_pay) if sale else 0.0
         avg_price = (
             _f(sale.price_with_disc) / max(1, int(sale.rows or 0)) if sale and sale.rows else 0.0
@@ -257,7 +547,20 @@ async def build_unit_economics(
 
         unit_cogs = cost_for_date(cogs_lookup, nm, midpoint)
 
-        unit_revenue_net = (for_pay / units_sold) if units_sold > 0 else 0.0
+        # Real per-unit payout from report_detail (after commission, acquiring,
+        # delivery, storage, penalties — same as WB cabinet «к перечислению»).
+        # Falls back to wb_sales.for_pay only if report_detail hasn't arrived.
+        rd = rd_metrics_by_nm.get(nm)
+        if rd is not None and units_sold > 0 and rd["payout"] > 0:
+            unit_revenue_net = rd["payout"] / units_sold
+            payout_source = "report_detail"
+        elif units_sold > 0:
+            unit_revenue_net = for_pay / units_sold
+            payout_source = "sales_feed"
+        else:
+            unit_revenue_net = 0.0
+            payout_source = "none"
+
         unit_margin = unit_revenue_net - unit_cogs - per_order_marketing
         unit_margin_pct = (unit_margin / unit_revenue_net * 100) if unit_revenue_net > 0 else 0.0
         roi = (unit_margin / unit_cogs * 100) if unit_cogs > 0 else 0.0
@@ -269,6 +572,94 @@ async def build_unit_economics(
         stock = stock_by_nm.get(nm, 0)
         dts = round(stock / velocity_units, 1) if velocity_units > 0 else None
 
+        # Buyout % — та же формула, что на дашборде (metrics._compute_window_kpis):
+        #   buyout = (sales − returns) / total_orders × 100,
+        # где total_orders = активные + отменённые покупателем (всё, что попало
+        # в wb_orders), а числитель — net (sales-feed minus returns).
+        total_orders = orders_by_nm.get(nm, {}).get("total_orders", 0)
+        buyout_pct = (units_sold / total_orders * 100) if total_orders > 0 else 0.0
+        turnover_days = (
+            round(stock * days_back / units_sold, 1) if units_sold > 0 else None
+        )
+
+        # ── Полная P&L разбивка per nm как в Excel ──
+        rd_data = rd_metrics_by_nm.get(nm, {})
+        rev_sale_rd = rd_data.get("rev_sale", 0.0)
+        rev_return_rd = rd_data.get("rev_return", 0.0)
+        revenue_net_rd = rd_data.get("revenue_net", 0.0)
+        # Acquiring выделяем как отдельное поле (чтобы comission_wb совпадал
+        # с P&L и WB-кабинетом, где эквайринг показан отдельно).
+        acquiring_net = rd_data.get("acquiring_net", 0.0)
+        commission_wb = rd_data.get("commission_wb", 0.0) - acquiring_net
+        delivery_rd = rd_data.get("delivery", 0.0)
+        # Хранение: предпочитаем точные данные из WB Analytics
+        # `/api/v1/paid_storage` (синхронятся ежедневно — таблица
+        # wb_paid_storage). НЕ прибавляем rd_data.storage — paid_storage уже
+        # содержит полную сумму per nm. Если paid_storage пуст за период —
+        # fallback на пропорциональное распределение storage_fee из RD.
+        if has_paid_storage_data:
+            storage_rd = paid_storage_by_nm.get(nm, 0.0)
+        else:
+            storage_rd = rd_data.get("storage", 0.0) + storage_unalloc * share_by_stock(nm)
+        penalty_rd = rd_data.get("penalty", 0.0)
+        # Платная приёмка: WB кладёт сумму в ppvz_vw на rows без nm_id —
+        # распределяем пропорционально продажам.
+        acceptance_fee_rd = (
+            rd_data.get("acceptance_fee", 0.0)
+            + acceptance_unalloc * share_by_sold(nm)
+        )
+        # Удержания и лояльность — тоже агрегаты без nm_id, разносим по продажам.
+        deduction_rd = deduction_unalloc * share_by_sold(nm)
+        loyalty_writeoff_rd = (
+            rd_data.get("loyalty_writeoff", 0.0)
+            + loyalty_unalloc * share_by_sold(nm)
+        )
+        acquiring_correction_rd = rd_data.get("acquiring_correction", 0.0)
+        ppvz_return_rd = rd_data.get("ppvz_return", 0.0)
+        rd_units_sale = rd_data.get("rd_units_sale", 0)
+
+        # COGS total (для распределения по проданным единицам).
+        cogs_total = unit_cogs * units_sold
+
+        # Налог per nm — используем _compute_tax с локальным P&L.
+        # Расходы для базы налога = себестоимость + комиссия + логистика +
+        # хранение + штрафы + платная приёмка + списание баллов + коррекция
+        # эквайринга + реклама. (Так же как build_pnl собирает operating
+        # expenses для УСН 15%/ОСНО.)
+        if vat_payer and vat_rate > 0:
+            vat_nm = revenue_net_rd - revenue_net_rd / (1 + vat_rate / 100.0)
+        else:
+            vat_nm = 0.0
+        revenue_after_vat_nm = revenue_net_rd - vat_nm
+        expenses_for_tax = (
+            cogs_total
+            + commission_wb
+            + acquiring_net
+            + delivery_rd
+            + storage_rd
+            + penalty_rd
+            + acceptance_fee_rd
+            + loyalty_writeoff_rd
+            + acquiring_correction_rd
+            + deduction_rd
+            + marketing_total
+        )
+        tax_nm = _compute_tax(
+            tax_system,
+            revenue_net=revenue_net_rd,
+            revenue_after_vat=revenue_after_vat_nm,
+            expenses=expenses_for_tax,
+            tax_rate=tax_rate,
+            tax_min_rate=tax_min_rate,
+            reduce_by_insurance=reduce_by_insurance,
+        )
+
+        # Чистая прибыль per nm (после налога).
+        net_profit = revenue_after_vat_nm - expenses_for_tax - tax_nm
+        profitability_pct = (
+            (net_profit / revenue_net_rd * 100) if revenue_net_rd > 0 else 0.0
+        )
+
         items.append(
             {
                 "nm_id": nm,
@@ -277,27 +668,67 @@ async def build_unit_economics(
                 "brand": prod.brand if prod else None,
                 "photo_url": prod.photo_url if prod else None,
                 "is_archived": bool(prod.is_archived) if prod else False,
-                "orders": orders,
+                # Sales feed counters (быстрая аналитика):
+                # «Заказы» = ВСЕ заказы за период (active + отменённые покупателем).
+                # Это та же база, что используется на дашборде для расчёта buyout%.
+                "orders": total_orders,
+                # active_orders сохраняется для совместимости (кому нужно отдельно).
+                "active_orders": orders,
+                "total_orders": total_orders,
                 "units_sold": units_sold,
                 "revenue": revenue,
                 "for_pay": for_pay,
                 "avg_price": round(avg_price, 2),
+                "buyout_pct": round(buyout_pct, 2),
                 "commission_pct": round(commission_pct, 2),
+                # Real WB-cabinet finances per nm (из report_detail):
+                "rev_sale": round(rev_sale_rd, 2),
+                "rev_return": round(rev_return_rd, 2),
+                "ppvz_return": round(ppvz_return_rd, 2),
+                "commission_wb": round(commission_wb, 2),
+                "acquiring": round(acquiring_net, 2),
+                "delivery": round(delivery_rd, 2),
+                "storage": round(storage_rd, 2),
+                "penalty": round(penalty_rd, 2),
+                "acceptance_fee": round(acceptance_fee_rd, 2),
+                "loyalty_writeoff": round(loyalty_writeoff_rd, 2),
+                "acquiring_correction": round(acquiring_correction_rd, 2),
+                "deduction": round(deduction_rd, 2),
+                "rd_units_sale": rd_units_sale,
+                # Marketing
                 "ad_cost": round(ad_cost, 2),
                 "external_ad_cost": round(ext_total, 2),
                 "ad_per_order": round(per_order_marketing, 2),
                 "drr_pct": round(drr_pct, 2),
+                # COGS / margin
                 "cogs_unit": round(unit_cogs, 2),
+                "cogs_total": round(cogs_total, 2),
                 "margin_unit": round(unit_margin, 2),
                 "margin_pct": round(unit_margin_pct, 2),
                 "roi_pct": round(roi, 2),
+                # Налог + чистая прибыль
+                "tax": round(tax_nm, 2),
+                "vat": round(vat_nm, 2),
+                "net_profit": round(net_profit, 2),
+                "profitability_pct": round(profitability_pct, 2),
+                # Stock
                 "stock": stock,
+                "turnover_days": turnover_days,
                 "days_to_stockout": dts,
             }
         )
 
-    items.sort(key=lambda x: x["revenue"], reverse=True)
-    return {"days_back": days_back, "items": items}
+    items.sort(key=lambda x: x["rev_sale"] or x["revenue"], reverse=True)
+    return {
+        "days_back": days_back,
+        "start_date": start.date().isoformat(),
+        "end_date": (end - timedelta(days=1)).date().isoformat(),
+        "tax_system": tax_system,
+        "tax_rate": tax_rate,
+        "vat_payer": vat_payer,
+        "vat_rate": vat_rate,
+        "items": items,
+    }
 
 
 async def _velocity_14d(session: AsyncSession, nm_id: int) -> float:

@@ -19,6 +19,8 @@ import Capitalization from "./pages/Capitalization";
 import ProductGroups from "./pages/ProductGroups";
 import AuditLog from "./pages/AuditLog";
 import Login from "./pages/Login";
+import Signup from "./pages/Signup";
+import Legal from "./pages/Legal";
 import Users from "./pages/Users";
 import Brands from "./pages/Brands";
 import Glossary from "./pages/Glossary";
@@ -75,6 +77,8 @@ export default function App() {
     <AuthProvider>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/signup" element={<Signup />} />
+        <Route path="/legal" element={<Legal />} />
         <Route
           element={
             <ProtectedRoute>

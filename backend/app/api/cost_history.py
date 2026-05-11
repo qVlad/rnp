@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Cogs, Product, WbOrder, WbSale
 from app.db.session import get_db
+from app.services.auth import get_db_tenant_scoped
 from app.services.audit import actor_from_request, audit_log, snapshot
 from app.services.auth import current_brands_filter
 
@@ -57,7 +58,7 @@ def _row(c: Cogs) -> dict[str, Any]:
 @router.get("")
 async def list_history(
     nm_id: Annotated[int | None, Query()] = None,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict[str, Any]:
     """Return all cost rows (or for a specific SKU). Sorted nm_id asc, valid_from desc."""
@@ -74,7 +75,7 @@ async def list_history(
 
 @router.get("/missing")
 async def list_missing_cogs(
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict[str, Any]:
     """SKUs that have orders or sales but no COGS row at all.
@@ -119,7 +120,7 @@ async def list_missing_cogs(
 
 
 @router.get("/{nm_id}")
-async def list_for_sku(nm_id: int, session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def list_for_sku(nm_id: int, session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     stmt = (
         select(Cogs)
         .where(Cogs.nm_id == nm_id)
@@ -133,7 +134,7 @@ async def list_for_sku(nm_id: int, session: AsyncSession = Depends(get_db)) -> d
 async def add_history(
     payload: CogsIn,
     request: Request,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     # ensure product row exists (cogs has FK to products)
     await session.execute(
@@ -166,7 +167,7 @@ async def update_history(
     cogs_id: int,
     payload: CogsIn,
     request: Request,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     obj = await session.get(Cogs, cogs_id)
     if not obj:
@@ -192,7 +193,7 @@ async def update_history(
 async def delete_history(
     cogs_id: int,
     request: Request,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, str]:
     obj = await session.get(Cogs, cogs_id)
     if not obj:
@@ -214,7 +215,7 @@ async def truncate_after(
     nm_id: int,
     from_date: Annotated[_date, Query(alias="from")],
     request: Request,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, int]:
     """Delete all cost entries for nm_id starting from `from_date` (inclusive)."""
     result = await session.execute(

@@ -67,6 +67,12 @@ celery_app.conf.update(
             "task": "app.sync.tasks.sync_report_detail",
             "schedule": crontab(hour=4, minute=15),
         },
+        # paid_storage: once daily at 05:30 MSK — async-task на seller-analytics-api,
+        # отдельная категория `analytics` (3/мин). Тянем за последние 7 дней.
+        "sync-paid-storage-daily": {
+            "task": "app.sync.tasks.sync_paid_storage",
+            "schedule": crontab(hour=5, minute=30),
+        },
         # Advert queue — production observation: WB penalises >=2 advert calls
         # within ~60 min with 50-60 min cooldown. Schedule must keep ≥1h gap
         # between any two advert-category calls, idealy >=2h.

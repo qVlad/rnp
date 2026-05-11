@@ -88,13 +88,42 @@ export default function Settings() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["tg-status"] }),
   });
 
-  // WB token validator
+  // WB token validator (legacy, для проверки токена .env через diagnostics)
   const [tokenInput, setTokenInput] = useState("");
   const [validateResult, setValidateResult] = useState<any | null>(null);
   const validateMut = useMutation({
     mutationFn: (t?: string) => api.validateWbToken(t),
     onSuccess: (d) => setValidateResult(d),
     onError: (e: any) => setValidateResult({ ok: false, error: e.message }),
+  });
+
+  // Per-tenant WB-токен (multi-tenant, хранится в БД).
+  const wbTokenStatusQ = useQuery({
+    queryKey: ["wb-token-status"],
+    queryFn: () => api.getWbTokenStatus(),
+  });
+  const [newWbToken, setNewWbToken] = useState("");
+  const [testResult, setTestResult] = useState<{
+    valid: boolean;
+    error: string | null;
+    seller_id: string | null;
+  } | null>(null);
+  const setTokenMut = useMutation({
+    mutationFn: (t: string) => api.setWbToken(t),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["wb-token-status"] });
+      qc.invalidateQueries({ queryKey: ["whoami"] });
+      setNewWbToken("");
+      setTestResult(null);
+    },
+  });
+  const testTokenMut = useMutation({
+    mutationFn: (t: string) => api.testTenantWbToken(t),
+    onSuccess: (d) => setTestResult(d),
+  });
+  const clearTokenMut = useMutation({
+    mutationFn: () => api.clearWbToken(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["wb-token-status"] }),
   });
 
   const clearCooldownMut = useMutation({
@@ -108,9 +137,119 @@ export default function Settings() {
     <div className="flex flex-col gap-6 max-w-4xl">
       <h1 className="text-xl font-semibold">Настройки</h1>
 
+      {/* Новый multi-tenant блок: WB-токен per-tenant хранится в БД,
+          вводится через UI. Старый блок ниже («Подключение через .env»)
+          — диагностика. */}
       <section className="card">
         <h2 className="font-medium mb-3">Подключение к WB</h2>
+        <div className="text-sm text-muted mb-3">
+          Вставьте сюда свой WB API-токен — сервис подтянет вашу аналитику.{" "}
+          Токен хранится в БД, привязан к вашей компании. Только директор может
+          его менять.
+        </div>
+
+        <div className="text-sm mb-2">
+          Текущий статус:{" "}
+          {wbTokenStatusQ.data?.set ? (
+            <span className="text-success">
+              ✓ токен установлен{" "}
+              {wbTokenStatusQ.data.seller_id && (
+                <span className="text-muted">
+                  (seller: {wbTokenStatusQ.data.seller_id.slice(0, 8)}…)
+                </span>
+              )}{" "}
+              {wbTokenStatusQ.data.validated_at && (
+                <span className="text-muted">
+                  · проверен{" "}
+                  {new Date(wbTokenStatusQ.data.validated_at).toLocaleString(
+                    "ru",
+                  )}
+                </span>
+              )}
+            </span>
+          ) : (
+            <span className="text-warn">✗ не настроен</span>
+          )}
+        </div>
+
+        <textarea
+          className="input w-full font-mono text-xs"
+          rows={3}
+          placeholder="eyJhbGciOi…"
+          value={newWbToken}
+          onChange={(e: any) => {
+            setNewWbToken(e.target.value);
+            setTestResult(null);
+          }}
+        />
+
+        <div className="flex gap-2 mt-2 items-center flex-wrap">
+          <button
+            type="button"
+            className="btn"
+            disabled={!newWbToken.trim() || testTokenMut.isPending}
+            onClick={() => testTokenMut.mutate(newWbToken.trim())}
+          >
+            {testTokenMut.isPending ? "Проверяю…" : "Проверить"}
+          </button>
+          <button
+            type="button"
+            className="btn border-accent text-accent"
+            disabled={
+              !newWbToken.trim() ||
+              setTokenMut.isPending ||
+              (testResult ? !testResult.valid : false)
+            }
+            onClick={() => setTokenMut.mutate(newWbToken.trim())}
+          >
+            {setTokenMut.isPending ? "Сохраняю…" : "Сохранить"}
+          </button>
+          {wbTokenStatusQ.data?.set && (
+            <button
+              type="button"
+              className="btn text-danger"
+              disabled={clearTokenMut.isPending}
+              onClick={() => {
+                if (confirm("Удалить WB-токен? Sync остановится."))
+                  clearTokenMut.mutate();
+              }}
+            >
+              Удалить
+            </button>
+          )}
+        </div>
+
+        {testResult && (
+          <div className="mt-2 text-sm">
+            {testResult.valid ? (
+              <span className="text-success">
+                ✓ токен валиден
+                {testResult.seller_id &&
+                  ` · seller_id: ${testResult.seller_id}`}
+              </span>
+            ) : (
+              <span className="text-danger">
+                ✗ {testResult.error || "ошибка"}
+              </span>
+            )}
+          </div>
+        )}
+
+        {setTokenMut.isError && (
+          <div className="mt-2 text-danger text-sm">
+            {(setTokenMut.error as any)?.message || "ошибка сохранения"}
+          </div>
+        )}
+      </section>
+
+      <section className="card">
+        <h2 className="font-medium mb-3">Подключение к WB (legacy via .env)</h2>
         <div className="text-sm text-muted leading-relaxed">
+          <strong>Альтернатива: токен в `.env`</strong> (используется только
+          для default-tenant при single-tenant установке). Если уже задали
+          токен через форму выше — этот блок не нужен.
+          <br />
+          <br />
           <strong>Как получить токен:</strong>
           <ol className="list-decimal list-inside mt-2 space-y-1">
             <li>

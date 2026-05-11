@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Product, ProductGroupAssignment, SalesPlan
 from app.db.session import get_db
+from app.services.auth import get_db_tenant_scoped
 from app.services.auth import current_brands_filter, require_director_or_head
 
 from app.services.plan_fact import build_plan_fact
@@ -29,7 +30,7 @@ ALLOWED_SCOPES = {"store", "nm", "group"}
 async def plan_fact(
     year: Annotated[int, Query(ge=2020, le=2100)],
     month: Annotated[int, Query(ge=1, le=12)],
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict[str, Any]:
     """Plan vs Fact for the given month."""
@@ -74,7 +75,7 @@ async def list_plans(
     year: Annotated[int | None, Query()] = None,
     month: Annotated[int | None, Query()] = None,
     scope_type: Annotated[str | None, Query()] = None,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict[str, Any]:
     stmt = select(SalesPlan).order_by(
@@ -114,7 +115,7 @@ async def list_plans(
 
 
 @router.post("", dependencies=[Depends(require_director_or_head)])
-async def create_plan(payload: PlanIn, session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def create_plan(payload: PlanIn, session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     if payload.scope_type == "store" and payload.scope_id is not None:
         raise HTTPException(400, "store-scope plan must have scope_id = null")
     if payload.scope_type != "store" and payload.scope_id is None:
@@ -147,7 +148,7 @@ async def create_plan(payload: PlanIn, session: AsyncSession = Depends(get_db)) 
 
 @router.put("/{plan_id}", dependencies=[Depends(require_director_or_head)])
 async def update_plan(
-    plan_id: int, payload: PlanIn, session: AsyncSession = Depends(get_db)
+    plan_id: int, payload: PlanIn, session: AsyncSession = Depends(get_db_tenant_scoped)
 ) -> dict[str, Any]:
     obj = await session.get(SalesPlan, plan_id)
     if not obj:
@@ -160,7 +161,7 @@ async def update_plan(
 
 
 @router.delete("/{plan_id}", dependencies=[Depends(require_director_or_head)])
-async def delete_plan(plan_id: int, session: AsyncSession = Depends(get_db)) -> dict[str, str]:
+async def delete_plan(plan_id: int, session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, str]:
     obj = await session.get(SalesPlan, plan_id)
     if not obj:
         raise HTTPException(404, "not found")

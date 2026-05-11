@@ -1,0 +1,51 @@
+# Overlay для деплоя с ВСТРОЕННЫМ Caddy (всё-в-одном).
+#
+# ⚠️ НЕ ИСПОЛЬЗОВАТЬ если на сервере уже есть отдельный Caddy для нескольких
+# сервисов — конфликт за порты 80/443. В этом случае внешний Caddy просто
+# проксирует на http://192.168.31.61:4098 с заголовками X-Forwarded-Proto:https
+# (см. DEPLOY.md, раздел «Безопасность → Вариант A»).
+#
+# Этот overlay полезен ТОЛЬКО для standalone-установки без внешнего proxy.
+#
+# Запуск:
+#   docker compose -f docker-compose.yml -f docker-compose.https.yml up -d
+#
+# Что меняется относительно базового compose:
+#   - Добавляется caddy (порты 80, 443)
+#   - frontend больше не мапит 4098 на host (его читает только caddy внутри сети)
+#
+# Env переменные (в .env):
+#   DEPLOY_DOMAIN=rnp.example.com    # домен (для Let's Encrypt)
+#   DEPLOY_EMAIL=you@example.com     # email для Let's Encrypt
+#   ИЛИ оставить пустыми → self-signed.
+
+services:
+  frontend:
+    # Убираем host-мапинг 4098:80 — теперь Caddy ходит на frontend:80
+    # внутри docker network.
+    ports: []
+    expose:
+      - "80"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # Если домен задан — слушаем по нему + Let's Encrypt.
+      # Если нет — слушаем :443 с self-signed (`tls internal`).
+      SITE_ADDRESS: ${DEPLOY_DOMAIN:-:443}
+      TLS_DIRECTIVE: ${DEPLOY_DOMAIN:+tls ${DEPLOY_EMAIL:-internal}}
+      ACME_EMAIL_DIRECTIVE: ${DEPLOY_EMAIL:+email ${DEPLOY_EMAIL}}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

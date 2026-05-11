@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import AuditLog
 from app.db.session import get_db
+from app.services.auth import get_db_tenant_scoped
 from app.services.auth import require_director
 
 router = APIRouter(
@@ -26,7 +27,7 @@ async def list_audit_log(
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
     limit: int = Query(default=200, ge=1, le=2000),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     stmt = select(AuditLog).order_by(desc(AuditLog.created_at)).limit(limit)
     if table:
@@ -76,7 +77,7 @@ async def list_audit_log(
 
 
 @router.get("/tables")
-async def list_audited_tables(session: AsyncSession = Depends(get_db)) -> dict[str, list[str]]:
+async def list_audited_tables(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, list[str]]:
     """Distinct table names that have ever been audited (for UI dropdown)."""
     rows = (
         await session.execute(

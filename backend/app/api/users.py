@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import User
 from app.db.session import get_db
+from app.services.auth import get_db_tenant_scoped
 from app.services.auth import (
     CurrentUser,
     ROLES,
@@ -52,7 +53,7 @@ def _row(u: User) -> dict[str, Any]:
 
 
 @router.get("")
-async def list_users(session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def list_users(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     rows = (
         await session.execute(select(User).order_by(User.username))
     ).scalars().all()
@@ -61,7 +62,7 @@ async def list_users(session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
 
 @router.post("")
 async def create_user(
-    payload: UserCreatePayload, session: AsyncSession = Depends(get_db)
+    payload: UserCreatePayload, session: AsyncSession = Depends(get_db_tenant_scoped)
 ) -> dict[str, Any]:
     username = payload.username.strip().lower()
     if not username or len(username) < 3:
@@ -97,7 +98,7 @@ async def update_user(
     user_id: int,
     payload: UserUpdatePayload,
     actor: CurrentUser = Depends(require_director),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     user = await session.get(User, user_id)
     if not user:
@@ -134,7 +135,7 @@ async def update_user(
 async def delete_user(
     user_id: int,
     actor: CurrentUser = Depends(require_director),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, str]:
     user = await session.get(User, user_id)
     if not user:
