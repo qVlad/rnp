@@ -8,10 +8,12 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 
+from app.core.config import settings as _cfg
 from app.db.session import task_session_scope
 from app.services.anomaly import collect_alerts
 from app.services.metrics import compute_dashboard, top_skus
 from app.services.pnl_builder import build_pnl
+from app.services.tenant_context import set_tenant
 
 
 def _rub(v: float | int | None) -> str:
@@ -48,6 +50,7 @@ def _arrow(change: float | None) -> str:
 async def build_now() -> str:
     """KPIs for today + week + month."""
     async with task_session_scope() as session:
+        set_tenant(session, _cfg.bot_tenant_id)
         day = await compute_dashboard(session, "day")
         week = await compute_dashboard(session, "week")
         month = await compute_dashboard(session, "month")
@@ -78,6 +81,7 @@ async def build_now() -> str:
 
 async def build_alerts() -> str:
     async with task_session_scope() as session:
+        set_tenant(session, _cfg.bot_tenant_id)
         alerts = await collect_alerts(session)
 
     if not alerts:
@@ -105,6 +109,7 @@ async def build_pnl_short() -> str:
     month_start = today.replace(day=1)
 
     async with task_session_scope() as session:
+        set_tenant(session, _cfg.bot_tenant_id)
         week_pnl = await build_pnl(
             session, date_from=week_start, date_to=today, granularity="week"
         )
@@ -136,6 +141,7 @@ async def build_daily_digest() -> str:
     yesterday = today - timedelta(days=1)
 
     async with task_session_scope() as session:
+        set_tenant(session, _cfg.bot_tenant_id)
         day = await compute_dashboard(session, "day")
         week = await compute_dashboard(session, "week")
         alerts = await collect_alerts(session)

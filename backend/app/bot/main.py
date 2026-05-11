@@ -20,6 +20,7 @@ from app.core.logging import get_logger
 from app.db.models import AppSetting
 from app.db.session import task_session_scope
 from app.integrations.telegram import get_me, get_updates, send_message
+from app.services.tenant_context import set_tenant
 
 log = get_logger(__name__)
 
@@ -34,16 +35,26 @@ HELP = (
 
 
 async def _save_setting(key: str, value: str) -> None:
+    tid = settings.bot_tenant_id
     async with task_session_scope() as session:
-        stmt = pg_insert(AppSetting).values(key=key, value=value)
-        stmt = stmt.on_conflict_do_update(index_elements=["key"], set_={"value": value})
+        set_tenant(session, tid)
+        stmt = pg_insert(AppSetting).values(tenant_id=tid, key=key, value=value)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["tenant_id", "key"], set_={"value": value}
+        )
         await session.execute(stmt)
 
 
 async def _read_setting(key: str) -> str | None:
+    tid = settings.bot_tenant_id
     async with task_session_scope() as session:
+        set_tenant(session, tid)
         row = (
-            await session.execute(select(AppSetting).where(AppSetting.key == key))
+            await session.execute(
+                select(AppSetting).where(
+                    AppSetting.tenant_id == tid, AppSetting.key == key
+                )
+            )
         ).scalar_one_or_none()
         return row.value if row else None
 

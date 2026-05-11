@@ -1,63 +1,61 @@
 """Manual backfill of `wb_report_detail` for arbitrary historical periods.
 
-The regular `sync_report_detail` Celery task pulls only the last 14 days because
-WB's `report_date_from`/`report_date_to` parameters look at recently-closed
-reports. To populate older history, this one-off script walks specific date
-windows and saves rows to the same DB table — fully idempotent (upsert by
-`rrd_id`), safe to re-run.
+The regular `sync_report_detail` Celery task pulls only the last 14 days, so
+older history must be filled in via this one-off script. It walks the requested
+date window once, paginates by `rrdId` cursor, and upserts to the same table —
+fully idempotent (PK = rrd_id), safe to re-run on overlapping ranges.
 
-WB rate limit on `/api/v5/supplier/reportDetailByPeriod` is 1/min Personal,
-2/24h **Base** (this seller's token is Base). The script is therefore extremely
-patient — sleeps long between paginated calls inside one window, and at least 1
-hour between windows on Base tokens.
+**Endpoint:** new `POST /api/finance/v1/sales-reports/detailed` on finance-api.
+This replaces the deprecated `/reportDetailByPeriod` (sunset 2026-07-15). The
+new endpoint has a single 1/min limit for both Personal and Base tokens — no
+2/24h cap — so backfilling N weeks now takes ~N minutes, not N days.
 
 Usage::
 
     docker compose exec backend python -m scripts.backfill_report_detail \\
-        --from 2026-02-01 --to 2026-04-19
+        --tenant 1 --from 2026-02-01 --to 2026-04-26
 
-    # Or split into multiple windows (recommended for Base — under 14 days each
-    # to avoid quota burn from oversized responses):
-    docker compose exec backend python -m scripts.backfill_report_detail \\
-        --from 2026-02-01 --to 2026-02-14
-    docker compose exec backend python -m scripts.backfill_report_detail \\
-        --from 2026-02-15 --to 2026-02-28
-    # ... and so on
+The script is tenant-aware: pass `--tenant <id>` (default 1). The script reads
+the tenant's WB token from `tenants.wb_token` via `tenant_sync_context`.
 
-Always check `/api/settings/cooldown` before running. If `statistics > 0`,
-abort and wait — running anyway will burn the WB quota on a no-op skip.
+If you saw a 429 from any statistics-category call recently, check
+`redis-cli TTL wb:cooldown:finance` — though finance is its own category and
+shouldn't be affected by statistics-side penalties.
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
-import logging
 from datetime import date, datetime, timedelta, timezone
-
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.logging import configure_logging, get_logger
 from app.db.models import WbReportDetail
-from app.db.session import task_session_scope
-from app.integrations.wb.client import WbApiClient
-from app.integrations.wb.statistics import fetch_report_detail
+from app.integrations.wb.statistics import fetch_report_detail_v2
 from app.sync.tasks import _bulk_upsert, _ensure_products, _parse_date, _parse_dt
+from app.sync.tenants import tenant_sync_context
 
 log = get_logger(__name__)
 
 
-async def backfill(date_from: date, date_to: date, dry_run: bool = False) -> int:
+async def backfill(
+    tenant_id: int, date_from: date, date_to: date, dry_run: bool = False
+) -> int:
     """Pull report_detail for [date_from, date_to] (inclusive) and upsert."""
     log.info(
-        "backfill: starting %s..%s (dry_run=%s)", date_from, date_to, dry_run
+        "backfill: tenant=%s %s..%s (dry_run=%s)",
+        tenant_id, date_from, date_to, dry_run,
     )
     start_ts = datetime.combine(date_from, datetime.min.time(), tzinfo=timezone.utc)
     end_ts = datetime.combine(date_to, datetime.max.time(), tzinfo=timezone.utc)
 
     total_rows = 0
-    async with task_session_scope() as session, WbApiClient() as wb:
+    async with tenant_sync_context(tenant_id) as ctx:
+        if ctx is None:
+            log.error("backfill: tenant %s has no WB token, abort", tenant_id)
+            return 0
+        session, wb = ctx
         try:
-            chunks_iter = fetch_report_detail(wb, date_from=start_ts, date_to=end_ts)
+            chunks_iter = fetch_report_detail_v2(wb, date_from=start_ts, date_to=end_ts)
         except Exception as e:
             log.error("backfill: WB call failed before pagination: %s", e)
             return 0
@@ -121,9 +119,14 @@ async def backfill(date_from: date, date_to: date, dry_run: bool = False) -> int
                         }
                     )
                 await _bulk_upsert(session, WbReportDetail, values, pk_cols=["rrd_id"])
+                # Commit per chunk so a later 429 / cooldown / OOM does NOT
+                # roll back the work already done. The next page's failure
+                # then only loses the rows we have not yet seen, and the
+                # script can be safely re-run to resume from where it died.
+                await session.commit()
                 total_rows += len(values)
                 log.info(
-                    "backfill: chunk %d upserted, total so far %d",
+                    "backfill: chunk %d upserted+committed, total so far %d",
                     chunk_no,
                     total_rows,
                 )
@@ -141,6 +144,7 @@ async def backfill(date_from: date, date_to: date, dry_run: bool = False) -> int
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--tenant", type=int, default=1, help="tenant_id (default 1)")
     p.add_argument("--from", dest="date_from", required=True, help="YYYY-MM-DD")
     p.add_argument("--to", dest="date_to", required=True, help="YYYY-MM-DD")
     p.add_argument("--dry-run", action="store_true", help="don't write to DB")
@@ -160,7 +164,7 @@ def main() -> None:
             "consider splitting into smaller windows.",
             (dt_ - df).days,
         )
-    rows = asyncio.run(backfill(df, dt_, dry_run=args.dry_run))
+    rows = asyncio.run(backfill(args.tenant, df, dt_, dry_run=args.dry_run))
     print(f"\n=== backfill done: {rows} rows {'(DRY)' if args.dry_run else 'upserted'} ===")
 
 

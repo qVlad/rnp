@@ -12,7 +12,7 @@ from app.integrations.wb.rate_limiter import TokenBucketLimiter
 
 log = get_logger(__name__)
 
-Category = Literal["statistics", "advert", "common", "analytics"]
+Category = Literal["statistics", "advert", "common", "analytics", "finance"]
 
 
 class WbApiError(Exception):
@@ -100,12 +100,17 @@ class WbApiClient:
             "common": TokenBucketLimiter(60),
             # seller-analytics-api: stocks-report и paid_storage — 3/мин с 20с между.
             "analytics": TokenBucketLimiter(3, min_interval_s=20.0),
+            # finance-api: новый endpoint /api/finance/v1/sales-reports/detailed —
+            # 1/мин, burst 1. min_interval_s=60 чтобы не отстреливать два запроса
+            # подряд в одну минуту.
+            "finance": TokenBucketLimiter(1, min_interval_s=60.0),
         }
         self._bases: dict[Category, str] = {
             "statistics": settings.wb_statistics_base,
             "advert": settings.wb_advert_base,
             "common": settings.wb_common_base,
             "analytics": settings.wb_analytics_base,
+            "finance": settings.wb_finance_base,
         }
         self._client: httpx.AsyncClient | None = None
 

@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     # Once set, the `bot` service starts long-polling and the Celery beat-scheduled
     # digest task delivers daily summaries.
     tg_bot_token: str | None = None
+    # Tenant the bot pins itself to. In the current single-seller deployment the
+    # default tenant_id=1 is correct. A future multi-bot setup will need
+    # per-tenant tokens or chat→tenant routing.
+    bot_tenant_id: int = 1
 
     # ── Authentication / JWT ──────────────────────────────────────────────
     # SECRET used to sign JWT cookies. **MUST be set in .env** in production

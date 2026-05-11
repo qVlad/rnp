@@ -19,6 +19,7 @@ from app.integrations.wb import cooldown as wb_cooldown
 from app.services.audit import actor_from_request, audit_log
 from app.services.auth import require_director
 from app.services.settings_timeline import TIMELINEABLE_KEYS
+from app.services.tenant_context import get_tenant
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -68,7 +69,12 @@ class SettingsPayload(BaseModel):
 
 @router.get("")
 async def get_settings_view(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
-    rows = (await session.execute(select(AppSetting))).scalars().all()
+    tenant_id = get_tenant(session)
+    rows = (
+        await session.execute(
+            select(AppSetting).where(AppSetting.tenant_id == tenant_id)
+        )
+    ).scalars().all()
     cfg = {r.key: r.value for r in rows}
     cps = (await session.execute(select(SyncCheckpoint))).scalars().all()
     return {
@@ -99,10 +105,15 @@ async def put_settings(
     if "vat_rate" in data and str(int(data["vat_rate"])) not in VAT_RATES:
         raise HTTPException(400, f"vat_rate must be one of {sorted(VAT_RATES)}")
 
+    tenant_id = get_tenant(session)
+
     # Snapshot prior values for audit
     prior_rows = (
         await session.execute(
-            select(AppSetting).where(AppSetting.key.in_(list(data.keys())))
+            select(AppSetting).where(
+                AppSetting.tenant_id == tenant_id,
+                AppSetting.key.in_(list(data.keys())),
+            )
         )
     ).scalars().all()
     before = {r.key: r.value for r in prior_rows}
@@ -117,8 +128,10 @@ async def put_settings(
         else:
             value_str = str(value)
         after[key] = value_str
-        stmt = pg_insert(AppSetting).values(key=key, value=value_str)
-        stmt = stmt.on_conflict_do_update(index_elements=["key"], set_={"value": value_str})
+        stmt = pg_insert(AppSetting).values(tenant_id=tenant_id, key=key, value=value_str)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["tenant_id", "key"], set_={"value": value_str}
+        )
         await session.execute(stmt)
 
     # Only log keys that actually changed
@@ -429,12 +442,20 @@ async def clear_cooldown(category: str) -> dict[str, str]:
 @router.get("/telegram/status")
 async def telegram_status(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     """Show bot configuration & link status."""
+    tenant_id = get_tenant(session)
     chat_row = (
-        await session.execute(select(AppSetting).where(AppSetting.key == "tg_chat_id"))
+        await session.execute(
+            select(AppSetting).where(
+                AppSetting.tenant_id == tenant_id, AppSetting.key == "tg_chat_id"
+            )
+        )
     ).scalar_one_or_none()
     digest_row = (
         await session.execute(
-            select(AppSetting).where(AppSetting.key == "tg_digest_enabled")
+            select(AppSetting).where(
+                AppSetting.tenant_id == tenant_id,
+                AppSetting.key == "tg_digest_enabled",
+            )
         )
     ).scalar_one_or_none()
 
@@ -457,8 +478,13 @@ async def telegram_test(session: AsyncSession = Depends(get_db_tenant_scoped)) -
     """Send a test message to the linked chat."""
     if not cfg.tg_bot_token:
         raise HTTPException(400, "TG_BOT_TOKEN not configured (.env)")
+    tenant_id = get_tenant(session)
     chat_row = (
-        await session.execute(select(AppSetting).where(AppSetting.key == "tg_chat_id"))
+        await session.execute(
+            select(AppSetting).where(
+                AppSetting.tenant_id == tenant_id, AppSetting.key == "tg_chat_id"
+            )
+        )
     ).scalar_one_or_none()
     if not chat_row or not chat_row.value:
         raise HTTPException(400, "no chat linked — send /start to your bot first")
@@ -478,8 +504,13 @@ async def set_digest_enabled(
     payload: TgDigestPayload, session: AsyncSession = Depends(get_db_tenant_scoped)
 ) -> dict[str, str]:
     value = "1" if payload.enabled else "0"
-    stmt = pg_insert(AppSetting).values(key="tg_digest_enabled", value=value)
-    stmt = stmt.on_conflict_do_update(index_elements=["key"], set_={"value": value})
+    tenant_id = get_tenant(session)
+    stmt = pg_insert(AppSetting).values(
+        tenant_id=tenant_id, key="tg_digest_enabled", value=value
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["tenant_id", "key"], set_={"value": value}
+    )
     await session.execute(stmt)
     await session.commit()
     return {"status": "ok"}
@@ -488,8 +519,13 @@ async def set_digest_enabled(
 @router.delete("/telegram/chat")
 async def unlink_telegram_chat(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, str]:
     """Forget the linked chat — next /start binds to a new chat."""
+    tenant_id = get_tenant(session)
     chat_row = (
-        await session.execute(select(AppSetting).where(AppSetting.key == "tg_chat_id"))
+        await session.execute(
+            select(AppSetting).where(
+                AppSetting.tenant_id == tenant_id, AppSetting.key == "tg_chat_id"
+            )
+        )
     ).scalar_one_or_none()
     if chat_row:
         await session.delete(chat_row)

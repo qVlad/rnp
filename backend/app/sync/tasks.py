@@ -42,7 +42,7 @@ from app.integrations.wb.advert import (
 from app.integrations.wb.paid_storage import fetch_paid_storage
 from app.integrations.wb.statistics import (
     fetch_orders,
-    fetch_report_detail,
+    fetch_report_detail_v2,
     fetch_sales,
     fetch_stocks,
 )
@@ -568,7 +568,7 @@ async def _sync_report_detail_async(tenant_id: int, days_back: int = 14) -> int:
             return 0
         session, wb = ctx
         try:
-            chunks_iter = fetch_report_detail(wb, date_from=start, date_to=end)
+            chunks_iter = fetch_report_detail_v2(wb, date_from=start, date_to=end)
         except Exception as e:
             log.warning("report_detail: fetch failed (%s) — skipping this run", e)
             await update_checkpoint(
@@ -998,18 +998,27 @@ async def _send_daily_digest_async() -> bool:
     from sqlalchemy import select as _select  # local to avoid cycle confusion
 
     from app.bot.digest import build_daily_digest
+    from app.core.config import settings as _cfg
     from app.db.models import AppSetting
     from app.integrations.telegram import send_message
+    from app.services.tenant_context import set_tenant
 
     async with session_scope() as session:
+        set_tenant(session, _cfg.bot_tenant_id)
         chat_id_row = (
             await session.execute(
-                _select(AppSetting).where(AppSetting.key == "tg_chat_id")
+                _select(AppSetting).where(
+                    AppSetting.tenant_id == _cfg.bot_tenant_id,
+                    AppSetting.key == "tg_chat_id",
+                )
             )
         ).scalar_one_or_none()
         digest_enabled_row = (
             await session.execute(
-                _select(AppSetting).where(AppSetting.key == "tg_digest_enabled")
+                _select(AppSetting).where(
+                    AppSetting.tenant_id == _cfg.bot_tenant_id,
+                    AppSetting.key == "tg_digest_enabled",
+                )
             )
         ).scalar_one_or_none()
 
