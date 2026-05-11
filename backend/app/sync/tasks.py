@@ -57,8 +57,16 @@ from app.services.tenant_context import set_tenant
 
 
 async def _list_active_tenants() -> list[int]:
-    """Helper для dispatcher'ов: список tenants с WB-токеном."""
-    from app.db.session import session_scope as _ss  # noqa: WPS433
+    """Helper для dispatcher'ов: список tenants с WB-токеном.
+
+    ВАЖНО: используем `task_session_scope`, а не модульный `session_scope`.
+    Модульный engine привязан к event loop процесса (FastAPI loop №1).
+    Celery worker внутри `asyncio.run(...)` создаёт **новый** loop №2 —
+    реюз модульного engine из другого loop'а даёт
+    `RuntimeError: Future ... attached to a different loop` через раз.
+    `task_session_scope` создаёт fresh engine внутри текущего loop'а.
+    """
+    from app.db.session import task_session_scope as _ss  # noqa: WPS433
 
     async with _ss() as session:
         return await get_active_tenants(session)
