@@ -44,6 +44,8 @@ interface UnitRow {
   units_sold: number;
   units_sold_gross?: number;
   units_returned?: number;
+  in_way_to_client?: number;
+  in_way_from_client?: number;
   revenue: number;
   avg_price: number;
   buyout_pct: number;
@@ -450,6 +452,36 @@ export default function Units() {
         header: "Остаток",
         accessorKey: "stock",
         cell: (c) => fmtNum(c.getValue<number>()),
+      },
+      {
+        header: () => (
+          <span title="Едут к покупателю: товар в доставке, ожидается выкуп или отказ">
+            → Клиент
+          </span>
+        ),
+        accessorKey: "in_way_to_client",
+        cell: (c) => {
+          const v = c.getValue<number>() ?? 0;
+          return (
+            <span className={v > 0 ? "" : "text-muted"}>{fmtNum(v)}</span>
+          );
+        },
+      },
+      {
+        header: () => (
+          <span title="Едут обратно от покупателя: возвраты в пути, скоро вернутся на склад">
+            ← Возврат
+          </span>
+        ),
+        accessorKey: "in_way_from_client",
+        cell: (c) => {
+          const v = c.getValue<number>() ?? 0;
+          return (
+            <span className={v > 0 ? "text-warn" : "text-muted"}>
+              {fmtNum(v)}
+            </span>
+          );
+        },
       },
       {
         header: "",

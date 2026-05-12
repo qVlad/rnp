@@ -395,6 +395,8 @@ async def build_unit_economics(
         select(
             WbStockSnapshot.nm_id,
             func.coalesce(func.sum(WbStockSnapshot.quantity_full), 0).label("qty"),
+            func.coalesce(func.sum(WbStockSnapshot.in_way_to_client), 0).label("in_to"),
+            func.coalesce(func.sum(WbStockSnapshot.in_way_from_client), 0).label("in_from"),
         )
         .where(WbStockSnapshot.snapshot_dt == latest_dt)
         .group_by(WbStockSnapshot.nm_id)
@@ -403,6 +405,10 @@ async def build_unit_economics(
         stock_stmt = stock_stmt.where(WbStockSnapshot.nm_id.in_(nm_filter))
     stock_rows = (await session.execute(stock_stmt)).all()
     stock_by_nm = {int(r.nm_id): int(r.qty or 0) for r in stock_rows}
+    in_way_by_nm = {
+        int(r.nm_id): {"to_client": int(r.in_to or 0), "from_client": int(r.in_from or 0)}
+        for r in stock_rows
+    }
 
     # Точное хранение per nm из WB Analytics API (`/api/v1/paid_storage`).
     # Заполняется celery-таской `sync_paid_storage` (раз в день за 7 дней).
@@ -719,6 +725,8 @@ async def build_unit_economics(
                 "profitability_pct": round(profitability_pct, 2),
                 # Stock
                 "stock": stock,
+                "in_way_to_client": in_way_by_nm.get(nm, {}).get("to_client", 0),
+                "in_way_from_client": in_way_by_nm.get(nm, {}).get("from_client", 0),
                 "turnover_days": turnover_days,
                 "days_to_stockout": dts,
             }

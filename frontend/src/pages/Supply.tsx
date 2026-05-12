@@ -225,7 +225,18 @@ export default function Supply() {
                 <th className="text-left p-2">Артикул</th>
                 <th className="text-left p-2">Статус</th>
                 <th className="text-right p-2">Остаток</th>
-                <th className="text-right p-2">В пути</th>
+                <th
+                  className="text-right p-2"
+                  title="Едут к покупателю: товар в доставке, ожидается выкуп или отказ"
+                >
+                  → Клиент
+                </th>
+                <th
+                  className="text-right p-2"
+                  title="Едут обратно от покупателя: возвраты в пути, скоро вернутся на склад"
+                >
+                  ← Возврат
+                </th>
                 <th className="text-right p-2">шт/день</th>
                 <th className="text-right p-2">Дни до 0</th>
                 <th className="text-right p-2">К отгрузке</th>
@@ -258,8 +269,19 @@ export default function Supply() {
                         </span>
                       </td>
                       <td className="p-2 text-right font-mono">{it.stock}</td>
-                      <td className="p-2 text-right font-mono text-muted">
-                        {it.in_way_to_client + it.in_way_from_client}
+                      <td
+                        className={`p-2 text-right font-mono ${
+                          it.in_way_to_client > 0 ? "" : "text-muted"
+                        }`}
+                      >
+                        {it.in_way_to_client}
+                      </td>
+                      <td
+                        className={`p-2 text-right font-mono ${
+                          it.in_way_from_client > 0 ? "text-warn" : "text-muted"
+                        }`}
+                      >
+                        {it.in_way_from_client}
                       </td>
                       <td className="p-2 text-right font-mono">
                         {it.velocity_per_day.toFixed(2)}
@@ -287,7 +309,7 @@ export default function Supply() {
                     </tr>
                     {isOpen && dist && (
                       <tr key={`${it.nm_id}-exp`} className="bg-bg/40 border-t border-border/50">
-                        <td colSpan={10} className="p-3">
+                        <td colSpan={11} className="p-3">
                           <div className="text-xs text-muted mb-2">
                             Распределение по кластерам за {distQ.data?.irp_window ?? irpWin} дн.
                             Цель = рекомендация × ИРП. Дефицит подсвечен.
