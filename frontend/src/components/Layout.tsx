@@ -75,11 +75,17 @@ export default function Layout() {
                   {user.full_name || user.username}{" "}
                   <span
                     className={
-                      isDirector ? "text-success" : "text-muted"
+                      isDirector
+                        ? "text-success"
+                        : isHead
+                        ? "text-accent"
+                        : "text-muted"
                     }
                     title={
                       isDirector
                         ? "роль director — полный доступ"
+                        : isHead
+                        ? "роль head_of_sales — расширенный доступ"
                         : "роль manager — ограниченный доступ"
                     }
                   >

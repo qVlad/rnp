@@ -488,19 +488,28 @@ async def build_pnl(
         b.acquiring += _f(r.acquiring)
         b.additional += _f(r.additional)
 
-    # Storage из paid_storage по date — это согласует с Dashboard и Units.
-    if storage_paid_total > 0:
-        for d, amount in storage_paid_by_date.items():
-            b = get_bucket(d)
-            b.storage += amount
-    else:
-        # Fallback: paid_storage за период не sync'нулся → берём storage_fee
-        # из report_detail (агрегатно по неделе на rr_dt).
-        for r in rd_rows:
-            if r.rr_dt is None:
-                continue
-            b = get_bucket(r.rr_dt)
-            b.storage += _f(r.storage)
+    # Storage: paid_storage per-day где есть, fallback на storage_fee из RD для
+    # недель которых нет в paid_storage. Старая логика была binary («или всё из
+    # paid_storage, или всё из RD»), что ломало P&L когда paid_storage покрывал
+    # только часть периода — старые WB-недели просто пропадали из totals.
+    # Группируем покрытие по WB-week (Mon-Sun), чтобы не задвоить storage внутри
+    # одной недели где RD и paid_storage могут пересекаться.
+    paid_storage_weeks: set[date] = {
+        d - timedelta(days=d.weekday()) for d in storage_paid_by_date
+    }
+    # A) paid_storage per-day
+    for d, amount in storage_paid_by_date.items():
+        b = get_bucket(d)
+        b.storage += amount
+    # B) RD storage_fee для rr_dt чьей недели нет в paid_storage
+    for r in rd_rows:
+        if r.rr_dt is None:
+            continue
+        rr_monday = r.rr_dt - timedelta(days=r.rr_dt.weekday())
+        if rr_monday in paid_storage_weeks:
+            continue
+        b = get_bucket(r.rr_dt)
+        b.storage += _f(r.storage)
 
     # Per-day extras: ads, ext-ads, COGS, opex, fixed, manual adjustments
     cursor = date_from

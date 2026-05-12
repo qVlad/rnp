@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Cogs, Product, WbOrder, WbSale
 from app.db.session import get_db
-from app.services.auth import get_db_tenant_scoped
+from app.services.auth import get_db_tenant_scoped, require_director_or_head
 from app.services.audit import actor_from_request, audit_log, snapshot
 from app.services.auth import current_brands_filter
 
@@ -130,7 +130,7 @@ async def list_for_sku(nm_id: int, session: AsyncSession = Depends(get_db_tenant
     return {"nm_id": nm_id, "items": [_row(r) for r in rows]}
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(require_director_or_head)])
 async def add_history(
     payload: CogsIn,
     request: Request,
@@ -162,7 +162,7 @@ async def add_history(
     return _row(obj)
 
 
-@router.put("/{cogs_id}")
+@router.put("/{cogs_id}", dependencies=[Depends(require_director_or_head)])
 async def update_history(
     cogs_id: int,
     payload: CogsIn,
@@ -189,7 +189,7 @@ async def update_history(
     return _row(obj)
 
 
-@router.delete("/{cogs_id}")
+@router.delete("/{cogs_id}", dependencies=[Depends(require_director_or_head)])
 async def delete_history(
     cogs_id: int,
     request: Request,
@@ -210,7 +210,7 @@ async def delete_history(
     return {"status": "deleted"}
 
 
-@router.post("/{nm_id}/truncate")
+@router.post("/{nm_id}/truncate", dependencies=[Depends(require_director_or_head)])
 async def truncate_after(
     nm_id: int,
     from_date: Annotated[_date, Query(alias="from")],

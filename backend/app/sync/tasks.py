@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from dateutil.parser import isoparse
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -199,14 +199,20 @@ async def _ensure_products(session: AsyncSession, rows: list[dict[str, Any]]) ->
     for start in range(0, len(rows), _BULK_CHUNK_ROWS):
         chunk = rows[start : start + _BULK_CHUNK_ROWS]
         stmt = pg_insert(Product).values(chunk)
+        # COALESCE keeps existing non-NULL values when the syncing source doesn't
+        # supply them. Critical for report_detail / backfill which pass only
+        # nmId + supplierArticle — without COALESCE these would null out brand /
+        # subject / category every run, leaving brand-filter broken for the
+        # ~8h window until the next stocks sync restores them.
         stmt = stmt.on_conflict_do_update(
             index_elements=["nm_id"],
             set_={
-                "vendor_code": stmt.excluded.vendor_code,
-                "subject": stmt.excluded.subject,
-                "brand": stmt.excluded.brand,
-                "category": stmt.excluded.category,
+                "vendor_code": func.coalesce(stmt.excluded.vendor_code, Product.vendor_code),
+                "subject": func.coalesce(stmt.excluded.subject, Product.subject),
+                "brand": func.coalesce(stmt.excluded.brand, Product.brand),
+                "category": func.coalesce(stmt.excluded.category, Product.category),
                 "last_seen_at": stmt.excluded.last_seen_at,
+                # Re-appearance unarchives — keep unconditional.
                 "is_archived": stmt.excluded.is_archived,
             },
         )

@@ -90,17 +90,59 @@ export default function App() {
           <Route path="pnl" element={<PnL />} />
           <Route path="pnl-reconciliation" element={<PnLReconciliation />} />
           <Route path="units" element={<Units />} />
-          <Route path="revenue-corrections" element={<RevenueCorrections />} />
-          <Route path="external-marketing" element={<ExternalMarketing />} />
-          <Route path="opex" element={<Opex />} />
+          <Route
+            path="revenue-corrections"
+            element={
+              <DirectorOrHead>
+                <RevenueCorrections />
+              </DirectorOrHead>
+            }
+          />
+          <Route
+            path="external-marketing"
+            element={
+              <DirectorOrHead>
+                <ExternalMarketing />
+              </DirectorOrHead>
+            }
+          />
+          <Route
+            path="opex"
+            element={
+              <DirectorOrHead>
+                <Opex />
+              </DirectorOrHead>
+            }
+          />
           <Route path="cost-history" element={<CostHistory />} />
           <Route path="abc" element={<AbcAnalysis />} />
           <Route path="supply" element={<Supply />} />
           <Route path="plans" element={<Plans />} />
-          <Route path="cash-flow" element={<CashFlow />} />
-          <Route path="capitalization" element={<Capitalization />} />
+          <Route
+            path="cash-flow"
+            element={
+              <DirectorOrHead>
+                <CashFlow />
+              </DirectorOrHead>
+            }
+          />
+          <Route
+            path="capitalization"
+            element={
+              <DirectorOrHead>
+                <Capitalization />
+              </DirectorOrHead>
+            }
+          />
           <Route path="product-groups" element={<ProductGroups />} />
-          <Route path="audit-log" element={<AuditLog />} />
+          <Route
+            path="audit-log"
+            element={
+              <DirectorOnly>
+                <AuditLog />
+              </DirectorOnly>
+            }
+          />
           <Route path="calc" element={<UnitCalculator />} />
           <Route
             path="users"
@@ -119,7 +161,14 @@ export default function App() {
             }
           />
           <Route path="glossary" element={<Glossary />} />
-          <Route path="settings" element={<Settings />} />
+          <Route
+            path="settings"
+            element={
+              <DirectorOnly>
+                <Settings />
+              </DirectorOnly>
+            }
+          />
         </Route>
       </Routes>
     </AuthProvider>
