@@ -310,7 +310,15 @@ export default function Units() {
         accessorKey: "cogs_unit",
         cell: (c) => fmtRub(c.getValue<number>()),
       },
-      { header: "Заказы", accessorKey: "total_orders", cell: (c) => fmtNum(c.getValue<number>()) },
+      {
+        header: () => (
+          <span title="Все заказы за период, включая отменённые. На дашборде столбец «Заказы» показывает только активные.">
+            Заказы (всего)
+          </span>
+        ),
+        accessorKey: "total_orders",
+        cell: (c) => fmtNum(c.getValue<number>()),
+      },
       { header: "Продажи кол-во", accessorKey: "units_sold", cell: (c) => fmtNum(c.getValue<number>()) },
       {
         header: "Выкуп %",

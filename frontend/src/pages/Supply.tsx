@@ -265,7 +265,16 @@ export default function Supply() {
                         {it.velocity_per_day.toFixed(2)}
                       </td>
                       <td className="p-2 text-right font-mono">
-                        {it.days_to_zero == null ? "—" : it.days_to_zero}
+                        {it.days_to_zero == null ? (
+                          <span
+                            className="text-muted cursor-help"
+                            title="Не считается: за окно скорости (по умолчанию 14 дн.) у SKU не было продаж — velocity = 0"
+                          >
+                            —
+                          </span>
+                        ) : (
+                          it.days_to_zero
+                        )}
                       </td>
                       <td className="p-2 text-right font-mono font-semibold">
                         {it.recommended_supply_qty > 0

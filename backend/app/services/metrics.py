@@ -652,10 +652,13 @@ async def compute_dashboard(
             _pct_change(curr["revenue_gross"], prev["revenue_gross"]), "₽",
             f"Сумма заказанных товаров за период.\nИсточник ({mode}): {src_revenue}.\n"
             "Это «брутто» выручка — до WB-комиссии, логистики и налогов."),
-        KPI("revenue_net", "Чистая выручка", curr["revenue_net"], prev["revenue_net"],
+        KPI("revenue_net", "Поступления от WB", curr["revenue_net"], prev["revenue_net"],
             _pct_change(curr["revenue_net"], prev["revenue_net"]), "₽",
-            "Выплата селлеру после WB-комиссии (до логистики/хранения/налогов).\n"
-            f"Σ ppvz_for_pay (Продажи − Возвраты) за период.\nИсточник: {src_orders}."),
+            "Сумма после удержания WB-комиссии и эквайринга — то с чего ещё вычтут "
+            "логистику/хранение/штрафы.\n"
+            f"Формула: Σ ppvz_for_pay (Продажи − Возвраты).\nИсточник: {src_orders}.\n"
+            "⚠ На странице P&L «Чистая выручка» имеет другое определение — это "
+            "revenue_gross − returns (т.е. ДО комиссии WB)."),
         KPI("orders", "Заказы", curr["orders"], prev["orders"],
             _pct_change(curr["orders"], prev["orders"]), "шт",
             (

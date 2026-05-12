@@ -67,7 +67,7 @@ class SettingsPayload(BaseModel):
     stockout_warning_days: float | None = None
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_director)])
 async def get_settings_view(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     tenant_id = get_tenant(session)
     rows = (
@@ -148,7 +148,7 @@ async def put_settings(
     return {"status": "ok"}
 
 
-@router.post("/cogs")
+@router.post("/cogs", dependencies=[Depends(require_director)])
 async def upload_cogs(
     file: UploadFile, session: AsyncSession = Depends(get_db_tenant_scoped)
 ) -> dict[str, Any]:
@@ -211,7 +211,7 @@ async def upload_cogs(
     return {"inserted": inserted, "skipped": skipped}
 
 
-@router.get("/cogs")
+@router.get("/cogs", dependencies=[Depends(require_director)])
 async def list_cogs(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     stmt = select(
         Cogs.nm_id,
@@ -244,7 +244,7 @@ class TriggerPayload(BaseModel):
     entity: str  # one of: orders, sales, stocks, ad_campaigns, ad_stats, report_detail, all
 
 
-@router.post("/sync/trigger")
+@router.post("/sync/trigger", dependencies=[Depends(require_director)])
 async def trigger_sync(payload: TriggerPayload) -> dict[str, str]:
     from app.sync.tasks import (
         sync_ad_campaign_details,
@@ -274,7 +274,7 @@ async def trigger_sync(payload: TriggerPayload) -> dict[str, str]:
     return {"task_id": async_result.id, "entity": payload.entity, "status": "queued"}
 
 
-@router.get("/cooldown")
+@router.get("/cooldown", dependencies=[Depends(require_director)])
 async def get_cooldown() -> dict[str, Any]:
     """Show remaining global cooldown for each WB API category (seconds)."""
     return {
@@ -296,7 +296,7 @@ class TimelineEntryPayload(BaseModel):
     comment: str | None = None
 
 
-@router.get("/timeline")
+@router.get("/timeline", dependencies=[Depends(require_director)])
 async def list_timeline(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     rows = (
         await session.execute(
@@ -425,7 +425,7 @@ async def delete_timeline_entry(
     return {"status": "deleted"}
 
 
-@router.delete("/cooldown/{category}")
+@router.delete("/cooldown/{category}", dependencies=[Depends(require_director)])
 async def clear_cooldown(category: str) -> dict[str, str]:
     """Manually clear a cooldown (use only after WB has actually had time to recover)."""
     if category not in {"statistics", "advert", "common"}:
@@ -439,7 +439,7 @@ async def clear_cooldown(category: str) -> dict[str, str]:
 # ────────────────────────────────────────────────────────────────────────────
 
 
-@router.get("/telegram/status")
+@router.get("/telegram/status", dependencies=[Depends(require_director)])
 async def telegram_status(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     """Show bot configuration & link status."""
     tenant_id = get_tenant(session)
@@ -473,7 +473,7 @@ async def telegram_status(session: AsyncSession = Depends(get_db_tenant_scoped))
     }
 
 
-@router.post("/telegram/test")
+@router.post("/telegram/test", dependencies=[Depends(require_director)])
 async def telegram_test(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     """Send a test message to the linked chat."""
     if not cfg.tg_bot_token:
@@ -499,7 +499,7 @@ class TgDigestPayload(BaseModel):
     enabled: bool
 
 
-@router.put("/telegram/digest")
+@router.put("/telegram/digest", dependencies=[Depends(require_director)])
 async def set_digest_enabled(
     payload: TgDigestPayload, session: AsyncSession = Depends(get_db_tenant_scoped)
 ) -> dict[str, str]:
@@ -516,7 +516,7 @@ async def set_digest_enabled(
     return {"status": "ok"}
 
 
-@router.delete("/telegram/chat")
+@router.delete("/telegram/chat", dependencies=[Depends(require_director)])
 async def unlink_telegram_chat(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, str]:
     """Forget the linked chat — next /start binds to a new chat."""
     tenant_id = get_tenant(session)
