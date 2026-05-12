@@ -42,6 +42,8 @@ interface UnitRow {
   orders: number;
   total_orders: number;
   units_sold: number;
+  units_sold_gross?: number;
+  units_returned?: number;
   revenue: number;
   avg_price: number;
   buyout_pct: number;
@@ -319,7 +321,30 @@ export default function Units() {
         accessorKey: "total_orders",
         cell: (c) => fmtNum(c.getValue<number>()),
       },
-      { header: "Продажи кол-во", accessorKey: "units_sold", cell: (c) => fmtNum(c.getValue<number>()) },
+      {
+        header: () => (
+          <span title="Sales − Returns (нетто). Может быть отрицательным если возвраты пришли из заказов, сделанных до окна.">
+            Продажи кол-во
+          </span>
+        ),
+        accessorKey: "units_sold",
+        cell: (c) => {
+          const v = c.getValue<number>();
+          const row = c.row.original as UnitRow;
+          const ret = row.units_returned ?? 0;
+          if (v < 0) {
+            return (
+              <span
+                className="text-warn"
+                title={`Возвратов в периоде: ${ret}, продаж: ${row.units_sold_gross ?? 0}. Возвраты прилетели из заказов до окна.`}
+              >
+                {fmtNum(v)}
+              </span>
+            );
+          }
+          return fmtNum(v);
+        },
+      },
       {
         header: "Выкуп %",
         accessorKey: "buyout_pct",

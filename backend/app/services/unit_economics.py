@@ -675,7 +675,13 @@ async def build_unit_economics(
                 # active_orders сохраняется для совместимости (кому нужно отдельно).
                 "active_orders": orders,
                 "total_orders": total_orders,
+                # units_sold = sales − returns (НЕТТО). Может быть отрицательным
+                # если возвраты прилетели из заказов сделанных ДО окна. Для
+                # «брутто-продаж» и «возвратов» отдельные поля ниже — UI
+                # показывает обе цифры, чтобы −1 не выглядел как баг.
                 "units_sold": units_sold,
+                "units_sold_gross": gross_units,
+                "units_returned": returns_count,
                 "revenue": revenue,
                 "for_pay": for_pay,
                 "avg_price": round(avg_price, 2),
