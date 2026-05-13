@@ -296,27 +296,46 @@ async def collect_alerts(
                         except Exception:
                             balance = {}
 
-                total_kopecks = balance.get("total")
-                if total_kopecks is not None and int(total_kopecks) == 0:
+                cash_rub = balance.get("balance_rub")
+                net_rub = balance.get("net_rub")
+                total_rub = (
+                    (cash_rub or 0) + (net_rub or 0)
+                    if cash_rub is not None and net_rub is not None
+                    else None
+                )
+
+                if total_rub == 0:
                     alerts.append({
                         "level": "warning",
                         "code": "ad_stats_zero_balance",
                         "message": (
-                            f"Баланс рекламного кабинета WB = 0 ₽ (cash={balance.get('cash',0)}, "
-                            f"netting={balance.get('netting',0)}). "
+                            f"Баланс рекламного кабинета WB пустой "
+                            f"(наличные 0 ₽, взаимозачёт 0 ₽). "
                             f"Поэтому {active_cnt} активных кампаний не тратят — нечего тратить. "
-                            f"Пополни счёт: WB-кабинет → Реклама → Финансы рекламы → пополнить."
+                            f"Пополни: WB-кабинет → Реклама → Финансы рекламы → пополнить."
                         ),
                     })
-                elif total_kopecks is not None and int(total_kopecks) > 0:
-                    rub = int(total_kopecks) / 100
+                elif cash_rub == 0 and net_rub and net_rub > 0:
+                    alerts.append({
+                        "level": "warning",
+                        "code": "ad_stats_only_netting",
+                        "message": (
+                            f"Наличный баланс WB-рекламы = 0 ₽ "
+                            f"(но есть {net_rub:,.2f} ₽ во взаимозачёте). "
+                            f"Реклама обычно тратит только наличный счёт — пополни его в кабинете, "
+                            f"иначе {active_cnt} активных кампаний так и не начнут показы."
+                        ),
+                    })
+                elif total_rub is not None and total_rub > 0:
                     alerts.append({
                         "level": "warning",
                         "code": "ad_stats_empty_with_balance",
                         "message": (
-                            f"На балансе WB-рекламы {rub:,.2f} ₽, но fullstats показывает 0 трат "
-                            f"за 60 дней ({ago}, {active_cnt} активных кампаний). "
-                            f"Скорее всего у кампаний нулевой дневной бюджет или ставка ниже минимальной. "
+                            f"На балансе WB-рекламы {total_rub:,.2f} ₽ "
+                            f"(наличные {cash_rub:,.2f} + взаимозачёт {net_rub:,.2f}), "
+                            f"но fullstats показывает 0 трат за 60 дней ({ago}). "
+                            f"У {active_cnt} активных кампаний скорее всего нулевой дневной бюджет "
+                            f"или ставка ниже минимальной. "
                             f"Проверь: WB-кабинет → Реклама → выбери кампанию → дневной лимит и ставка."
                         ),
                     })

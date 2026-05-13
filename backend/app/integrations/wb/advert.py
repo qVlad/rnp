@@ -177,19 +177,24 @@ async def fetch_advert_account_balance(client: WbApiClient) -> dict[str, Any]:
     оставляет на рекламу); `total` = cash + netting. Если `total = 0`, ни одна
     кампания не сможет тратить — это самая частая причина «ad_stats пуст».
 
+    ⚠ Имя «/adv/v1/budget» (без id) больше не работает; теперь требует
+    `?id=<advert_id>` и возвращает баланс per-campaign. Для общего баланса —
+    `/adv/v1/balance`.
+
     На failure (4xx/cooldown) возвращает пустой dict, не падает — это
     diagnostic endpoint, не critical path.
     """
     try:
-        data = await client.get("/adv/v1/budget", category="advert")
+        data = await client.get("/adv/v1/balance", category="advert")
     except Exception:
         return {}
     if not isinstance(data, dict):
         return {}
+    # `balance` — наличный счёт в РУБЛЯХ (пополнения селлера).
+    # `net` — взаимозачёт в КОПЕЙКАХ (WB перечисляет, может идти на рекламу).
     return {
-        "cash": int(data.get("cash") or 0),
-        "netting": int(data.get("netting") or 0),
-        "total": int(data.get("total") or 0),
+        "balance_rub": int(data.get("balance") or 0),
+        "net_rub": int(data.get("net") or 0) / 100.0,
         "currency": data.get("currency") or "RUB",
     }
 
