@@ -24,6 +24,8 @@ celery_app.conf.update(
         "app.sync.tasks.sync_sales": {"queue": "stats"},
         "app.sync.tasks.sync_stocks": {"queue": "stats"},
         "app.sync.tasks.sync_report_detail": {"queue": "stats"},
+        "app.sync.tasks.sync_report_detail_backfill": {"queue": "stats"},
+        "app.sync.tasks.sync_report_detail_for_tenant": {"queue": "stats"},
         "app.sync.tasks.sync_ad_campaigns": {"queue": "advert"},
         "app.sync.tasks.sync_ad_campaign_details": {"queue": "advert"},
         "app.sync.tasks.sync_ad_stats": {"queue": "advert"},
@@ -66,6 +68,13 @@ celery_app.conf.update(
         "sync-report-detail-daily": {
             "task": "app.sync.tasks.sync_report_detail",
             "schedule": crontab(hour=4, minute=15),
+        },
+        # Weekly safety net for the reconciliation page: the daily task only
+        # refreshes recent rows, while this keeps the 12-week history populated
+        # without upserting ~90 days of report_detail every single day.
+        "sync-report-detail-backfill-weekly": {
+            "task": "app.sync.tasks.sync_report_detail_backfill",
+            "schedule": crontab(hour=6, minute=15, day_of_week="sun"),
         },
         # paid_storage: once daily at 05:30 MSK — async-task на seller-analytics-api,
         # отдельная категория `analytics` (3/мин). Тянем за последние 7 дней.

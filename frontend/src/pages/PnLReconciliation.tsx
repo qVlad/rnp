@@ -13,6 +13,8 @@ export default function PnLReconciliation() {
 
   const periods = q.data?.periods ?? [];
   const totals = q.data?.totals;
+  const loadedWeeks = periods.length;
+  const hasPartialHistory = !q.isLoading && loadedWeeks > 0 && loadedWeeks < weeks;
 
   return (
     <div className="flex flex-col gap-4">
@@ -64,6 +66,21 @@ export default function PnLReconciliation() {
             onChange={(e: any) => setThreshold(Number(e.target.value))}
           />
         </label>
+        {q.data && (
+          <div className="text-xs text-muted max-w-md">
+            <div>
+              Найдено <span className="text-white font-medium">{loadedWeeks}</span>{" "}
+              закрытых WB-недель в окне{" "}
+              <span className="text-white font-medium">{weeks}</span> недель.
+            </div>
+            {hasPartialHistory && (
+              <div className="mt-1 text-warn">
+                Пустые недели не рисуются: для них ещё нет загруженного отчёта
+                реализации WB или период ещё не закрыт.
+              </div>
+            )}
+          </div>
+        )}
         {totals && (
           <div className="ml-auto text-sm flex gap-4">
             <Stat label="WB: Выручка (gross)" value={totals.wb_revenue_gross} />

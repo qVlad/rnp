@@ -71,8 +71,14 @@ export default function Settings() {
   });
 
   const syncMut = useMutation({
-    mutationFn: (entity: string) => api.triggerSync(entity),
-    onSuccess: (d, entity) => setSyncResult(`Запущена задача ${entity} → ${d.task_id}`),
+    mutationFn: (payload: { entity: string; daysBack?: number }) =>
+      api.triggerSync(payload.entity, payload.daysBack),
+    onSuccess: (d, payload) =>
+      setSyncResult(
+        `Запущена задача ${payload.entity}${
+          payload.daysBack ? ` за ${payload.daysBack} дней` : ""
+        } → ${d.task_id}`,
+      ),
     onError: (e: any) => setSyncResult(`Ошибка: ${e.message}`),
   });
 
@@ -715,12 +721,20 @@ export default function Settings() {
             <button
               key={key}
               className="btn"
-              onClick={() => syncMut.mutate(key)}
+              onClick={() => syncMut.mutate({ entity: key })}
               disabled={syncMut.isPending}
             >
               {label}
             </button>
           ))}
+          <button
+            className="btn"
+            onClick={() => syncMut.mutate({ entity: "report_detail", daysBack: 90 })}
+            disabled={syncMut.isPending}
+            title="Догрузить отчёт реализации за 12 недель для сверки с WB"
+          >
+            Отчёт реализации: 12 недель
+          </button>
         </div>
         {syncResult && <div className="text-sm mb-3">{syncResult}</div>}
 

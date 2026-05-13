@@ -72,14 +72,14 @@ async def _list_active_tenants() -> list[int]:
         return await get_active_tenants(session)
 
 
-def _fanout(per_tenant_task) -> dict[str, Any]:
+def _fanout(per_tenant_task, *task_args: Any) -> dict[str, Any]:
     """Запустить per-tenant task для каждого активного tenant'а."""
     tenants = asyncio.run(_list_active_tenants())
     if not tenants:
         log.info("dispatcher: no active tenants (no WB token set)")
         return {"tenants_scheduled": 0}
     for tid in tenants:
-        per_tenant_task.delay(tid)
+        per_tenant_task.delay(tid, *task_args)
     return {"tenants_scheduled": len(tenants), "tenant_ids": tenants}
 
 log = get_logger(__name__)
@@ -668,6 +668,12 @@ def sync_report_detail_for_tenant(tenant_id: int, days_back: int = 14) -> int:
 def sync_report_detail_dispatch() -> dict[str, Any]:
     """Beat dispatcher: fanout sync_report_detail_for_tenant для активных tenants."""
     return _fanout(sync_report_detail_for_tenant)
+
+
+@celery_app.task(name="app.sync.tasks.sync_report_detail_backfill")
+def sync_report_detail_backfill_dispatch() -> dict[str, Any]:
+    """Weekly safety net: keep the 12-week reconciliation window populated."""
+    return _fanout(sync_report_detail_for_tenant, 90)
 
 
 

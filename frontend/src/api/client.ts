@@ -256,10 +256,10 @@ export const api = {
     if (!resp.ok) throw new Error(await resp.text());
     return resp.json();
   },
-  triggerSync: (entity: string) =>
+  triggerSync: (entity: string, daysBack?: number) =>
     request<{ task_id: string }>("/api/settings/sync/trigger", {
       method: "POST",
-      body: JSON.stringify({ entity }),
+      body: JSON.stringify({ entity, days_back: daysBack }),
     }),
   getCooldown: () =>
     request<{ statistics: number; advert: number; common: number }>(

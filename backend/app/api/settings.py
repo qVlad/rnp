@@ -5,7 +5,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -245,10 +245,14 @@ async def list_cogs(session: AsyncSession = Depends(get_db_tenant_scoped)) -> di
 
 class TriggerPayload(BaseModel):
     entity: str  # one of: orders, sales, stocks, ad_campaigns, ad_stats, report_detail, all
+    days_back: int | None = Field(default=None, ge=1, le=365)
 
 
 @router.post("/sync/trigger", dependencies=[Depends(require_director)])
-async def trigger_sync(payload: TriggerPayload) -> dict[str, str]:
+async def trigger_sync(
+    payload: TriggerPayload,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, str]:
     from app.sync.tasks import (
         sync_ad_campaign_details,
         sync_ad_campaigns,
@@ -256,6 +260,7 @@ async def trigger_sync(payload: TriggerPayload) -> dict[str, str]:
         sync_all,
         sync_orders,
         sync_report_detail,
+        sync_report_detail_for_tenant,
         sync_sales,
         sync_stocks,
     )
@@ -273,7 +278,13 @@ async def trigger_sync(payload: TriggerPayload) -> dict[str, str]:
     task = task_map.get(payload.entity)
     if task is None:
         raise HTTPException(400, f"Unknown entity {payload.entity}")
-    async_result = task.delay()
+    if payload.entity == "report_detail" and payload.days_back is not None:
+        tenant_id = get_tenant(session)
+        if tenant_id is None:
+            raise HTTPException(400, "Tenant context is not set")
+        async_result = sync_report_detail_for_tenant.delay(tenant_id, payload.days_back)
+    else:
+        async_result = task.delay()
     return {"task_id": async_result.id, "entity": payload.entity, "status": "queued"}
 
 
