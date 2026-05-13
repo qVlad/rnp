@@ -687,11 +687,14 @@ export default function Units() {
         />
       )}
 
-      <div className="card overflow-x-auto">
+      <div
+        className="card overflow-auto"
+        style={{ maxHeight: "calc(100vh - 180px)" }}
+      >
         {q.isLoading && <div className="text-muted">Загрузка…</div>}
         {q.data && (
           <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-surface z-10">
+            <thead className="sticky top-0 bg-surface z-20">
               {table.getHeaderGroups().map((hg) => (
                 <tr key={hg.id} className="text-muted text-[10px] uppercase">
                   {hg.headers.map((h) => {
