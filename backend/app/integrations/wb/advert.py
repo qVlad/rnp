@@ -190,11 +190,13 @@ async def fetch_advert_account_balance(client: WbApiClient) -> dict[str, Any]:
         return {}
     if not isinstance(data, dict):
         return {}
-    # `balance` — наличный счёт в РУБЛЯХ (пополнения селлера).
-    # `net` — взаимозачёт в КОПЕЙКАХ (WB перечисляет, может идти на рекламу).
+    # Оба поля в РУБЛЯХ (НЕ копейки — проверено владельцем кабинета).
+    # `balance` — пополненный наличный счёт.
+    # `net` — взаимозачёт (WB перечисляет нам, и эти же деньги уходят на
+    # рекламу — это основной источник пополнения кампаний).
     return {
         "balance_rub": int(data.get("balance") or 0),
-        "net_rub": int(data.get("net") or 0) / 100.0,
+        "net_rub": int(data.get("net") or 0),
         "currency": data.get("currency") or "RUB",
     }
 

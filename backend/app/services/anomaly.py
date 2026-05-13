@@ -211,18 +211,20 @@ async def collect_alerts(
                 ),
             })
         elif ad_stats_cp.last_status not in ("ok", None) and ad_stats_cp.rows_processed == 0:
-            # Распознаём почему ad_stats пустой: реальный WB-cooldown сейчас,
-            # нет активных кампаний, или 0 трат при наличии активных.
+            # Диагностика «почему fullstats пустой» строится не от поля
+            # status в БД (оно у WB неоднозначное — status=11 может означать
+            # «приостановлена» в кабинете несмотря на доки), а от реальной
+            # активности: сколько кампаний тратили за последние 14 / 30 дней.
             from app.integrations.wb import cooldown as wb_cooldown  # noqa: WPS433
 
             advert_cooldown_s = await wb_cooldown.get_remaining("advert")
-            active_cnt = (await session.execute(
-                select(func.count()).select_from(WbAdCampaign).where(
-                    WbAdCampaign.status == 11
-                )
-            )).scalar_one()
             total_cnt = (await session.execute(
-                select(func.count()).select_from(WbAdCampaign)
+                select(func.count()).select_from(WbAdCampaign))
+            ).scalar_one()
+            recent_spenders_14d = (await session.execute(
+                select(func.count(func.distinct(WbAdStatsDaily.advert_id))).where(
+                    WbAdStatsDaily.stat_date >= date.today() - timedelta(days=14)
+                )
             )).scalar_one()
             last_spend = (await session.execute(
                 select(func.max(WbAdStatsDaily.stat_date))
@@ -248,40 +250,17 @@ async def collect_alerts(
                         "включена категория «Promotion / Реклама»."
                     ),
                 })
-            elif active_cnt == 0:
-                alerts.append({
-                    "level": "info",
-                    "code": "ad_stats_no_active",
-                    "message": (
-                        f"Реклама в P&L = 0: ни одной активной кампании "
-                        f"(всего {total_cnt}, все на паузе/завершены). "
-                        f"Чтобы данные пошли — в WB-кабинете → Реклама → выбери кампанию → запусти показ. "
-                        f"Подтянется в течение 1-6 часов."
-                    ),
-                })
-            else:
-                # Активные кампании есть, но fullstats пустой. Проверим
-                # баланс рекламного кабинета — если он 0, это и есть причина.
-                days_since = (
-                    (date.today() - last_spend).days if last_spend else None
-                )
-                ago = (
-                    f"последняя трата {days_since} дн. назад"
-                    if days_since is not None
-                    else "трат не было вообще"
-                )
-
-                # On-demand balance probe — один WB-запрос, ловит cooldown
-                # внутри fetch_advert_account_balance и возвращает {} на любую
-                # ошибку. Если cooldown активен, мы уже отработали выше; сюда
-                # попадаем только когда категория advert свободна.
+            elif recent_spenders_14d == 0:
+                # Кампании есть в кабинете, но ни одна не тратила
+                # последние 14 дней — все на паузе/завершены.
+                # Заодно покажем сколько денег на счёте — для принятия решения.
                 from app.sync.tenants import get_tenant_token  # noqa: WPS433
                 from app.integrations.wb.client import WbApiClient  # noqa: WPS433
                 from app.integrations.wb.advert import (  # noqa: WPS433
                     fetch_advert_account_balance,
                 )
-
                 from app.services.tenant_context import get_tenant  # noqa: WPS433
+
                 tenant_id_for_probe = get_tenant(session)
                 balance: dict = {}
                 if tenant_id_for_probe is not None:
@@ -296,60 +275,52 @@ async def collect_alerts(
                         except Exception:
                             balance = {}
 
-                cash_rub = balance.get("balance_rub")
-                net_rub = balance.get("net_rub")
-                total_rub = (
-                    (cash_rub or 0) + (net_rub or 0)
-                    if cash_rub is not None and net_rub is not None
-                    else None
+                cash = balance.get("balance_rub")
+                net = balance.get("net_rub")
+                days_since = (
+                    (date.today() - last_spend).days if last_spend else None
                 )
+                ago = (
+                    f"последняя трата {days_since} дн. назад"
+                    if days_since is not None
+                    else "трат не было вообще"
+                )
+                balance_hint = ""
+                if cash is not None and net is not None:
+                    balance_hint = (
+                        f" На рекламном счёте доступно "
+                        f"{cash + net:,.0f} ₽ "
+                        f"(наличные {cash:,.0f} + взаимозачёт {net:,.0f})."
+                    )
 
-                if total_rub == 0:
-                    alerts.append({
-                        "level": "warning",
-                        "code": "ad_stats_zero_balance",
-                        "message": (
-                            f"Баланс рекламного кабинета WB пустой "
-                            f"(наличные 0 ₽, взаимозачёт 0 ₽). "
-                            f"Поэтому {active_cnt} активных кампаний не тратят — нечего тратить. "
-                            f"Пополни: WB-кабинет → Реклама → Финансы рекламы → пополнить."
-                        ),
-                    })
-                elif cash_rub == 0 and net_rub and net_rub > 0:
-                    alerts.append({
-                        "level": "warning",
-                        "code": "ad_stats_only_netting",
-                        "message": (
-                            f"Наличный баланс WB-рекламы = 0 ₽ "
-                            f"(но есть {net_rub:,.2f} ₽ во взаимозачёте). "
-                            f"Реклама обычно тратит только наличный счёт — пополни его в кабинете, "
-                            f"иначе {active_cnt} активных кампаний так и не начнут показы."
-                        ),
-                    })
-                elif total_rub is not None and total_rub > 0:
-                    alerts.append({
-                        "level": "warning",
-                        "code": "ad_stats_empty_with_balance",
-                        "message": (
-                            f"На балансе WB-рекламы {total_rub:,.2f} ₽ "
-                            f"(наличные {cash_rub:,.2f} + взаимозачёт {net_rub:,.2f}), "
-                            f"но fullstats показывает 0 трат за 60 дней ({ago}). "
-                            f"У {active_cnt} активных кампаний скорее всего нулевой дневной бюджет "
-                            f"или ставка ниже минимальной. "
-                            f"Проверь: WB-кабинет → Реклама → выбери кампанию → дневной лимит и ставка."
-                        ),
-                    })
-                else:
-                    # Balance probe failed — fallback на общее сообщение
-                    alerts.append({
-                        "level": "warning",
-                        "code": "ad_stats_empty",
-                        "message": (
-                            f"{active_cnt} активных кампаний (status=11) в WB, "
-                            f"но fullstats возвращает 0 трат за 60 дней — {ago}. "
-                            f"Возможные причины: пустой баланс кабинета, нулевой дневной бюджет, "
-                            f"низкая ставка. Проверь в WB-кабинете → Реклама."
-                        ),
-                    })
+                alerts.append({
+                    "level": "warning",
+                    "code": "ad_stats_all_paused",
+                    "message": (
+                        f"{total_cnt} рекламных кампаний есть, но ни одна не тратила "
+                        f"последние 14 дней ({ago})."
+                        f"{balance_hint}"
+                        f" Если хочешь крутить рекламу — WB-кабинет → Реклама → "
+                        f"выбери кампанию → пополни бюджет и сними с паузы."
+                    ),
+                })
+            else:
+                # Есть недавние «тратящие» кампании, но текущий sync вернул 0.
+                # Скорее всего WB-side гэп: между запусками sync новые данные
+                # ещё не появились, следующий запуск подберёт.
+                days_since = (
+                    (date.today() - last_spend).days if last_spend else None
+                )
+                alerts.append({
+                    "level": "info",
+                    "code": "ad_stats_sync_lag",
+                    "message": (
+                        f"Последний sync не получил новых данных fullstats, "
+                        f"но {recent_spenders_14d} кампаний тратили в последние 14 дней "
+                        f"(самая свежая — {days_since} дн. назад). "
+                        f"Скорее всего WB ещё не успел сформировать срез — "
+                        f"следующий запуск через 1-2 часа подберёт."
+                    ),
+                })
 
     return alerts
