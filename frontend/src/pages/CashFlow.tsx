@@ -106,6 +106,22 @@ export default function CashFlow() {
             <div className="text-xs text-muted mt-2">
               {q.data.period.from} … {q.data.period.to}
             </div>
+            {q.data.context?.pnl_cash_flow !== undefined && (
+              <div
+                className="text-xs mt-2"
+                title="ДДС считается через P&L как единый источник правды (final WB-логика, hybrid storage, НДС, налог). При расхождении — баг."
+              >
+                <span className="text-muted">Сверка с P&L:</span>{" "}
+                <span className="font-mono">
+                  {fmtRub(q.data.context.pnl_cash_flow)}
+                </span>
+                {Math.abs(q.data.context.pnl_cash_flow - q.data.net_cash_flow) > 1 && (
+                  <span className="ml-2 text-red-400">
+                    Δ {fmtRub(q.data.net_cash_flow - q.data.context.pnl_cash_flow)}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

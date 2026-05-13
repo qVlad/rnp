@@ -448,8 +448,10 @@ export const api = {
       net_cash_flow: number;
       context: {
         revenue_gross: number;
-        net_sales_inflow: number;
+        ppvz_for_pay_implied: number;
         wb_commission: number;
+        pnl_cash_flow: number;
+        pnl_profit: number;
       };
     }>(`/api/cash-flow?from=${from}&to=${to}`),
 
