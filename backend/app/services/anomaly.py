@@ -260,8 +260,8 @@ async def collect_alerts(
                     ),
                 })
             else:
-                # Активные кампании есть, но fullstats пустой —
-                # обычно значит дневной бюджет = 0 или показы не идут.
+                # Активные кампании есть, но fullstats пустой. Проверим
+                # баланс рекламного кабинета — если он 0, это и есть причина.
                 days_since = (
                     (date.today() - last_spend).days if last_spend else None
                 )
@@ -270,15 +270,67 @@ async def collect_alerts(
                     if days_since is not None
                     else "трат не было вообще"
                 )
-                alerts.append({
-                    "level": "warning",
-                    "code": "ad_stats_empty",
-                    "message": (
-                        f"{active_cnt} активных кампаний (status=11) в WB, "
-                        f"но fullstats возвращает 0 трат за 60 дней — {ago}. "
-                        f"Проверь в WB-кабинете → Реклама → дневной бюджет / лимит / тип ставки. "
-                        f"Реклама в P&L пока не учтена."
-                    ),
-                })
+
+                # On-demand balance probe — один WB-запрос, ловит cooldown
+                # внутри fetch_advert_account_balance и возвращает {} на любую
+                # ошибку. Если cooldown активен, мы уже отработали выше; сюда
+                # попадаем только когда категория advert свободна.
+                from app.sync.tenants import get_tenant_token  # noqa: WPS433
+                from app.integrations.wb.client import WbApiClient  # noqa: WPS433
+                from app.integrations.wb.advert import (  # noqa: WPS433
+                    fetch_advert_account_balance,
+                )
+
+                from app.services.tenant_context import get_tenant  # noqa: WPS433
+                tenant_id_for_probe = get_tenant(session)
+                balance: dict = {}
+                if tenant_id_for_probe is not None:
+                    try:
+                        token = await get_tenant_token(session, tenant_id_for_probe)
+                    except Exception:
+                        token = None
+                    if token:
+                        try:
+                            async with WbApiClient(token=token) as wb:
+                                balance = await fetch_advert_account_balance(wb)
+                        except Exception:
+                            balance = {}
+
+                total_kopecks = balance.get("total")
+                if total_kopecks is not None and int(total_kopecks) == 0:
+                    alerts.append({
+                        "level": "warning",
+                        "code": "ad_stats_zero_balance",
+                        "message": (
+                            f"Баланс рекламного кабинета WB = 0 ₽ (cash={balance.get('cash',0)}, "
+                            f"netting={balance.get('netting',0)}). "
+                            f"Поэтому {active_cnt} активных кампаний не тратят — нечего тратить. "
+                            f"Пополни счёт: WB-кабинет → Реклама → Финансы рекламы → пополнить."
+                        ),
+                    })
+                elif total_kopecks is not None and int(total_kopecks) > 0:
+                    rub = int(total_kopecks) / 100
+                    alerts.append({
+                        "level": "warning",
+                        "code": "ad_stats_empty_with_balance",
+                        "message": (
+                            f"На балансе WB-рекламы {rub:,.2f} ₽, но fullstats показывает 0 трат "
+                            f"за 60 дней ({ago}, {active_cnt} активных кампаний). "
+                            f"Скорее всего у кампаний нулевой дневной бюджет или ставка ниже минимальной. "
+                            f"Проверь: WB-кабинет → Реклама → выбери кампанию → дневной лимит и ставка."
+                        ),
+                    })
+                else:
+                    # Balance probe failed — fallback на общее сообщение
+                    alerts.append({
+                        "level": "warning",
+                        "code": "ad_stats_empty",
+                        "message": (
+                            f"{active_cnt} активных кампаний (status=11) в WB, "
+                            f"но fullstats возвращает 0 трат за 60 дней — {ago}. "
+                            f"Возможные причины: пустой баланс кабинета, нулевой дневной бюджет, "
+                            f"низкая ставка. Проверь в WB-кабинете → Реклама."
+                        ),
+                    })
 
     return alerts

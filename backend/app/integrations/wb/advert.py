@@ -113,10 +113,44 @@ async def fetch_campaigns_info(
                 category="advert",
                 params={"ids": ids_csv},
             )
+            # WB менял формат этого endpoint несколько раз:
+            #   2024 — плоский list of objects с camelCase (advertId, dailyBudget, …)
+            #   2026 — `{"adverts":[...]}` со snake_case (id, settings.name, …)
+            # dailyBudget больше не возвращается тут — теперь /adv/v1/budget?id=...
+            items: list[dict[str, Any]] = []
             if isinstance(data, list):
-                out.extend(data)
-            elif isinstance(data, dict) and data.get("advertId"):
-                out.append(data)
+                items = data
+            elif isinstance(data, dict):
+                if isinstance(data.get("adverts"), list):
+                    items = data["adverts"]
+                elif data.get("advertId") or data.get("id"):
+                    items = [data]
+            for raw in items:
+                # already in legacy camelCase shape — pass through
+                if "advertId" in raw and "dailyBudget" in raw:
+                    out.append(raw)
+                    continue
+                settings = raw.get("settings") or {}
+                nm_settings = raw.get("nm_settings") or []
+                first_nm = nm_settings[0] if nm_settings else {}
+                bids = first_nm.get("bids_kopecks") or {}
+                placements = settings.get("placements") or {}
+                out.append({
+                    "advertId": raw.get("id") or raw.get("advertId"),
+                    "name": settings.get("name") or raw.get("name"),
+                    "type": raw.get("type"),
+                    "status": raw.get("status"),
+                    "dailyBudget": raw.get("dailyBudget"),
+                    "startTime": raw.get("startTime") or raw.get("start_time"),
+                    "endTime": raw.get("endTime") or raw.get("end_time"),
+                    "paymentType": settings.get("payment_type") or raw.get("paymentType"),
+                    "bidType": raw.get("bid_type"),
+                    "bidSearchKopecks": bids.get("search"),
+                    "bidRecommendationsKopecks": bids.get("recommendations"),
+                    "placementSearch": bool(placements.get("search")),
+                    "placementRecommendations": bool(placements.get("recommendations")),
+                    "currency": raw.get("currency"),
+                })
         except WbApiError as e:
             # Graceful degradation: keep ids we already collected and try the
             # next chunk. Surface enough detail to recognize a sustained
@@ -133,6 +167,31 @@ async def fetch_campaigns_info(
             )
             continue
     return out
+
+
+async def fetch_advert_account_balance(client: WbApiClient) -> dict[str, Any]:
+    """`GET /adv/v1/budget` — общий баланс рекламного кабинета селлера.
+
+    Возвращает: `{"cash": int, "netting": int, "total": int, "currency": str}`.
+    `cash` — пополненный счёт; `netting` — взаимозачёт (WB перечисляет нам и
+    оставляет на рекламу); `total` = cash + netting. Если `total = 0`, ни одна
+    кампания не сможет тратить — это самая частая причина «ad_stats пуст».
+
+    На failure (4xx/cooldown) возвращает пустой dict, не падает — это
+    diagnostic endpoint, не critical path.
+    """
+    try:
+        data = await client.get("/adv/v1/budget", category="advert")
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        "cash": int(data.get("cash") or 0),
+        "netting": int(data.get("netting") or 0),
+        "total": int(data.get("total") or 0),
+        "currency": data.get("currency") or "RUB",
+    }
 
 
 async def fetch_fullstats(
