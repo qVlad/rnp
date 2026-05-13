@@ -10,7 +10,15 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AppSetting, Cogs, Product, SyncCheckpoint, WbReportDetail
+from app.db.models import (
+    AppSetting,
+    Cogs,
+    Product,
+    SyncCheckpoint,
+    WbAdCampaign,
+    WbAdStatsDaily,
+    WbReportDetail,
+)
 from app.services.metrics import compute_dashboard
 from app.services.unit_economics import build_unit_economics
 
@@ -203,13 +211,74 @@ async def collect_alerts(
                 ),
             })
         elif ad_stats_cp.last_status not in ("ok", None) and ad_stats_cp.rows_processed == 0:
-            alerts.append({
-                "level": "info",
-                "code": "ad_stats_empty",
-                "message": (
-                    f"ad_stats пуст: {ad_stats_cp.last_error or 'нет данных'} "
-                    f"— реклама в P&L не учтена"
-                ),
-            })
+            # Распознаём почему ad_stats пустой: реальный WB-cooldown сейчас,
+            # нет активных кампаний, или 0 трат при наличии активных.
+            from app.integrations.wb import cooldown as wb_cooldown  # noqa: WPS433
+
+            advert_cooldown_s = await wb_cooldown.get_remaining("advert")
+            active_cnt = (await session.execute(
+                select(func.count()).select_from(WbAdCampaign).where(
+                    WbAdCampaign.status == 11
+                )
+            )).scalar_one()
+            total_cnt = (await session.execute(
+                select(func.count()).select_from(WbAdCampaign)
+            )).scalar_one()
+            last_spend = (await session.execute(
+                select(func.max(WbAdStatsDaily.stat_date))
+            )).scalar_one()
+
+            if advert_cooldown_s > 0:
+                mins = max(1, advert_cooldown_s // 60)
+                alerts.append({
+                    "level": "info",
+                    "code": "ad_stats_cooldown",
+                    "message": (
+                        f"WB временно блокирует /adv/v3/fullstats (cooldown ~{mins} мин). "
+                        f"Следующий sync через 1-2 часа подберёт пропущенные данные."
+                    ),
+                })
+            elif total_cnt == 0:
+                alerts.append({
+                    "level": "info",
+                    "code": "ad_stats_no_campaigns",
+                    "message": (
+                        "Рекламные кампании в WB отсутствуют. "
+                        "Если ты крутишь рекламу через личный кабинет, проверь что в токене WB "
+                        "включена категория «Promotion / Реклама»."
+                    ),
+                })
+            elif active_cnt == 0:
+                alerts.append({
+                    "level": "info",
+                    "code": "ad_stats_no_active",
+                    "message": (
+                        f"Реклама в P&L = 0: ни одной активной кампании "
+                        f"(всего {total_cnt}, все на паузе/завершены). "
+                        f"Чтобы данные пошли — в WB-кабинете → Реклама → выбери кампанию → запусти показ. "
+                        f"Подтянется в течение 1-6 часов."
+                    ),
+                })
+            else:
+                # Активные кампании есть, но fullstats пустой —
+                # обычно значит дневной бюджет = 0 или показы не идут.
+                days_since = (
+                    (date.today() - last_spend).days if last_spend else None
+                )
+                ago = (
+                    f"последняя трата {days_since} дн. назад"
+                    if days_since is not None
+                    else "трат не было вообще"
+                )
+                alerts.append({
+                    "level": "warning",
+                    "code": "ad_stats_empty",
+                    "message": (
+                        f"{active_cnt} активных кампаний (status=11) в WB, "
+                        f"но fullstats возвращает 0 трат за 60 дней — {ago}. "
+                        f"Проверь в WB-кабинете → Реклама → дневной бюджет / лимит / тип ставки. "
+                        f"Реклама в P&L пока не учтена."
+                    ),
+                })
 
     return alerts
