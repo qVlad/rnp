@@ -31,6 +31,8 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.tenant_context import get_tenant
+
 from app.db.models import (
     AppSetting,
     ArtificialOrder,
@@ -241,9 +243,9 @@ async def _import_cogs(
             pack = _to_decimal(r.get("packaging_rub")) or Decimal(0)
             ful = _to_decimal(r.get("fulfillment_rub")) or Decimal(0)
             await session.execute(
-                pg_insert(Product).values(nm_id=nm_id).on_conflict_do_nothing(
-                    index_elements=["nm_id"]
-                )
+                pg_insert(Product)
+                .values(tenant_id=get_tenant(session), nm_id=nm_id)
+                .on_conflict_do_nothing(index_elements=["nm_id"])
             )
             existing = (await session.execute(
                 select(Cogs).where(Cogs.nm_id == nm_id, Cogs.valid_from == valid_from)
@@ -681,9 +683,9 @@ async def _import_off_platform(
             )
             if nm_id is not None:
                 await session.execute(
-                    pg_insert(Product).values(nm_id=nm_id).on_conflict_do_nothing(
-                        index_elements=["nm_id"]
-                    )
+                    pg_insert(Product)
+                    .values(tenant_id=get_tenant(session), nm_id=nm_id)
+                    .on_conflict_do_nothing(index_elements=["nm_id"])
                 )
             kwargs = dict(
                 dt=dt, nm_id=nm_id, kind=kind, qty=int(qty),
@@ -774,9 +776,9 @@ async def _import_pg_assignments(
                 continue
             # ensure product exists for FK
             await session.execute(
-                pg_insert(Product).values(nm_id=nm_id).on_conflict_do_nothing(
-                    index_elements=["nm_id"]
-                )
+                pg_insert(Product)
+                .values(tenant_id=get_tenant(session), nm_id=nm_id)
+                .on_conflict_do_nothing(index_elements=["nm_id"])
             )
             existing = (await session.execute(
                 select(ProductGroupAssignment).where(

@@ -29,6 +29,7 @@ from app.db.session import get_db
 from app.services.auth import get_db_tenant_scoped, require_director_or_head
 from app.services.audit import actor_from_request, audit_log, snapshot
 from app.services.auth import current_brands_filter
+from app.services.tenant_context import get_tenant
 
 _COGS_FIELDS = ["id", "nm_id", "valid_from", "cost_rub", "packaging_rub", "fulfillment_rub"]
 
@@ -136,11 +137,12 @@ async def add_history(
     request: Request,
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
-    # ensure product row exists (cogs has FK to products)
+    # ensure product row exists (cogs has FK to products). tenant_id is
+    # required by the NOT NULL constraint added in migration 0016.
     await session.execute(
-        pg_insert(Product).values(nm_id=payload.nm_id).on_conflict_do_nothing(
-            index_elements=["nm_id"]
-        )
+        pg_insert(Product)
+        .values(tenant_id=get_tenant(session), nm_id=payload.nm_id)
+        .on_conflict_do_nothing(index_elements=["nm_id"])
     )
     obj = Cogs(
         nm_id=payload.nm_id,

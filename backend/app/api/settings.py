@@ -163,6 +163,7 @@ async def upload_cogs(
     inserted = 0
     skipped = 0
     today = date.today()
+    tenant_id = get_tenant(session)
     for row in reader:
         if len(row) < 2:
             skipped += 1
@@ -190,9 +191,11 @@ async def upload_cogs(
             except InvalidOperation:
                 pass
 
-        # ensure product row exists (FK)
-        prod_stmt = pg_insert(Product).values(nm_id=nm_id).on_conflict_do_nothing(
-            index_elements=["nm_id"]
+        # ensure product row exists (FK). tenant_id required after migration 0016.
+        prod_stmt = (
+            pg_insert(Product)
+            .values(tenant_id=tenant_id, nm_id=nm_id)
+            .on_conflict_do_nothing(index_elements=["nm_id"])
         )
         await session.execute(prod_stmt)
 
