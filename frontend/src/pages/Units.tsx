@@ -4,7 +4,9 @@ import {
   type ColumnDef,
   flexRender,
   getCoreRowModel,
+  getPaginationRowModel,
   getSortedRowModel,
+  type PaginationState,
   type SortingState,
   type VisibilityState,
   useReactTable,
@@ -117,6 +119,10 @@ export default function Units() {
   const [includeArchived, setIncludeArchived] = useState(false);
   const [sorting, setSorting] = useState<SortingState>([{ id: "rev_sale", desc: true }]);
   const [filter, setFilter] = useState("");
+  const [pagination, setPagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: 50,
+  });
   const [hoverPhoto, setHoverPhoto] = useState<{ nm: number; x: number; y: number } | null>(null);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(() => {
     try {
@@ -521,12 +527,20 @@ export default function Units() {
   const table = useReactTable({
     data: filtered,
     columns,
-    state: { sorting, columnVisibility },
+    state: { sorting, columnVisibility, pagination },
     onSortingChange: setSorting,
     onColumnVisibilityChange: setColumnVisibility,
+    onPaginationChange: setPagination,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
   });
+
+  // При смене фильтра сбрасываем pageIndex чтобы не оставаться на пустой
+  // странице после сужения выборки.
+  useEffect(() => {
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }, [filter, includeArchived, rangeKey]);
 
   // Лейблы колонок для меню — берутся из header definition.
   const columnMenuItems = table.getAllLeafColumns().filter((c) => c.id !== "actions" && c.id !== "photo");
@@ -857,6 +871,71 @@ export default function Units() {
             </tbody>
           </table>
         )}
+        <PaginationFooter table={table} />
+      </div>
+    </div>
+  );
+}
+
+function PaginationFooter({ table }: { table: any }) {
+  const total = table.getFilteredRowModel().rows.length;
+  if (total === 0) return null;
+  const pageCount = table.getPageCount();
+  const pi = table.getState().pagination.pageIndex;
+  const ps = table.getState().pagination.pageSize;
+  const fromIdx = pi * ps + 1;
+  const toIdx = Math.min((pi + 1) * ps, total);
+  return (
+    <div className="flex items-center justify-between gap-3 pt-3 text-xs text-muted flex-wrap">
+      <div>
+        {fromIdx}–{toIdx} из {total} SKU
+      </div>
+      <div className="flex items-center gap-2">
+        <span>На странице:</span>
+        <select
+          className="bg-surface border border-border rounded-md p-1 text-sm text-white"
+          value={ps}
+          onChange={(e) => table.setPageSize(Number(e.target.value))}
+        >
+          {[25, 50, 100, 200, 500].map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="flex items-center gap-1">
+        <button
+          className="btn text-xs"
+          disabled={!table.getCanPreviousPage()}
+          onClick={() => table.setPageIndex(0)}
+        >
+          «
+        </button>
+        <button
+          className="btn text-xs"
+          disabled={!table.getCanPreviousPage()}
+          onClick={() => table.previousPage()}
+        >
+          ‹
+        </button>
+        <span className="px-2">
+          стр. {pi + 1} из {pageCount}
+        </span>
+        <button
+          className="btn text-xs"
+          disabled={!table.getCanNextPage()}
+          onClick={() => table.nextPage()}
+        >
+          ›
+        </button>
+        <button
+          className="btn text-xs"
+          disabled={!table.getCanNextPage()}
+          onClick={() => table.setPageIndex(pageCount - 1)}
+        >
+          »
+        </button>
       </div>
     </div>
   );

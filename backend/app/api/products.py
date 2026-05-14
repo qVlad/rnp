@@ -146,7 +146,15 @@ async def unarchive_product(nm_id: int, session: AsyncSession = Depends(get_db_t
 
 @router.get("/{nm_id}/photo")
 async def get_product_photo(nm_id: int) -> Response:
-    """Return the WB main photo for a SKU. Cached in Redis for 24 h."""
+    """Return the WB main photo for a SKU. Cached in Redis for 24 h.
+
+    Priority of URL sources:
+      1. Redis cache (fastest) — 24h TTL.
+      2. `Product.photo_url` из БД (заполняется через sync_product_photos
+         раз в сутки через WB Content API) — 1 запрос, ~100мс.
+      3. Heuristic basket-CDN probing (12+ кандидатов) — fallback ~700мс
+         для SKU без content-API синки.
+    """
     key = _PHOTO_KEY_FMT.format(nm_id=nm_id)
     neg_key = _PHOTO_NEG_FMT.format(nm_id=nm_id)
     r = redis_async.from_url(cfg.redis_url, decode_responses=False)
@@ -161,18 +169,46 @@ async def get_product_photo(nm_id: int) -> Response:
         # Negative cache: don't hammer WB CDN if we just probed and got 404.
         if await r.get(neg_key):
             raise HTTPException(404, "WB photo not in public CDN (cached)")
+
+        # (2) Prefer Product.photo_url из БД — заполнено через WB Content API.
+        # admin scope (без set_tenant) — Product.tenant_id фильтр не применяется,
+        # SELECT возвращает первый матч; для photo-proxy этого достаточно
+        # т.к. nm_id уникален в WB и фото у всех tenant'ов одинаковое.
+        from app.db.session import SessionLocal
+        from app.db.models import Product
+
+        db_url: str | None = None
+        async with SessionLocal() as session:
+            from sqlalchemy import select as _sel
+            row = (
+                await session.execute(_sel(Product.photo_url).where(Product.nm_id == nm_id))
+            ).first()
+            if row and row[0]:
+                db_url = row[0]
+
         body: bytes | None = None
         last_status = 0
         async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
-            for url in _wb_photo_urls(nm_id):
+            # (2) Сначала пробуем известный URL из БД.
+            if db_url:
                 try:
-                    resp = await client.get(url, headers={"User-Agent": "rnp/1.0"})
+                    resp = await client.get(db_url, headers={"User-Agent": "rnp/1.0"})
+                    last_status = resp.status_code
+                    if resp.status_code == 200 and resp.content:
+                        body = resp.content
                 except httpx.HTTPError:
-                    continue
-                last_status = resp.status_code
-                if resp.status_code == 200 and resp.content:
-                    body = resp.content
-                    break
+                    pass
+            # (3) Fallback — перебор basket-CDN'ов.
+            if body is None:
+                for url in _wb_photo_urls(nm_id):
+                    try:
+                        resp = await client.get(url, headers={"User-Agent": "rnp/1.0"})
+                    except httpx.HTTPError:
+                        continue
+                    last_status = resp.status_code
+                    if resp.status_code == 200 and resp.content:
+                        body = resp.content
+                        break
         if body is None:
             await r.set(neg_key, b"1", ex=_PHOTO_NEGATIVE_TTL)
             raise HTTPException(404, f"WB photo not found (last status {last_status})")

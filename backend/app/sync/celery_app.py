@@ -105,6 +105,13 @@ celery_app.conf.update(
             "task": "app.sync.tasks.sync_ad_campaign_details",
             "schedule": crontab(hour=4, minute=45),
         },
+        # Photo URLs from WB Content API — раз в сутки достаточно, фото
+        # карточек редко меняется. Заполняет products.photo_url чтобы
+        # photo-proxy не перебирал basket-CDN'ы.
+        "sync-product-photos-daily": {
+            "task": "app.sync.tasks.sync_product_photos",
+            "schedule": crontab(hour=5, minute=0),
+        },
         # Telegram daily digest — 09:00 MSK (no-op if bot is not configured)
         "tg-daily-digest": {
             "task": "app.sync.tasks.send_daily_digest",

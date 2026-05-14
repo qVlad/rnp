@@ -1315,6 +1315,66 @@ def send_daily_digest() -> bool:
     return asyncio.run(_send_daily_digest_async())
 
 
+async def _sync_product_photos_async(tenant_id: int) -> int:
+    """Заполняет `products.photo_url` через WB Content API (раз в сутки).
+
+    Без этого photo-proxy (`/api/products/{nm_id}/photo`) для каждого cold-MISS
+    перебирает 12+ basket-CDN'ов до 200 OK (~700мс). С photo_url из БД —
+    1 запрос, ~100мс.
+
+    Идемпотентна: повторный запуск перезаписывает photo_url если поменялся
+    (WB иногда меняет — переезд CDN, новый фото-сет)."""
+    from app.integrations.wb.content import extract_photo_url, fetch_cards_list
+
+    updated = 0
+    async with tenant_sync_context(tenant_id) as ctx:
+        if ctx is None:
+            log.info("photos: tenant %s no WB token, skip", tenant_id)
+            return 0
+        session, wb = ctx
+        try:
+            async for batch in fetch_cards_list(wb, limit=100):
+                # Готовим mapping nm_id → photo_url
+                nm_to_url: dict[int, str] = {}
+                for card in batch:
+                    nm = card.get("nmID") or card.get("nmId")
+                    if not nm:
+                        continue
+                    url = extract_photo_url(card)
+                    if url:
+                        nm_to_url[int(nm)] = url
+                if not nm_to_url:
+                    continue
+                # UPDATE существующих Product записей (без insert: фото имеет
+                # смысл только для уже синканных через orders/sales SKU).
+                rows = (
+                    await session.execute(
+                        select(Product).where(Product.nm_id.in_(list(nm_to_url.keys())))
+                    )
+                ).scalars().all()
+                for p in rows:
+                    new_url = nm_to_url.get(p.nm_id)
+                    if new_url and p.photo_url != new_url:
+                        p.photo_url = new_url
+                        updated += 1
+                await session.commit()
+        except Exception as e:
+            log.warning("photos: fetch failed (%s) — skipping this run", e)
+            return updated
+    log.info("photos: tenant=%s updated=%d", tenant_id, updated)
+    return updated
+
+
+@celery_app.task(name="app.sync.tasks.sync_product_photos_for_tenant")
+def sync_product_photos_for_tenant(tenant_id: int) -> int:
+    return asyncio.run(_sync_product_photos_async(tenant_id))
+
+
+@celery_app.task(name="app.sync.tasks.sync_product_photos")
+def sync_product_photos() -> dict[str, Any]:
+    return _fanout(sync_product_photos_for_tenant)
+
+
 @celery_app.task(name="app.sync.tasks.sync_all")
 def sync_all() -> dict[str, Any]:
     """Запустить все dispatcher'ы (fanout per-tenant для каждого синка)."""
