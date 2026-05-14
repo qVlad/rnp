@@ -46,7 +46,7 @@ from typing import Any
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Product, WbReportDetail
+from app.db.models import Product, WbRedeemNotification, WbReportDetail
 from app.services.period_aggregates import (
     OP_RETURN,
     OP_SALE,
@@ -174,6 +174,42 @@ async def build_tax_report(
 
     rows = (await session.execute(rd_stmt)).all()
 
+    # ── Buybacks (Уведомления о выкупе) — приходят отдельно через Documents API.
+    # Группируем по неделе [report_date_from..report_date_to] чтобы попасть в
+    # соответствующую строку отчёта. Если выкуп вне границы отчётов — добавим
+    # как отдельную строку с realization_id=None ниже.
+    buyback_stmt = (
+        select(
+            WbRedeemNotification.notification_number,
+            WbRedeemNotification.notification_date,
+            WbRedeemNotification.total_sum_with_vat,
+        )
+        .where(WbRedeemNotification.notification_date >= date_from)
+        .where(WbRedeemNotification.notification_date <= date_to)
+        .order_by(WbRedeemNotification.notification_date)
+    )
+    buyback_rows = (await session.execute(buyback_stmt)).all()
+    # Распределяем по периодам [report_date_from..report_date_to]
+    buyback_by_realization: dict[int, float] = {}
+    unallocated_buybacks: list[dict[str, Any]] = []
+    for br in buyback_rows:
+        matched = False
+        for r in rows:
+            if r.report_date_from <= br.notification_date <= r.report_date_to:
+                buyback_by_realization[int(r.realization_id)] = (
+                    buyback_by_realization.get(int(r.realization_id), 0.0)
+                    + float(br.total_sum_with_vat or 0)
+                )
+                matched = True
+                break
+        if not matched:
+            # Выкуп вне границ отчётов реализации — отдельной строкой
+            unallocated_buybacks.append({
+                "number": br.notification_number,
+                "date": br.notification_date,
+                "sum": float(br.total_sum_with_vat or 0),
+            })
+
     # COGS per realization: суммируем стоимость проданных единиц по дате
     # признания дохода (report_date_to). Используем тот же lookup что pnl_builder.
     cogs_lookup = await build_cogs_lookup(session)
@@ -232,9 +268,11 @@ async def build_tax_report(
     for r in rows:
         income_realization = float(r.income_realization or 0)
         income_compensation = float(r.income_compensation or 0)
-        # Уведомления о выкупе / взаимозачёты — пока не подключены (требуют
-        # ручного ввода или парсинга банковской выписки). Зарезервированы.
-        income_buyback = 0.0
+        # Buyback из синхронизированных Уведомлений о выкупе (Documents API).
+        # Если notification_date попала в [report_date_from, report_date_to] —
+        # добавляем в эту строку отчёта. Взаимозачёты пока не подключены
+        # (отдельный документ «Акт взаимозачёта», категория actprofit).
+        income_buyback = buyback_by_realization.get(int(r.realization_id), 0.0)
         income_offset = 0.0
         income_total = income_realization + income_compensation + income_buyback + income_offset
 

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
 
@@ -19,13 +19,29 @@ export default function TaxReport() {
   const [from, setFrom] = useState(defaultFrom);
   const [to, setTo] = useState(defaultTo);
 
+  const queryClient = useQueryClient();
   const q = useQuery({
     queryKey: ["tax-report", from, to],
     queryFn: () => api.taxReport(from, to),
   });
+  const buybacks = useQuery({
+    queryKey: ["tax-report-buybacks", from, to],
+    queryFn: () => api.taxReportBuybacks(from, to),
+  });
+  const syncBuybacks = useMutation({
+    mutationFn: () => api.taxReportSyncBuybacks(),
+    onSuccess: () => {
+      // Wait a bit then refetch (task is async)
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["tax-report-buybacks"] });
+        queryClient.invalidateQueries({ queryKey: ["tax-report"] });
+      }, 5000);
+    },
+  });
 
   const rows = q.data?.rows ?? [];
   const totals = q.data?.totals;
+  const buybackRows = buybacks.data?.items ?? [];
 
   return (
     <div className="flex flex-col gap-4">
@@ -77,9 +93,17 @@ export default function TaxReport() {
           <span className="text-xs text-muted uppercase">По</span>
           <input type="date" className="input" value={to} onChange={(e) => setTo(e.target.value)} />
         </label>
-        <div className="text-xs text-muted ml-auto">
+        <button
+          className="btn ml-auto"
+          onClick={() => syncBuybacks.mutate()}
+          disabled={syncBuybacks.isPending}
+          title="Скачать новые Уведомления о выкупе из WB Documents API"
+        >
+          {syncBuybacks.isPending ? "Синхронизация…" : "↻ Синхр. выкупы"}
+        </button>
+        <div className="text-xs text-muted">
           {q.isLoading && "Загрузка…"}
-          {!q.isLoading && `Отчётов: ${rows.length}`}
+          {!q.isLoading && `Отчётов: ${rows.length}, Выкупов: ${buybackRows.length}`}
         </div>
       </section>
 
@@ -90,6 +114,38 @@ export default function TaxReport() {
           <KpiBlock label="Себестоимость" value={totals.cogs} color="text-warn" />
           <KpiBlock label="База налога" value={totals.tax_base} />
           <KpiBlock label="Налог к уплате" value={totals.tax} color="text-accent" big />
+        </section>
+      )}
+
+      {buybackRows.length > 0 && (
+        <section className="card">
+          <div className="flex items-baseline gap-3 mb-2">
+            <h2 className="font-semibold">Уведомления о выкупе</h2>
+            <span className="text-xs text-muted">
+              {buybackRows.length} шт. на сумму {fmtRub(buybacks.data?.total_sum || 0)} —
+              суммируются в Доход в соответствующем отчёте по дате выкупа
+            </span>
+          </div>
+          <table className="min-w-full text-xs">
+            <thead className="border-b border-border">
+              <tr>
+                <th className="text-left py-1 px-2">№</th>
+                <th className="text-left py-1 px-2">Дата</th>
+                <th className="text-right py-1 px-2">Сумма (вкл. НДС)</th>
+                <th className="text-right py-1 px-2">Позиций</th>
+              </tr>
+            </thead>
+            <tbody>
+              {buybackRows.map((b) => (
+                <tr key={b.number} className="border-b border-border/40">
+                  <td className="py-1 px-2 font-mono">№{b.number}</td>
+                  <td className="py-1 px-2 text-muted">{b.date}</td>
+                  <td className="py-1 px-2 text-right text-success">{fmtRub(b.total_sum_with_vat)}</td>
+                  <td className="py-1 px-2 text-right text-muted">{b.items_count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </section>
       )}
 

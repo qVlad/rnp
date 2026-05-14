@@ -364,6 +364,31 @@ class WbAdCampaign(Base, TenantScopedMixin):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class WbRedeemNotification(Base, TenantScopedMixin):
+    """Уведомление о выкупе (WB Documents API → category="redeem-notification").
+
+    Когда WB сам выкупает товар продавца (например, потерянный/повреждённый),
+    он шлёт PDF/XLSX-уведомление отдельно от еженедельного отчёта реализации.
+    Эти суммы — доход для УСН/АУСН (бухгалтер 1С признаёт их по дате
+    поступления на р/с). См. tax_report.income_buyback.
+    """
+
+    __tablename__ = "wb_redeem_notification"
+
+    # Композитный PK (tenant_id, notification_number) — номер уникален в рамках
+    # одного селлера, но не глобально.
+    notification_number: Mapped[str] = mapped_column(String(64), primary_key=True)
+    notification_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    total_sum_with_vat: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
+    # JSON массив товарных позиций: [{nm_id?, vendor_code, name, qty, sum, kiz}, ...]
+    items: Mapped[dict | None] = mapped_column(JSONB)
+    # ID документа в WB Documents API (для повторного download)
+    service_name: Mapped[str | None] = mapped_column(String(128))
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class WbAdStatsDaily(Base, TenantScopedMixin):
     __tablename__ = "wb_ad_stats_daily"
 

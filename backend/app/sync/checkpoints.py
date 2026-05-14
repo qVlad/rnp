@@ -15,7 +15,11 @@ async def get_checkpoint(session: AsyncSession, entity: str) -> SyncCheckpoint |
 async def get_or_create(session: AsyncSession, entity: str) -> SyncCheckpoint:
     cp = await get_checkpoint(session, entity)
     if cp is None:
-        cp = SyncCheckpoint(entity=entity)
+        # SyncCheckpoint composite PK = (tenant_id, entity). НЕ наследует
+        # TenantScopedMixin, поэтому before_flush auto-stamp не работает.
+        # Берём tenant_id из session.info (set_tenant — см. tenant_sync_context).
+        tenant_id = session.sync_session.info.get("tenant_id")
+        cp = SyncCheckpoint(entity=entity, tenant_id=tenant_id)
         session.add(cp)
         await session.flush()
     return cp

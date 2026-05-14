@@ -174,6 +174,26 @@ export const api = {
   pnl: (from: string, to: string, granularity: "day" | "week" | "month") =>
     request(`/api/pnl?from=${from}&to=${to}&granularity=${granularity}`),
 
+  taxReportBuybacks: (from: string, to: string) =>
+    request<{
+      from: string;
+      to: string;
+      items: Array<{
+        number: string;
+        date: string;
+        total_sum_with_vat: number;
+        items_count: number;
+        service_name: string | null;
+      }>;
+      total_sum: number;
+    }>(`/api/tax-report/buybacks?from=${from}&to=${to}`),
+
+  taxReportSyncBuybacks: () =>
+    request<{ status: string; task_id?: string }>(
+      "/api/tax-report/sync-buybacks",
+      { method: "POST" },
+    ),
+
   taxReport: (from: string, to: string) =>
     request<{
       from: string;

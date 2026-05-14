@@ -878,13 +878,15 @@ async def _sync_redeem_notifications_async(tenant_id: int, days_back: int = 90) 
                 items=parsed["items"],
                 service_name=parsed["service_name"],
             )
+            # NB: `stmt.excluded.items` коллизит с dict.items() — SQLAlchemy
+            # отдаёт bound method. Берём через subscript ['items'].
             stmt = stmt.on_conflict_do_update(
                 index_elements=["tenant_id", "notification_number"],
                 set_={
-                    "notification_date": stmt.excluded.notification_date,
-                    "total_sum_with_vat": stmt.excluded.total_sum_with_vat,
-                    "items": stmt.excluded.items,
-                    "service_name": stmt.excluded.service_name,
+                    "notification_date": stmt.excluded["notification_date"],
+                    "total_sum_with_vat": stmt.excluded["total_sum_with_vat"],
+                    "items": stmt.excluded["items"],
+                    "service_name": stmt.excluded["service_name"],
                 },
             )
             await session.execute(stmt)
@@ -1097,6 +1099,25 @@ async def _sync_ad_stats_async(tenant_id: int, days_back: int = 60) -> int:
                 session, "ad_stats", rows_processed=0, status="skipped", error=str(e)[:500]
             )
             return 0
+
+        # Диагностика: сколько кампаний вернули непустой days[]. ROADMAP P1 —
+        # «9 active кампаний без stats». WB иногда фильтрует на своей стороне
+        # для status=7 (завершённых) или для очень старых периодов. Логируем
+        # split: returned_with_data / total_requested. Если разрыв постоянен,
+        # это WB-side ограничение, фикс не в нашем коде.
+        with_data = sum(1 for c in stats if c.get("days"))
+        if with_data < len(ids):
+            ids_returned = {int(c.get("advertId", 0)) for c in stats if c.get("days")}
+            missing = sorted(set(ids) - ids_returned)
+            status_by_id = {int(r[0]): r[1] for r in rows}
+            missing_by_status: dict[int, int] = {}
+            for m in missing:
+                st = status_by_id.get(m)
+                missing_by_status[st] = missing_by_status.get(st, 0) + 1
+            log.info(
+                "ad_stats: %d/%d campaigns returned data; missing by status: %s",
+                with_data, len(ids), dict(missing_by_status),
+            )
         values: list[dict[str, Any]] = []
         for camp in stats:
             advert_id = camp.get("advertId")
