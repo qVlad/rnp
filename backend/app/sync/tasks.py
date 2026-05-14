@@ -43,9 +43,9 @@ from app.integrations.wb.advert import (
 from app.integrations.wb.paid_storage import fetch_paid_storage
 from app.integrations.wb.statistics import (
     fetch_orders,
-    fetch_report_detail_v2,
+    fetch_report_detail_with_fallback as fetch_report_detail_v2,
     fetch_sales,
-    fetch_stocks,
+    fetch_stocks_with_fallback as fetch_stocks,
 )
 from app.sync.celery_app import celery_app
 from app.sync.checkpoints import get_date_from, update_checkpoint
@@ -790,6 +790,122 @@ def sync_report_detail_dispatch() -> dict[str, Any]:
 def sync_report_detail_backfill_dispatch() -> dict[str, Any]:
     """Weekly safety net: keep the 12-week reconciliation window populated."""
     return _fanout(sync_report_detail_for_tenant, 90)
+
+
+# ---------------------------------------------------------------------------
+# Redeem notifications (Documents API)
+# ---------------------------------------------------------------------------
+
+
+async def _sync_redeem_notifications_async(tenant_id: int, days_back: int = 90) -> int:
+    """Sync «Уведомление о выкупе» через WB Documents API.
+
+    1) GET /documents/list?category=redeem-notification — список доступных за период
+    2) Для каждого нового (не в БД) — GET /documents/download — скачать ZIP
+    3) Парсим XLSX, upsert в wb_redeem_notification
+
+    Используем per-document download (1/10 сек), а не batch (1/5 мин) — у нас
+    редко >1-2 новых в неделю, проще без батчинга.
+    """
+    from app.db.models import WbRedeemNotification
+    from app.integrations.wb.documents import (
+        CATEGORY_REDEEM_NOTIFICATION,
+        download_document,
+        list_documents,
+        parse_redeem_notification,
+    )
+
+    today = datetime.now(timezone.utc).date()
+    date_from = today - timedelta(days=days_back)
+
+    total_synced = 0
+    async with tenant_sync_context(tenant_id) as ctx:
+        if ctx is None:
+            log.info("redeem_notifications: tenant %s no token, skip", tenant_id)
+            return 0
+        session, wb = ctx
+
+        try:
+            docs = await list_documents(
+                wb, CATEGORY_REDEEM_NOTIFICATION, date_from, today, limit=50
+            )
+        except Exception as e:
+            log.warning("redeem_notifications: list failed (%s)", e)
+            await update_checkpoint(
+                session, "redeem_notifications", rows_processed=0,
+                status="skipped", error=str(e)[:500],
+            )
+            return 0
+
+        if not docs:
+            await update_checkpoint(session, "redeem_notifications", rows_processed=0)
+            return 0
+
+        # Какие уже есть в БД (избегаем повторных скачиваний)
+        existing = (
+            await session.execute(
+                select(WbRedeemNotification.service_name).where(
+                    WbRedeemNotification.service_name.in_(
+                        [d.get("serviceName") for d in docs if d.get("serviceName")]
+                    )
+                )
+            )
+        ).scalars().all()
+        existing_set = set(existing)
+
+        new_docs = [d for d in docs if d.get("serviceName") not in existing_set]
+        log.info(
+            "redeem_notifications: tenant=%s found=%d new=%d",
+            tenant_id, len(docs), len(new_docs),
+        )
+
+        for doc in new_docs:
+            sname = doc.get("serviceName")
+            if not sname:
+                continue
+            try:
+                zip_bytes = await download_document(wb, sname, extension="zip")
+                parsed = parse_redeem_notification(zip_bytes)
+            except Exception as e:
+                log.warning("redeem_notifications: %s failed (%s)", sname, e)
+                continue
+
+            stmt = pg_insert(WbRedeemNotification).values(
+                tenant_id=tenant_id,
+                notification_number=parsed["notification_number"],
+                notification_date=parsed["notification_date"],
+                total_sum_with_vat=parsed["total_sum_with_vat"],
+                items=parsed["items"],
+                service_name=parsed["service_name"],
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["tenant_id", "notification_number"],
+                set_={
+                    "notification_date": stmt.excluded.notification_date,
+                    "total_sum_with_vat": stmt.excluded.total_sum_with_vat,
+                    "items": stmt.excluded.items,
+                    "service_name": stmt.excluded.service_name,
+                },
+            )
+            await session.execute(stmt)
+            total_synced += 1
+
+        await session.commit()
+        await update_checkpoint(
+            session, "redeem_notifications", rows_processed=total_synced,
+        )
+    return total_synced
+
+
+@celery_app.task(name="app.sync.tasks.sync_redeem_notifications_for_tenant")
+def sync_redeem_notifications_for_tenant(tenant_id: int, days_back: int = 90) -> int:
+    return asyncio.run(_sync_redeem_notifications_async(tenant_id, days_back))
+
+
+@celery_app.task(name="app.sync.tasks.sync_redeem_notifications")
+def sync_redeem_notifications_dispatch() -> dict[str, Any]:
+    """Beat dispatcher (раз в день): fanout по активным tenants."""
+    return _fanout(sync_redeem_notifications_for_tenant)
 
 
 

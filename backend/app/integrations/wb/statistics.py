@@ -74,6 +74,10 @@ async def fetch_stocks(
       nmId, barcode, supplierArticle, warehouseName,
       quantity (available), inWayToClient, inWayFromClient, quantityFull,
       Price (note capital P), Discount (note capital D), subject, brand, category
+
+    **DEPRECATED** — sunset 2026-06-23. New code should use `fetch_stocks_v2`
+    which targets seller-analytics-api. Use `fetch_stocks_with_fallback`
+    if you want auto-switch on sunset.
     """
     if date_from is None:
         date_from = datetime(2019, 6, 20)
@@ -83,6 +87,90 @@ async def fetch_stocks(
         params={"dateFrom": _format_dt(date_from)},
     )
     return data or []
+
+
+# Field mapping: legacy /supplier/stocks vs new /analytics/v1/stocks-report
+# differ in key names and structure. Normalize to legacy shape so downstream
+# code (sync/tasks._sync_stocks_async) consumes both transparently.
+_STOCKS_V2_KEYS = {
+    "nmId": "nmId",
+    "barcode": "barcode",
+    "supplierArticle": "supplierArticle",
+    "warehouseName": "warehouseName",
+    "quantity": "quantity",
+    "inWayToClient": "inWayToClient",
+    "inWayFromClient": "inWayFromClient",
+    "quantityFull": "quantityFull",
+    "Price": "Price",
+    "Discount": "Discount",
+    "subject": "subject",
+    "brand": "brand",
+    "category": "category",
+}
+
+
+def _normalize_stocks_v2_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Перевести строку нового /analytics/v1/stocks-report формата в legacy
+    /supplier/stocks shape. Неизвестные ключи пропускаются — downstream код
+    использует только конкретные поля (см. sync/tasks._sync_stocks_async).
+
+    Если WB введёт переименования полей в новом endpoint — добавить мэппинг
+    сюда (как `_LEGACY_ALIASES` для report_detail)."""
+    # Текущее предположение: ключи совпадают. Если живой curl покажет
+    # переименования — расширить логику ниже.
+    return {_STOCKS_V2_KEYS.get(k, k): v for k, v in row.items()}
+
+
+async def fetch_stocks_v2(
+    client: WbApiClient,
+    date_from: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """`POST /api/analytics/v1/stocks-report/wb-warehouses` — replacement for
+    sunset-2026-06-23 `/supplier/stocks` on seller-analytics-api.
+
+    Key differences:
+    - POST with JSON body (not GET with query string)
+    - 3 req/min with hard 20s interval (vs legacy 1/min with burst)
+    - Same conceptual "full snapshot" semantics (dateFrom не фильтр)
+
+    Rows are normalized to legacy snake/Pascal mix so the caller treats the
+    response identical to `fetch_stocks()`. If WB renames fields, extend
+    `_STOCKS_V2_KEYS` instead of patching downstream code.
+    """
+    if date_from is None:
+        date_from = datetime(2019, 6, 20)
+    body: dict[str, Any] = {"dateFrom": _format_dt(date_from)}
+    data = await client.post(
+        "/api/analytics/v1/stocks-report/wb-warehouses",
+        category="analytics",
+        json=body,
+    )
+    rows = data if isinstance(data, list) else (data or {}).get("data") or []
+    return [_normalize_stocks_v2_row(r) for r in rows]
+
+
+async def fetch_stocks_with_fallback(
+    client: WbApiClient,
+    date_from: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Graceful sunset migration: пробуем legacy `/supplier/stocks` сначала,
+    если WB вернул 410 Gone / 404 (sunset 2026-06-23) — автоматически
+    переключаемся на новый `/analytics/v1/stocks-report/wb-warehouses`.
+
+    Это даёт zero-downtime миграцию: ничего не нужно деплоить ровно в день
+    sunset, переключение произойдёт само на первой 410-ответе после того
+    как WB отрубит legacy endpoint."""
+    from app.integrations.wb.client import WbApiError  # local import — avoid cycle
+
+    try:
+        return await fetch_stocks(client, date_from=date_from)
+    except WbApiError as e:
+        # 410 Gone — типичный sunset signal у WB. 404 — fallback на случай если
+        # WB просто удалит path. Любая 4xx-ошибка не связанная с sunset (401, 403,
+        # 429) должна пробрасываться, поэтому фильтруем строго по двум кодам.
+        if e.status not in (404, 410):
+            raise
+        return await fetch_stocks_v2(client, date_from=date_from)
 
 
 async def fetch_report_detail(
@@ -230,6 +318,49 @@ async def fetch_report_detail_v2(
         if max_rrd_id <= rrd_id:
             return
         rrd_id = max_rrd_id
+
+
+async def fetch_report_detail_with_fallback(
+    client: WbApiClient,
+    date_from: datetime,
+    date_to: datetime,
+    *,
+    rrdid_start: int = 0,
+    page_limit: int = 100_000,
+) -> Iterable[list[dict[str, Any]]]:
+    """Graceful migration для report_detail. **v2 — primary** (мы уже на нём
+    с мая 2026); legacy `/reportDetailByPeriod` — fallback на случай если
+    finance-api временно ломается. После sunset 2026-07-15 legacy перестанет
+    отвечать, и эта функция станет эквивалентом `fetch_report_detail_v2`.
+
+    Любая 4xx-ошибка v2 (кроме 401/403/429) триггерит откат на legacy. 401/403
+    это auth-проблема одинаковая для обоих, 429 — rate-limit, fallback её не
+    решит."""
+    from app.integrations.wb.client import WbApiError
+
+    try:
+        async for batch in fetch_report_detail_v2(
+            client,
+            date_from,
+            date_to,
+            rrd_id_start=rrdid_start,
+            page_limit=page_limit,
+        ):
+            yield batch
+        return
+    except WbApiError as e:
+        if e.status in (401, 403, 429) or e.status >= 500:
+            raise
+        # 4xx бизнес-ошибка — возможно finance-api временный спад. Пока legacy
+        # жив (до 2026-07-15) — пробуем его.
+        async for batch in fetch_report_detail(
+            client,
+            date_from,
+            date_to,
+            rrdid_start=rrdid_start,
+            page_limit=page_limit,
+        ):
+            yield batch
 
 
 async def fetch_incomes(
