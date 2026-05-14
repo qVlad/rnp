@@ -953,14 +953,26 @@ async def _sync_ad_stats_async(tenant_id: int, days_back: int = 60) -> int:
             return 0
         session, wb = ctx
         # Read advert ids from local DB; sync_ad_campaigns refreshes them hourly.
-        ids_rows = (
-            await session.execute(select(WbAdCampaign.advert_id))
-        ).scalars().all()
-        ids = [int(i) for i in ids_rows]
+        rows = (
+            await session.execute(
+                select(WbAdCampaign.advert_id, WbAdCampaign.status)
+            )
+        ).all()
+        ids = [int(r[0]) for r in rows]
         if not ids:
             log.info("ad_stats: no campaigns in DB yet — run sync_ad_campaigns first")
             await update_checkpoint(session, "ad_stats", rows_processed=0)
             return 0
+        # WB status codes: 9 = в работе. Если ни одной активной — fullstats для
+        # paused/ended кампаний возвращает только исторические `days[]` до даты
+        # остановки. Логируем явно, чтобы «дыра в синке» не казалась багом.
+        active_cnt = sum(1 for r in rows if r[1] == 9)
+        if active_cnt == 0:
+            log.warning(
+                "ad_stats: no active campaigns (status=9) among %d — "
+                "fullstats will only return historical data up to last pause date",
+                len(ids),
+            )
         try:
             stats = await fetch_fullstats(wb, ids, date_from=start, date_to=end)
         except Exception as e:

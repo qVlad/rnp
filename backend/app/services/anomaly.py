@@ -323,4 +323,28 @@ async def collect_alerts(
                     ),
                 })
 
+        # Отдельный кейс: sync отрабатывает успешно (last_status=ok,
+        # rows_processed>0 — переинсёрт исторического окна), но MAX(stat_date)
+        # отстаёт от сегодня на >7 дней. Это значит, что все активные
+        # кампании остановлены и WB возвращает только хвост до даты паузы.
+        # Гейт выше (last_status != 'ok' AND rows_processed == 0) этот сценарий
+        # не ловит, поэтому проверяем отдельно по реальной свежести данных.
+        if ad_stats_cp.last_status == "ok" and (ad_stats_cp.rows_processed or 0) > 0:
+            max_stat_date = (await session.execute(
+                select(func.max(WbAdStatsDaily.stat_date))
+            )).scalar_one()
+            if max_stat_date is not None:
+                gap_days = (date.today() - max_stat_date).days
+                if gap_days > 7:
+                    alerts.append({
+                        "level": "warning",
+                        "code": "ad_stats_data_stale",
+                        "message": (
+                            f"Sync рекламы работает, но свежих данных нет уже "
+                            f"{gap_days} дн. (последняя дата — {max_stat_date}). "
+                            f"Скорее всего все кампании на паузе или завершены. "
+                            f"WB-кабинет → Реклама → проверь статусы и пополни бюджет."
+                        ),
+                    })
+
     return alerts
