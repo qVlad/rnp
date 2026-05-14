@@ -174,6 +174,39 @@ export const api = {
   pnl: (from: string, to: string, granularity: "day" | "week" | "month") =>
     request(`/api/pnl?from=${from}&to=${to}&granularity=${granularity}`),
 
+  taxReport: (from: string, to: string) =>
+    request<{
+      from: string;
+      to: string;
+      scope: "company" | "brands";
+      rows: Array<{
+        realization_id: number;
+        report_date_from: string;
+        report_date_to: string;
+        income_realization: number;
+        income_compensation: number;
+        income_buyback: number;
+        income_offset: number;
+        income_total: number;
+        expense_ppvz_vw: number;
+        expense_ppvz_vw_nds: number;
+        expense_acquiring: number;
+        expense_delivery: number;
+        expense_paid_acceptance: number;
+        expense_penalty: number;
+        expense_deduction: number;
+        expense_storage: number;
+        expense_rebill_logistic: number;
+        expense_total: number;
+        cogs: number;
+        tax_base: number;
+        tax_system: string;
+        tax_rate: number;
+        tax: number;
+      }>;
+      totals: Record<string, number>;
+    }>(`/api/tax-report?from=${from}&to=${to}`),
+
   pnlReconciliation: (weeks = 12, diff_threshold_pct = 1.0) =>
     request<{
       weeks_back: number;

@@ -130,6 +130,24 @@ Helper `app.services.auth.current_brands_filter()` возвращает `set[str
 
 Видимость пунктов меню фронта — в `frontend/src/components/Layout.tsx` (`directorOnly`, `directorOrHead`).
 
+## Единый источник истины: period_aggregates
+
+`backend/app/services/period_aggregates.py` — каноничные предикаты для всех
+аналитических страниц. Любой новый сервис который читает `wb_report_detail`
+ОБЯЗАН использовать оттуда `OP_SALE`, `OP_RETURN`, `OP_COMPENSATION_RETURN`,
+`REVENUE_FIELD`, `sale_dt_filter()`, `sale_day()` — а не дублировать
+`supplier_oper_name == "Продажа"` локально (иначе page-to-page drift).
+
+**Каноничное поле даты — `sale_dt`** (когда WB зафиксировал физический выкуп/
+возврат в кабинете). Совпадает с xlsx-выгрузкой WB 1:1 (Δ 0₽). Старое `rr_dt`
+(дата строки в фин-отчёте) для возвратов сдвигается на 1-2 недели вперёд —
+ломало сверку между P&L / Reconciliation / Dashboard. С мая 2026 все
+сервисы переведены на `sale_dt` (см. `period_aggregates.sale_dt_filter()`).
+
+**Каноничный фильтр периода:** `WbAdStatsDaily.stat_date < end_date_exclusive`
+(полуоткрытый интервал). Не добавлять `+ timedelta(days=1)` поверх уже
+exclusive `end` — даст лишний день рекламы в Units (была баг).
+
 ## Дашборд KPI и режимы
 
 Дашборд имеет toggle **Preliminary / Final** (см. `Dashboard.tsx:dataMode`):

@@ -1,11 +1,18 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
 
+// WB seller cabinet — раздел финансовых отчётов реализации.
+// Прямого URL на конкретный realization_id у WB нет — селлер открывает
+// общий список и фильтрует по ID.
+const WB_FINANCE_REPORTS_URL =
+  "https://seller.wildberries.ru/realization-reports/main";
+
 export default function PnLReconciliation() {
   const [weeks, setWeeks] = useState(12);
   const [threshold, setThreshold] = useState(1);
+  const [expanded, setExpanded] = useState<string | null>(null);
   const q = useQuery({
     queryKey: ["pnl-reconciliation", weeks, threshold],
     queryFn: () => api.pnlReconciliation(weeks, threshold),
@@ -35,7 +42,11 @@ export default function PnLReconciliation() {
         (несовпадение, копать в audit-log или backfill). <b>Доля выплаты</b>{" "}
         (Payout / gross) — какой % gross-выручки реально дошёл до селлера после
         WB-удержаний; норма 25-40 % для маркетплейса.
-        <span className="text-accent ml-2">
+        <div className="mt-2 text-accent">
+          💡 <b>Кликни на строку</b> — откроется пошаговая сверка с прямой ссылкой
+          в WB-кабинет: куда смотреть и какие поля сличать.
+        </div>
+        <span className="text-accent">
           Все термины → <a href="/glossary" className="underline">/glossary</a>
         </span>
       </div>
@@ -152,14 +163,21 @@ export default function PnLReconciliation() {
                 const fees =
                   p.wb.delivery + p.wb.storage + p.wb.penalty +
                   p.wb.deduction + p.wb.acquiring - p.wb.additional;
+                const key = `${p.period_from}-${p.period_to}`;
+                const isOpen = expanded === key;
                 return (
+                  <React.Fragment key={key}>
                   <tr
-                    key={`${p.period_from}-${p.period_to}`}
-                    className={`border-t border-border ${
+                    className={`border-t border-border cursor-pointer hover:bg-bg/40 ${
                       p.diff.alert ? "bg-danger/10" : ""
                     }`}
+                    onClick={() => setExpanded(isOpen ? null : key)}
+                    title={isOpen ? "Свернуть детали" : "Открыть сверку шаг-за-шагом"}
                   >
                     <td className="p-2 sticky left-0 bg-surface whitespace-nowrap">
+                      <span className="text-muted mr-1 inline-block w-3">
+                        {isOpen ? "▾" : "▸"}
+                      </span>
                       {p.period_from} — {p.period_to}
                     </td>
                     <td className="p-2 font-mono text-xs">
@@ -211,6 +229,8 @@ export default function PnLReconciliation() {
                       {p.diff.payout_to_gross_pct.toFixed(1)}%
                     </td>
                   </tr>
+                  {isOpen && <WizardRow p={p} fees={fees} />}
+                  </React.Fragment>
                 );
               })}
             </tbody>
@@ -252,5 +272,156 @@ function Stat({
         {raw ? value : fmtRub(value)}
       </span>
     </div>
+  );
+}
+
+// Wizard-row — раскрывается при клике на неделю. Шаг-за-шагом сверка
+// с WB-кабинетом: какие поля сличать и что значит расхождение.
+function WizardRow({ p, fees }: { p: any; fees: number }) {
+  const checks: { label: string; wb: number; ours: number; tolerance?: number; note?: string }[] = [
+    {
+      label: "Выручка (Продажи − Возвраты)",
+      wb: p.wb.revenue_gross - p.wb.revenue_returns,
+      ours: p.ours.revenue_gross - (p.ours.revenue_net < 0 ? 0 : 0), // simple base
+      tolerance: 1.0,
+      note: "В WB-кабинете это строка «Реализация» (Продажи − Возвраты).",
+    },
+    {
+      label: "Комиссия WB и эквайринг",
+      wb: p.wb.commission,
+      ours: p.ours.commission,
+      tolerance: 1.0,
+      note: "Сравни с колонкой «Комиссия WB и эквайринг» в детализации.",
+    },
+    {
+      label: "Чистая выручка (ppvz_for_pay)",
+      wb: p.wb.payout,
+      ours: p.ours.revenue_net,
+      tolerance: 1.0,
+      note: "WB: сумма ppvz_for_pay в детализации. Наша: revenue_gross + dbs − returns − selfbuy.",
+    },
+  ];
+  return (
+    <tr className="bg-bg/50 border-t border-border">
+      <td colSpan={13} className="p-4">
+        <div className="grid lg:grid-cols-[1fr_1fr] gap-6">
+          {/* Левая колонка: инструкция сверки */}
+          <div className="text-sm flex flex-col gap-3">
+            <div className="font-medium text-white">
+              Шаги сверки за {p.period_from} — {p.period_to}
+            </div>
+
+            <ol className="list-decimal list-inside space-y-2 text-muted leading-relaxed">
+              <li>
+                <a
+                  href={WB_FINANCE_REPORTS_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent underline hover:no-underline"
+                >
+                  Открыть WB-кабинет → Отчёты → Финансовые отчёты реализации
+                </a>{" "}
+                в новой вкладке.
+              </li>
+              <li>
+                Найти отчёт с ID{" "}
+                <code className="text-white">{p.realization_ids}</code> (
+                {p.realizations_count}{" "}
+                {p.realizations_count === 1 ? "отчёт" : "отчётов"} за неделю).
+              </li>
+              <li>
+                Скачать xlsx (если ещё не скачан) — он 1:1 с тем что WB присылает
+                по API. Поля для сверки: <b>retail_price_withdisc_rub</b>,{" "}
+                <b>ppvz_for_pay</b>, <b>commission_percent</b>,{" "}
+                <b>delivery_rub</b>, <b>storage_fee</b>.
+              </li>
+              <li>
+                Сравнить итоги по строкам справа. Если Δ &lt; ~1 ₽ — норма
+                (округления). Если &gt; — проверь синки (`./scripts/remote.sh
+                logs worker-default`) или WB ретро-корректировки.
+              </li>
+            </ol>
+
+            {p.diff.alert && (
+              <div className="card border-danger/40 bg-danger/10 text-xs text-danger">
+                ⚠ Δ Выручка {p.diff.revenue_gross_pct.toFixed(2)}% превышает
+                порог {`(`}
+                {fmtRub(p.diff.revenue_gross_abs)}
+                {`)`}. Возможные причины:
+                <ul className="list-disc list-inside mt-1 space-y-0.5">
+                  <li>не дошла синка `sync_report_detail` — запустить вручную</li>
+                  <li>
+                    WB прислал ретро-корректировку (доплату/доп.удержание) —
+                    проверь `realization_id` в audit-log
+                  </li>
+                  <li>
+                    в нашей БД есть строки с нестандартным{" "}
+                    <code>supplier_oper_name</code> регистром
+                  </li>
+                </ul>
+              </div>
+            )}
+          </div>
+
+          {/* Правая колонка: построчная таблица сверки */}
+          <div className="flex flex-col gap-2">
+            <div className="text-sm font-medium text-white">
+              Сравнение ключевых полей
+            </div>
+            <table className="text-xs w-full">
+              <thead className="text-muted">
+                <tr>
+                  <th className="text-left p-1">Поле</th>
+                  <th className="text-right p-1 text-warn">WB</th>
+                  <th className="text-right p-1 text-success">Наша</th>
+                  <th className="text-right p-1">Δ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {checks.map((c) => {
+                  const diff = c.ours - c.wb;
+                  const tol = c.tolerance ?? 1.0;
+                  const bad = Math.abs(diff) > tol;
+                  return (
+                    <tr key={c.label} className="border-t border-border">
+                      <td className="p-1" title={c.note}>
+                        {c.label}
+                      </td>
+                      <td className="p-1 text-right font-mono">
+                        {fmtRub(c.wb)}
+                      </td>
+                      <td className="p-1 text-right font-mono">
+                        {fmtRub(c.ours)}
+                      </td>
+                      <td
+                        className={`p-1 text-right font-mono ${
+                          bad ? "text-danger font-bold" : "text-muted"
+                        }`}
+                      >
+                        {diff.toFixed(2)}
+                      </td>
+                    </tr>
+                  );
+                })}
+                <tr className="border-t border-border">
+                  <td className="p-1 text-muted">WB-удержания (сумма)</td>
+                  <td className="p-1 text-right font-mono text-muted">
+                    {fmtRub(fees)}
+                  </td>
+                  <td className="p-1 text-right font-mono text-muted">—</td>
+                  <td className="p-1 text-right text-muted">—</td>
+                </tr>
+              </tbody>
+            </table>
+            <div className="text-xs text-muted leading-relaxed mt-2">
+              «WB-удержания» = логистика {fmtRub(p.wb.delivery)} + хранение{" "}
+              {fmtRub(p.wb.storage)} + штрафы {fmtRub(p.wb.penalty)} +
+              удержания {fmtRub(p.wb.deduction)} + эквайринг{" "}
+              {fmtRub(p.wb.acquiring)} − доплаты {fmtRub(p.wb.additional)}.
+            </div>
+          </div>
+        </div>
+      </td>
+    </tr>
   );
 }

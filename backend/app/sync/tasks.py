@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from dateutil.parser import isoparse
@@ -96,10 +97,49 @@ def _parse_dt(value: Any) -> datetime | None:
         return None
 
 
+def _to_decimal(value: Any) -> Decimal | None:
+    """Coerce WB-API value → Decimal | None. Empty strings / None → None.
+    WB отдаёт денежные поля строками вроде "0", "82.999", "-167.17131114";
+    проценты — числами. Передавать "" в Numeric колонку asyncpg не умеет."""
+    if value is None or value == "":
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+
+def _to_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _to_bool(value: Any) -> bool | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    s = str(value).strip().lower()
+    if s in ("true", "1", "yes", "y"):
+        return True
+    if s in ("false", "0", "no", "n"):
+        return False
+    return None
+
+
 # asyncpg / Postgres binary protocol limit: max 32767 bind parameters per query.
-# Pick a chunk size that keeps us well under that even for the widest table
-# (report_detail at ~26 cols → 1000 × 26 = 26000 params, under the cap).
+# Pick a chunk size that keeps us well under that even for the widest table.
+# After report_detail expansion to 88 cols (2026-05) 1000-row chunks would
+# blow the limit (88000 params), so bulk helpers auto-shrink based on the
+# actual number of columns per row.
 _BULK_CHUNK_ROWS = 1000
+_PARAM_LIMIT = 30000  # safety margin under 32767
 
 
 def _stamp_tenant(session: AsyncSession, model: Any, values: list[dict[str, Any]]) -> None:
@@ -119,6 +159,14 @@ def _stamp_tenant(session: AsyncSession, model: Any, values: list[dict[str, Any]
         row.setdefault("tenant_id", tid)
 
 
+def _safe_chunk_size(first_row: dict[str, Any]) -> int:
+    """Подобрать chunk size так чтобы chunk × cols < _PARAM_LIMIT.
+    Для широких таблиц (report_detail ~85 cols) даёт ~350 строк за один
+    INSERT; для узких остаётся cap = _BULK_CHUNK_ROWS."""
+    ncols = max(len(first_row), 1)
+    return max(1, min(_BULK_CHUNK_ROWS, _PARAM_LIMIT // ncols))
+
+
 async def _bulk_upsert(
     session: AsyncSession,
     model: Any,
@@ -132,8 +180,9 @@ async def _bulk_upsert(
     if not values:
         return
     _stamp_tenant(session, model, values)
-    for start in range(0, len(values), _BULK_CHUNK_ROWS):
-        chunk = values[start : start + _BULK_CHUNK_ROWS]
+    chunk_rows = _safe_chunk_size(values[0])
+    for start in range(0, len(values), chunk_rows):
+        chunk = values[start : start + chunk_rows]
         stmt = pg_insert(model).values(chunk)
         stmt = stmt.on_conflict_do_update(
             index_elements=pk_cols,
@@ -152,8 +201,9 @@ async def _bulk_insert(
     if not values:
         return
     _stamp_tenant(session, model, values)
-    for start in range(0, len(values), _BULK_CHUNK_ROWS):
-        chunk = values[start : start + _BULK_CHUNK_ROWS]
+    chunk_rows = _safe_chunk_size(values[0])
+    for start in range(0, len(values), chunk_rows):
+        chunk = values[start : start + chunk_rows]
         await session.execute(pg_insert(model).values(chunk))
 
 
@@ -599,12 +649,14 @@ async def _sync_report_detail_async(tenant_id: int, days_back: int = 14) -> int:
                         continue
                     values.append(
                         {
+                            # === PK ===
                             "rrd_id": int(rrd),
-                            "realization_id": r.get("realizationreport_id"),
+                            # === Existing ~30 fields ===
+                            "realization_id": _to_int(r.get("realizationreport_id")),
                             "report_date_from": _parse_date(r.get("date_from")),
                             "report_date_to": _parse_date(r.get("date_to")),
                             "create_dt": _parse_date(r.get("create_dt")),
-                            "nm_id": int(r["nm_id"]) if r.get("nm_id") else None,
+                            "nm_id": _to_int(r.get("nm_id")),
                             "sa_name": r.get("sa_name"),
                             "barcode": r.get("barcode"),
                             "doc_type_name": r.get("doc_type_name"),
@@ -612,25 +664,89 @@ async def _sync_report_detail_async(tenant_id: int, days_back: int = 14) -> int:
                             "order_dt": _parse_dt(r.get("order_dt")),
                             "sale_dt": _parse_dt(r.get("sale_dt")),
                             "rr_dt": _parse_date(r.get("rr_dt")),
-                            "quantity": int(r.get("quantity") or 0),
-                            "retail_price": r.get("retail_price") or 0,
-                            "retail_amount": r.get("retail_amount") or 0,
-                            "sale_percent": r.get("sale_percent") or 0,
-                            "commission_percent": r.get("commission_percent") or 0,
-                            "ppvz_for_pay": r.get("ppvz_for_pay") or 0,
-                            "delivery_rub": r.get("delivery_rub") or 0,
-                            "storage_fee": r.get("storage_fee") or 0,
-                            "penalty": r.get("penalty") or 0,
-                            "additional_payment": r.get("additional_payment") or 0,
-                            "deduction": r.get("deduction") or 0,
-                            "acquiring_fee": r.get("acquiring_fee") or 0,
-                            # Fields added in WB API v5 (2025-2026)
-                            "retail_price_withdisc_rub": r.get("retail_price_withdisc_rub"),
+                            "quantity": _to_int(r.get("quantity")) or 0,
+                            "retail_price": _to_decimal(r.get("retail_price")) or 0,
+                            "retail_amount": _to_decimal(r.get("retail_amount")) or 0,
+                            "sale_percent": _to_decimal(r.get("sale_percent")) or 0,
+                            "commission_percent": _to_decimal(r.get("commission_percent")) or 0,
+                            "ppvz_for_pay": _to_decimal(r.get("ppvz_for_pay")) or 0,
+                            "delivery_rub": _to_decimal(r.get("delivery_rub")) or 0,
+                            "storage_fee": _to_decimal(r.get("storage_fee")) or 0,
+                            "penalty": _to_decimal(r.get("penalty")) or 0,
+                            "additional_payment": _to_decimal(r.get("additional_payment")) or 0,
+                            "deduction": _to_decimal(r.get("deduction")) or 0,
+                            "acquiring_fee": _to_decimal(r.get("acquiring_fee")) or 0,
+                            "retail_price_withdisc_rub": _to_decimal(r.get("retail_price_withdisc_rub")),
                             "kiz": r.get("kiz") or None,
-                            # НДС-related (present for VAT payers from 2026)
-                            "ppvz_vw": r.get("ppvz_vw"),
-                            "ppvz_vw_nds": r.get("ppvz_vw_nds"),
-                            "supplier_reward": r.get("supplier_reward"),
+                            "ppvz_vw": _to_decimal(r.get("ppvz_vw")),
+                            "ppvz_vw_nds": _to_decimal(r.get("ppvz_vw_nds")),
+                            "supplier_reward": _to_decimal(r.get("supplier_reward")),  # legacy, новый API не отдаёт
+                            # === New 58 fields (migration 0017, 2026-05) ===
+                            # Strings
+                            "acquiring_bank": r.get("acquiring_bank"),
+                            "article_substitution": r.get("article_substitution") or None,
+                            "bonus_type_name": r.get("bonus_type_name"),
+                            "brand_name": r.get("brand_name"),
+                            "country": r.get("country"),
+                            "currency": r.get("currency"),
+                            "declaration_number": r.get("declaration_number") or None,
+                            "delivery_method": r.get("delivery_method") or None,
+                            "fix_tariff_date_from": r.get("fix_tariff_date_from") or None,
+                            "fix_tariff_date_to": r.get("fix_tariff_date_to") or None,
+                            "gi_box_type_name": r.get("gi_box_type_name"),
+                            "office_name": r.get("office_name") or None,
+                            "order_uid": r.get("order_uid"),
+                            "payment_processing": r.get("payment_processing"),
+                            "ppvz_office_name": r.get("ppvz_office_name"),
+                            "ppvz_supplier_inn": r.get("ppvz_supplier_inn") or None,
+                            "ppvz_supplier_name": r.get("ppvz_supplier_name") or None,
+                            "srid": r.get("srid"),
+                            "sticker_id": r.get("sticker_id") or None,
+                            "subject_name": r.get("subject_name"),
+                            "tech_size": r.get("tech_size") or None,
+                            "title": r.get("title"),
+                            "trbx_id": r.get("trbx_id") or None,
+                            "uuid_promocode": r.get("uuid_promocode") or None,
+                            "vendor_code": r.get("vendor_code"),
+                            # BigInt IDs
+                            "gi_id": _to_int(r.get("gi_id")),
+                            "order_id": _to_int(r.get("order_id")),
+                            "ppvz_office_id": _to_int(r.get("ppvz_office_id")),
+                            "shk_id": _to_int(r.get("shk_id")),
+                            "loyalty_id": _to_int(r.get("loyalty_id")),
+                            "seller_promo_id": _to_int(r.get("seller_promo_id")),
+                            # Small ints / enums
+                            "report_type": _to_int(r.get("report_type")),
+                            "is_kgvp_v2": _to_int(r.get("is_kgvp_v2")),
+                            "sup_rating_up": _to_int(r.get("sup_rating_up")),
+                            "wibes_discount_percent": _to_decimal(r.get("wibes_discount_percent")),
+                            # Numerics
+                            "acquiring_percent": _to_decimal(r.get("acquiring_percent")),
+                            "cashback_amount": _to_decimal(r.get("cashback_amount")),
+                            "cashback_commission_change": _to_decimal(r.get("cashback_commission_change")),
+                            "cashback_discount": _to_decimal(r.get("cashback_discount")),
+                            "delivery_amount": _to_decimal(r.get("delivery_amount")),
+                            "dlv_prc": _to_decimal(r.get("dlv_prc")),
+                            "installment_cofinancing_amount": _to_decimal(r.get("installment_cofinancing_amount")),
+                            "kvw": _to_decimal(r.get("kvw")),
+                            "kvw_base": _to_decimal(r.get("kvw_base")),
+                            "loyalty_discount": _to_decimal(r.get("loyalty_discount")),
+                            "paid_acceptance": _to_decimal(r.get("paid_acceptance")),
+                            "payment_schedule": _to_decimal(r.get("payment_schedule")),
+                            "ppvz_reward": _to_decimal(r.get("ppvz_reward")),
+                            "ppvz_sales_commission": _to_decimal(r.get("ppvz_sales_commission")),
+                            "product_discount_for_report": _to_decimal(r.get("product_discount_for_report")),
+                            "rebill_logistic_cost": _to_decimal(r.get("rebill_logistic_cost")),
+                            "return_amount": _to_decimal(r.get("return_amount")),
+                            "sale_price_affiliated_discount_prc": _to_decimal(r.get("sale_price_affiliated_discount_prc")),
+                            "sale_price_promocode_discount_prc": _to_decimal(r.get("sale_price_promocode_discount_prc")),
+                            "sale_price_wholesale_discount_prc": _to_decimal(r.get("sale_price_wholesale_discount_prc")),
+                            "seller_promo": _to_decimal(r.get("seller_promo")),
+                            "seller_promo_discount": _to_decimal(r.get("seller_promo_discount")),
+                            "spp": _to_decimal(r.get("spp")),
+                            # Booleans
+                            "is_b2b": _to_bool(r.get("is_b2b")),
+                            "srv_dbs": _to_bool(r.get("srv_dbs")),
                         }
                     )
                 await _bulk_upsert(session, WbReportDetail, values, pk_cols=["rrd_id"])

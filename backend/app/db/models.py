@@ -277,8 +277,77 @@ class WbReportDetail(Base, TenantScopedMixin):
     ppvz_vw: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     # ppvz_vw_nds — WB commission VAT amount
     ppvz_vw_nds: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
-    # supplier_reward — seller's net reward (ppvz_for_pay analog, post-tax clarity)
+    # supplier_reward — legacy column from old /reportDetailByPeriod (теперь не
+    # заполняется, новый эквивалент — ppvz_reward ниже). Оставлено для historic
+    # данных собранных до 2026-05.
     supplier_reward: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+
+    # === Full 88-field coverage (added 2026-05, migration 0017) ===
+    # Strings
+    acquiring_bank: Mapped[str | None] = mapped_column(String(128))
+    article_substitution: Mapped[str | None] = mapped_column(String(255))
+    bonus_type_name: Mapped[str | None] = mapped_column(String(255))
+    brand_name: Mapped[str | None] = mapped_column(String(255))
+    country: Mapped[str | None] = mapped_column(String(64))
+    currency: Mapped[str | None] = mapped_column(String(8), index=True)
+    declaration_number: Mapped[str | None] = mapped_column(String(64))
+    delivery_method: Mapped[str | None] = mapped_column(String(64))
+    fix_tariff_date_from: Mapped[str | None] = mapped_column(String(32))
+    fix_tariff_date_to: Mapped[str | None] = mapped_column(String(32))
+    gi_box_type_name: Mapped[str | None] = mapped_column(String(64))
+    office_name: Mapped[str | None] = mapped_column(String(128))
+    order_uid: Mapped[str | None] = mapped_column(String(64))
+    payment_processing: Mapped[str | None] = mapped_column(String(255))
+    ppvz_office_name: Mapped[str | None] = mapped_column(Text)
+    ppvz_supplier_inn: Mapped[str | None] = mapped_column(String(32))
+    ppvz_supplier_name: Mapped[str | None] = mapped_column(String(255))
+    srid: Mapped[str | None] = mapped_column(String(128))
+    sticker_id: Mapped[str | None] = mapped_column(String(64))
+    subject_name: Mapped[str | None] = mapped_column(String(255))
+    tech_size: Mapped[str | None] = mapped_column(String(64))
+    title: Mapped[str | None] = mapped_column(Text)
+    trbx_id: Mapped[str | None] = mapped_column(String(64))
+    uuid_promocode: Mapped[str | None] = mapped_column(String(64))
+    vendor_code: Mapped[str | None] = mapped_column(String(255))
+    # BigInt IDs (reportId аливится в realization_id, отдельной колонки нет)
+    gi_id: Mapped[int | None] = mapped_column(BigInteger)
+    order_id: Mapped[int | None] = mapped_column(BigInteger)
+    ppvz_office_id: Mapped[int | None] = mapped_column(BigInteger)
+    shk_id: Mapped[int | None] = mapped_column(BigInteger)
+    loyalty_id: Mapped[int | None] = mapped_column(BigInteger)
+    seller_promo_id: Mapped[int | None] = mapped_column(BigInteger)
+    # Small ints
+    report_type: Mapped[int | None] = mapped_column(Integer)
+    is_kgvp_v2: Mapped[int | None] = mapped_column(Integer)
+    sup_rating_up: Mapped[int | None] = mapped_column(Integer)
+    wibes_discount_percent: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    # Numerics (money / percentages)
+    acquiring_percent: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    cashback_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    cashback_commission_change: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    cashback_discount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    delivery_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    dlv_prc: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    installment_cofinancing_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    kvw: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
+    kvw_base: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    loyalty_discount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    paid_acceptance: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    payment_schedule: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    ppvz_reward: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
+    ppvz_sales_commission: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    product_discount_for_report: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    rebill_logistic_cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    return_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    sale_price_affiliated_discount_prc: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    sale_price_promocode_discount_prc: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    sale_price_wholesale_discount_prc: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    seller_promo: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    seller_promo_discount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    spp: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    # Booleans
+    is_b2b: Mapped[bool | None] = mapped_column(Boolean)
+    srv_dbs: Mapped[bool | None] = mapped_column(Boolean)
 
 
 class WbAdCampaign(Base, TenantScopedMixin):
@@ -622,6 +691,8 @@ class OpexEntry(Base, TenantScopedMixin):
         Integer, ForeignKey("opex_categories.id", ondelete="RESTRICT"), index=True
     )
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    # Контрагент / подрядчик — свободное поле для трассировки «кому платим».
+    contractor: Mapped[str | None] = mapped_column(String(128))
     comment: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

@@ -115,11 +115,12 @@ async def build_unit_economics(
     # penalty summed across all rows. Plus extra categories that the user
     # spreadsheet uses as separate columns (платная приёмка / списание баллов /
     # коррекция эквайринга).
-    rd_revenue_field = func.coalesce(
-        WbReportDetail.retail_price_withdisc_rub, WbReportDetail.retail_amount
+    # Каноничные предикаты в services/period_aggregates.py.
+    from app.services.period_aggregates import (
+        OP_SALE as rd_is_sale,
+        OP_RETURN as rd_is_return,
+        REVENUE_FIELD as rd_revenue_field,
     )
-    rd_is_sale = WbReportDetail.supplier_oper_name == "Продажа"
-    rd_is_return = WbReportDetail.supplier_oper_name == "Возврат"
     rd_is_acceptance = WbReportDetail.supplier_oper_name.in_(
         [
             "Возмещение за выдачу и возврат товаров на ПВЗ",
@@ -151,6 +152,15 @@ async def build_unit_economics(
             func.coalesce(
                 func.sum(case((rd_is_return, WbReportDetail.ppvz_for_pay), else_=0)), 0
             ).label("ppvz_return"),
+            # retail_amount = «Стоимость продажи» которую WB пропечатывает
+            # в УПД для ФНС. Юридически корректная база для АУСН/УСН-доход
+            # (см. письмо Минфина / WB Финотчёт). Сходится с Excel налогом 1:1.
+            func.coalesce(
+                func.sum(case((rd_is_sale, WbReportDetail.retail_amount), else_=0)), 0
+            ).label("retail_amt_sale"),
+            func.coalesce(
+                func.sum(case((rd_is_return, WbReportDetail.retail_amount), else_=0)), 0
+            ).label("retail_amt_return"),
             func.coalesce(
                 func.sum(case((rd_is_sale, WbReportDetail.acquiring_fee), else_=0)), 0
             ).label("acq_sale"),
@@ -186,6 +196,8 @@ async def build_unit_economics(
             ).label("rd_units_return"),
         )
         .where(
+            # sale_dt — каноничное поле даты для report_detail (совпадает с
+            # WB-кабинетом). См. period_aggregates.sale_dt_filter / CLAUDE.md.
             WbReportDetail.sale_dt >= start,
             WbReportDetail.sale_dt < end,
             WbReportDetail.nm_id.isnot(None),
@@ -267,6 +279,7 @@ async def build_unit_economics(
         acq_return = _f(r.acq_return)
         ppvz_net = ppvz_sale - ppvz_return
         acq_net = acq_sale - acq_return
+        retail_amt_net = _f(r.retail_amt_sale) - _f(r.retail_amt_return)
         delivery = _f(r.delivery)
         storage = _f(r.storage)
         penalty = _f(r.penalty)
@@ -294,6 +307,7 @@ async def build_unit_economics(
             "acceptance_fee": acceptance_fee,
             "loyalty_writeoff": loyalty_writeoff,
             "acquiring_correction": acquiring_correction,
+            "retail_amt_net": retail_amt_net,
             "rd_units_net": int(r.rd_units_net or 0),
             "rd_units_sale": int(r.rd_units_sale or 0),
             "rd_units_return": int(r.rd_units_return or 0),
@@ -349,7 +363,7 @@ async def build_unit_economics(
         )
         .where(
             WbAdStatsDaily.stat_date >= start.date(),
-            WbAdStatsDaily.stat_date < end.date() + timedelta(days=1),
+            WbAdStatsDaily.stat_date < end.date(),
             WbAdStatsDaily.nm_id.isnot(None),
         )
         .group_by(WbAdStatsDaily.nm_id)
@@ -367,7 +381,7 @@ async def build_unit_economics(
         )
         .where(
             ExternalAdCost.spend_date >= start.date(),
-            ExternalAdCost.spend_date < end.date() + timedelta(days=1),
+            ExternalAdCost.spend_date < end.date(),
             ExternalAdCost.nm_id.isnot(None),
         )
         .group_by(ExternalAdCost.nm_id)
@@ -383,7 +397,7 @@ async def build_unit_economics(
             await session.execute(
                 select(func.coalesce(func.sum(ExternalAdCost.amount), 0)).where(
                     ExternalAdCost.spend_date >= start.date(),
-                    ExternalAdCost.spend_date < end.date() + timedelta(days=1),
+                    ExternalAdCost.spend_date < end.date(),
                     ExternalAdCost.nm_id.is_(None),
                 )
             )
@@ -494,9 +508,18 @@ async def build_unit_economics(
     )
     if archived_nm_ids:
         nm_set -= archived_nm_ids
-    revenue_by_nm: dict[int, float] = {
-        nm: orders_by_nm.get(nm, {}).get("revenue", 0.0) for nm in nm_set
-    }
+    # Каноничная выручка — из report_detail (rev_sale − rev_return), как
+    # на P&L и Dashboard final. Старый источник `wb_orders.total_price` давал
+    # на 5-15% выше из-за preliminary-лага и ломал сверку между страницами.
+    # Для SKU которых пока нет в report_detail (последние 1-2 дня) делаем
+    # fallback на orders-revenue чтобы карточка не светилась нулём.
+    revenue_by_nm: dict[int, float] = {}
+    for nm in nm_set:
+        rd = rd_metrics_by_nm.get(nm)
+        if rd is not None:
+            revenue_by_nm[nm] = rd["rev_sale"] - rd["rev_return"]
+        else:
+            revenue_by_nm[nm] = orders_by_nm.get(nm, {}).get("revenue", 0.0)
     total_revenue = sum(revenue_by_nm.values())
 
     # Aggregate distribution bases (для разнесения unallocated buckets):
@@ -509,6 +532,18 @@ async def build_unit_economics(
         if nm_v in nm_set:
             units_sold_by_nm[nm_v] = max(0, int(sr.units or 0))
     total_units_sold_for_alloc = sum(units_sold_by_nm.values())
+
+    # WB Удержания (deduction_unalloc) ⊇ реклама + джем + аренда PVZ + прочее.
+    # WB advert API (`/adv/v3/fullstats` → wb_ad_stats_daily) даёт ТОЧНУЮ
+    # сумму рекламы per-nm; остаток Удержаний считаем «прочими удержаниями»
+    # и распределяем pro-rata по продажам. Если advert API недосинкан
+    # (бэкфилл за свежие даты ещё не доехал из-за rate-limit), other будет
+    # переоценен — ничего страшного, итоговая сумма (ad+other) всё равно
+    # совпадает с Удержания_total.
+    total_wb_ad_cost = sum(
+        _f(v.get("ad_cost", 0.0)) for v in ad_by_nm.values()
+    )
+    other_deductions_total = max(0.0, deduction_unalloc - total_wb_ad_cost)
 
     def share_by_stock(nm: int) -> float:
         if total_stock_for_alloc <= 0:
@@ -544,11 +579,24 @@ async def build_unit_economics(
         orders = orders_by_nm.get(nm, {}).get("orders", 0)
         revenue = revenue_by_nm.get(nm, 0.0)
 
+        # Корректное разделение Удержаний на реклама vs прочее:
+        #
+        #  - ad_cost = /adv/v3/fullstats (wb_ad_stats_daily) per nm — это
+        #    ТОЧНАЯ сумма рекламных трат, которую WB отдаёт через advert API.
+        #  - other_deductions = Удержания.deduction − total_ad_cost — остаток
+        #    Удержаний, не покрытый рекламой (Подписка Джем, аренда PVZ,
+        #    компенсации и пр.). Этого breakdown WB через API не отдаёт,
+        #    отдаёт только в UI кабинета (Финансы → Детализация удержаний).
+        #    Распределяем pro-rata по продажам.
+        #
+        # Сумма (ad_cost + other_deductions) = Удержания_total ⇒ итог в
+        # expenses_for_tax совпадает с тем, что WB реально списал.
         ad_cost = ad_by_nm.get(nm, {}).get("ad_cost", 0.0)
+        other_deductions = other_deductions_total * share_by_sold(nm)
         ext_per_sku = ext_ad_by_nm.get(nm, 0.0)
         ext_brand = brand_share_for(nm)
         ext_total = ext_per_sku + ext_brand
-        marketing_total = ad_cost + ext_total
+        marketing_total = ad_cost + ext_total + other_deductions
         per_order_marketing = marketing_total / orders if orders > 0 else 0.0
 
         unit_cogs = cost_for_date(cogs_lookup, nm, midpoint)
@@ -614,7 +662,10 @@ async def build_unit_economics(
             rd_data.get("acceptance_fee", 0.0)
             + acceptance_unalloc * share_by_sold(nm)
         )
-        # Удержания и лояльность — тоже агрегаты без nm_id, разносим по продажам.
+        # Удержания (Удержание) теперь идут как реклама через ad_cost выше,
+        # отдельно тут не учитываем (иначе double-count в expenses_for_tax).
+        # Поле deduction оставляем в output для прозрачности — пусть UI
+        # видит, что именно зашло в marketing.
         deduction_rd = deduction_unalloc * share_by_sold(nm)
         loyalty_writeoff_rd = (
             rd_data.get("loyalty_writeoff", 0.0)
@@ -647,9 +698,12 @@ async def build_unit_economics(
             + acceptance_fee_rd
             + loyalty_writeoff_rd
             + acquiring_correction_rd
-            + deduction_rd
             + marketing_total
         )
+        # Tax base = retail_amount net (Продажа − Возврат). Это WB-сторонняя
+        # «Стоимость продажи» из УПД для ФНС — юридически корректная база
+        # для УСН/АУСН-доход. Точно совпадает с Excel клиента (см. AV колонку).
+        retail_amt_net_nm = rd_data.get("retail_amt_net", 0.0)
         tax_nm = _compute_tax(
             tax_system,
             revenue_net=revenue_net_rd,
@@ -658,6 +712,7 @@ async def build_unit_economics(
             tax_rate=tax_rate,
             tax_min_rate=tax_min_rate,
             reduce_by_insurance=reduce_by_insurance,
+            cash_income=retail_amt_net_nm,
         )
 
         # Чистая прибыль per nm (после налога).
@@ -706,6 +761,7 @@ async def build_unit_economics(
                 "loyalty_writeoff": round(loyalty_writeoff_rd, 2),
                 "acquiring_correction": round(acquiring_correction_rd, 2),
                 "deduction": round(deduction_rd, 2),
+                "other_deductions": round(other_deductions, 2),
                 "rd_units_sale": rd_units_sale,
                 # Marketing
                 "ad_cost": round(ad_cost, 2),

@@ -37,9 +37,14 @@ Mode = Literal["preliminary", "final"]
 #      own buckets (Потери/подмены, Лояльность) — not in «Выкупы».
 #   2) WB further subtracts the ppvz_for_pay of «Добровольная компенсация при
 #      возврате» from «Выкупы» (it counts as a buyback fee). Mirror that.
-_SALE_NAMES = ("Продажа", "продажа")
-_RETURN_NAMES = ("Возврат", "возврат")
-_COMPENSATION_NAMES = ("Добровольная компенсация при возврате",)
+# Канонические наборы операций — единый источник в period_aggregates.
+# Локальные алиасы оставлены для обратной совместимости со старыми
+# in_(_SALE_NAMES) выражениями ниже.
+from app.services.period_aggregates import (  # noqa: E402
+    COMPENSATION_RETURN_NAMES as _COMPENSATION_NAMES,
+    RETURN_NAMES as _RETURN_NAMES,
+    SALE_NAMES as _SALE_NAMES,
+)
 
 D0 = Decimal("0")
 

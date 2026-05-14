@@ -26,7 +26,7 @@ from app.services.auth import get_db_tenant_scoped
 from app.services.audit import actor_from_request, audit_log, snapshot
 from app.services.auth import require_director, require_director_or_head
 
-_ENTRY_FIELDS = ["id", "entry_date", "category_id", "amount", "comment"]
+_ENTRY_FIELDS = ["id", "entry_date", "category_id", "amount", "contractor", "comment"]
 _CAT_FIELDS = ["id", "name", "kind", "is_fixed", "in_operating", "cf_section", "is_default"]
 
 router = APIRouter(
@@ -48,6 +48,7 @@ class OpexEntryIn(BaseModel):
     entry_date: date
     category_id: int
     amount: float
+    contractor: str | None = None
     comment: str | None = None
 
 
@@ -73,6 +74,7 @@ def _entry_row(e: OpexEntry) -> dict[str, Any]:
         "category_in_operating": e.category.in_operating if e.category else None,
         "category_cf_section": e.category.cf_section if e.category else None,
         "amount": float(e.amount),
+        "contractor": e.contractor,
         "comment": e.comment,
     }
 

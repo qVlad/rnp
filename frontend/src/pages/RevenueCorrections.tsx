@@ -4,40 +4,83 @@ import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
 
 type Type = "selfbuy" | "giveaway" | "selforder" | "dbs" | "rfbs";
-const TYPE_OPTIONS: { value: Type; label: string; effect: string; color: string }[] = [
+
+// Group → подгруппы по бизнес-семантике (не по техническому enum).
+// «Артефакты выручки» — фиктивные продажи, вычитаются.
+// «Сторонний канал» — реальные продажи через свою логистику, добавляются.
+type Group = "fake" | "channel";
+const TYPE_OPTIONS: {
+  value: Type;
+  label: string;
+  group: Group;
+  hint: string;
+  effect: string;
+  color: string;
+}[] = [
+  {
+    value: "selforder",
+    label: "Самозаказ",
+    group: "fake",
+    hint: "Сразу при оформлении заказа на платформе. Без обязательного выкупа.",
+    effect: "вычитается из выручки",
+    color: "text-yellow-400",
+  },
   {
     value: "selfbuy",
     label: "Самовыкуп",
+    group: "fake",
+    hint: "Подрядчик забрал товар с ПВЗ. Между датой заказа и выкупа должно быть ~2-3 дня (WB не примет иначе).",
     effect: "вычитается из выручки",
     color: "text-yellow-400",
   },
   {
     value: "giveaway",
     label: "Раздача",
-    effect: "вычитается из выручки",
-    color: "text-yellow-400",
-  },
-  {
-    value: "selforder",
-    label: "Самозаказ",
+    group: "fake",
+    hint: "Бартер / инфлюенсер / большая скидка. В «Услуги подрядчика» — оплата блогеру или агентству.",
     effect: "вычитается из выручки",
     color: "text-yellow-400",
   },
   {
     value: "dbs",
     label: "DBS",
+    group: "channel",
+    hint: "Delivery by Seller — продажа через свою логистику. WB не считает её в /supplier/sales, добавляется вручную.",
     effect: "добавляется к выручке",
     color: "text-emerald-400",
   },
   {
     value: "rfbs",
     label: "rFBS",
+    group: "channel",
+    hint: "realFBS — продажа со своего склада, своими силами доставки. WB её тоже не учитывает в стат-API.",
     effect: "добавляется к выручке",
     color: "text-emerald-400",
   },
 ];
 
+const GROUP_META: Record<Group, { title: string; subtitle: string; color: string }> = {
+  fake: {
+    title: "Артефакты выручки",
+    subtitle:
+      "Фиктивные продажи которые искажают WB-цифры. Сумма вычитается из чистой выручки в P&L; услуги подрядчика идут отдельной статьёй расходов.",
+    color: "text-yellow-400",
+  },
+  channel: {
+    title: "Сторонний канал доставки (DBS / rFBS)",
+    subtitle:
+      "Реальные продажи через свою логистику. WB не видит их в /supplier/sales — вносите вручную, чтобы они попали в общую выручку и unit-economics.",
+    color: "text-emerald-400",
+  },
+};
+
 const today = () => new Date().toISOString().slice(0, 10);
+const daysBetween = (a: string, b: string): number => {
+  const da = new Date(a).getTime();
+  const db = new Date(b).getTime();
+  if (!da || !db) return NaN;
+  return Math.round((db - da) / 86_400_000);
+};
 const blankForm = () => ({
   type: "selfbuy" as Type,
   order_dt: today(),
@@ -108,6 +151,16 @@ export default function RevenueCorrections() {
 
   const items = q.data?.items ?? [];
   const labels = q.data?.type_labels ?? {};
+  const fakeItems = items.filter((r: any) =>
+    ["selforder", "selfbuy", "giveaway"].includes(r.type),
+  );
+  const channelItems = items.filter((r: any) => ["dbs", "rfbs"].includes(r.type));
+  const activeOpt = TYPE_OPTIONS.find((t) => t.value === form.type);
+  const showCompletionHint =
+    form.type === "selfbuy" &&
+    form.order_dt &&
+    form.completion_dt &&
+    daysBetween(form.order_dt, form.completion_dt) < 2;
 
   return (
     <div className="flex flex-col gap-4">
@@ -127,15 +180,6 @@ export default function RevenueCorrections() {
         </select>
       </div>
 
-      <div className="card text-sm text-muted leading-relaxed">
-        Здесь учитываются «искусственные» заказы вне обычных WB-продаж:
-        <ul className="list-disc list-inside mt-2 space-y-1">
-          <li><span className="text-yellow-400">Самовыкупы / самозаказы / раздачи</span> — фиктивные продажи, которые искажают выручку. Сумма <em>вычитается</em> из чистой выручки в P&amp;L.</li>
-          <li><span className="text-emerald-400">DBS / rFBS</span> — реальные продажи через свою логистику. Сумма <em>добавляется</em> к выручке.</li>
-          <li>Услуги подрядчика (плата агентству, блогеру и т.п.) идут отдельной статьёй расходов.</li>
-        </ul>
-      </div>
-
       <section className="card">
         <h2 className="font-medium mb-3">
           {editingId ? `Редактировать запись #${editingId}` : "Добавить запись"}
@@ -145,14 +189,28 @@ export default function RevenueCorrections() {
             <select
               className="input"
               value={form.type}
-              onChange={(e: any) => setForm({ ...form, type: e.target.value })}
+              onChange={(e: any) => setForm({ ...form, type: e.target.value as Type })}
             >
-              {TYPE_OPTIONS.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
-                </option>
-              ))}
+              <optgroup label="— Артефакты выручки (вычитаются) —">
+                {TYPE_OPTIONS.filter((t) => t.group === "fake").map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="— Сторонний канал (добавляется) —">
+                {TYPE_OPTIONS.filter((t) => t.group === "channel").map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </optgroup>
             </select>
+            {activeOpt && (
+              <div className={`text-[11px] mt-1 ${activeOpt.color} leading-snug`}>
+                {activeOpt.hint}
+              </div>
+            )}
           </Field>
           <Field label="Дата заказа">
             <input
@@ -162,13 +220,24 @@ export default function RevenueCorrections() {
               onChange={(e: any) => setForm({ ...form, order_dt: e.target.value })}
             />
           </Field>
-          <Field label="Дата выкупа (опц.)">
+          <Field label={form.type === "selfbuy" ? "Дата выкупа с ПВЗ" : "Дата выкупа (опц.)"}>
             <input
               type="date"
               className="input"
               value={form.completion_dt}
               onChange={(e: any) => setForm({ ...form, completion_dt: e.target.value })}
             />
+            {form.type === "selfbuy" && (
+              <div className="text-[11px] text-muted mt-1 leading-snug">
+                Между заказом и выкупом нужно <b>2-3 дня</b> — иначе WB пометит
+                как подозрительный заказ и не учтёт самовыкуп.
+              </div>
+            )}
+            {showCompletionHint && (
+              <div className="text-[11px] text-warn mt-1 leading-snug">
+                ⚠ меньше 2 дней между заказом и выкупом — WB может не засчитать.
+              </div>
+            )}
           </Field>
           <Field label="nmId (артикул WB)">
             <input
@@ -229,12 +298,68 @@ export default function RevenueCorrections() {
         </div>
       </section>
 
-      <div className="card overflow-x-auto">
-        {q.isLoading && <div className="text-muted">Загрузка…</div>}
-        {q.data && items.length === 0 && (
-          <div className="text-muted text-sm">Записей пока нет.</div>
-        )}
-        {q.data && items.length > 0 && (
+      {q.isLoading && <div className="card text-muted">Загрузка…</div>}
+      {q.data && items.length === 0 && (
+        <div className="card text-muted text-sm">Записей пока нет.</div>
+      )}
+
+      {(filter === "" || ["selforder", "selfbuy", "giveaway"].includes(filter)) && (
+        <GroupSection
+          group="fake"
+          rows={filter ? items : fakeItems}
+          labels={labels}
+          onEdit={startEdit}
+          onDelete={(id) => delMut.mutate(id)}
+          hidden={filter !== "" && !["selforder", "selfbuy", "giveaway"].includes(filter)}
+        />
+      )}
+      {(filter === "" || ["dbs", "rfbs"].includes(filter)) && (
+        <GroupSection
+          group="channel"
+          rows={filter ? items : channelItems}
+          labels={labels}
+          onEdit={startEdit}
+          onDelete={(id) => delMut.mutate(id)}
+          hidden={filter !== "" && !["dbs", "rfbs"].includes(filter)}
+        />
+      )}
+    </div>
+  );
+}
+
+function GroupSection({
+  group,
+  rows,
+  labels,
+  onEdit,
+  onDelete,
+  hidden,
+}: {
+  group: Group;
+  rows: any[];
+  labels: Record<string, string>;
+  onEdit: (row: any) => void;
+  onDelete: (id: number) => void;
+  hidden: boolean;
+}) {
+  if (hidden) return null;
+  const meta = GROUP_META[group];
+  const total = rows.reduce((s, r) => s + Number(r.gross_amount || 0), 0);
+  const fees = rows.reduce((s, r) => s + Number(r.contractor_fee || 0), 0);
+  return (
+    <section className="card">
+      <div className="flex items-baseline justify-between flex-wrap gap-2 mb-2">
+        <h2 className={`font-medium ${meta.color}`}>{meta.title}</h2>
+        <div className="text-xs text-muted">
+          {rows.length} зап. · сумма {fmtRub(total)}
+          {fees > 0 && <> · услуги {fmtRub(fees)}</>}
+        </div>
+      </div>
+      <div className="text-xs text-muted leading-relaxed mb-3">{meta.subtitle}</div>
+      {rows.length === 0 ? (
+        <div className="text-muted text-sm">Записей нет.</div>
+      ) : (
+        <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="text-muted text-xs uppercase">
@@ -249,7 +374,7 @@ export default function RevenueCorrections() {
               </tr>
             </thead>
             <tbody>
-              {items.map((row: any) => {
+              {rows.map((row: any) => {
                 const t = TYPE_OPTIONS.find((x) => x.value === row.type);
                 return (
                   <tr key={row.id} className="border-t border-border">
@@ -265,13 +390,13 @@ export default function RevenueCorrections() {
                     </td>
                     <td className="p-2 text-muted">{row.comment ?? ""}</td>
                     <td className="p-2 text-right space-x-2">
-                      <button className="btn text-xs" onClick={() => startEdit(row)}>
+                      <button className="btn text-xs" onClick={() => onEdit(row)}>
                         ✎
                       </button>
                       <button
                         className="btn text-xs text-red-400"
                         onClick={() => {
-                          if (confirm("Удалить запись?")) delMut.mutate(row.id);
+                          if (confirm("Удалить запись?")) onDelete(row.id);
                         }}
                       >
                         ✕
@@ -282,9 +407,9 @@ export default function RevenueCorrections() {
               })}
             </tbody>
           </table>
-        )}
-      </div>
-    </div>
+        </div>
+      )}
+    </section>
   );
 }
 

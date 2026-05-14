@@ -1,8 +1,8 @@
 """Build P&L statement from `wb_report_detail` (source of truth) + extras.
 
-The report-detail rows arrive with 1-2 day lag. We aggregate by `rr_dt` (the date
-when WB recorded the operation) into the user-chosen granularity (day/week/month)
-and combine with:
+The report-detail rows arrive with 1-2 day lag. We aggregate by `sale_dt`
+(каноничная дата физического выкупа/возврата — совпадает с WB-кабинетом 1:1)
+в выбранную пользователем гранулярность (day/week/month) и combine with:
   - WB ad costs from wb_ad_stats_daily
   - external (off-platform) marketing costs from external_ad_costs
   - artificial-orders adjustments (selfbuy / giveaway / dbs / rfbs)
@@ -65,6 +65,18 @@ class PnLRow:
     deduction: float = 0.0
     acquiring: float = 0.0
     additional: float = 0.0
+    # ppvz_for_pay net (Продажа − Возврат): «К перечислению поставщику».
+    # retail_amt_net: WB-сторонняя «Стоимость продажи» (УПД для ФНС) — это
+    # юридически корректная база УСН/АУСН-доход.
+    ppvz_for_pay: float = 0.0
+    retail_amt_net: float = 0.0
+    # Бухгалтерские поля для расчёта налога по методике клиентского
+    # бухгалтера (УСН-15% доходы минус расходы по УПД). Расход признаётся
+    # только по тем строкам что приходят в WB-отчёте реализации.
+    ppvz_vw_net: float = 0.0           # Вознаграждение WB без НДС (УПД)
+    ppvz_vw_nds_net: float = 0.0       # НДС с вознаграждения WB (УПД)
+    paid_acceptance_total: float = 0.0  # Платная приёмка (УПД)
+    rebill_logistic_total: float = 0.0  # Возмещение издержек по перевозке (УПД)
     ad_cost: float = 0.0              # WB Promotion (advert API)
     external_ad_cost: float = 0.0     # off-WB marketing (bloggers / infographics / etc.)
     contractor_fees: float = 0.0      # service fees for selfbuy/dbs/etc.
@@ -73,6 +85,11 @@ class PnLRow:
     opex_cashflow_only: float = 0.0   # OPEX entries with category.in_operating=False
     other_costs: float = 0.0          # legacy fixed_costs_monthly fallback
     tax: float = 0.0
+    # Налог по методике бухгалтера (для сверки с 1С). База = retail_amt_net
+    # (стоимость до СПП, юридически корректно для УПД), расходы = только
+    # WB-удержания с УПД (без рекламы / OPEX / COGS управленческого).
+    # Себестоимость учитывается отдельно как `cogs` той же P&L.
+    tax_for_fns: float = 0.0
     profit: float = 0.0
     cash_flow: float = 0.0            # operating profit minus non-operating cash items + non-OP income
 
@@ -101,6 +118,12 @@ class PnLRow:
             "opex_cashflow_only": round(self.opex_cashflow_only, 2),
             "other_costs": round(self.other_costs, 2),
             "tax": round(self.tax, 2),
+            "tax_for_fns": round(self.tax_for_fns, 2),
+            "ppvz_vw_net": round(self.ppvz_vw_net, 2),
+            "ppvz_vw_nds_net": round(self.ppvz_vw_nds_net, 2),
+            "paid_acceptance_total": round(self.paid_acceptance_total, 2),
+            "rebill_logistic_total": round(self.rebill_logistic_total, 2),
+            "retail_amt_net": round(self.retail_amt_net, 2),
             "profit": round(self.profit, 2),
             "cash_flow": round(self.cash_flow, 2),
         }
@@ -144,6 +167,69 @@ DEFAULT_MIN_TAX_RATE = {
 }
 
 
+def _compute_tax_for_fns(
+    system: str,
+    *,
+    retail_amt_net: float,
+    ppvz_vw_net: float,
+    ppvz_vw_nds_net: float,
+    delivery: float,
+    paid_acceptance: float,
+    penalty: float,
+    deduction: float,
+    storage: float,
+    cogs: float,
+    tax_rate: float,
+    tax_min_rate: float,
+    reduce_by_insurance: bool,
+) -> float:
+    """Налог по методике клиентского бухгалтера (УСН-15% / АУСН-20%).
+
+    База:
+      Доход = retail_amt_net (стоимость до СПП — то что WB печатает в УПД для ФНС)
+      Расход = ppvz_vw_net + ppvz_vw_nds_net + delivery + paid_acceptance
+               + penalty + deduction + storage   (только удержания по УПД)
+      Себестоимость = cogs (отдельно)
+      База налога = max(0, Доход − Расход − Себестоимость)
+
+    НЕ включаются (в отличие от управленческого P&L):
+      - реклама WB (ad_cost) — у бухгалтера попадает в Удержания через УПД
+      - external_ad_cost (внешний маркетинг)
+      - OPEX операционный (аренда, зп) — учитывается в 1С отдельно
+      - fixed_costs
+
+    Сравнение с xlsx-бухгалтера 2026-05-14 — методика подтверждена.
+    """
+    income = max(0.0, retail_amt_net)
+    # TODO (2026-05-14): ppvz_vw — signed field. Положительное = комиссия WB
+    # (расход), отрицательное = WB вернул комиссию (доход/корректировка). Для
+    # текущей системы `ausn_income` это не важно — wb_expenses не используется
+    # в формуле. Но при миграции на `usn_income_expense` нужно понять,
+    # учитывать отрицательные ppvz_vw как «уменьшение расхода» или как
+    # «дополнительный доход» (бухгалтерский вопрос — обсудить с клиентом).
+    # На периодах март-2026 у клиента ppvz_vw_net = -131k₽ (масс. корректировка
+    # WB), для apr/may — положительное. См. qa-tester отчёт 2026-05-14.
+    wb_expenses = (
+        ppvz_vw_net + ppvz_vw_nds_net + delivery + paid_acceptance
+        + penalty + deduction + storage
+    )
+    base = max(0.0, income - wb_expenses - cogs)
+    if system in ("usn_income_expense", "ausn_income_expense"):
+        tax = base * (tax_rate / 100.0)
+        min_tax = income * (tax_min_rate / 100.0)
+        return max(tax, min_tax)
+    if system in ("usn_income", "ausn_income"):
+        tax = income * (tax_rate / 100.0)
+        if reduce_by_insurance and system == "usn_income":
+            tax = tax * 0.5
+        return tax
+    if system == "osn":
+        return base * (tax_rate / 100.0)
+    if system == "npd":
+        return income * (tax_rate / 100.0)
+    return 0.0
+
+
 def _compute_tax(
     system: str,
     *,
@@ -153,9 +239,17 @@ def _compute_tax(
     tax_rate: float,
     tax_min_rate: float,
     reduce_by_insurance: bool,
+    cash_income: float | None = None,
 ) -> float:
+    # Для систем -доход (УСН/АУСН/НПД) база — это «доход» в учётной политике.
+    # По умолчанию используем revenue_after_vat (розничная цена, что заплатил
+    # покупатель — формально верно для агентской схемы маркетплейса). Если
+    # передан `cash_income` (ppvz_net = деньги, реально пришедшие на счёт
+    # ИП после комиссии ВБ) — используем его. См. tenant setting
+    # `tax_base_mode` = revenue | ppvz.
+    income_base = cash_income if cash_income is not None else revenue_after_vat
     if system in ("usn_income", "ausn_income"):
-        tax = max(0.0, revenue_after_vat) * (tax_rate / 100.0)
+        tax = max(0.0, income_base) * (tax_rate / 100.0)
         if reduce_by_insurance and system == "usn_income":
             tax = tax * 0.5
         return tax
@@ -168,7 +262,7 @@ def _compute_tax(
         base = max(0.0, revenue_after_vat - expenses)
         return base * (tax_rate / 100.0)
     if system == "npd":
-        return max(0.0, revenue_after_vat) * (tax_rate / 100.0)
+        return max(0.0, income_base) * (tax_rate / 100.0)
     if system == "patent":
         return 0.0
     return 0.0
@@ -251,35 +345,35 @@ async def build_pnl(
     company_scope = brands is None  # keep OPEX/taxes/fixed only for org-wide view
 
     # ── A) WB report-detail aggregations (source of truth for revenue/commissions) ──
-    # IMPORTANT: revenue uses `retail_price_withdisc_rub` (price the buyer
-    # actually paid after WB SPP/promo) — that matches the «Выкупы»/«Возвраты»
-    # columns in the WB seller cabinet. retail_amount is the pre-SPP price and
-    # is ~30% lower for marketplace data.
-    # Filter on supplier_oper_name (not doc_type_name) — same logic as in
-    # services/metrics.py: doc_type 'Продажа' also catches compensations and
-    # loyalty bonuses which the cabinet shows in separate buckets.
-    revenue_field = func.coalesce(
-        WbReportDetail.retail_price_withdisc_rub, WbReportDetail.retail_amount
+    # Каноничные предикаты + дата (sale_dt) импортируются из period_aggregates,
+    # чтобы Dashboard / Units / Reconciliation использовали ТЕ ЖЕ формулы.
+    # Старый rr_dt-фильтр сдвигал возвраты на 1-2 недели вперёд относительно
+    # WB-кабинета и ломал сверку между страницами; sale_dt совпадает 1:1.
+    from app.services.period_aggregates import (
+        OP_SALE,
+        OP_RETURN,
+        REVENUE_FIELD,
+        acquiring_net_expr,
+        ppvz_net_expr,
+        revenue_gross_expr,
+        revenue_returns_expr,
+        sale_day,
+        sale_dt_filter,
     )
-    is_sale = WbReportDetail.supplier_oper_name == "Продажа"
-    is_return = WbReportDetail.supplier_oper_name == "Возврат"
+
     rd_stmt = (
         select(
-            WbReportDetail.rr_dt,
-            func.sum(case((is_sale, revenue_field), else_=0)).label("revenue_gross"),
-            func.sum(case((is_return, revenue_field), else_=0)).label("revenue_returns"),
-            # ppvz / acquiring are summed only on Продажа − Возврат rows. WB
-            # also stamps these fields on Возмещения / Компенсации rows, but
-            # those go into separate cabinet buckets (Лояльность / Потери),
-            # not into the «Комиссия» line.
+            sale_day().label("sale_day"),
+            revenue_gross_expr().label("revenue_gross"),
+            revenue_returns_expr().label("revenue_returns"),
+            ppvz_net_expr().label("ppvz_for_pay"),
+            acquiring_net_expr().label("acquiring"),
+            # retail_amount net = WB-сторонняя «Стоимость продажи» (УПД), база
+            # налога УСН/АУСН-доход. См. unit_economics.py для деталей.
             (
-                func.sum(case((is_sale, WbReportDetail.ppvz_for_pay), else_=0))
-                - func.sum(case((is_return, WbReportDetail.ppvz_for_pay), else_=0))
-            ).label("ppvz_for_pay"),
-            (
-                func.sum(case((is_sale, WbReportDetail.acquiring_fee), else_=0))
-                - func.sum(case((is_return, WbReportDetail.acquiring_fee), else_=0))
-            ).label("acquiring"),
+                func.sum(case((OP_SALE, WbReportDetail.retail_amount), else_=0))
+                - func.sum(case((OP_RETURN, WbReportDetail.retail_amount), else_=0))
+            ).label("retail_amt_net"),
             func.sum(WbReportDetail.delivery_rub).label("delivery"),
             # storage_fee остаётся как fallback; реальное хранение пер-день
             # приходит из wb_paid_storage и заменяется ниже (по date).
@@ -287,10 +381,25 @@ async def build_pnl(
             func.sum(WbReportDetail.penalty).label("penalty"),
             func.sum(WbReportDetail.deduction).label("deduction"),
             func.sum(WbReportDetail.additional_payment).label("additional"),
+            # Бухгалтерские поля для tax_for_fns. ppvz_vw / ppvz_vw_nds net
+            # (Продажа − Возврат) — это сумма вознаграждения WB и НДС с него,
+            # которые клиентский бухгалтер берёт в расход по УПД.
+            (
+                func.sum(case((OP_SALE, WbReportDetail.ppvz_vw), else_=0))
+                - func.sum(case((OP_RETURN, WbReportDetail.ppvz_vw), else_=0))
+            ).label("ppvz_vw_net"),
+            (
+                func.sum(case((OP_SALE, WbReportDetail.ppvz_vw_nds), else_=0))
+                - func.sum(case((OP_RETURN, WbReportDetail.ppvz_vw_nds), else_=0))
+            ).label("ppvz_vw_nds_net"),
+            # paid_acceptance / rebill_logistic_cost есть на ВСЕХ строках
+            # (включая Возмещение, Логистику и пр.) — суммируем все.
+            func.sum(func.coalesce(WbReportDetail.paid_acceptance, 0)).label("paid_acceptance_total"),
+            func.sum(func.coalesce(WbReportDetail.rebill_logistic_cost, 0)).label("rebill_logistic_total"),
         )
-        .where(WbReportDetail.rr_dt >= date_from, WbReportDetail.rr_dt <= date_to)
-        .group_by(WbReportDetail.rr_dt)
-        .order_by(WbReportDetail.rr_dt)
+        .where(*sale_dt_filter(date_from, date_to))
+        .group_by(sale_day())
+        .order_by(sale_day())
     )
     if nm_filter is not None:
         rd_stmt = rd_stmt.where(WbReportDetail.nm_id.in_(nm_filter))
@@ -467,11 +576,11 @@ async def build_pnl(
             buckets[key] = PnLRow(period_start=key[0], period_end=key[1])
         return buckets[key]
 
-    # WB report-detail rows
+    # WB report-detail rows (sale_day = DATE(sale_dt))
     for r in rd_rows:
-        if r.rr_dt is None:
+        if r.sale_day is None:
             continue
-        b = get_bucket(r.rr_dt)
+        b = get_bucket(r.sale_day)
         b.revenue_gross += _f(r.revenue_gross)
         b.revenue_returns += _f(r.revenue_returns)
         # commission (без эквайринга — эквайринг отдельной строкой). Все
@@ -487,6 +596,13 @@ async def build_pnl(
         b.deduction += _f(r.deduction)
         b.acquiring += _f(r.acquiring)
         b.additional += _f(r.additional)
+        b.ppvz_for_pay += _f(r.ppvz_for_pay)
+        b.retail_amt_net += _f(r.retail_amt_net)
+        # Поля для бухгалтерского налога:
+        b.ppvz_vw_net += _f(r.ppvz_vw_net)
+        b.ppvz_vw_nds_net += _f(r.ppvz_vw_nds_net)
+        b.paid_acceptance_total += _f(r.paid_acceptance_total)
+        b.rebill_logistic_total += _f(r.rebill_logistic_total)
 
     # Storage: paid_storage per-day где есть, fallback на storage_fee из RD для
     # недель которых нет в paid_storage. Старая логика была binary («или всё из
@@ -501,14 +617,14 @@ async def build_pnl(
     for d, amount in storage_paid_by_date.items():
         b = get_bucket(d)
         b.storage += amount
-    # B) RD storage_fee для rr_dt чьей недели нет в paid_storage
+    # B) RD storage_fee для sale_day чьей недели нет в paid_storage
     for r in rd_rows:
-        if r.rr_dt is None:
+        if r.sale_day is None:
             continue
-        rr_monday = r.rr_dt - timedelta(days=r.rr_dt.weekday())
-        if rr_monday in paid_storage_weeks:
+        sale_monday = r.sale_day - timedelta(days=r.sale_day.weekday())
+        if sale_monday in paid_storage_weeks:
             continue
-        b = get_bucket(r.rr_dt)
+        b = get_bucket(r.sale_day)
         b.storage += _f(r.storage)
 
     # Per-day extras: ads, ext-ads, COGS, opex, fixed, manual adjustments
@@ -579,6 +695,29 @@ async def build_pnl(
             tax_rate=tax_rate,
             tax_min_rate=tax_min_rate,
             reduce_by_insurance=reduce_by_insurance,
+            # База налога УСН/АУСН-доход = retail_amount net (Продажа − Возврат).
+            # Это WB-сторонняя «Стоимость продажи» из УПД для ФНС, юридически
+            # корректная база. Точно совпадает с ручным расчётом Excel клиента
+            # (AV колонка). См. обсуждение 2026-05-14.
+            cash_income=b.retail_amt_net,
+        )
+        # Параллельно — налог по методике клиентского бухгалтера (отдельной
+        # колонкой). Управленческий `tax` остаётся первичным, `tax_for_fns`
+        # — для сверки с 1С. См. CLAUDE.md / xlsx-сверка 2026-05-14.
+        b.tax_for_fns = _compute_tax_for_fns(
+            tax_system,
+            retail_amt_net=b.retail_amt_net,
+            ppvz_vw_net=b.ppvz_vw_net,
+            ppvz_vw_nds_net=b.ppvz_vw_nds_net,
+            delivery=b.delivery,
+            paid_acceptance=b.paid_acceptance_total,
+            penalty=b.penalty,
+            deduction=b.deduction,
+            storage=b.storage,
+            cogs=b.cogs,
+            tax_rate=tax_rate,
+            tax_min_rate=tax_min_rate,
+            reduce_by_insurance=reduce_by_insurance,
         )
         b.profit = revenue_after_vat - operating_expenses - b.tax
 
@@ -620,6 +759,12 @@ def _totals(rows: list[PnLRow]) -> dict[str, float]:
         "opex_cashflow_only",
         "other_costs",
         "tax",
+        "tax_for_fns",
+        "ppvz_vw_net",
+        "ppvz_vw_nds_net",
+        "paid_acceptance_total",
+        "rebill_logistic_total",
+        "retail_amt_net",
         "profit",
         "cash_flow",
     )

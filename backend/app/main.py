@@ -23,6 +23,7 @@ from app.api import (
     product_groups,
     products,
     settings,
+    tax_report,
     tenant_settings,
     units,
     users,
@@ -169,3 +170,4 @@ app.include_router(auth_api.router)
 app.include_router(users.router)
 app.include_router(brands.router)
 app.include_router(tenant_settings.router)
+app.include_router(tax_report.router)

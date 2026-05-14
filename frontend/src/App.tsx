@@ -4,6 +4,7 @@ import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import PnL from "./pages/PnL";
 import PnLReconciliation from "./pages/PnLReconciliation";
+import TaxReport from "./pages/TaxReport";
 import Units from "./pages/Units";
 import Settings from "./pages/Settings";
 import RevenueCorrections from "./pages/RevenueCorrections";
@@ -24,6 +25,7 @@ import Legal from "./pages/Legal";
 import Users from "./pages/Users";
 import Brands from "./pages/Brands";
 import Glossary from "./pages/Glossary";
+import Docs from "./pages/Docs";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, needsBootstrap } = useAuth();
@@ -89,6 +91,14 @@ export default function App() {
           <Route index element={<Dashboard />} />
           <Route path="pnl" element={<PnL />} />
           <Route path="pnl-reconciliation" element={<PnLReconciliation />} />
+          <Route
+            path="tax-report"
+            element={
+              <DirectorOrHead>
+                <TaxReport />
+              </DirectorOrHead>
+            }
+          />
           <Route path="units" element={<Units />} />
           <Route
             path="revenue-corrections"
@@ -161,6 +171,7 @@ export default function App() {
             }
           />
           <Route path="glossary" element={<Glossary />} />
+          <Route path="docs" element={<Docs />} />
           <Route
             path="settings"
             element={

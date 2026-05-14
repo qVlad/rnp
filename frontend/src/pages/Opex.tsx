@@ -42,6 +42,7 @@ function Entries() {
     entry_date: today(),
     category_id: "",
     amount: 0,
+    contractor: "",
     comment: "",
   });
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -58,7 +59,13 @@ function Entries() {
   });
 
   const reset = () => {
-    setForm({ entry_date: today(), category_id: "", amount: 0, comment: "" });
+    setForm({
+      entry_date: today(),
+      category_id: "",
+      amount: 0,
+      contractor: "",
+      comment: "",
+    });
     setEditingId(null);
   };
 
@@ -68,6 +75,7 @@ function Entries() {
         entry_date: form.entry_date,
         category_id: Number(form.category_id),
         amount: Number(form.amount) || 0,
+        contractor: form.contractor || null,
         comment: form.comment || null,
       };
       return editingId
@@ -132,6 +140,14 @@ function Entries() {
               step="0.01"
             />
           </Field>
+          <Field label="Контрагент / подрядчик">
+            <input
+              className="input"
+              value={form.contractor}
+              onChange={(e: any) => setForm({ ...form, contractor: e.target.value })}
+              placeholder="ИП Иванов, ООО «Бухгалтерия», блогер @nick…"
+            />
+          </Field>
           <Field label="Комментарий">
             <input
               className="input"
@@ -184,6 +200,7 @@ function Entries() {
                 <th className="text-left p-2">Категория</th>
                 <th className="text-right p-2">Сумма</th>
                 <th className="text-left p-2">В опер.прибыль</th>
+                <th className="text-left p-2">Контрагент</th>
                 <th className="text-left p-2">Комментарий</th>
                 <th className="p-2"></th>
               </tr>
@@ -206,6 +223,7 @@ function Entries() {
                       <span className="text-muted">только ДДС</span>
                     )}
                   </td>
+                  <td className="p-2 text-muted">{row.contractor ?? ""}</td>
                   <td className="p-2 text-muted">{row.comment ?? ""}</td>
                   <td className="p-2 text-right space-x-2">
                     <button
@@ -215,6 +233,7 @@ function Entries() {
                           entry_date: row.entry_date,
                           category_id: String(row.category_id),
                           amount: row.amount,
+                          contractor: row.contractor || "",
                           comment: row.comment || "",
                         });
                         setEditingId(row.id);

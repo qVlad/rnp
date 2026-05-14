@@ -16,14 +16,36 @@ type Line = {
   label: string;
   kind?: LineKind;
   emphasize?: boolean;
+  hint?: string;
 };
 
 const lines: Line[] = [
-  { kind: "section", label: "Выручка" },
+  { kind: "section", label: "Выручка (FBO / основной канал)" },
   { key: "revenue_gross", label: "Выручка (gross)" },
   { key: "revenue_returns", label: "Возвраты" },
-  { key: "dbs_revenue", label: "DBS / rFBS выручка" },
-  { key: "selfbuy_adjustment", label: "Самовыкупы / раздачи (вычитаем)" },
+
+  {
+    kind: "section",
+    label: "Сторонний канал доставки (DBS / rFBS)",
+  },
+  {
+    key: "dbs_revenue",
+    label: "Выручка через свою логистику",
+    hint:
+      "Реальные продажи через свою логистику (Delivery by Seller / realFBS). WB не показывает их в /supplier/sales — добавлены вручную через «Корректировки выручки». Эта выручка добавляется к gross в чистую выручку.",
+  },
+
+  {
+    kind: "section",
+    label: "Корректировки выручки (артефакты)",
+  },
+  {
+    key: "selfbuy_adjustment",
+    label: "Самовыкупы / самозаказы / раздачи",
+    hint:
+      "Фиктивные продажи (накрутка рейтинга, бартер, инфлюенсеры). Сумма вычитается из чистой выручки, чтобы P&L отражал только реальные деньги.",
+  },
+
   { key: "revenue_net", label: "Чистая выручка", emphasize: true },
   { key: "vat", label: "НДС (исходящий)" },
 
@@ -46,7 +68,8 @@ const lines: Line[] = [
   { key: "other_costs", label: "Прочие фикс.расходы (legacy)" },
 
   { kind: "section", label: "Налоги" },
-  { key: "tax", label: "Налог" },
+  { key: "tax", label: "Налог (управленческий, retail_amt × ставка)" },
+  { key: "tax_for_fns", label: "Налог по бух-методу (для 1С, retail_amt − УПД − COGS)" },
 
   { key: "profit", label: "Чистая прибыль", emphasize: true },
 
@@ -148,7 +171,20 @@ export default function PnL() {
                     key={k}
                     className={`border-t border-border ${line.emphasize ? "bg-bg/40 font-semibold" : ""}`}
                   >
-                    <td className="p-2 sticky left-0 bg-surface">{line.label}</td>
+                    <td
+                      className="p-2 sticky left-0 bg-surface"
+                      title={line.hint || undefined}
+                    >
+                      {line.label}
+                      {line.hint && (
+                        <span
+                          className="ml-1 text-muted text-[10px] cursor-help"
+                          aria-label="что это?"
+                        >
+                          ⓘ
+                        </span>
+                      )}
+                    </td>
                     {q.data.rows.map((r: any) => (
                       <td key={r.period_start} className="text-right p-2 font-mono">
                         {fmtRub(r[k])}

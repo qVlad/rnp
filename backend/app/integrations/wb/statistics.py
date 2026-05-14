@@ -158,6 +158,17 @@ _LEGACY_ALIASES = {
     "paid_storage": "storage_fee",
     "retail_price_with_disc": "retail_price_withdisc_rub",
     "sku": "barcode",
+    # Новый finance-api отдаёт `vw` и `vwNds` (snake → vw / vw_nds), но в
+    # БД эти суммы исторически лежат в колонках `ppvz_vw` / `ppvz_vw_nds`
+    # (так назывались в старом /reportDetailByPeriod). Аливаем чтобы
+    # бухгалтерский расчёт расхода (Вознаграждение WB без НДС + НДС)
+    # тянул реальные данные, а не NULL.
+    "vw": "ppvz_vw",
+    "vw_nds": "ppvz_vw_nds",
+    # Новый API возвращает ppvzReward (snake → ppvz_reward); старый
+    # /reportDetailByPeriod возвращал supplier_reward. Не аливаем, чтобы
+    # сохранить новое поле как `ppvz_reward` и колонку `supplier_reward`
+    # оставить для legacy данных.
 }
 
 

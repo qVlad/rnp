@@ -58,7 +58,7 @@ SCHEMAS: dict[str, list[str]] = {
     "products": ["nm_id", "vendor_code", "subject", "brand", "category", "is_archived"],
     "cogs": ["nm_id", "valid_from", "cost_rub", "packaging_rub", "fulfillment_rub"],
     "opex_categories": ["name", "kind", "is_fixed", "in_operating", "cf_section"],
-    "opex_entries": ["id", "entry_date", "category_name", "amount", "comment"],
+    "opex_entries": ["id", "entry_date", "category_name", "amount", "contractor", "comment"],
     "artificial_orders": [
         "id", "type", "order_dt", "completion_dt",
         "nm_id", "qty", "gross_amount", "contractor_fee", "comment",
@@ -319,7 +319,7 @@ async def _export_opex_entries(session: AsyncSession) -> list[list[Any]]:
         .join(OpexCategory, OpexEntry.category_id == OpexCategory.id)
         .order_by(OpexEntry.entry_date, OpexEntry.id)
     )).all()
-    return [[e.id, e.entry_date, name, e.amount, e.comment] for e, name in rows]
+    return [[e.id, e.entry_date, name, e.amount, e.contractor, e.comment] for e, name in rows]
 
 
 async def _import_opex_entries(
@@ -348,6 +348,7 @@ async def _import_opex_entries(
                 entry_date=entry_date,
                 category_id=cat_by_name[cat_name],
                 amount=amount,
+                contractor=_to_str(r.get("contractor")),
                 comment=_to_str(r.get("comment")),
             )
             if existing:

@@ -46,10 +46,11 @@ async def build_reconciliation(
     # Filter on supplier_oper_name and use retail_price_withdisc_rub —
     # same convention as build_pnl(), so WB-side and our-side compare
     # apples to apples (and 1:1 with the WB seller cabinet).
-    sale_filter = WbReportDetail.supplier_oper_name == "Продажа"
-    return_filter = WbReportDetail.supplier_oper_name == "Возврат"
-    revenue_field = func.coalesce(
-        WbReportDetail.retail_price_withdisc_rub, WbReportDetail.retail_amount
+    # Канонические предикаты — единый источник истины:
+    from app.services.period_aggregates import (  # noqa: WPS433
+        OP_SALE as sale_filter,
+        OP_RETURN as return_filter,
+        REVENUE_FIELD as revenue_field,
     )
     nm_filter = (
         select(Product.nm_id).where(Product.brand.in_(list(brands)))
