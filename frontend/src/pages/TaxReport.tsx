@@ -9,16 +9,15 @@ function isoDate(d: Date) {
 
 export default function TaxReport() {
   const today = useMemo(() => new Date(), []);
-  const defaultFrom = useMemo(() => {
-    const d = new Date(today);
-    d.setDate(d.getDate() - 89);
-    return isoDate(d);
-  }, [today]);
+  // По умолчанию — с начала текущего года: чтобы налоговый отчёт сразу
+  // показывал ВСЕ закрытые недели + ВСЕ выкупы, а не только 89 дней.
+  const defaultFrom = useMemo(() => `${today.getFullYear()}-01-01`, [today]);
   const defaultTo = useMemo(() => isoDate(today), [today]);
 
   const [from, setFrom] = useState(defaultFrom);
   const [to, setTo] = useState(defaultTo);
   const [cogsMethod, setCogsMethod] = useState<"historical" | "weighted_avg">("historical");
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
   const queryClient = useQueryClient();
   const q = useQuery({
@@ -32,11 +31,37 @@ export default function TaxReport() {
   const syncBuybacks = useMutation({
     mutationFn: () => api.taxReportSyncBuybacks(),
     onSuccess: () => {
-      // Wait a bit then refetch (task is async)
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ["tax-report-buybacks"] });
-        queryClient.invalidateQueries({ queryKey: ["tax-report"] });
-      }, 5000);
+      // Backfill идёт ~80 сек (download + parse каждого документа с 10-сек
+      // лимитом API). Поллим каждые 8 сек до 2 мин, чтобы UI авто-обновлялся
+      // когда новые записи появятся. Завершаем по «no change за 16 сек подряд».
+      setSyncMsg("Синхронизация запущена — подождите ~1-2 минуты, UI обновится автоматически");
+      const startCount = buybacks.data?.items.length ?? 0;
+      let prevCount = startCount;
+      let stableTicks = 0;
+      const startTime = Date.now();
+      const interval = setInterval(async () => {
+        const fresh = await api.taxReportBuybacks(from, to);
+        const newCount = fresh.items.length;
+        if (newCount !== prevCount) {
+          stableTicks = 0;
+          prevCount = newCount;
+          queryClient.invalidateQueries({ queryKey: ["tax-report-buybacks"] });
+          queryClient.invalidateQueries({ queryKey: ["tax-report"] });
+        } else {
+          stableTicks += 1;
+        }
+        const elapsed = (Date.now() - startTime) / 1000;
+        const added = newCount - startCount;
+        if (stableTicks >= 2 || elapsed > 120) {
+          clearInterval(interval);
+          if (added > 0) {
+            setSyncMsg(`✓ Синхронизация завершена: добавлено ${added} новых выкупов`);
+          } else {
+            setSyncMsg("✓ Синхронизация завершена: новых выкупов нет (все уже в БД)");
+          }
+          setTimeout(() => setSyncMsg(null), 8000);
+        }
+      }, 8000);
     },
   });
 
@@ -110,15 +135,25 @@ export default function TaxReport() {
           className="btn ml-auto"
           onClick={() => syncBuybacks.mutate()}
           disabled={syncBuybacks.isPending}
-          title="Скачать новые Уведомления о выкупе из WB Documents API"
+          title="Скачать новые Уведомления о выкупе из WB Documents API. Проверяет данные за 90 дней назад от сегодня."
         >
           {syncBuybacks.isPending ? "Синхронизация…" : "↻ Синхр. выкупы"}
         </button>
         <div className="text-xs text-muted">
           {q.isLoading && "Загрузка…"}
-          {!q.isLoading && `Отчётов: ${rows.length}, Выкупов: ${buybackRows.length}`}
+          {!q.isLoading && (
+            <span title="Кол-во строк (1 неделя = 2 отчёта: основной + корректировки). Выкупов меньше т.к. WB выкупает не каждую неделю">
+              Отчётов: {rows.length}, Выкупов: {buybackRows.length}
+            </span>
+          )}
         </div>
       </section>
+
+      {syncMsg && (
+        <section className="card text-sm text-accent bg-accent/5 border-accent/30">
+          {syncMsg}
+        </section>
+      )}
 
       {totals && (
         <section className="card grid grid-cols-2 md:grid-cols-5 gap-4">

@@ -797,7 +797,7 @@ def sync_report_detail_backfill_dispatch() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-async def _sync_redeem_notifications_async(tenant_id: int, days_back: int = 90) -> int:
+async def _sync_redeem_notifications_async(tenant_id: int, days_back: int = 400) -> int:
     """Sync «Уведомление о выкупе» через WB Documents API.
 
     1) GET /documents/list?category=redeem-notification — список доступных за период
@@ -900,7 +900,7 @@ async def _sync_redeem_notifications_async(tenant_id: int, days_back: int = 90) 
 
 
 @celery_app.task(name="app.sync.tasks.sync_redeem_notifications_for_tenant")
-def sync_redeem_notifications_for_tenant(tenant_id: int, days_back: int = 90) -> int:
+def sync_redeem_notifications_for_tenant(tenant_id: int, days_back: int = 400) -> int:
     return asyncio.run(_sync_redeem_notifications_async(tenant_id, days_back))
 
 
@@ -915,7 +915,7 @@ def sync_redeem_notifications_dispatch() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-async def _sync_offset_acts_async(tenant_id: int, days_back: int = 90) -> int:
+async def _sync_offset_acts_async(tenant_id: int, days_back: int = 400) -> int:
     """Аналогично _sync_redeem_notifications_async — но для actprofit.
     Дублирует структуру: list → download → parse → upsert. У клиента
     обычно мало или нет этих документов, но если появятся — попадут в
@@ -1005,7 +1005,7 @@ async def _sync_offset_acts_async(tenant_id: int, days_back: int = 90) -> int:
 
 
 @celery_app.task(name="app.sync.tasks.sync_offset_acts_for_tenant")
-def sync_offset_acts_for_tenant(tenant_id: int, days_back: int = 90) -> int:
+def sync_offset_acts_for_tenant(tenant_id: int, days_back: int = 400) -> int:
     return asyncio.run(_sync_offset_acts_async(tenant_id, days_back))
 
 
