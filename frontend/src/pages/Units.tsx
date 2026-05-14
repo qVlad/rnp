@@ -12,6 +12,7 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import { api } from "@/api/client";
+import { DateRangePicker } from "@/components/DateRangePicker";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
 
 const COL_VIS_KEY = "units.columnVisibility.v2";
@@ -577,24 +578,11 @@ export default function Units() {
               </button>
             ))}
           </div>
-          <div className="flex items-center gap-1 text-xs">
-            <input
-              type="date"
-              className="input"
-              style={{ width: 130, padding: "4px 6px" }}
-              value={customStart}
-              max={customEnd}
-              onChange={(e: any) => setCustomStart(e.target.value)}
-            />
-            <span className="text-muted">—</span>
-            <input
-              type="date"
-              className="input"
-              style={{ width: 130, padding: "4px 6px" }}
-              value={customEnd}
-              min={customStart}
-              max={today()}
-              onChange={(e: any) => setCustomEnd(e.target.value)}
+          <div className="flex items-center gap-2 text-xs">
+            <DateRangePicker
+              from={customStart || today()}
+              to={customEnd || today()}
+              onChange={(r) => { setCustomStart(r.from); setCustomEnd(r.to); }}
             />
             <button
               className={`btn ${mode.kind === "custom" ? "border-accent text-accent" : ""}`}

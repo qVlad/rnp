@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { DateRangePicker } from "@/components/DateRangePicker";
+
+const isoToday = () => new Date().toISOString().slice(0, 10);
 
 export default function AuditLog() {
   const [table, setTable] = useState("");
@@ -98,20 +101,11 @@ export default function AuditLog() {
               onChange={(e: any) => setEntityId(e.target.value)}
             />
           </Field>
-          <Field label="С даты">
-            <input
-              type="date"
-              className="input"
-              value={dateFrom}
-              onChange={(e: any) => setDateFrom(e.target.value)}
-            />
-          </Field>
-          <Field label="По дату">
-            <input
-              type="date"
-              className="input"
-              value={dateTo}
-              onChange={(e: any) => setDateTo(e.target.value)}
+          <Field label="Период">
+            <DateRangePicker
+              from={dateFrom || isoToday()}
+              to={dateTo || isoToday()}
+              onChange={(r) => { setDateFrom(r.from); setDateTo(r.to); }}
             />
           </Field>
           <Field label="Лимит">

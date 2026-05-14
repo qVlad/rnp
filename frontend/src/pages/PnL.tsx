@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
+import { DateRangePicker } from "@/components/DateRangePicker";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const daysAgo = (n: number) => {
@@ -102,24 +103,14 @@ export default function PnL() {
       <div className="flex items-end justify-between flex-wrap gap-3">
         <h1 className="text-xl font-semibold">P&L</h1>
         <div className="flex items-end gap-3 flex-wrap">
-          <label className="flex flex-col text-xs text-muted">
-            С
-            <input
-              type="date"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-              className="bg-surface border border-border rounded-md p-1.5 text-sm text-white"
+          <div className="flex flex-col text-xs text-muted">
+            Период
+            <DateRangePicker
+              from={from}
+              to={to}
+              onChange={(r) => { setFrom(r.from); setTo(r.to); }}
             />
-          </label>
-          <label className="flex flex-col text-xs text-muted">
-            По
-            <input
-              type="date"
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-              className="bg-surface border border-border rounded-md p-1.5 text-sm text-white"
-            />
-          </label>
+          </div>
           <div className="flex gap-1">
             {(["day", "week", "month"] as const).map((g) => (
               <button

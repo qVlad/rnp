@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
+import { DateRangePicker } from "@/components/DateRangePicker";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const startOfMonth = () => {
@@ -39,24 +40,14 @@ export default function CashFlow() {
       <div className="flex items-end justify-between flex-wrap gap-3">
         <h1 className="text-xl font-semibold">ДДС — Движение денежных средств</h1>
         <div className="flex items-end gap-3 flex-wrap">
-          <label className="flex flex-col text-xs text-muted">
-            С
-            <input
-              type="date"
-              value={from}
-              onChange={(e: any) => setFrom(e.target.value)}
-              className="input"
+          <div className="flex flex-col text-xs text-muted">
+            Период
+            <DateRangePicker
+              from={from}
+              to={to}
+              onChange={(r) => { setFrom(r.from); setTo(r.to); }}
             />
-          </label>
-          <label className="flex flex-col text-xs text-muted">
-            По
-            <input
-              type="date"
-              value={to}
-              onChange={(e: any) => setTo(e.target.value)}
-              className="input"
-            />
-          </label>
+          </div>
         </div>
       </div>
 

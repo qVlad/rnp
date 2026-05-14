@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
+import { DateRangePicker } from "@/components/DateRangePicker";
 
 function isoDate(d: Date) {
   return d.toISOString().slice(0, 10);
@@ -111,14 +112,14 @@ export default function TaxReport() {
       </div>
 
       <section className="card flex flex-wrap gap-4 items-end">
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted uppercase">С</span>
-          <input type="date" className="input" value={from} onChange={(e) => setFrom(e.target.value)} />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted uppercase">По</span>
-          <input type="date" className="input" value={to} onChange={(e) => setTo(e.target.value)} />
-        </label>
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-muted uppercase">Период</span>
+          <DateRangePicker
+            from={from}
+            to={to}
+            onChange={(r) => { setFrom(r.from); setTo(r.to); }}
+          />
+        </div>
         <label className="flex flex-col gap-1">
           <span className="text-xs text-muted uppercase">Метод COGS</span>
           <select
