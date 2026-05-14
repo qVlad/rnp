@@ -278,27 +278,43 @@ function Stat({
 // Wizard-row — раскрывается при клике на неделю. Шаг-за-шагом сверка
 // с WB-кабинетом: какие поля сличать и что значит расхождение.
 function WizardRow({ p, fees }: { p: any; fees: number }) {
+  // ВАЖНО: формулы сторон должны быть симметричны (apples-to-apples).
+  //
+  // 1) Выручка net (Продажи − Возвраты): обе стороны — сумма retail_with_disc.
+  //    WB: revenue_gross − revenue_returns (по report_date_to)
+  //    Наша: revenue_gross − revenue_returns (по sale_dt) — НЕ revenue_net,
+  //    т.к. revenue_net включает manual adjustments (dbs, selfbuy) которых
+  //    в WB-данных нет — это дало бы фейковую дельту.
+  //
+  // 2) Комиссия + эквайринг: WB-side commission = revenue_net − ppvz_for_pay
+  //    (т.к. WB уже вычел и комиссию, и эквайринг до ppvz_for_pay). Наша
+  //    side хранит их раздельно: commission (без эквайринга) + acquiring.
+  //    Сумма обоих = WB.commission.
+  //
+  // 3) Чистая выручка (ppvz_for_pay) — фактическое перечисление селлеру
+  //    после WB-удержаний. Обе стороны: sum(ppvz_for_pay net Продажа−Возврат).
+  //    Раньше тут сравнивали wb.payout vs ours.revenue_net — РАЗНЫЕ ПОНЯТИЯ.
   const checks: { label: string; wb: number; ours: number; tolerance?: number; note?: string }[] = [
     {
       label: "Выручка (Продажи − Возвраты)",
       wb: p.wb.revenue_gross - p.wb.revenue_returns,
-      ours: p.ours.revenue_gross - (p.ours.revenue_net < 0 ? 0 : 0), // simple base
+      ours: (p.ours.revenue_gross || 0) - (p.ours.revenue_returns || 0),
       tolerance: 1.0,
       note: "В WB-кабинете это строка «Реализация» (Продажи − Возвраты).",
     },
     {
       label: "Комиссия WB и эквайринг",
       wb: p.wb.commission,
-      ours: p.ours.commission,
+      ours: (p.ours.commission || 0) + (p.ours.acquiring || 0),
       tolerance: 1.0,
-      note: "Сравни с колонкой «Комиссия WB и эквайринг» в детализации.",
+      note: "WB: revenue_net − ppvz_for_pay (включает эквайринг). Наша: commission + acquiring.",
     },
     {
       label: "Чистая выручка (ppvz_for_pay)",
       wb: p.wb.payout,
-      ours: p.ours.revenue_net,
+      ours: p.ours.ppvz_for_pay || 0,
       tolerance: 1.0,
-      note: "WB: сумма ppvz_for_pay в детализации. Наша: revenue_gross + dbs − returns − selfbuy.",
+      note: "Сумма ppvz_for_pay net (Продажа − Возврат) — то что WB реально перечисляет селлеру.",
     },
   ];
   return (
