@@ -46,7 +46,7 @@ from typing import Any
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Product, WbRedeemNotification, WbReportDetail
+from app.db.models import Product, WbOffsetAct, WbRedeemNotification, WbReportDetail
 from app.services.period_aggregates import (
     OP_RETURN,
     OP_SALE,
@@ -196,6 +196,27 @@ async def build_tax_report(
         .order_by(WbRedeemNotification.notification_date)
     )
     buyback_rows = (await session.execute(buyback_stmt)).all()
+
+    # ── Offsets (Акты взаимозачёта) — параллельно redeem, через actprofit.
+    offset_stmt = (
+        select(
+            WbOffsetAct.act_number,
+            WbOffsetAct.act_date,
+            WbOffsetAct.total_sum,
+        )
+        .where(WbOffsetAct.act_date >= date_from)
+        .where(WbOffsetAct.act_date <= date_to)
+    )
+    offset_rows = (await session.execute(offset_stmt)).all()
+    offset_by_realization: dict[int, float] = {}
+    for of in offset_rows:
+        for r in rows:
+            if r.report_date_from <= of.act_date <= r.report_date_to:
+                offset_by_realization[int(r.realization_id)] = (
+                    offset_by_realization.get(int(r.realization_id), 0.0)
+                    + float(of.total_sum or 0)
+                )
+                break
     # Распределяем по периодам [report_date_from..report_date_to]
     buyback_by_realization: dict[int, float] = {}
     unallocated_buybacks: list[dict[str, Any]] = []
@@ -299,7 +320,7 @@ async def build_tax_report(
         # добавляем в эту строку отчёта. Взаимозачёты пока не подключены
         # (отдельный документ «Акт взаимозачёта», категория actprofit).
         income_buyback = buyback_by_realization.get(int(r.realization_id), 0.0)
-        income_offset = 0.0
+        income_offset = offset_by_realization.get(int(r.realization_id), 0.0)
         income_total = income_realization + income_compensation + income_buyback + income_offset
 
         e_ppvz_vw = float(r.expense_ppvz_vw or 0)

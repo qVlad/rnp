@@ -37,6 +37,7 @@ from app.integrations.wb.client import WbApiClient
 
 # Канонические имена категорий WB Documents API
 CATEGORY_REDEEM_NOTIFICATION = "redeem-notification"
+CATEGORY_OFFSET_ACT = "actprofit"
 
 
 async def list_documents(
@@ -249,4 +250,98 @@ def parse_redeem_notification(zip_bytes: bytes) -> dict[str, Any]:
         "total_sum_with_vat": total_sum,
         "items": items,
         "service_name": f"redeem-notification-{notification_number}",
+    }
+
+
+# ── Парсер XLSX акта взаимозачёта (actprofit) ───────────────────────────
+# Generic-парсер: ищет шапку с номером + датой, и строку «Итого» с суммой.
+# Точная структура неизвестна (у клиента нет таких документов в живом
+# tenants за последние 5 месяцев) — берём согласованный подход с redeem.
+
+_OFFSET_HEADER_RE = re.compile(
+    r"(?:АКТ\s+ВЗАИМОЗАЧ[ЕЁ]ТА|АКТ\s+ЗАЧ[ЕЁ]ТА)\s*№?\s*(?P<num>\d+).*?от\s+(?P<date>\d{4}-\d{2}-\d{2}|\d{2}\.\d{2}\.\d{4})",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def parse_offset_act(zip_bytes: bytes) -> dict[str, Any]:
+    """Распарсить ZIP с актом взаимозачёта. Возвращает:
+      {
+        "act_number": "...",
+        "act_date": date(...),
+        "total_sum": Decimal(...),
+        "items": [...],
+        "service_name": "actprofit-...",
+      }
+
+    Парсер написан как fallback с поддержкой нескольких форматов:
+    1. Шапка с «Акт взаимозачёта/зачёта №<n> от <date>»
+    2. Сумма в строке «Итого:» (любая колонка с числом)
+
+    При появлении первого реального документа на проде — подкорректировать
+    логику под фактический формат WB."""
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+        xlsx_name = next((n for n in z.namelist() if n.endswith(".xlsx")), None)
+        if xlsx_name is None:
+            raise ValueError("no .xlsx inside ZIP")
+        xlsx_bytes = z.read(xlsx_name)
+
+    wb = load_workbook(io.BytesIO(xlsx_bytes), data_only=True)
+    s = wb.active
+
+    # 1) Шапка
+    header_text = ""
+    for r in range(1, min(15, s.max_row) + 1):
+        v = s.cell(row=r, column=1).value
+        if v and ("АКТ" in str(v).upper() and "ЗАЧ" in str(v).upper()):
+            header_text = str(v)
+            break
+    m = _OFFSET_HEADER_RE.search(header_text or "")
+    if m:
+        act_number = m.group("num")
+        act_date = _parse_date_loose(m.group("date"))
+    else:
+        # Fallback — взять номер из serviceName и текущую дату
+        act_number = "unknown"
+        act_date = None
+
+    if act_date is None:
+        raise ValueError(f"can't parse date from header: {header_text!r}")
+
+    # 2) Сумма из «Итого:»
+    total_sum: Decimal | None = None
+    for r in range(s.max_row, 0, -1):
+        cell_a = str(s.cell(row=r, column=1).value or "").strip().lower()
+        if cell_a.startswith("итого"):
+            # Просканировать строку и взять самое большое число (вероятный total)
+            for col in range(2, s.max_column + 1):
+                v = s.cell(row=r, column=col).value
+                parsed = _parse_ru_decimal(v)
+                if parsed is not None and (total_sum is None or parsed > total_sum):
+                    total_sum = parsed
+            if total_sum is not None:
+                break
+    if total_sum is None:
+        raise ValueError("no Итого row with parseable sum found")
+
+    # 3) Items — собираем все непустые строки между шапкой и «Итого»
+    items: list[dict[str, Any]] = []
+    for r in range(2, s.max_row + 1):
+        row_values = [s.cell(row=r, column=c).value for c in range(1, min(s.max_column, 10) + 1)]
+        if all(v in (None, "") for v in row_values):
+            continue
+        cell_a = str(row_values[0] or "").strip().lower()
+        if cell_a.startswith("итого"):
+            break
+        # Пропускаем шапку
+        if any(kw in str(row_values).upper() for kw in ("АКТ", "СУММА", "ОБЩЕСТВО", "ИНН")):
+            continue
+        items.append({f"col_{i+1}": str(v) if v is not None else None for i, v in enumerate(row_values)})
+
+    return {
+        "act_number": act_number,
+        "act_date": act_date,
+        "total_sum": total_sum,
+        "items": items,
+        "service_name": f"actprofit-{act_number}",
     }

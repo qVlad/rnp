@@ -910,6 +910,111 @@ def sync_redeem_notifications_dispatch() -> dict[str, Any]:
     return _fanout(sync_redeem_notifications_for_tenant)
 
 
+# ---------------------------------------------------------------------------
+# Offset acts (Акт взаимозачёта, Documents API: actprofit)
+# ---------------------------------------------------------------------------
+
+
+async def _sync_offset_acts_async(tenant_id: int, days_back: int = 90) -> int:
+    """Аналогично _sync_redeem_notifications_async — но для actprofit.
+    Дублирует структуру: list → download → parse → upsert. У клиента
+    обычно мало или нет этих документов, но если появятся — попадут в
+    `income_offset` налогового отчёта."""
+    from app.db.models import WbOffsetAct
+    from app.integrations.wb.documents import (
+        CATEGORY_OFFSET_ACT,
+        download_document,
+        list_documents,
+        parse_offset_act,
+    )
+
+    today = datetime.now(timezone.utc).date()
+    date_from = today - timedelta(days=days_back)
+
+    total_synced = 0
+    async with tenant_sync_context(tenant_id) as ctx:
+        if ctx is None:
+            log.info("offset_acts: tenant %s no token, skip", tenant_id)
+            return 0
+        session, wb = ctx
+
+        try:
+            docs = await list_documents(
+                wb, CATEGORY_OFFSET_ACT, date_from, today, limit=50
+            )
+        except Exception as e:
+            log.warning("offset_acts: list failed (%s)", e)
+            await update_checkpoint(
+                session, "offset_acts", rows_processed=0,
+                status="skipped", error=str(e)[:500],
+            )
+            return 0
+
+        if not docs:
+            await update_checkpoint(session, "offset_acts", rows_processed=0)
+            return 0
+
+        existing = (
+            await session.execute(
+                select(WbOffsetAct.service_name).where(
+                    WbOffsetAct.service_name.in_(
+                        [d.get("serviceName") for d in docs if d.get("serviceName")]
+                    )
+                )
+            )
+        ).scalars().all()
+        existing_set = set(existing)
+
+        new_docs = [d for d in docs if d.get("serviceName") not in existing_set]
+        log.info("offset_acts: tenant=%s found=%d new=%d", tenant_id, len(docs), len(new_docs))
+
+        for doc in new_docs:
+            sname = doc.get("serviceName")
+            if not sname:
+                continue
+            try:
+                zip_bytes = await download_document(wb, sname, extension="zip")
+                parsed = parse_offset_act(zip_bytes)
+            except Exception as e:
+                log.warning("offset_acts: %s failed (%s)", sname, e)
+                continue
+
+            stmt = pg_insert(WbOffsetAct).values(
+                tenant_id=tenant_id,
+                act_number=parsed["act_number"],
+                act_date=parsed["act_date"],
+                total_sum=parsed["total_sum"],
+                items=parsed["items"],
+                service_name=parsed["service_name"],
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["tenant_id", "act_number"],
+                set_={
+                    "act_date": stmt.excluded["act_date"],
+                    "total_sum": stmt.excluded["total_sum"],
+                    "items": stmt.excluded["items"],
+                    "service_name": stmt.excluded["service_name"],
+                },
+            )
+            await session.execute(stmt)
+            total_synced += 1
+
+        await session.commit()
+        await update_checkpoint(session, "offset_acts", rows_processed=total_synced)
+    return total_synced
+
+
+@celery_app.task(name="app.sync.tasks.sync_offset_acts_for_tenant")
+def sync_offset_acts_for_tenant(tenant_id: int, days_back: int = 90) -> int:
+    return asyncio.run(_sync_offset_acts_async(tenant_id, days_back))
+
+
+@celery_app.task(name="app.sync.tasks.sync_offset_acts")
+def sync_offset_acts_dispatch() -> dict[str, Any]:
+    """Beat dispatcher (раз в день): fanout по активным tenants."""
+    return _fanout(sync_offset_acts_for_tenant)
+
+
 
 
 # ---------------------------------------------------------------------------

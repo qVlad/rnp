@@ -82,6 +82,18 @@ celery_app.conf.update(
             "task": "app.sync.tasks.sync_paid_storage",
             "schedule": crontab(hour=5, minute=30),
         },
+        # Документы: уведомления о выкупе + акты взаимозачёта (Documents API).
+        # 07:00 MSK после report_detail (04:15) и paid_storage (05:30) — даём
+        # WB время сгенерировать новые документы. Rate limit 1/10sec на download,
+        # 13 документов за 90 дней = ~2 минуты на синк, не нагружает API.
+        "sync-redeem-notifications-daily": {
+            "task": "app.sync.tasks.sync_redeem_notifications",
+            "schedule": crontab(hour=7, minute=0),
+        },
+        "sync-offset-acts-daily": {
+            "task": "app.sync.tasks.sync_offset_acts",
+            "schedule": crontab(hour=7, minute=15),
+        },
         # Advert queue — production observation: WB penalises >=2 advert calls
         # within ~60 min with 50-60 min cooldown. Schedule must keep ≥1h gap
         # between any two advert-category calls, idealy >=2h.

@@ -46,6 +46,7 @@ from app.db.models import (
     ProductGroupAssignment,
     SalesPlan,
     SettingTimeline,
+    Supply,
     WbTariffCategory,
 )
 
@@ -81,6 +82,13 @@ SCHEMAS: dict[str, list[str]] = {
     ],
     "product_groups": ["id", "name", "manager_name", "color", "comment"],
     "product_group_assignments": ["group_name", "nm_id"],
+    "supplies": [
+        "id", "nm_id", "vendor_code", "supply_date",
+        "qty", "cost_per_unit", "currency",
+        "vendor", "invoice_number",
+        "paid_status", "paid_date", "paid_amount",
+        "notes",
+    ],
 }
 
 ENTITY_LABELS: dict[str, str] = {
@@ -97,6 +105,7 @@ ENTITY_LABELS: dict[str, str] = {
     "off_platform_stock": "Off-WB склад (движения)",
     "product_groups": "Группы товаров",
     "product_group_assignments": "Привязка SKU к группам",
+    "supplies": "Закупки у поставщиков",
 }
 
 
@@ -798,6 +807,86 @@ async def _import_pg_assignments(
     return {"inserted": inserted, "updated": updated, "skipped": skipped, "errors": errors}
 
 
+async def _export_supplies(session: AsyncSession) -> list[list[Any]]:
+    rows = (await session.execute(select(Supply).order_by(Supply.supply_date.desc(), Supply.id.desc()))).scalars().all()
+    return [
+        [
+            s.id,
+            s.nm_id,
+            s.vendor_code,
+            s.supply_date,
+            int(s.qty or 0),
+            float(s.cost_per_unit) if s.cost_per_unit is not None else None,
+            s.currency,
+            s.vendor,
+            s.invoice_number,
+            s.paid_status,
+            s.paid_date,
+            float(s.paid_amount) if s.paid_amount is not None else None,
+            s.notes,
+        ]
+        for s in rows
+    ]
+
+
+async def _import_supplies(
+    session: AsyncSession, rows: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Upsert по id если задан, иначе insert. Натуральный ключ
+    (nm_id+supply_date+invoice_number) — не enforce'им, потому что invoice
+    бывает пустой. Если хотите редактировать существующую запись — экспортируйте
+    сначала, чтобы получить id в первой колонке.
+    """
+    inserted = updated = skipped = 0
+    errors: list[str] = []
+    for i, raw in enumerate(rows, start=2):
+        try:
+            sid = _to_int(raw.get("id"))
+            supply_date = _to_date(raw.get("supply_date"))
+            if supply_date is None:
+                raise ValueError("supply_date обязательна")
+            qty = _to_int(raw.get("qty")) or 0
+            if qty <= 0:
+                raise ValueError("qty должна быть > 0")
+            cost_per_unit = _to_decimal(raw.get("cost_per_unit")) or 0
+            total_cost = cost_per_unit * qty
+            paid_status = (raw.get("paid_status") or "unpaid").strip().lower()
+            if paid_status not in ("unpaid", "partial", "paid"):
+                paid_status = "unpaid"
+            payload = {
+                "nm_id": _to_int(raw.get("nm_id")),
+                "vendor_code": _to_str(raw.get("vendor_code")),
+                "supply_date": supply_date,
+                "qty": qty,
+                "cost_per_unit": cost_per_unit,
+                "total_cost": total_cost,
+                "currency": (raw.get("currency") or "RUB").strip().upper()[:8] or "RUB",
+                "vendor": _to_str(raw.get("vendor")),
+                "invoice_number": _to_str(raw.get("invoice_number")),
+                "paid_status": paid_status,
+                "paid_date": _to_date(raw.get("paid_date")),
+                "paid_amount": _to_decimal(raw.get("paid_amount")),
+                "notes": _to_str(raw.get("notes")),
+            }
+            if sid:
+                existing = await session.get(Supply, sid)
+                if existing is None:
+                    # id указан но не найден — создаём новую запись (id выставит SEQ)
+                    session.add(Supply(**payload))
+                    inserted += 1
+                else:
+                    for k, v in payload.items():
+                        setattr(existing, k, v)
+                    updated += 1
+            else:
+                session.add(Supply(**payload))
+                inserted += 1
+        except Exception as e:
+            errors.append(f"строка {i}: {e}")
+            skipped += 1
+    return {"inserted": inserted, "updated": updated, "skipped": skipped, "errors": errors}
+
+
 REGISTRY: dict[str, tuple[ExportFn, ImportFn]] = {
     "products": (_export_products, _import_products),
     "cogs": (_export_cogs, _import_cogs),
@@ -812,6 +901,7 @@ REGISTRY: dict[str, tuple[ExportFn, ImportFn]] = {
     "off_platform_stock": (_export_off_platform, _import_off_platform),
     "product_groups": (_export_product_groups, _import_product_groups),
     "product_group_assignments": (_export_pg_assignments, _import_pg_assignments),
+    "supplies": (_export_supplies, _import_supplies),
 }
 
 
