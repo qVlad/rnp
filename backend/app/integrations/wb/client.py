@@ -12,7 +12,7 @@ from app.integrations.wb.rate_limiter import TokenBucketLimiter
 
 log = get_logger(__name__)
 
-Category = Literal["statistics", "advert", "common", "analytics", "finance", "documents"]
+Category = Literal["statistics", "advert", "common", "analytics", "finance", "documents", "content"]
 
 
 class WbApiError(Exception):
@@ -108,6 +108,9 @@ class WbApiClient:
             # POST /documents/download/all — 1 req / 5 min (используется только
             # в sync_redeem_notifications, лимит соблюдается на уровне task).
             "documents": TokenBucketLimiter(6, min_interval_s=10.0),
+            # content-api: /content/v2/get/cards/list — 100/min по доке, но мы
+            # используем редко (раз в сутки на 100 SKU), осторожно лимитируем 60/мин.
+            "content": TokenBucketLimiter(60),
         }
         self._bases: dict[Category, str] = {
             "statistics": settings.wb_statistics_base,
@@ -116,6 +119,7 @@ class WbApiClient:
             "analytics": settings.wb_analytics_base,
             "finance": settings.wb_finance_base,
             "documents": getattr(settings, "wb_documents_base", "https://documents-api.wildberries.ru"),
+            "content": settings.wb_content_base,
         }
         self._client: httpx.AsyncClient | None = None
 

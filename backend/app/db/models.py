@@ -364,6 +364,40 @@ class WbAdCampaign(Base, TenantScopedMixin):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class Supply(Base, TenantScopedMixin):
+    """Закупка товара у поставщика — батч с qty и cost_per_unit.
+
+    Используется для расчёта себестоимости методом средневзвешенной
+    (как в 1С): только paid-supplies учитываются для УСН-расхода.
+
+    Формула: avg_cost(nm) = Σ(qty×cost) / Σ(qty) по paid supplies до даты продажи.
+    См. services/cogs_weighted.py.
+    """
+
+    __tablename__ = "supplies"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    nm_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    vendor_code: Mapped[str | None] = mapped_column(String(255))
+    supply_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    qty: Mapped[int] = mapped_column(Integer, default=0)
+    cost_per_unit: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0)
+    total_cost: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
+    currency: Mapped[str] = mapped_column(String(8), default="RUB")
+    vendor: Mapped[str | None] = mapped_column(String(255))
+    invoice_number: Mapped[str | None] = mapped_column(String(128))
+    paid_status: Mapped[str] = mapped_column(String(16), default="unpaid")
+    paid_date: Mapped[date | None] = mapped_column(Date)
+    paid_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class WbRedeemNotification(Base, TenantScopedMixin):
     """Уведомление о выкупе (WB Documents API → category="redeem-notification").
 

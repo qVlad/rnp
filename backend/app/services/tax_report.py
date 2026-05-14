@@ -103,6 +103,7 @@ async def build_tax_report(
     date_from: date,
     date_to: date,
     brands: set[str] | None = None,
+    cogs_method: str = "historical",
 ) -> dict[str, Any]:
     """Сгруппированный по WB-отчётам налоговый расчёт за период.
 
@@ -110,6 +111,12 @@ async def build_tax_report(
     дохода). Каждый отчёт реализации становится отдельной строкой.
 
     `brands` — фильтр для manager-роли (как в build_pnl).
+
+    `cogs_method`:
+        - "historical" (default) — Cogs.cost на дату продажи (FIFO замена).
+        - "weighted_avg" — средневзвешенная по таблице supplies (1С метод):
+          avg_cost(nm) = Σ(qty×cost) / Σ(qty) по paid поставкам до конца
+          периода. Для УСН-расхода учитываются только оплаченные поставки.
     """
     nm_filter = (
         select(Product.nm_id).where(Product.brand.in_(list(brands)))
@@ -235,6 +242,16 @@ async def build_tax_report(
         cogs_stmt = cogs_stmt.where(WbReportDetail.nm_id.in_(nm_filter))
     cogs_rows = (await session.execute(cogs_stmt)).all()
 
+    # Weighted-avg lookup — заранее посчитан avg_cost per nm_id для всего
+    # периода (paid supplies до date_to). Используется если cogs_method='weighted_avg'.
+    weighted_avg_by_nm: dict[int, dict[str, float]] = {}
+    if cogs_method == "weighted_avg":
+        from app.services.cogs_weighted import compute_weighted_avg_cogs  # noqa: WPS433
+        nm_ids_in_period = {int(cr.nm_id) for cr in cogs_rows if cr.nm_id is not None}
+        weighted_avg_by_nm = await compute_weighted_avg_cogs(
+            session, nm_ids_in_period, period_end=date_to, paid_only=True
+        )
+
     cogs_by_realization: dict[int, float] = {}
     for cr in cogs_rows:
         if cr.units_net <= 0 or cr.nm_id is None:
@@ -242,7 +259,16 @@ async def build_tax_report(
         sale_d = cr.sale_dt.date() if cr.sale_dt else None
         if sale_d is None:
             continue
-        unit_cost = cost_for_date(cogs_lookup, int(cr.nm_id), sale_d)
+        nm = int(cr.nm_id)
+        unit_cost: float | None = None
+        if cogs_method == "weighted_avg":
+            wa = weighted_avg_by_nm.get(nm)
+            if wa and wa["avg_cost"] > 0:
+                unit_cost = wa["avg_cost"]
+        # Fallback на historical для weighted_avg тоже — иначе теряем COGS
+        # на SKU без записей в supplies.
+        if unit_cost is None or unit_cost <= 0:
+            unit_cost = cost_for_date(cogs_lookup, nm, sale_d)
         if unit_cost is None or unit_cost <= 0:
             continue
         cogs_by_realization[int(cr.realization_id)] = (

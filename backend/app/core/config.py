@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     #   /reportDetailByPeriod    → 2026-07-15 → finance-api
     wb_analytics_base: str = "https://seller-analytics-api.wildberries.ru"
     wb_finance_base: str = "https://finance-api.wildberries.ru"
+    wb_content_base: str = "https://content-api.wildberries.ru"
 
     # Rate limits:
     # Statistics (statistics-api.wildberries.ru):

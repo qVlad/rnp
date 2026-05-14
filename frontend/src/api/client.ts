@@ -174,6 +174,47 @@ export const api = {
   pnl: (from: string, to: string, granularity: "day" | "week" | "month") =>
     request(`/api/pnl?from=${from}&to=${to}&granularity=${granularity}`),
 
+  listSupplies: (filters: {
+    nm_id?: number;
+    paid_status?: string;
+    date_from?: string;
+    date_to?: string;
+  } = {}) => {
+    const qs = new URLSearchParams();
+    if (filters.nm_id) qs.set("nm_id", String(filters.nm_id));
+    if (filters.paid_status) qs.set("paid_status", filters.paid_status);
+    if (filters.date_from) qs.set("date_from", filters.date_from);
+    if (filters.date_to) qs.set("date_to", filters.date_to);
+    return request<{
+      items: Array<{
+        id: number;
+        nm_id: number | null;
+        vendor_code: string | null;
+        supply_date: string;
+        qty: number;
+        cost_per_unit: number;
+        total_cost: number;
+        currency: string;
+        vendor: string | null;
+        invoice_number: string | null;
+        paid_status: "unpaid" | "partial" | "paid";
+        paid_date: string | null;
+        paid_amount: number | null;
+        notes: string | null;
+      }>;
+      totals: { count: number; total_qty: number; total_cost: number; paid_cost: number };
+    }>(`/api/supplies?${qs}`);
+  },
+
+  createSupply: (body: Record<string, any>) =>
+    request("/api/supplies", { method: "POST", body: JSON.stringify(body) }),
+
+  updateSupply: (id: number, body: Record<string, any>) =>
+    request(`/api/supplies/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+
+  deleteSupply: (id: number) =>
+    request(`/api/supplies/${id}`, { method: "DELETE" }),
+
   taxReportBuybacks: (from: string, to: string) =>
     request<{
       from: string;
@@ -194,11 +235,16 @@ export const api = {
       { method: "POST" },
     ),
 
-  taxReport: (from: string, to: string) =>
+  taxReport: (
+    from: string,
+    to: string,
+    cogs_method: "historical" | "weighted_avg" = "historical",
+  ) =>
     request<{
       from: string;
       to: string;
       scope: "company" | "brands";
+      cogs_method: "historical" | "weighted_avg";
       rows: Array<{
         realization_id: number;
         report_date_from: string;
@@ -225,7 +271,7 @@ export const api = {
         tax: number;
       }>;
       totals: Record<string, number>;
-    }>(`/api/tax-report?from=${from}&to=${to}`),
+    }>(`/api/tax-report?from=${from}&to=${to}&cogs_method=${cogs_method}`),
 
   pnlReconciliation: (weeks = 12, diff_threshold_pct = 1.0) =>
     request<{

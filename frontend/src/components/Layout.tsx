@@ -24,6 +24,7 @@ const links: Link[] = [
   { to: "/supply", label: "Поставки" },
   { to: "/plans", label: "План-Факт" },
   { to: "/cost-history", label: "Себестоимость" },
+  { to: "/supplies", label: "Закупки", directorOrHead: true },
   { to: "/external-marketing", label: "Внеш. маркетинг", directorOrHead: true },
   { to: "/revenue-corrections", label: "Корректировки", directorOrHead: true },
   { to: "/opex", label: "OPEX", directorOrHead: true },

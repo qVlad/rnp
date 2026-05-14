@@ -18,11 +18,12 @@ export default function TaxReport() {
 
   const [from, setFrom] = useState(defaultFrom);
   const [to, setTo] = useState(defaultTo);
+  const [cogsMethod, setCogsMethod] = useState<"historical" | "weighted_avg">("historical");
 
   const queryClient = useQueryClient();
   const q = useQuery({
-    queryKey: ["tax-report", from, to],
-    queryFn: () => api.taxReport(from, to),
+    queryKey: ["tax-report", from, to, cogsMethod],
+    queryFn: () => api.taxReport(from, to, cogsMethod),
   });
   const buybacks = useQuery({
     queryKey: ["tax-report-buybacks", from, to],
@@ -92,6 +93,18 @@ export default function TaxReport() {
         <label className="flex flex-col gap-1">
           <span className="text-xs text-muted uppercase">По</span>
           <input type="date" className="input" value={to} onChange={(e) => setTo(e.target.value)} />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-muted uppercase">Метод COGS</span>
+          <select
+            className="input"
+            value={cogsMethod}
+            onChange={(e) => setCogsMethod(e.target.value as "historical" | "weighted_avg")}
+            title="historical = Cogs.cost на дату продажи; weighted_avg = средневзвешенная по supplies (как в 1С, нужны записи на /supplies)"
+          >
+            <option value="historical">Historical (Cogs.cost)</option>
+            <option value="weighted_avg">Weighted-avg (1С / supplies)</option>
+          </select>
         </label>
         <button
           className="btn ml-auto"

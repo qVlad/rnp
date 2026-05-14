@@ -24,6 +24,7 @@ router = APIRouter(
 async def get_tax_report(
     date_from: date | None = Query(default=None, alias="from"),
     date_to: date | None = Query(default=None, alias="to"),
+    cogs_method: str = Query(default="historical", regex="^(historical|weighted_avg)$"),
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
@@ -31,6 +32,11 @@ async def get_tax_report(
 
     `from`/`to` фильтруют по `report_date_to` (дате признания дохода).
     По умолчанию — последние 90 дней.
+
+    `cogs_method`:
+        - "historical" (default) — цена закупки на дату продажи (Cogs.cost)
+        - "weighted_avg" — средневзвешенная по таблице supplies (как в 1С).
+          Учитываются только paid поставки.
     """
     if date_to is None:
         date_to = date.today()
@@ -41,8 +47,10 @@ async def get_tax_report(
         date_from=date_from,
         date_to=date_to,
         brands=brands,
+        cogs_method=cogs_method,
     )
     out["scope"] = "company" if brands is None else "brands"
+    out["cogs_method"] = cogs_method
     return out
 
 
