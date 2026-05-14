@@ -13,7 +13,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.db.models import ArtificialOrder, WbReportDetail
+from app.db.models import ArtificialOrder, ExternalAdCost, Product, WbReportDetail
 from app.services.pnl_builder import build_pnl
 
 
@@ -184,6 +184,63 @@ async def test_build_pnl_selfbuy_subtracted(db_session, test_tenant):
     assert t["selfbuy_adjustment"] == pytest.approx(3000.0)
     assert t["contractor_fees"] == pytest.approx(100.0)
     assert t["revenue_net"] == pytest.approx(-3000.0)
+
+
+async def test_build_pnl_manager_scope_gets_brand_level_marketing_pro_rata(
+    db_session, test_tenant
+):
+    """Сценарий: manager-бренд BRAND_A делает 700₽ выручки, другой бренд
+    BRAND_B — 300₽ (total 1000₽). Brand-level external marketing = 100₽
+    (nm_id=NULL). Manager должен видеть 70₽ (70% доля бренда A в выручке).
+    Раньше — видел 0₽ (brand-level просто отбрасывался)."""
+    # nm 11111 → BRAND_A (manager-scope), nm 22222 → BRAND_B (company-only)
+    db_session.add(Product(nm_id=11111, brand="BRAND_A", subject="t"))
+    db_session.add(Product(nm_id=22222, brand="BRAND_B", subject="t"))
+    await db_session.flush()
+
+    # Продажи 8 апреля: BRAND_A=700, BRAND_B=300
+    db_session.add(
+        _make_rd_row(
+            rrd_id=900,
+            nm_id=11111,
+            sale_dt=datetime(2026, 4, 8, 12, 0, tzinfo=timezone.utc),
+            oper="Продажа",
+            retail=700.0,
+            ppvz=500.0,
+        )
+    )
+    db_session.add(
+        _make_rd_row(
+            rrd_id=901,
+            nm_id=22222,
+            sale_dt=datetime(2026, 4, 8, 13, 0, tzinfo=timezone.utc),
+            oper="Продажа",
+            retail=300.0,
+            ppvz=240.0,
+        )
+    )
+    # Brand-level (компанейский) маркетинг на ту же дату — 100₽
+    db_session.add(
+        ExternalAdCost(
+            spend_date=date(2026, 4, 8),
+            nm_id=None,
+            channel="blogger",
+            amount=Decimal("100.00"),
+        )
+    )
+    await db_session.flush()
+
+    # Manager scope = только BRAND_A
+    res = await build_pnl(
+        db_session,
+        date_from=date(2026, 4, 6),
+        date_to=date(2026, 4, 12),
+        granularity="week",
+        brands={"BRAND_A"},
+    )
+    t = res["totals"]
+    # 700/(700+300) = 70%; 100₽ * 0.7 = 70₽
+    assert t["external_ad_cost"] == pytest.approx(70.0, abs=0.01)
 
 
 async def test_build_pnl_giveaway_also_subtracts(db_session, test_tenant):

@@ -441,9 +441,11 @@ async def build_pnl(
     ad_by_day: dict[date, float] = {r.stat_date: _f(r.ad_cost) for r in ad_rows}
 
     # ── C) External (off-WB) ad costs ──
-    # In manager scope we ONLY count rows attached to a specific nm_id of the
-    # whitelisted brands. Brand-level (nm_id IS NULL) external marketing isn't
-    # carved up here — distributing it pro-rata across brands is a separate UX.
+    # Если nm_filter указан (manager scope), брендовый маркетинг с nm_id=NULL
+    # распределяем pro-rata по выручке: доля бренда менеджера в общей выручке
+    # за тот день × сумма brand-level marketing того дня. Это даёт честный ДРР
+    # на странице P&L менеджера — без распределения брендовая реклама просто
+    # «исчезала» для манагера, занижая его ДРР.
     ext_ad_stmt = (
         select(
             ExternalAdCost.spend_date,
@@ -459,6 +461,71 @@ async def build_pnl(
         ext_ad_stmt = ext_ad_stmt.where(ExternalAdCost.nm_id.in_(nm_filter))
     ext_ad_rows = (await session.execute(ext_ad_stmt)).all()
     ext_ad_by_day: dict[date, float] = {r.spend_date: _f(r.amount) for r in ext_ad_rows}
+
+    # Pro-rata для brand-level (nm_id IS NULL): только в manager scope.
+    if nm_filter is not None:
+        # Brand-level marketing по дням (вся компания)
+        bl_stmt = (
+            select(
+                ExternalAdCost.spend_date,
+                func.coalesce(func.sum(ExternalAdCost.amount), 0).label("amount"),
+            )
+            .where(
+                ExternalAdCost.spend_date >= date_from,
+                ExternalAdCost.spend_date <= date_to,
+                ExternalAdCost.nm_id.is_(None),
+            )
+            .group_by(ExternalAdCost.spend_date)
+        )
+        bl_rows = (await session.execute(bl_stmt)).all()
+        brand_level_by_day: dict[date, float] = {
+            r.spend_date: _f(r.amount) for r in bl_rows
+        }
+
+        if brand_level_by_day:
+            # Выручка manager-бренда по дням (из rd_rows что уже отфильтрованы)
+            # — берём sale_day и retail_price_withdisc_rub для Продаж.
+            from app.services.period_aggregates import (  # noqa: WPS433
+                OP_SALE as _sale, REVENUE_FIELD as _rev, sale_day as _sd,
+            )
+            # rd_rows уже отфильтрованы по nm_filter (см. rd_stmt выше).
+            # Получаем по дням выручка-бренда.
+            br_rev_stmt = (
+                select(
+                    _sd().label("sale_day"),
+                    func.sum(case((_sale, _rev), else_=0)).label("rev"),
+                )
+                .where(
+                    WbReportDetail.sale_dt.is_not(None),
+                    WbReportDetail.nm_id.in_(nm_filter),
+                )
+                .where(*sale_dt_filter(date_from, date_to))
+                .group_by(_sd())
+            )
+            br_rev = {
+                r.sale_day: _f(r.rev)
+                for r in (await session.execute(br_rev_stmt)).all()
+            }
+            # Выручка всей компании по дням (без brand filter)
+            co_rev_stmt = (
+                select(
+                    _sd().label("sale_day"),
+                    func.sum(case((_sale, _rev), else_=0)).label("rev"),
+                )
+                .where(WbReportDetail.sale_dt.is_not(None))
+                .where(*sale_dt_filter(date_from, date_to))
+                .group_by(_sd())
+            )
+            co_rev = {
+                r.sale_day: _f(r.rev)
+                for r in (await session.execute(co_rev_stmt)).all()
+            }
+            for d, bl_amount in brand_level_by_day.items():
+                co = co_rev.get(d, 0.0)
+                br = br_rev.get(d, 0.0)
+                if co > 0 and br > 0:
+                    share = br / co
+                    ext_ad_by_day[d] = ext_ad_by_day.get(d, 0.0) + bl_amount * share
 
     # ── D) Manual revenue corrections ──
     artif_stmt = select(ArtificialOrder).where(
