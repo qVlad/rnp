@@ -7,13 +7,14 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Product, ProductGroupAssignment, SalesPlan
 from app.db.session import get_db
+from app.services.audit import actor_from_request, audit_log, snapshot
 from app.services.auth import get_db_tenant_scoped
 from app.services.auth import current_brands_filter, require_director_or_head
 
@@ -24,6 +25,13 @@ from app.services.plan_fact import build_plan_fact
 router = APIRouter(prefix="/api/plans", tags=["plans"])
 
 ALLOWED_SCOPES = {"store", "nm", "group"}
+
+_AUDIT_FIELDS = [
+    "id", "period_year", "period_month", "scope_type", "scope_id",
+    "planned_orders_qty", "planned_orders_revenue",
+    "planned_sales_qty", "planned_sales_revenue",
+    "planned_profit", "planned_marketing_cost", "comment",
+]
 
 
 @router.get("/fact")
@@ -115,7 +123,11 @@ async def list_plans(
 
 
 @router.post("", dependencies=[Depends(require_director_or_head)])
-async def create_plan(payload: PlanIn, session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
+async def create_plan(
+    payload: PlanIn,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
     if payload.scope_type == "store" and payload.scope_id is not None:
         raise HTTPException(400, "store-scope plan must have scope_id = null")
     if payload.scope_type != "store" and payload.scope_id is None:
@@ -141,6 +153,13 @@ async def create_plan(payload: PlanIn, session: AsyncSession = Depends(get_db_te
 
     obj = SalesPlan(**payload.model_dump())
     session.add(obj)
+    await session.flush()
+    await audit_log(
+        session, "sales_plans", "create",
+        entity_id=str(obj.id),
+        after=snapshot(obj, _AUDIT_FIELDS),
+        actor=actor_from_request(request),
+    )
     await session.commit()
     await session.refresh(obj)
     return _row(obj)
@@ -148,23 +167,44 @@ async def create_plan(payload: PlanIn, session: AsyncSession = Depends(get_db_te
 
 @router.put("/{plan_id}", dependencies=[Depends(require_director_or_head)])
 async def update_plan(
-    plan_id: int, payload: PlanIn, session: AsyncSession = Depends(get_db_tenant_scoped)
+    plan_id: int,
+    payload: PlanIn,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     obj = await session.get(SalesPlan, plan_id)
     if not obj:
         raise HTTPException(404, "not found")
+    before = snapshot(obj, _AUDIT_FIELDS)
     for k, v in payload.model_dump().items():
         setattr(obj, k, v)
+    await audit_log(
+        session, "sales_plans", "update",
+        entity_id=str(obj.id),
+        before=before, after=snapshot(obj, _AUDIT_FIELDS),
+        actor=actor_from_request(request),
+    )
     await session.commit()
     await session.refresh(obj)
     return _row(obj)
 
 
 @router.delete("/{plan_id}", dependencies=[Depends(require_director_or_head)])
-async def delete_plan(plan_id: int, session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, str]:
+async def delete_plan(
+    plan_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, str]:
     obj = await session.get(SalesPlan, plan_id)
     if not obj:
         raise HTTPException(404, "not found")
+    before = snapshot(obj, _AUDIT_FIELDS)
     await session.delete(obj)
+    await audit_log(
+        session, "sales_plans", "delete",
+        entity_id=str(plan_id),
+        before=before,
+        actor=actor_from_request(request),
+    )
     await session.commit()
     return {"status": "deleted"}

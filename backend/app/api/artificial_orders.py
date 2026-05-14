@@ -12,13 +12,14 @@ from __future__ import annotations
 from datetime import date
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ArtificialOrder
 from app.db.session import get_db
+from app.services.audit import actor_from_request, audit_log, snapshot
 from app.services.auth import get_db_tenant_scoped
 from app.services.auth import require_director_or_head
 
@@ -27,6 +28,11 @@ router = APIRouter(
     tags=["artificial-orders"],
     dependencies=[Depends(require_director_or_head)],
 )
+
+_AUDIT_FIELDS = [
+    "id", "type", "order_dt", "completion_dt", "nm_id", "qty",
+    "gross_amount", "contractor_fee", "comment",
+]
 
 ALLOWED_TYPES = {"selfbuy", "giveaway", "selforder", "dbs", "rfbs"}
 TYPE_LABELS = {
@@ -95,7 +101,9 @@ async def list_orders(
 
 @router.post("")
 async def create_order(
-    payload: ArtificialOrderIn, session: AsyncSession = Depends(get_db_tenant_scoped)
+    payload: ArtificialOrderIn,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     obj = ArtificialOrder(
         type=payload.type,
@@ -108,6 +116,13 @@ async def create_order(
         comment=payload.comment,
     )
     session.add(obj)
+    await session.flush()
+    await audit_log(
+        session, "artificial_orders", "create",
+        entity_id=str(obj.id),
+        after=snapshot(obj, _AUDIT_FIELDS),
+        actor=actor_from_request(request),
+    )
     await session.commit()
     await session.refresh(obj)
     return _row(obj)
@@ -117,11 +132,13 @@ async def create_order(
 async def update_order(
     order_id: int,
     payload: ArtificialOrderIn,
+    request: Request,
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     obj = await session.get(ArtificialOrder, order_id)
     if not obj:
         raise HTTPException(404, "not found")
+    before = snapshot(obj, _AUDIT_FIELDS)
     obj.type = payload.type
     obj.order_dt = payload.order_dt
     obj.completion_dt = payload.completion_dt
@@ -130,16 +147,33 @@ async def update_order(
     obj.gross_amount = payload.gross_amount
     obj.contractor_fee = payload.contractor_fee
     obj.comment = payload.comment
+    await audit_log(
+        session, "artificial_orders", "update",
+        entity_id=str(obj.id),
+        before=before, after=snapshot(obj, _AUDIT_FIELDS),
+        actor=actor_from_request(request),
+    )
     await session.commit()
     await session.refresh(obj)
     return _row(obj)
 
 
 @router.delete("/{order_id}")
-async def delete_order(order_id: int, session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, str]:
+async def delete_order(
+    order_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, str]:
     obj = await session.get(ArtificialOrder, order_id)
     if not obj:
         raise HTTPException(404, "not found")
+    before = snapshot(obj, _AUDIT_FIELDS)
     await session.delete(obj)
+    await audit_log(
+        session, "artificial_orders", "delete",
+        entity_id=str(order_id),
+        before=before,
+        actor=actor_from_request(request),
+    )
     await session.commit()
     return {"status": "deleted"}

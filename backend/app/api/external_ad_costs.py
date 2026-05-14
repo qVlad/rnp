@@ -9,13 +9,14 @@ from __future__ import annotations
 from datetime import date
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ExternalAdCost
 from app.db.session import get_db
+from app.services.audit import actor_from_request, audit_log, snapshot
 from app.services.auth import get_db_tenant_scoped
 from app.services.auth import require_director_or_head
 
@@ -24,6 +25,9 @@ router = APIRouter(
     tags=["external-ad-costs"],
     dependencies=[Depends(require_director_or_head)],
 )
+
+
+_AUDIT_FIELDS = ["id", "spend_date", "nm_id", "channel", "amount", "comment"]
 
 
 CHANNEL_PRESETS = [
@@ -81,10 +85,19 @@ async def list_costs(
 
 @router.post("")
 async def create_cost(
-    payload: ExternalAdCostIn, session: AsyncSession = Depends(get_db_tenant_scoped)
+    payload: ExternalAdCostIn,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     obj = ExternalAdCost(**payload.model_dump())
     session.add(obj)
+    await session.flush()
+    await audit_log(
+        session, "external_ad_costs", "create",
+        entity_id=str(obj.id),
+        after=snapshot(obj, _AUDIT_FIELDS),
+        actor=actor_from_request(request),
+    )
     await session.commit()
     await session.refresh(obj)
     return _row(obj)
@@ -94,23 +107,42 @@ async def create_cost(
 async def update_cost(
     cost_id: int,
     payload: ExternalAdCostIn,
+    request: Request,
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     obj = await session.get(ExternalAdCost, cost_id)
     if not obj:
         raise HTTPException(404, "not found")
+    before = snapshot(obj, _AUDIT_FIELDS)
     for k, v in payload.model_dump().items():
         setattr(obj, k, v)
+    await audit_log(
+        session, "external_ad_costs", "update",
+        entity_id=str(obj.id),
+        before=before, after=snapshot(obj, _AUDIT_FIELDS),
+        actor=actor_from_request(request),
+    )
     await session.commit()
     await session.refresh(obj)
     return _row(obj)
 
 
 @router.delete("/{cost_id}")
-async def delete_cost(cost_id: int, session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, str]:
+async def delete_cost(
+    cost_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, str]:
     obj = await session.get(ExternalAdCost, cost_id)
     if not obj:
         raise HTTPException(404, "not found")
+    before = snapshot(obj, _AUDIT_FIELDS)
     await session.delete(obj)
+    await audit_log(
+        session, "external_ad_costs", "delete",
+        entity_id=str(cost_id),
+        before=before,
+        actor=actor_from_request(request),
+    )
     await session.commit()
     return {"status": "deleted"}

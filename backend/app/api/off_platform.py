@@ -3,15 +3,19 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import OffPlatformStockMovement
 from app.db.session import get_db
+from app.services.audit import actor_from_request, audit_log, snapshot
 from app.services.auth import get_db_tenant_scoped
 from app.services import off_platform
 from app.services.auth import require_director_or_head
+
+
+_AUDIT_FIELDS = ["id", "dt", "nm_id", "kind", "qty", "unit_cost", "comment"]
 
 router = APIRouter(
     prefix="/api/off-platform",
@@ -49,7 +53,9 @@ async def list_movements(
 
 @router.post("/movements")
 async def create_movement(
-    payload: MovementPayload, session: AsyncSession = Depends(get_db_tenant_scoped)
+    payload: MovementPayload,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     try:
         row = await off_platform.create_movement(
@@ -63,6 +69,13 @@ async def create_movement(
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+    await session.flush()
+    await audit_log(
+        session, "off_platform_stock_movements", "create",
+        entity_id=str(row.id),
+        after=snapshot(row, _AUDIT_FIELDS),
+        actor=actor_from_request(request),
+    )
     await session.commit()
     return {"id": row.id, "status": "created"}
 
@@ -71,6 +84,7 @@ async def create_movement(
 async def update_movement(
     movement_id: int,
     payload: MovementPayload,
+    request: Request,
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, str]:
     row = await session.get(OffPlatformStockMovement, movement_id)
@@ -83,24 +97,40 @@ async def update_movement(
         )
     if payload.qty <= 0:
         raise HTTPException(400, "qty must be positive")
+    before = snapshot(row, _AUDIT_FIELDS)
     row.dt = payload.dt
     row.nm_id = payload.nm_id
     row.kind = payload.kind
     row.qty = int(payload.qty)
     row.unit_cost = Decimal(str(payload.unit_cost or 0))
     row.comment = payload.comment
+    await audit_log(
+        session, "off_platform_stock_movements", "update",
+        entity_id=str(row.id),
+        before=before, after=snapshot(row, _AUDIT_FIELDS),
+        actor=actor_from_request(request),
+    )
     await session.commit()
     return {"status": "updated"}
 
 
 @router.delete("/movements/{movement_id}")
 async def delete_movement(
-    movement_id: int, session: AsyncSession = Depends(get_db_tenant_scoped)
+    movement_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, str]:
     row = await session.get(OffPlatformStockMovement, movement_id)
     if not row:
         raise HTTPException(404, "not found")
+    before = snapshot(row, _AUDIT_FIELDS)
     await session.delete(row)
+    await audit_log(
+        session, "off_platform_stock_movements", "delete",
+        entity_id=str(movement_id),
+        before=before,
+        actor=actor_from_request(request),
+    )
     await session.commit()
     return {"status": "deleted"}
 
