@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import (
     ExternalAdCost,
     Product,
+    ProductGroup,
     ProductGroupAssignment,
     SalesPlan,
     WbAdStatsDaily,
@@ -267,6 +268,34 @@ async def build_plan_fact(
         ).scalars().all()
         product_map = {p.nm_id: p for p in rows}
 
+    # Group-scope: для каждого group_id из планов собираем список входящих
+    # nm_id (через ProductGroupAssignment) + получаем human-readable group.name.
+    group_ids = [
+        p.scope_id for p in plans if p.scope_type == "group" and p.scope_id
+    ]
+    group_name_map: dict[int, str] = {}
+    group_nms_map: dict[int, set[int]] = {}
+    if group_ids:
+        # Имена групп
+        gname_rows = (
+            await session.execute(
+                select(ProductGroup.id, ProductGroup.name).where(
+                    ProductGroup.id.in_(group_ids)
+                )
+            )
+        ).all()
+        group_name_map = {int(r.id): r.name for r in gname_rows}
+        # nm_id'ы каждой группы (с учётом brand-фильтра — manager не должен
+        # видеть факт по nm_id не своих брендов даже внутри группы).
+        ga_stmt = select(
+            ProductGroupAssignment.group_id, ProductGroupAssignment.nm_id
+        ).where(ProductGroupAssignment.group_id.in_(group_ids))
+        if nm_filter is not None:
+            ga_stmt = ga_stmt.where(ProductGroupAssignment.nm_id.in_(nm_filter))
+        ga_rows = (await session.execute(ga_stmt)).all()
+        for r in ga_rows:
+            group_nms_map.setdefault(int(r.group_id), set()).add(int(r.nm_id))
+
     # Build per-plan items
     items: list[dict[str, Any]] = []
     for p in plans:
@@ -291,15 +320,38 @@ async def build_plan_fact(
             label = (
                 f"SKU {nm}" + (f" — {prod.vendor_code}" if prod and prod.vendor_code else "")
             )
+        elif p.scope_type == "group" and p.scope_id is not None:
+            gid = int(p.scope_id)
+            members = group_nms_map.get(gid, set())
+            f_orders_qty = sum(orders_by_nm.get(n, {}).get("qty", 0) for n in members)
+            f_orders_rev = sum(
+                orders_by_nm.get(n, {}).get("revenue", 0.0) for n in members
+            )
+            f_sales_qty = sum(sales_by_nm.get(n, {}).get("qty", 0) for n in members)
+            f_sales_rev = sum(
+                sales_by_nm.get(n, {}).get("revenue", 0.0) for n in members
+            )
+            f_marketing = sum(
+                wb_ads_by_nm.get(n, 0.0) + ext_ads_by_nm.get(n, 0.0) for n in members
+            )
+            # Per-group profit пока не считаем (требовало бы группу P&L по
+            # SKU, что отдельная задача). Маркетинг + оборот покрывают 80%
+            # сценариев план-факта по группе.
+            f_profit = None
+            gname = group_name_map.get(gid, f"#{gid}")
+            label = f"Группа: {gname}" + (
+                f" ({len(members)} SKU)" if members else " (нет SKU)"
+            )
         else:
-            # group scope: not yet implemented end-to-end (groups feature in backlog)
+            # store-scope без scope_id уже обработан выше; сюда падает только
+            # некорректная комбинация (group без scope_id и т.п.) — заглушка.
             f_orders_qty = 0
             f_orders_rev = 0.0
             f_sales_qty = 0
             f_sales_rev = 0.0
             f_marketing = 0.0
             f_profit = None
-            label = f"Группа #{p.scope_id} (нет реализации)"
+            label = f"Неизвестный scope {p.scope_type}/{p.scope_id}"
 
         items.append(
             {
