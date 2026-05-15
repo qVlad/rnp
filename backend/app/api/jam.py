@@ -18,7 +18,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import JamQuery, Product
-from app.services.auth import current_brands_filter, get_db_tenant_scoped
+from app.services.auth import current_brands_filter, get_db_tenant_scoped, require_director
 from app.services.jam import build_jam_clusters
 
 
@@ -103,3 +103,50 @@ async def jam_skus(
             {"nm_id": int(r.nm_id), "queries": int(r.queries)} for r in rows
         ]
     }
+
+
+@router.post("/sync-now", dependencies=[Depends(require_director)])
+async def jam_sync_now(
+    days_back: Annotated[int, Query(ge=7, le=180)] = 30,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Запустить WB Jam-синхронизацию руками. Возвращает результат напрямую
+    (не через Celery), чтобы UI получил статус сразу. Только для director."""
+    from app.services.tenant_context import get_tenant
+    from app.sync.tasks import _sync_jam_async
+
+    tid = get_tenant(session)
+    if tid is None:
+        raise HTTPException(400, "tenant context not set")
+    return await _sync_jam_async(int(tid), days_back=days_back)
+
+
+@router.get("/url")
+async def jam_get_url(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
+    """Текущий настроенный URL для WB Jam (если задан)."""
+    from app.db.models import AppSetting
+
+    row = (
+        await session.execute(select(AppSetting).where(AppSetting.key == "wb_jam_url"))
+    ).scalar_one_or_none()
+    return {"wb_jam_url": (row.value if row else None) or ""}
+
+
+@router.put("/url", dependencies=[Depends(require_director)])
+async def jam_put_url(
+    payload: dict[str, str],
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Установить кастомный URL endpoint для WB Jam (если дефолтные не работают)."""
+    from app.db.models import AppSetting
+
+    url = (payload.get("wb_jam_url") or "").strip()
+    row = (
+        await session.execute(select(AppSetting).where(AppSetting.key == "wb_jam_url"))
+    ).scalar_one_or_none()
+    if row:
+        row.value = url
+    else:
+        session.add(AppSetting(key="wb_jam_url", value=url))
+    await session.commit()
+    return {"wb_jam_url": url}
