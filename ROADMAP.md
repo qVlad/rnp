@@ -21,6 +21,7 @@
 | `ad_campaign_details` "empty info response" | WB возвращает `[]` на `/api/advert/v2/adverts?ids=...`, не 429 | Сделать controlled curl с обоими paths и выбрать рабочий |
 | Бэкфилл `report_detail` за апрель 1-19 | WB присылает только последние ~14 дней | Запустить `scripts/backfill_report_detail.py` с задержкой 3+ часа между чанками |
 | Расхождение «Реклама» с WB-кабинетом ~0.7% | Наш advert API: 117 971₽, WB кабинет: 118 797₽ | WB кабинет включает Boost / промо-инструменты которых нет в `/adv/v3/fullstats`. Сейчас юзер может вручную добавить через `/external-marketing` |
+| **WB Jam endpoint неизвестен** | Все 3 кандидата `/api/v2/search-report/products`, `/api/v2/search-report`, `/content/v3/keywords/search-report` дают 404 с `origin: s2s-api-auth-content` на seller-analytics-api. Auth/scope в порядке (нет 401/403) — путь точно другой. | (1) Открыть «Аналитика сравнения карточек» WB-кабинета с DevTools → найти POST/GET с реальным путём → вписать в `/jam → Подключение`. (2) Альтернатива: дождаться публикации в dev.wildberries.ru/openapi. (3) Текущее поведение: `sync_jam` ловит `EndpointNotFoundError` и сразу прерывается. Excel-импорт через `/settings → jam_queries` работает как fallback. Sync-задача и UI готовы — нужен только правильный URL. |
 
 ## P0 · WB CDN миграция
 
