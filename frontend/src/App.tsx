@@ -28,6 +28,8 @@ import Brands from "./pages/Brands";
 import Glossary from "./pages/Glossary";
 import Docs from "./pages/Docs";
 import Checklist from "./pages/Checklist";
+import SeasonPlan from "./pages/SeasonPlan";
+import Jam from "./pages/Jam";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, needsBootstrap } = useAuth();
@@ -183,6 +185,15 @@ export default function App() {
           <Route path="glossary" element={<Glossary />} />
           <Route path="docs" element={<Docs />} />
           <Route path="checklist" element={<Checklist />} />
+          <Route
+            path="season-plan"
+            element={
+              <DirectorOrHead>
+                <SeasonPlan />
+              </DirectorOrHead>
+            }
+          />
+          <Route path="jam" element={<Jam />} />
           <Route
             path="settings"
             element={

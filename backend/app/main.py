@@ -17,12 +17,14 @@ from app.api import (
     dashboard,
     excel,
     external_ad_costs,
+    jam,
     off_platform,
     opex,
     plans,
     pnl,
     product_groups,
     products,
+    season_plan,
     settings,
     supplies,
     tax_report,
@@ -175,3 +177,5 @@ app.include_router(tenant_settings.router)
 app.include_router(tax_report.router)
 app.include_router(supplies.router)
 app.include_router(checklist.router)
+app.include_router(season_plan.router)
+app.include_router(jam.router)

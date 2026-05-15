@@ -804,6 +804,34 @@ export const api = {
       `/api/forecast/supply-distribution?velocity_window=${velocity_window}&target_days=${target_days}&irp_window=${irp_window}&include_archived=${includeArchived}`,
     ),
 
+  // ── Джем (поисковая аналитика, stub-API) ──
+  jamStatus: () =>
+    request<{ status: string; message: string; docs_url: string }>(
+      "/api/jam/status",
+    ),
+  jamClusters: (nm_id: number) =>
+    request<{ nm_id: number; status: string; clusters: any[]; message?: string }>(
+      `/api/jam/clusters/${nm_id}`,
+    ),
+
+  // ── Season plan (10X-методика) ──
+  seasonPlan: (months_history = 24, months_forecast = 12) =>
+    request<{
+      history: any[];
+      forecast: any[];
+      totals: {
+        history_total_revenue: number;
+        trailing_12_revenue: number;
+        base_monthly: number;
+        yoy_growth_pct: number;
+        forecast_total_revenue: number;
+      };
+      season_factors: Record<string, number>;
+      warning?: string;
+    }>(
+      `/api/season-plan?months_history=${months_history}&months_forecast=${months_forecast}`,
+    ),
+
   // ── Checklist (10X-методика) ──
   checklistSku: (nm_id: number, days_back = 30) =>
     request<any>(`/api/checklist/sku/${nm_id}?days_back=${days_back}`),
