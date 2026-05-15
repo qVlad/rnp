@@ -273,11 +273,19 @@ export const api = {
       totals: Record<string, number>;
     }>(`/api/tax-report?from=${from}&to=${to}&cogs_method=${cogs_method}`),
 
-  taxReportAusn: (from: string, to: string, pay_offset_days = 10) =>
+  taxReportAusn: (
+    from: string,
+    to: string,
+    pay_offset_days = 10,
+    pay_date_source: "auto" | "proxy" | "actual" = "auto",
+  ) =>
     request<{
       from: string;
       to: string;
       pay_offset_days: number;
+      pay_date_source_requested: "auto" | "proxy" | "actual";
+      pay_date_source_effective: "proxy" | "actual";
+      payment_orders_paid_count: number;
       methodology: string;
       monthly: Array<{
         month: string;
@@ -315,7 +323,54 @@ export const api = {
         month: string;
       }>;
     }>(
-      `/api/tax-report/ausn?from=${from}&to=${to}&pay_offset_days=${pay_offset_days}`,
+      `/api/tax-report/ausn?from=${from}&to=${to}` +
+        `&pay_offset_days=${pay_offset_days}` +
+        `&pay_date_source=${pay_date_source}`,
+    ),
+
+  paymentOrdersList: (from: string, to: string) =>
+    request<{
+      from: string;
+      to: string;
+      items: Array<{
+        payment_order_id: string;
+        created_dt: string;
+        paid_dt: string | null;
+        amount: number;
+        currency: string;
+        status: string;
+        status_raw: string | null;
+        bank_comment: string | null;
+      }>;
+      totals: { count: number; paid_sum: number; processing_sum: number };
+    }>(`/api/tax-report/payment-orders?from=${from}&to=${to}`),
+
+  paymentOrdersImport: (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return fetch("/api/tax-report/payment-orders/import", {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+    }).then(async (r) => {
+      const data = await r.json();
+      if (!r.ok) {
+        throw new Error(data?.detail || `HTTP ${r.status}`);
+      }
+      return data as {
+        rows_total: number;
+        rows_inserted: number;
+        rows_updated: number;
+        rows_skipped: number;
+        errors: string[];
+      };
+    });
+  },
+
+  paymentOrderDelete: (payment_order_id: string) =>
+    request<{ deleted: string }>(
+      `/api/tax-report/payment-orders/${encodeURIComponent(payment_order_id)}`,
+      { method: "DELETE" },
     ),
 
   pnlReconciliation: (weeks = 12, diff_threshold_pct = 1.0) =>

@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
 
@@ -40,11 +40,60 @@ export default function TaxReportAusn() {
   const [to, setTo] = useState(defaultTo);
   const [payOffsetDays, setPayOffsetDays] = useState(10);
   const [showDrillDown, setShowDrillDown] = useState(false);
+  const [paySource, setPaySource] = useState<"auto" | "proxy" | "actual">(
+    "auto",
+  );
+  const [showPaymentOrders, setShowPaymentOrders] = useState(false);
+  const [importMsg, setImportMsg] = useState<string | null>(null);
+  const [importErr, setImportErr] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const qc = useQueryClient();
 
   const q = useQuery({
-    queryKey: ["tax-report-ausn", from, to, payOffsetDays],
-    queryFn: () => api.taxReportAusn(from, to, payOffsetDays),
+    queryKey: ["tax-report-ausn", from, to, payOffsetDays, paySource],
+    queryFn: () => api.taxReportAusn(from, to, payOffsetDays, paySource),
   });
+
+  const ordersQ = useQuery({
+    queryKey: ["payment-orders", from, to],
+    queryFn: () => api.paymentOrdersList(from, to),
+  });
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setImportMsg(null);
+    setImportErr(null);
+    try {
+      const r = await api.paymentOrdersImport(f);
+      setImportMsg(
+        `Загружено: ${r.rows_total} (новых ${r.rows_inserted}, обновлено ${r.rows_updated}` +
+          (r.rows_skipped ? `, пропущено ${r.rows_skipped}` : "") +
+          ")" +
+          (r.errors?.length ? ` · ${r.errors.length} предупр.` : ""),
+      );
+      if (r.errors?.length) {
+        setImportErr(r.errors.slice(0, 3).join(" · "));
+      }
+      qc.invalidateQueries({ queryKey: ["tax-report-ausn"] });
+      qc.invalidateQueries({ queryKey: ["payment-orders"] });
+    } catch (err: any) {
+      setImportErr(err?.message || "Не удалось загрузить файл");
+    } finally {
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  async function handleDelete(poid: string) {
+    if (!confirm(`Удалить заявку ${poid}?`)) return;
+    try {
+      await api.paymentOrderDelete(poid);
+      qc.invalidateQueries({ queryKey: ["tax-report-ausn"] });
+      qc.invalidateQueries({ queryKey: ["payment-orders"] });
+    } catch (e: any) {
+      alert(e?.message || "Ошибка");
+    }
+  }
 
   const monthly = q.data?.monthly ?? [];
   const totals = q.data?.totals;
@@ -136,6 +185,23 @@ export default function TaxReportAusn() {
             onChange={(e) => setPayOffsetDays(Number(e.target.value))}
           />
         </label>
+        <label className="flex flex-col gap-1">
+          <span
+            className="text-xs text-muted uppercase"
+            title="auto: фактическая дата если есть импорт «Истории платежей», иначе proxy. proxy: всегда proxy. actual: только импорт (если нет — Банк = 0)."
+          >
+            Источник Банка
+          </span>
+          <select
+            className="input"
+            value={paySource}
+            onChange={(e) => setPaySource(e.target.value as any)}
+          >
+            <option value="auto">Авто</option>
+            <option value="proxy">Proxy (offset)</option>
+            <option value="actual">Факт (XLSX)</option>
+          </select>
+        </label>
         <label className="flex items-center gap-2 ml-auto text-xs">
           <input
             type="checkbox"
@@ -144,11 +210,100 @@ export default function TaxReportAusn() {
           />
           Показать отчёты (drill-down)
         </label>
+        <label className="flex items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            checked={showPaymentOrders}
+            onChange={(e) => setShowPaymentOrders(e.target.checked)}
+          />
+          Показать «Историю платежей»
+        </label>
         <div className="text-xs text-muted">
           {q.isLoading && "Загрузка…"}
           {!q.isLoading && q.data && `Месяцев: ${monthly.length}`}
         </div>
       </section>
+
+      {q.data && (
+        <section className="card flex flex-wrap items-center gap-4 text-xs">
+          <div>
+            <span className="text-muted uppercase mr-2">Сейчас Банк по:</span>
+            <span
+              className={
+                q.data.pay_date_source_effective === "actual"
+                  ? "text-success font-medium"
+                  : "text-warn"
+              }
+            >
+              {q.data.pay_date_source_effective === "actual"
+                ? `факту (${q.data.payment_orders_paid_count} заявок)`
+                : `proxy (+${q.data.pay_offset_days} дн)`}
+            </span>
+          </div>
+          <div className="ml-auto flex items-center gap-3">
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={handleFile}
+              className="text-xs"
+            />
+            <a
+              className="text-accent underline"
+              href="https://seller.wildberries.ru/payment-history/active"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Откроется ЛК WB. Кнопка «Экспорт в Excel» в правом верхнем углу таблицы."
+            >
+              Открыть «Историю платежей» в ЛК WB
+            </a>
+          </div>
+          {importMsg && (
+            <div className="basis-full text-success">{importMsg}</div>
+          )}
+          {importErr && (
+            <div className="basis-full text-error">{importErr}</div>
+          )}
+          <details className="basis-full text-muted leading-relaxed">
+            <summary className="cursor-pointer">Как загрузить (формат файла)</summary>
+            <div className="mt-2 ml-4">
+              <ol className="list-decimal ml-5 space-y-1">
+                <li>
+                  В ЛК WB открой <b>Финансы → История платежей → Архив</b>{" "}
+                  (или сразу <b>Активные</b>, если интересуют недавние).
+                </li>
+                <li>
+                  Выбери период (можно за весь год — повторный импорт
+                  идемпотентен по ID заявки).
+                </li>
+                <li>
+                  Нажми <b>Экспорт в Excel</b> (кнопка в правом верхнем
+                  углу таблицы) — скачается .xlsx.
+                </li>
+                <li>
+                  Загрузи файл сюда. Парсер найдёт колонки по заголовку
+                  (порядок неважен): <code>ID заявки на оплату</code>,{" "}
+                  <code>Сумма</code>, <code>Валюта</code>,{" "}
+                  <code>Дата создания</code>, <code>Статус оплаты</code>,{" "}
+                  <code>Комментарий банка</code>.
+                </li>
+                <li>
+                  Дата зачисления извлекается из «Статус оплаты»
+                  (фрагмент <code>DD.MM.YYYY</code>). «Оплата
+                  обрабатывается» сохраняется со статусом{" "}
+                  <code>processing</code> и пустой <code>paid_dt</code>.
+                </li>
+                <li>
+                  Когда загружены все месяцы периода — переключи{" "}
+                  <b>Источник Банка → Факт (XLSX)</b> или оставь{" "}
+                  <b>Авто</b> (само переключится, если данные за месяц
+                  есть).
+                </li>
+              </ol>
+            </div>
+          </details>
+        </section>
+      )}
 
       {totals && (
         <section className="card grid grid-cols-2 md:grid-cols-5 gap-4">
@@ -319,6 +474,88 @@ export default function TaxReportAusn() {
                   </td>
                 </tr>
               ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      {showPaymentOrders && (
+        <section className="card overflow-auto">
+          <div className="flex items-center mb-3">
+            <h2 className="font-medium">
+              История платежей (импорт XLSX) ·{" "}
+              {ordersQ.data?.totals.count ?? 0} заявок
+            </h2>
+            <div className="ml-auto text-xs text-muted">
+              Зачислено:{" "}
+              <span className="text-success">
+                {fmtRub(ordersQ.data?.totals.paid_sum ?? 0)}
+              </span>{" "}
+              · В обработке:{" "}
+              <span className="text-warn">
+                {fmtRub(ordersQ.data?.totals.processing_sum ?? 0)}
+              </span>
+            </div>
+          </div>
+          <table className="min-w-full text-xs">
+            <thead className="sticky top-0 bg-card border-b border-border z-10">
+              <tr>
+                <th className="text-left py-2 px-2">ID заявки</th>
+                <th className="text-left py-2 px-2 text-muted">Дата создания</th>
+                <th className="text-left py-2 px-2 text-muted">Дата зачисления</th>
+                <th className="text-right py-2 px-2">Сумма</th>
+                <th className="text-left py-2 px-2 text-muted">Валюта</th>
+                <th className="text-left py-2 px-2 text-muted">Статус</th>
+                <th className="text-left py-2 px-2 text-muted">Комментарий</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {(ordersQ.data?.items ?? []).map((o) => (
+                <tr
+                  key={o.payment_order_id}
+                  className="border-b border-border/40 hover:bg-card/60"
+                >
+                  <td className="py-2 px-2 font-mono">{o.payment_order_id}</td>
+                  <td className="py-2 px-2 text-muted">{o.created_dt}</td>
+                  <td className="py-2 px-2 text-muted">
+                    {o.paid_dt ?? <span className="text-warn">—</span>}
+                  </td>
+                  <td className="py-2 px-2 text-right">{fmtRub(o.amount)}</td>
+                  <td className="py-2 px-2 text-muted">{o.currency}</td>
+                  <td
+                    className={
+                      "py-2 px-2 " +
+                      (o.status === "paid"
+                        ? "text-success"
+                        : o.status === "processing"
+                        ? "text-warn"
+                        : "text-muted")
+                    }
+                  >
+                    {o.status}
+                  </td>
+                  <td className="py-2 px-2 text-muted truncate max-w-xs">
+                    {o.bank_comment}
+                  </td>
+                  <td className="py-2 px-2">
+                    <button
+                      className="text-error/70 hover:text-error text-xs"
+                      onClick={() => handleDelete(o.payment_order_id)}
+                      title="Удалить заявку"
+                    >
+                      ×
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {(ordersQ.data?.items ?? []).length === 0 && (
+                <tr>
+                  <td colSpan={8} className="text-center text-muted py-4">
+                    Заявок за выбранный период нет — загрузите XLSX выше.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </section>

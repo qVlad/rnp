@@ -443,6 +443,38 @@ class WbRedeemNotification(Base, TenantScopedMixin):
     )
 
 
+class WbPaymentOrder(Base, TenantScopedMixin):
+    """Заявка на оплату из ЛК WB / страница «История платежей».
+
+    Импортируется из XLSX, который пользователь выгружает вручную из
+    `seller.wildberries.ru/payment-history/active` (публичного API нет —
+    private BFF, не задокументирован, использование напрямую противоречит
+    ToS WB).
+
+    Используется в `services/tax_report_ausn.py`: если за нужный месяц
+    есть payment_orders → Bank-агрегат строится по фактическим `paid_dt`
+    вместо proxy `report_date_to + N дней`.
+    """
+
+    __tablename__ = "wb_payment_order"
+
+    # Композитный PK (tenant_id, payment_order_id) — формат "4400004/53"
+    payment_order_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    created_dt: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    # null если статус ещё «Оплата обрабатывается»
+    paid_dt: Mapped[date | None] = mapped_column(Date, index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
+    currency: Mapped[str] = mapped_column(String(8), default="RUB")
+    # 'processing' | 'paid' | 'failed' (см. payment_orders._normalize_status)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Сырой текст «Статус оплаты» — для дебага / показа юзеру
+    status_raw: Mapped[str | None] = mapped_column(String(255))
+    bank_comment: Mapped[str | None] = mapped_column(String(512))
+    imported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class WbAdStatsDaily(Base, TenantScopedMixin):
     __tablename__ = "wb_ad_stats_daily"
 
