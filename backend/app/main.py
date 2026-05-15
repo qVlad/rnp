@@ -12,6 +12,7 @@ from app.api import (
     brands,
     calc,
     cash_flow,
+    checklist,
     cost_history,
     dashboard,
     excel,
@@ -173,3 +174,4 @@ app.include_router(brands.router)
 app.include_router(tenant_settings.router)
 app.include_router(tax_report.router)
 app.include_router(supplies.router)
+app.include_router(checklist.router)

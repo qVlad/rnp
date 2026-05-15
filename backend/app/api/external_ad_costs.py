@@ -27,7 +27,7 @@ router = APIRouter(
 )
 
 
-_AUDIT_FIELDS = ["id", "spend_date", "nm_id", "channel", "amount", "comment"]
+_AUDIT_FIELDS = ["id", "spend_date", "end_date", "nm_id", "channel", "amount", "comment"]
 
 
 CHANNEL_PRESETS = [
@@ -43,6 +43,7 @@ CHANNEL_PRESETS = [
 
 class ExternalAdCostIn(BaseModel):
     spend_date: date
+    end_date: date | None = None
     nm_id: int | None = None
     channel: str
     amount: float
@@ -53,6 +54,7 @@ def _row(o: ExternalAdCost) -> dict[str, Any]:
     return {
         "id": o.id,
         "spend_date": o.spend_date.isoformat(),
+        "end_date": o.end_date.isoformat() if o.end_date else None,
         "nm_id": o.nm_id,
         "channel": o.channel,
         "amount": float(o.amount),

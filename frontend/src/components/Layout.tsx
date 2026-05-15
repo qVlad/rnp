@@ -19,6 +19,7 @@ const links: Link[] = [
   { to: "/capitalization", label: "Капитализация", directorOrHead: true },
   { to: "/product-groups", label: "Группы" },
   { to: "/units", label: "Юнит-экономика" },
+  { to: "/checklist", label: "Чек-лист" },
   { to: "/calc", label: "Калькулятор" },
   { to: "/abc", label: "ABC-анализ" },
   { to: "/supply", label: "Поставки" },

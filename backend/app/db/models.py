@@ -727,6 +727,10 @@ class ExternalAdCost(Base, TenantScopedMixin):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     spend_date: Mapped[date] = mapped_column(Date, index=True)
+    # Дата окончания периода (опционально). Если указана, amount распределяется
+    # равномерно по дням [spend_date..end_date]. NULL → точечный расход
+    # (legacy-совместимое поведение).
+    end_date: Mapped[date | None] = mapped_column(Date)
     nm_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
     channel: Mapped[str] = mapped_column(String(64))  # blogger / infographic / photo / banner / other
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)

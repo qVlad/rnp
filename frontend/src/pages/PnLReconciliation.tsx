@@ -435,6 +435,47 @@ function WizardRow({ p, fees }: { p: any; fees: number }) {
               удержания {fmtRub(p.wb.deduction)} + эквайринг{" "}
               {fmtRub(p.wb.acquiring)} − доплаты {fmtRub(p.wb.additional)}.
             </div>
+
+            {p.unattributed && p.unattributed.rows_count > 0 && (
+              <div className="card border-warn/30 bg-warn/5 mt-3 text-xs">
+                <div className="font-medium text-warn mb-1">
+                  «Нулевой SKU» — расходы без nm_id ({p.unattributed.rows_count} стр.)
+                </div>
+                <div className="text-muted leading-relaxed mb-2">
+                  WB шлёт эти строки без привязки к товару: платная приёмка по складу,
+                  бонусы, корректировки на категорию. В наш per-SKU P&L они не попадают —
+                  показываем отдельно чтобы видеть «куда ушла дельта».
+                </div>
+                <table className="w-full">
+                  <tbody>
+                    {[
+                      ["Логистика", p.unattributed.delivery],
+                      ["Хранение", p.unattributed.storage],
+                      ["Штрафы", p.unattributed.penalty],
+                      ["Удержания", p.unattributed.deduction],
+                      ["Эквайринг", p.unattributed.acquiring],
+                      ["Доплаты (−)", -p.unattributed.additional],
+                      ["ppvz_for_pay", p.unattributed.ppvz],
+                    ]
+                      .filter(([, v]) => (v as number) !== 0)
+                      .map(([label, v]) => (
+                        <tr key={String(label)}>
+                          <td className="py-0.5 text-muted">{label}</td>
+                          <td className="py-0.5 text-right font-mono">
+                            {fmtRub(v as number)}
+                          </td>
+                        </tr>
+                      ))}
+                    <tr className="border-t border-border">
+                      <td className="py-0.5 font-medium">Итого (сумма)</td>
+                      <td className="py-0.5 text-right font-mono font-medium">
+                        {fmtRub(p.unattributed.total)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       </td>

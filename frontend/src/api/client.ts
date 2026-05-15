@@ -803,4 +803,19 @@ export const api = {
     }>(
       `/api/forecast/supply-distribution?velocity_window=${velocity_window}&target_days=${target_days}&irp_window=${irp_window}&include_archived=${includeArchived}`,
     ),
+
+  // ── Checklist (10X-методика) ──
+  checklistSku: (nm_id: number, days_back = 30) =>
+    request<any>(`/api/checklist/sku/${nm_id}?days_back=${days_back}`),
+  checklistSummary: (days_back = 30, limit?: number) => {
+    const qs = new URLSearchParams({ days_back: String(days_back) });
+    if (limit) qs.set("limit", String(limit));
+    return request<{
+      items: any[];
+      total_skus: number;
+      red_skus: number;
+      yellow_skus: number;
+      green_skus: number;
+    }>(`/api/checklist?${qs.toString()}`);
+  },
 };

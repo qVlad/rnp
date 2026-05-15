@@ -6,6 +6,7 @@ import { fmtRub } from "@/lib/format";
 const today = () => new Date().toISOString().slice(0, 10);
 const blank = () => ({
   spend_date: today(),
+  end_date: "",
   nm_id: "",
   channel: "blogger",
   amount: 0,
@@ -42,6 +43,7 @@ export default function ExternalMarketing() {
     mutationFn: () => {
       const payload = {
         spend_date: form.spend_date,
+        end_date: form.end_date || null,
         nm_id: form.nm_id ? Number(form.nm_id) : null,
         channel: form.channel,
         amount: Number(form.amount) || 0,
@@ -65,6 +67,7 @@ export default function ExternalMarketing() {
   const startEdit = (row: any) => {
     setForm({
       spend_date: row.spend_date,
+      end_date: row.end_date || "",
       nm_id: row.nm_id ?? "",
       channel: row.channel,
       amount: row.amount,
@@ -108,13 +111,26 @@ export default function ExternalMarketing() {
           {editingId ? `Редактировать запись #${editingId}` : "Добавить расход"}
         </h2>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <Field label="Дата">
+          <Field label="Дата начала">
             <input
               type="date"
               className="input"
               value={form.spend_date}
               onChange={(e: any) => setForm({ ...form, spend_date: e.target.value })}
             />
+          </Field>
+          <Field label="Дата окончания (опц.)">
+            <input
+              type="date"
+              className="input"
+              value={form.end_date}
+              onChange={(e: any) => setForm({ ...form, end_date: e.target.value })}
+              min={form.spend_date}
+            />
+            <div className="text-[11px] text-muted mt-1 leading-snug">
+              Если указана — сумма распределится равномерно по дням периода.
+              Пусто → точечный расход на дату начала.
+            </div>
           </Field>
           <Field label="Канал">
             <select

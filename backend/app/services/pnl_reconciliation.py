@@ -110,6 +110,45 @@ async def build_reconciliation(
         rec_stmt = rec_stmt.where(WbReportDetail.nm_id.in_(nm_filter))
     rows = (await session.execute(rec_stmt)).all()
 
+    # «Нулевой SKU» (10X-методика): строки финотчёта WB без привязки к nm_id.
+    # WB шлёт так платную приёмку, корректировки удержаний по категориям,
+    # бонусы — это реальные деньги, но не относятся ни к одной SKU.
+    # Только для company-scope (manager не видит nm_id=NULL по brand-фильтру).
+    unattributed_by_period: dict[tuple[date, date], dict[str, float]] = {}
+    if nm_filter is None:
+        un_stmt = (
+            select(
+                WbReportDetail.report_date_from,
+                WbReportDetail.report_date_to,
+                func.sum(WbReportDetail.delivery_rub).label("delivery"),
+                func.sum(WbReportDetail.storage_fee).label("storage"),
+                func.sum(WbReportDetail.penalty).label("penalty"),
+                func.sum(WbReportDetail.deduction).label("deduction"),
+                func.sum(WbReportDetail.acquiring_fee).label("acquiring"),
+                func.sum(WbReportDetail.additional_payment).label("additional"),
+                func.sum(WbReportDetail.ppvz_for_pay).label("ppvz"),
+                func.count().label("rows_count"),
+            )
+            .where(WbReportDetail.nm_id.is_(None))
+            .where(WbReportDetail.report_date_from.is_not(None))
+            .where(WbReportDetail.report_date_from >= cutoff)
+            .group_by(
+                WbReportDetail.report_date_from,
+                WbReportDetail.report_date_to,
+            )
+        )
+        for r in (await session.execute(un_stmt)).all():
+            unattributed_by_period[(r.report_date_from, r.report_date_to)] = {
+                "delivery": float(r.delivery or 0),
+                "storage": float(r.storage or 0),
+                "penalty": float(r.penalty or 0),
+                "deduction": float(r.deduction or 0),
+                "acquiring": float(r.acquiring or 0),
+                "additional": float(r.additional or 0),
+                "ppvz": float(r.ppvz or 0),
+                "rows_count": int(r.rows_count or 0),
+            }
+
     periods: list[dict[str, Any]] = []
     for r in rows:
         wb_gross = float(r.revenue_gross or 0)
@@ -141,6 +180,9 @@ async def build_reconciliation(
             (wb_payout / wb_gross * 100.0) if wb_gross else 0.0
         )
 
+        un = unattributed_by_period.get(
+            (r.report_date_from, r.report_date_to), {}
+        )
         periods.append(
             {
                 "period_from": r.report_date_from.isoformat(),
@@ -159,6 +201,29 @@ async def build_reconciliation(
                     "deduction": round(float(r.deduction or 0), 2),
                     "acquiring": round(float(r.acquiring or 0), 2),
                     "additional": round(float(r.additional or 0), 2),
+                },
+                # «Нулевой SKU» — отдельным разделом: расходы которые WB шлёт
+                # без привязки к товару (платная приёмка по складу, бонусы,
+                # корректировки на категорию). Помогает понять «куда ушла
+                # разница между gross и payout кроме обычных удержаний».
+                "unattributed": {
+                    "rows_count": un.get("rows_count", 0),
+                    "delivery": round(un.get("delivery", 0.0), 2),
+                    "storage": round(un.get("storage", 0.0), 2),
+                    "penalty": round(un.get("penalty", 0.0), 2),
+                    "deduction": round(un.get("deduction", 0.0), 2),
+                    "acquiring": round(un.get("acquiring", 0.0), 2),
+                    "additional": round(un.get("additional", 0.0), 2),
+                    "ppvz": round(un.get("ppvz", 0.0), 2),
+                    "total": round(
+                        un.get("delivery", 0.0)
+                        + un.get("storage", 0.0)
+                        + un.get("penalty", 0.0)
+                        + un.get("deduction", 0.0)
+                        + un.get("acquiring", 0.0)
+                        - un.get("additional", 0.0),
+                        2,
+                    ),
                 },
                 "ours": {
                     "revenue_gross": ours.get("revenue_gross", 0.0),

@@ -447,21 +447,30 @@ async def build_pnl(
     # за тот день × сумма brand-level marketing того дня. Это даёт честный ДРР
     # на странице P&L менеджера — без распределения брендовая реклама просто
     # «исчезала» для манагера, занижая его ДРР.
-    ext_ad_stmt = (
-        select(
-            ExternalAdCost.spend_date,
-            func.coalesce(func.sum(ExternalAdCost.amount), 0).label("amount"),
-        )
-        .where(
-            ExternalAdCost.spend_date >= date_from,
-            ExternalAdCost.spend_date <= date_to,
-        )
-        .group_by(ExternalAdCost.spend_date)
+    # External ad с поддержкой периода (end_date): размазываем amount равномерно
+    # по дням [spend_date..end_date]. Записи без end_date — точечные на spend_date.
+    # SQL-фильтр: запись попадает в выборку если её диапазон пересекается с
+    # запрошенным [date_from..date_to].
+    ext_ad_stmt = select(ExternalAdCost).where(
+        ExternalAdCost.spend_date <= date_to,
+        func.coalesce(ExternalAdCost.end_date, ExternalAdCost.spend_date) >= date_from,
     )
     if nm_filter is not None:
         ext_ad_stmt = ext_ad_stmt.where(ExternalAdCost.nm_id.in_(nm_filter))
-    ext_ad_rows = (await session.execute(ext_ad_stmt)).all()
-    ext_ad_by_day: dict[date, float] = {r.spend_date: _f(r.amount) for r in ext_ad_rows}
+    ext_ad_rows = (await session.execute(ext_ad_stmt)).scalars().all()
+    ext_ad_by_day: dict[date, float] = defaultdict(float)
+    for ea in ext_ad_rows:
+        s = ea.spend_date
+        e = ea.end_date or ea.spend_date
+        if e < s:
+            e = s
+        days = (e - s).days + 1
+        per_day = _f(ea.amount) / days if days > 0 else _f(ea.amount)
+        cur = max(s, date_from)
+        last = min(e, date_to)
+        while cur <= last:
+            ext_ad_by_day[cur] += per_day
+            cur += timedelta(days=1)
 
     # Pro-rata для brand-level (nm_id IS NULL): только в manager scope.
     if nm_filter is not None:
