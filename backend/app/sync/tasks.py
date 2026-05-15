@@ -1495,7 +1495,7 @@ async def _sync_jam_async(tenant_id: int, days_back: int = 30) -> dict[str, Any]
     """
     from datetime import date as _date, timedelta as _td
     from app.db.models import AppSetting, Product
-    from app.integrations.wb.jam import fetch_jam_for_nm, normalize_jam_row
+    from app.integrations.wb.jam import EndpointNotFoundError, fetch_jam_for_nm, normalize_jam_row
     from app.services.jam import upsert_jam_query
 
     end_date = _date.today()
@@ -1541,6 +1541,17 @@ async def _sync_jam_async(tenant_id: int, days_back: int = 30) -> dict[str, Any]
                     limit=30,
                     custom_path=custom_path,
                 )
+            except EndpointNotFoundError as e:
+                # Все кандидаты вернули 404 — конфигурация endpoint неправильная.
+                # Остальные SKU гонять бессмысленно (получим то же).
+                msg = (
+                    "Endpoint WB Jam не найден среди кандидатов. "
+                    "Зайдите в /jam → Подключение и впишите точный URL "
+                    "из вашей подписки (или дождитесь обновления списка кандидатов)."
+                )
+                errors.append(msg)
+                log.error("jam: %s", e)
+                break
             except Exception as e:
                 msg = f"nm {nm}: {type(e).__name__}: {str(e)[:200]}"
                 errors.append(msg)

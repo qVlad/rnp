@@ -69,6 +69,7 @@ async def fetch_jam_for_nm(
     )
 
     last_err: WbApiError | None = None
+    all_404 = True
     for path, category in candidates:
         try:
             data = await client.post(path, category=category, json=body)
@@ -86,7 +87,9 @@ async def fetch_jam_for_nm(
                 )
                 raise
             # 429 / 5xx — пробрасываем (sync таска retry'нёт)
+            all_404 = False
             raise
+        all_404 = False
         # data может быть list или dict с ключом data/items/cards
         if isinstance(data, list):
             return data
@@ -99,9 +102,18 @@ async def fetch_jam_for_nm(
             return [data]
         return []
     # Все кандидаты дали 404
-    if last_err:
-        log.warning("jam: all endpoint candidates failed (last %d %s)", last_err.status, last_err)
+    if last_err and all_404:
+        log.warning(
+            "jam: all endpoint candidates returned 404 — set custom URL via /api/jam/url"
+        )
+        # Маркер «все эндпоинты не существуют» — sync таска прервёт цикл по SKU.
+        raise EndpointNotFoundError("WB Jam endpoint not found across all candidates")
     return []
+
+
+class EndpointNotFoundError(Exception):
+    """Все WB Jam endpoint-кандидаты вернули 404 — нет смысла гонять остальные SKU."""
+    pass
 
 
 def normalize_jam_row(
