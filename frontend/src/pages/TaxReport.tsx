@@ -106,8 +106,13 @@ export default function TaxReport() {
           расхождение возможно при колебаниях закупочных цен.
         </div>
         <div className="mt-1">
-          <b>Налог</b> = max(База × ставка, Доход × мин.ставка) для УСН-15%/АУСН-20%.
-          Ставки берутся из <a href="/settings" className="underline text-accent">timeline настроек</a>.
+          <b>Налог</b> для режимов <i>«Доходы»</i> (УСН-6%/АУСН-8%) =
+          Доход × ставка — расходы и себестоимость не вычитаются, колонка
+          «База» в таких строках справочная (показана серым).
+          <br />
+          Для режимов <i>«Доходы − Расходы»</i> (УСН-15%/АУСН-20%) =
+          max(База × ставка, Доход × мин.ставка). Ставки берутся из
+          <a href="/settings" className="underline text-accent"> timeline настроек</a>.
         </div>
       </div>
 
@@ -209,31 +214,57 @@ export default function TaxReport() {
               <th className="text-right py-2 px-2 text-muted">Себест.</th>
               <th className="text-right py-2 px-2">База</th>
               <th className="text-right py-2 px-2 text-accent">Налог</th>
+              <th
+                className="text-right py-2 px-2 text-muted"
+                title="Эффективная ставка = Налог / Доход. Для режима «Доходы» совпадает со ставкой режима."
+              >
+                Эфф. ставка
+              </th>
               <th className="text-left py-2 px-2 text-muted">Режим</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
-              <tr key={r.realization_id} className="border-b border-border/40 hover:bg-card/60">
-                <td className="py-2 px-2 font-mono">#{r.realization_id}</td>
-                <td className="py-2 px-2 text-muted">
-                  {r.report_date_from} … {r.report_date_to}
-                </td>
-                <td className="py-2 px-2 text-right text-success">{fmtRub(r.income_total)}</td>
-                <td className="py-2 px-2 text-right" title={expenseBreakdown(r)}>
-                  {fmtRub(r.expense_total)}
-                </td>
-                <td className="py-2 px-2 text-right text-warn">{fmtRub(r.cogs)}</td>
-                <td className="py-2 px-2 text-right">{fmtRub(r.tax_base)}</td>
-                <td className="py-2 px-2 text-right text-accent font-medium">{fmtRub(r.tax)}</td>
-                <td className="py-2 px-2 text-muted">
-                  {r.tax_system} ({r.tax_rate}%)
-                </td>
-              </tr>
-            ))}
+            {rows.map((r) => {
+              const incomeOnly = isIncomeOnlyMode(r.tax_system);
+              const effRate = r.income_total > 0 ? (r.tax / r.income_total) * 100 : 0;
+              return (
+                <tr key={r.realization_id} className="border-b border-border/40 hover:bg-card/60">
+                  <td className="py-2 px-2 font-mono">#{r.realization_id}</td>
+                  <td className="py-2 px-2 text-muted">
+                    {r.report_date_from} … {r.report_date_to}
+                  </td>
+                  <td className="py-2 px-2 text-right text-success">{fmtRub(r.income_total)}</td>
+                  <td className="py-2 px-2 text-right" title={expenseBreakdown(r)}>
+                    {fmtRub(r.expense_total)}
+                  </td>
+                  <td className="py-2 px-2 text-right text-warn">{fmtRub(r.cogs)}</td>
+                  <td
+                    className={
+                      incomeOnly
+                        ? "py-2 px-2 text-right text-muted/60 italic"
+                        : "py-2 px-2 text-right"
+                    }
+                    title={
+                      incomeOnly
+                        ? "В режиме «Доходы» база не используется — налог берётся со всей выручки. Это значение справочное (база, если бы был режим «Доходы − Расходы»)."
+                        : undefined
+                    }
+                  >
+                    {fmtRub(r.tax_base)}
+                  </td>
+                  <td className="py-2 px-2 text-right text-accent font-medium">{fmtRub(r.tax)}</td>
+                  <td className="py-2 px-2 text-right text-muted">
+                    {effRate.toFixed(2)}%
+                  </td>
+                  <td className="py-2 px-2 text-muted">
+                    {taxSystemLabel(r.tax_system)} ({r.tax_rate}%)
+                  </td>
+                </tr>
+              );
+            })}
             {!q.isLoading && rows.length === 0 && (
               <tr>
-                <td colSpan={8} className="text-center text-muted py-4">
+                <td colSpan={9} className="text-center text-muted py-4">
                   Нет отчётов WB за выбранный период
                 </td>
               </tr>
@@ -264,6 +295,23 @@ function KpiBlock({
       </div>
     </div>
   );
+}
+
+// Режимы «Доходы» — налог берётся со всей выручки, база (Доход−Расход−Себест.)
+// в этих строках только для справки.
+const INCOME_ONLY_MODES = new Set(["usn_income", "ausn_income"]);
+function isIncomeOnlyMode(taxSystem: string): boolean {
+  return INCOME_ONLY_MODES.has(taxSystem);
+}
+
+const TAX_SYSTEM_LABELS: Record<string, string> = {
+  usn_income: "УСН «Доходы»",
+  usn_income_expense: "УСН «Доходы − Расходы»",
+  ausn_income: "АУСН «Доходы»",
+  ausn_income_expense: "АУСН «Доходы − Расходы»",
+};
+function taxSystemLabel(taxSystem: string): string {
+  return TAX_SYSTEM_LABELS[taxSystem] ?? taxSystem;
 }
 
 function expenseBreakdown(r: {
