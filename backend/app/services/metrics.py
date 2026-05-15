@@ -28,7 +28,7 @@ from app.db.models import (
 )
 from app.services.periods import Period, PeriodKey, get_period
 
-Mode = Literal["preliminary", "final"]
+Mode = Literal["preliminary", "final", "hybrid"]
 # Final-mode aggregations match the WB seller cabinet «Выкупы» / «Возвраты»
 # columns 1:1. Two pieces matter:
 #   1) Filter Продажа / Возврат on `supplier_oper_name` (not doc_type_name).
@@ -564,6 +564,72 @@ def _compute_window_kpis(orders: dict, sales: dict, ad: dict) -> dict[str, float
     }
 
 
+async def _hybrid_cutoff(session: AsyncSession) -> datetime | None:
+    """Возвращает datetime (UTC, +1 день после max report_date_to) — границу
+    «закрытой» WB-территории. Дни до неё — final, после неё — preliminary.
+
+    Если в БД нет ни одного report_detail — None (всё считается preliminary).
+    """
+    from app.db.models import WbReportDetail as _RD
+
+    row = await session.execute(select(func.max(_RD.report_date_to)))
+    max_to = row.scalar()
+    if max_to is None:
+        return None
+    # +1 день — переход от закрытой недели к свежим данным
+    return datetime.combine(
+        max_to + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc
+    )
+
+
+def _merge_dicts(a: dict[str, float], b: dict[str, float]) -> dict[str, float]:
+    """Поэлементное сложение dict'ов с float-значениями. Ключи объединяются."""
+    out: dict[str, float] = dict(a)
+    for k, v in b.items():
+        out[k] = _f(out.get(k, 0)) + _f(v)
+    return out
+
+
+async def _hybrid_orders_or_sales(
+    aggregate_fn_final,
+    aggregate_fn_preliminary,
+    session: AsyncSession,
+    start: datetime,
+    end: datetime,
+    brands: set[str] | None,
+    cutoff: datetime | None,
+) -> dict[str, float]:
+    """Hybrid: для дат до cutoff — final, после — preliminary. Складываем."""
+    if cutoff is None or cutoff <= start:
+        # Все дни — preliminary (нет закрытых отчётов или они старше start)
+        return await aggregate_fn_preliminary(session, start, end, brands)
+    if cutoff >= end:
+        # Все дни — final (cutoff покрывает весь период)
+        return await aggregate_fn_final(session, start, end, brands)
+    # Mixed: [start, cutoff) — final; [cutoff, end) — preliminary
+    final_part = await aggregate_fn_final(session, start, cutoff, brands)
+    prelim_part = await aggregate_fn_preliminary(session, cutoff, end, brands)
+    return _merge_dicts(final_part, prelim_part)
+
+
+async def _hybrid_sold_units_and_cogs(
+    session: AsyncSession,
+    start: datetime,
+    end: datetime,
+    cogs_map: dict[int, float],
+    brands: set[str] | None = None,
+    cutoff: datetime | None = None,
+) -> tuple[int, float]:
+    """Hybrid sold units + COGS — split по cutoff и суммируем."""
+    if cutoff is None or cutoff <= start:
+        return await _sold_units_and_cogs(session, start, end, cogs_map, brands=brands)
+    if cutoff >= end:
+        return await _final_sold_units_and_cogs(session, start, end, cogs_map, brands=brands)
+    f_units, f_cogs = await _final_sold_units_and_cogs(session, start, cutoff, cogs_map, brands=brands)
+    p_units, p_cogs = await _sold_units_and_cogs(session, cutoff, end, cogs_map, brands=brands)
+    return f_units + p_units, f_cogs + p_cogs
+
+
 async def compute_dashboard(
     session: AsyncSession,
     period_or_key: "PeriodKey | Period",
@@ -578,23 +644,57 @@ async def compute_dashboard(
     `mode='final'` — read from wb_report_detail by rr_dt. Final WB numbers,
     matches the WB seller cabinet exactly. Updated weekly, ~14 day lag for the
     most recent week.
+
+    `mode='hybrid'` (10X-методика) — комбинированный: для уже закрытых
+    WB-недель (где есть report_detail) берём final-цифры, для свежих
+    дней — preliminary. Граница `cutoff = max(report_date_to) + 1d`.
+    Если cutoff покрывает весь период → ведёт себя как final;
+    если данных report_detail нет вообще → как preliminary.
     """
     period: Period = (
         period_or_key if isinstance(period_or_key, Period) else get_period(period_or_key)
     )
+
+    cutoff: datetime | None = None
+    if mode == "hybrid":
+        cutoff = await _hybrid_cutoff(session)
+
     if mode == "final":
         orders_fn = _final_orders_aggregate
         sales_fn = _final_sales_aggregate
         sold_fn = _final_sold_units_and_cogs
-    else:
+    elif mode == "preliminary":
         orders_fn = _orders_aggregate
         sales_fn = _sales_aggregate
         sold_fn = _sold_units_and_cogs
+    else:
+        # hybrid — уйдём в helper-обёртку ниже
+        orders_fn = None
+        sales_fn = None
+        sold_fn = None
 
-    curr_orders = await orders_fn(session, period.start, period.end, brands)
-    prev_orders = await orders_fn(session, period.prev_start, period.prev_end, brands)
-    curr_sales = await sales_fn(session, period.start, period.end, brands)
-    prev_sales = await sales_fn(session, period.prev_start, period.prev_end, brands)
+    if mode == "hybrid":
+        curr_orders = await _hybrid_orders_or_sales(
+            _final_orders_aggregate, _orders_aggregate,
+            session, period.start, period.end, brands, cutoff,
+        )
+        prev_orders = await _hybrid_orders_or_sales(
+            _final_orders_aggregate, _orders_aggregate,
+            session, period.prev_start, period.prev_end, brands, cutoff,
+        )
+        curr_sales = await _hybrid_orders_or_sales(
+            _final_sales_aggregate, _sales_aggregate,
+            session, period.start, period.end, brands, cutoff,
+        )
+        prev_sales = await _hybrid_orders_or_sales(
+            _final_sales_aggregate, _sales_aggregate,
+            session, period.prev_start, period.prev_end, brands, cutoff,
+        )
+    else:
+        curr_orders = await orders_fn(session, period.start, period.end, brands)
+        prev_orders = await orders_fn(session, period.prev_start, period.prev_end, brands)
+        curr_sales = await sales_fn(session, period.start, period.end, brands)
+        prev_sales = await sales_fn(session, period.prev_start, period.prev_end, brands)
     curr_ad = await _ad_aggregate(session, period.start, period.end, brands)
     prev_ad = await _ad_aggregate(session, period.prev_start, period.prev_end, brands)
     stocks = await _stocks_aggregate(session, brands)
@@ -603,16 +703,36 @@ async def compute_dashboard(
     prev = _compute_window_kpis(prev_orders, prev_sales, prev_ad)
 
     cogs_map = await _latest_cogs_map(session, brands=brands)
-    sold_units, sold_cogs = await sold_fn(
-        session, period.start, period.end, cogs_map, brands=brands
-    )
-    _, prev_sold_cogs = await sold_fn(
-        session, period.prev_start, period.prev_end, cogs_map, brands=brands
-    )
-    # Финансовые поля из wb_report_detail доступны только в final mode.
-    if mode == "final":
-        fin = await _final_finance_aggregate(session, period.start, period.end, brands)
-        prev_fin = await _final_finance_aggregate(session, period.prev_start, period.prev_end, brands)
+    if mode == "hybrid":
+        sold_units, sold_cogs = await _hybrid_sold_units_and_cogs(
+            session, period.start, period.end, cogs_map, brands=brands, cutoff=cutoff,
+        )
+        _, prev_sold_cogs = await _hybrid_sold_units_and_cogs(
+            session, period.prev_start, period.prev_end, cogs_map, brands=brands, cutoff=cutoff,
+        )
+    else:
+        sold_units, sold_cogs = await sold_fn(
+            session, period.start, period.end, cogs_map, brands=brands
+        )
+        _, prev_sold_cogs = await sold_fn(
+            session, period.prev_start, period.prev_end, cogs_map, brands=brands
+        )
+    # Финансовые поля из wb_report_detail доступны в final и hybrid (берём
+    # final-часть для closed-периода, для свежей части просто отсутствуют).
+    if mode in ("final", "hybrid"):
+        if mode == "hybrid" and cutoff is not None and cutoff > period.start and cutoff < period.end:
+            # finance — только за final-часть [start, cutoff)
+            fin = await _final_finance_aggregate(session, period.start, cutoff, brands)
+            prev_fin_end = min(cutoff, period.prev_end)
+            if prev_fin_end > period.prev_start:
+                prev_fin = await _final_finance_aggregate(
+                    session, period.prev_start, prev_fin_end, brands
+                )
+            else:
+                prev_fin = _empty_finance()
+        else:
+            fin = await _final_finance_aggregate(session, period.start, period.end, brands)
+            prev_fin = await _final_finance_aggregate(session, period.prev_start, period.prev_end, brands)
     else:
         fin = _empty_finance()
         prev_fin = _empty_finance()
@@ -646,11 +766,24 @@ async def compute_dashboard(
     roi = (margin_value / sold_cogs * 100) if sold_cogs > 0 else 0.0
     prev_roi = (prev_margin_value / prev_sold_cogs * 100) if prev_sold_cogs > 0 else 0.0
 
-    src_orders = "wb_orders по order_dt" if mode == "preliminary" else "wb_report_detail.Продажа по sale_dt"
-    src_revenue = "Σ retail_with_disc активных wb_orders" if mode == "preliminary" else (
-        "Σ retail_price_withdisc_rub Продаж − ppvz_for_pay добровольных компенсаций"
-    )
-    src_returns = "wb_sales.is_return по sale_dt" if mode == "preliminary" else "wb_report_detail.Возврат по sale_dt"
+    if mode == "hybrid":
+        cutoff_str = cutoff.date().isoformat() if cutoff else "(нет данных)"
+        src_orders = (
+            f"hybrid: до {cutoff_str} — wb_report_detail; после — wb_orders"
+        )
+        src_revenue = (
+            f"hybrid: до {cutoff_str} — Σ retail_price_withdisc_rub (Продажи − добровольные компенсации); "
+            "после — Σ wb_orders.total_price × (1−discount)"
+        )
+        src_returns = (
+            f"hybrid: до {cutoff_str} — wb_report_detail.Возврат; после — wb_sales.is_return"
+        )
+    else:
+        src_orders = "wb_orders по order_dt" if mode == "preliminary" else "wb_report_detail.Продажа по sale_dt"
+        src_revenue = "Σ retail_with_disc активных wb_orders" if mode == "preliminary" else (
+            "Σ retail_price_withdisc_rub Продаж − ppvz_for_pay добровольных компенсаций"
+        )
+        src_returns = "wb_sales.is_return по sale_dt" if mode == "preliminary" else "wb_report_detail.Возврат по sale_dt"
 
     kpis = [
         KPI("revenue_gross", "Выручка (gross)", curr["revenue_gross"], prev["revenue_gross"],
@@ -714,32 +847,32 @@ async def compute_dashboard(
             "100 % = удвоение, < 30 % — низкая, > 200 % — отличная."),
         # ─── Финансовые поля из wb_report_detail (только final mode) ─────
         KPI("commission_wb", "Комиссия WB", fin["commission"],
-            prev_fin["commission"] if mode == "final" else None,
-            _pct_change(fin["commission"], prev_fin["commission"]) if mode == "final" else None,
+            prev_fin["commission"] if mode in ("final", "hybrid") else None,
+            _pct_change(fin["commission"], prev_fin["commission"]) if mode in ("final", "hybrid") else None,
             "₽",
             "Комиссия WB + эквайринг — то что WB удерживает с каждого выкупа.\n"
             "Формула: Σ (retail_price_withdisc_rub − ppvz_for_pay) для Продаж − для Возвратов.\n"
             "Совпадает со столбцом «Комиссия WB и эквайринг» в WB-кабинете.\n"
             "Доступно только в Final режиме (источник — wb_report_detail)."),
         KPI("logistics_wb", "Логистика WB", fin["logistics"],
-            prev_fin["logistics"] if mode == "final" else None,
-            _pct_change(fin["logistics"], prev_fin["logistics"]) if mode == "final" else None,
+            prev_fin["logistics"] if mode in ("final", "hybrid") else None,
+            _pct_change(fin["logistics"], prev_fin["logistics"]) if mode in ("final", "hybrid") else None,
             "₽",
             "Расходы на логистику WB за период (доставка до ПВЗ, обратная логистика).\n"
             "Формула: Σ wb_report_detail.delivery_rub.\n"
             "Совпадает со столбцом «Логистика» в WB-кабинете.\n"
             "Доступно только в Final режиме."),
         KPI("storage_wb", "Хранение WB", fin["storage"],
-            prev_fin["storage"] if mode == "final" else None,
-            _pct_change(fin["storage"], prev_fin["storage"]) if mode == "final" else None,
+            prev_fin["storage"] if mode in ("final", "hybrid") else None,
+            _pct_change(fin["storage"], prev_fin["storage"]) if mode in ("final", "hybrid") else None,
             "₽",
             "Плата за хранение товара на FBO-складах WB.\n"
             "Формула: Σ wb_report_detail.storage_fee.\n"
             "Совпадает со столбцом «Хранение» в WB-кабинете.\n"
             "Доступно только в Final режиме."),
         KPI("payout_to_account", "Деньги на счёт", fin["payout_to_account"],
-            prev_fin["payout_to_account"] if mode == "final" else None,
-            _pct_change(fin["payout_to_account"], prev_fin["payout_to_account"]) if mode == "final" else None,
+            prev_fin["payout_to_account"] if mode in ("final", "hybrid") else None,
+            _pct_change(fin["payout_to_account"], prev_fin["payout_to_account"]) if mode in ("final", "hybrid") else None,
             "₽",
             "Деньги, которые WB реально переведёт на расчётный счёт за период.\n"
             "Формула: ppvz_net − логистика − хранение − штрафы − удержания + доплаты.\n"

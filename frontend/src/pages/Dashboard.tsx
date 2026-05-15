@@ -17,7 +17,7 @@ import { fmtNum, fmtRub } from "@/lib/format";
 
 type Period = "day" | "week" | "month";
 type Mode = { kind: "preset"; period: Period } | { kind: "custom"; start: string; end: string };
-type DataMode = "preliminary" | "final";
+type DataMode = "preliminary" | "final" | "hybrid";
 
 const periodLabels: Record<Period, string> = {
   day: "Сегодня",
@@ -93,6 +93,20 @@ export default function Dashboard() {
             <button
               type="button"
               className={`btn text-xs ${
+                dataMode === "hybrid" ? "border-accent text-accent" : ""
+              }`}
+              onClick={() => setDataMode("hybrid")}
+              title={
+                "Гибридный (10X-методика): для уже закрытых WB-недель — final-цифры, " +
+                "для свежих дней — preliminary. Граница автоматически по последнему " +
+                "закрытому отчёту реализации."
+              }
+            >
+              Hybrid
+            </button>
+            <button
+              type="button"
+              className={`btn text-xs ${
                 dataMode === "final" ? "border-accent text-accent" : ""
               }`}
               onClick={() => setDataMode("final")}
@@ -107,7 +121,9 @@ export default function Dashboard() {
           <span className="text-xs text-muted">
             {dataMode === "preliminary"
               ? "preliminary · скользящее окно (orders/sales)"
-              : "final · WB report_detail (как в кабинете)"}
+              : dataMode === "hybrid"
+                ? "hybrid · final + preliminary по cutoff"
+                : "final · WB report_detail (как в кабинете)"}
           </span>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
