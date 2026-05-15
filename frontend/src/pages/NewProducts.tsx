@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { fmtRub } from "@/lib/format";
 import {
   DEFAULT_MARKET,
+  type CbrRates,
   type ImportItem,
   type MarketParams,
   type WbCalcRow,
   computeImport,
   computeWbRow,
+  fetchCbrRates,
   loadState,
   saveState,
 } from "@/lib/newProductsCalc";
@@ -43,6 +45,9 @@ export default function NewProducts() {
   const [wbRows, setWbRows] = useState<WbCalcRow[]>([]);
   const [openParams, setOpenParams] = useState(false);
   const [activeScenario, setActiveScenario] = useState(0);
+  const [cbrRates, setCbrRates] = useState<CbrRates | null>(null);
+  const [cbrLoading, setCbrLoading] = useState(false);
+  const [cbrError, setCbrError] = useState<string | null>(null);
 
   // Load from localStorage on mount
   useEffect(() => {
@@ -66,6 +71,41 @@ export default function NewProducts() {
       }]);
     }
   }, []);
+
+  // Fetch CBR rates in background. На первой загрузке (когда сохранения нет)
+  // автоматически применяем; если у пользователя есть сохранённое состояние —
+  // показываем баннер с кнопкой «Применить» и не трогаем market без согласия.
+  const refreshCbr = async (autoApply: boolean) => {
+    setCbrLoading(true);
+    setCbrError(null);
+    const r = await fetchCbrRates();
+    setCbrLoading(false);
+    if (!r) {
+      setCbrError("Не удалось получить курсы ЦБ РФ");
+      return;
+    }
+    setCbrRates(r);
+    if (autoApply) {
+      setMarket((m) => ({ ...m, rub_cny: r.rub_cny, rub_eur: r.rub_eur }));
+    }
+  };
+
+  useEffect(() => {
+    // Если localStorage пуст — применяем сразу. Иначе только показываем.
+    const hadSaved = !!loadState();
+    refreshCbr(!hadSaved);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const applyCbr = () => {
+    if (!cbrRates) return;
+    setMarket((m) => ({ ...m, rub_cny: cbrRates.rub_cny, rub_eur: cbrRates.rub_eur }));
+  };
+
+  const ratesDiffer =
+    cbrRates !== null &&
+    (Math.abs(market.rub_cny - cbrRates.rub_cny) > 0.001 ||
+      Math.abs(market.rub_eur - cbrRates.rub_eur) > 0.001);
 
   // Persist on change
   useEffect(() => {
@@ -100,11 +140,34 @@ export default function NewProducts() {
         </div>
       </div>
 
+      {/* Баннер курсов ЦБ — появляется если курсы получены и отличаются от текущих */}
+      {cbrRates && ratesDiffer && (
+        <section className="card flex items-center gap-3 text-xs bg-accent/5 border-accent/30">
+          <span>
+            <b className="text-accent">Курсы ЦБ РФ на {cbrRates.date}</b>:
+            {" "}1 ¥ = <b>{cbrRates.rub_cny.toFixed(4)} ₽</b>,
+            {" "}1 € = <b>{cbrRates.rub_eur.toFixed(4)} ₽</b>
+            {" "}<span className="text-muted">(сейчас {market.rub_cny.toFixed(2)} / {market.rub_eur.toFixed(2)})</span>
+          </span>
+          <button className="btn text-xs ml-auto" onClick={applyCbr}>
+            Применить курсы ЦБ
+          </button>
+        </section>
+      )}
+      {cbrError && (
+        <section className="card text-xs text-warn">
+          ⚠ {cbrError} — используются ваши значения. Можно повторить через кнопку ↻ в параметрах.
+        </section>
+      )}
+
       <ParamsPanel
         market={market}
         onChange={setMarket}
         open={openParams}
         onToggle={() => setOpenParams((x) => !x)}
+        cbrRates={cbrRates}
+        cbrLoading={cbrLoading}
+        onRefreshCbr={() => refreshCbr(false)}
       />
 
       {/* Таблица «Импорт из Китая» */}
@@ -165,21 +228,45 @@ export default function NewProducts() {
 
 function ParamsPanel({
   market, onChange, open, onToggle,
+  cbrRates, cbrLoading, onRefreshCbr,
 }: {
   market: MarketParams;
   onChange: (m: MarketParams) => void;
   open: boolean;
   onToggle: () => void;
+  cbrRates: CbrRates | null;
+  cbrLoading: boolean;
+  onRefreshCbr: () => void;
 }) {
   return (
     <section className="card">
-      <button
-        className="text-sm font-medium w-full text-left flex items-center justify-between"
-        onClick={onToggle}
-      >
-        <span>Параметры рынка (курсы, тарифы WB, налоги)</span>
-        <span className="text-muted">{open ? "▴" : "▾"}</span>
-      </button>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <button
+          className="text-sm font-medium text-left flex items-center gap-2"
+          onClick={onToggle}
+        >
+          <span>Параметры рынка (курсы, тарифы WB, налоги)</span>
+          <span className="text-muted">{open ? "▴" : "▾"}</span>
+        </button>
+        <div className="flex items-center gap-2 text-xs text-muted">
+          {cbrRates ? (
+            <span title={`ЦБ РФ • USD ${cbrRates.rub_usd.toFixed(4)} ₽`}>
+              ЦБ {cbrRates.date}: 1¥={cbrRates.rub_cny.toFixed(2)} 1€={cbrRates.rub_eur.toFixed(2)}
+            </span>
+          ) : (
+            <span>курсы ЦБ не загружены</span>
+          )}
+          <button
+            type="button"
+            className="btn text-xs px-2 py-1"
+            disabled={cbrLoading}
+            onClick={onRefreshCbr}
+            title="Запросить актуальные курсы ЦБ РФ"
+          >
+            {cbrLoading ? "…" : "↻"}
+          </button>
+        </div>
+      </div>
       {open && (
         <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
           <NumField label="Курс RUB/CNY" v={market.rub_cny} on={(v) => onChange({ ...market, rub_cny: v })} />

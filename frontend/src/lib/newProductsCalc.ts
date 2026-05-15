@@ -318,6 +318,54 @@ function round2(x: number): number {
   return Math.round(x * 100) / 100;
 }
 
+// ── Курсы ЦБ РФ ─────────────────────────────────────────────────────────
+
+export type CbrRates = {
+  date: string;          // ISO дата выгрузки ЦБ (например, "2026-05-15")
+  rub_cny: number;       // RUB за 1 CNY
+  rub_eur: number;       // RUB за 1 EUR
+  rub_usd: number;       // RUB за 1 USD (для информации)
+};
+
+/**
+ * Загружает официальные курсы ЦБ РФ на сегодня (или последний рабочий день).
+ * Endpoint: https://www.cbr-xml-daily.ru/daily_json.js — публичный JSON
+ * без auth и с CORS-доступом. Кешируется ЦБ на 1 час; обновляется ~11:30 МСК.
+ *
+ * Возвращает null при сетевой ошибке — caller должен использовать прежние
+ * значения и показать пользователю что-то типа «не удалось обновить курсы».
+ */
+export async function fetchCbrRates(): Promise<CbrRates | null> {
+  try {
+    const resp = await fetch("https://www.cbr-xml-daily.ru/daily_json.js", {
+      // Не отправляем cookies, не нужны
+      credentials: "omit",
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const v = data?.Valute ?? {};
+    const get = (code: string): number => {
+      const e = v[code];
+      if (!e || !e.Value || !e.Nominal) return 0;
+      return Number(e.Value) / Number(e.Nominal);
+    };
+    const rub_cny = get("CNY");
+    const rub_eur = get("EUR");
+    const rub_usd = get("USD");
+    if (rub_cny <= 0 || rub_eur <= 0) return null;
+    // Date format: "2026-05-15T11:30:00+03:00"
+    const date = String(data?.Date || "").slice(0, 10) || new Date().toISOString().slice(0, 10);
+    return {
+      date,
+      rub_cny: Math.round(rub_cny * 10000) / 10000,
+      rub_eur: Math.round(rub_eur * 10000) / 10000,
+      rub_usd: Math.round(rub_usd * 10000) / 10000,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // ── localStorage persistence ───────────────────────────────────────────
 
 const LS_KEY = "rnp_new_products_state_v1";
