@@ -815,6 +815,21 @@ export const api = {
     }>("/api/jam/status"),
   jamSkus: () =>
     request<{ items: { nm_id: number; queries: number }[] }>("/api/jam/skus"),
+  jamSyncNow: (days_back = 30) =>
+    request<{
+      tenant_id?: number;
+      skus_processed?: number;
+      queries_upserted?: number;
+      errors?: string[];
+      skipped?: boolean;
+      reason?: string;
+    }>(`/api/jam/sync-now?days_back=${days_back}`, { method: "POST" }),
+  jamGetUrl: () => request<{ wb_jam_url: string }>("/api/jam/url"),
+  jamSetUrl: (wb_jam_url: string) =>
+    request<{ wb_jam_url: string }>("/api/jam/url", {
+      method: "PUT",
+      body: JSON.stringify({ wb_jam_url }),
+    }),
   jamClusters: (
     nm_id: number,
     params: {

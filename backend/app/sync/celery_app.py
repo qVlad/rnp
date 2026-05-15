@@ -124,6 +124,14 @@ celery_app.conf.update(
             "task": "app.sync.tasks.sync_product_photos",
             "schedule": crontab(hour=5, minute=0),
         },
+        # WB Jam — поисковые запросы по карточкам (платная подписка).
+        # Раз в сутки достаточно: запросы и их статистика обновляются с
+        # задержкой 1-2 дня. Расход на analytics: ~30 SKU × 1 запрос ≈ 10 мин
+        # с 20-секундным минимальным интервалом — укладываемся в окно.
+        "sync-jam-daily": {
+            "task": "app.sync.tasks.sync_jam",
+            "schedule": crontab(hour=5, minute=30),
+        },
         # Telegram daily digest — 09:00 MSK (no-op if bot is not configured)
         "tg-daily-digest": {
             "task": "app.sync.tasks.send_daily_digest",

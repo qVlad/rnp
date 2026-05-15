@@ -1480,6 +1480,115 @@ def sync_product_photos() -> dict[str, Any]:
     return _fanout(sync_product_photos_for_tenant)
 
 
+# ---------------------------------------------------------------------------
+# WB Jam — поисковые запросы по карточкам (платная подписка)
+# ---------------------------------------------------------------------------
+
+
+async def _sync_jam_async(tenant_id: int, days_back: int = 30) -> dict[str, Any]:
+    """Подтянуть ТОП-30 запросов из WB Jam для всех активных SKU тенанта.
+
+    Endpoint берётся из tenant_settings (`wb_jam_url_template`); если пустой —
+    пробует список дефолтных кандидатов (см. integrations/wb/jam.py).
+
+    Возвращает {tenants_processed, skus_processed, queries_upserted, errors}.
+    """
+    from datetime import date as _date, timedelta as _td
+    from app.db.models import AppSetting, Product
+    from app.integrations.wb.jam import fetch_jam_for_nm, normalize_jam_row
+    from app.services.jam import upsert_jam_query
+
+    end_date = _date.today()
+    start_date = end_date - _td(days=days_back)
+    upserted = 0
+    skus_processed = 0
+    errors: list[str] = []
+
+    async with tenant_sync_context(tenant_id) as ctx:
+        if ctx is None:
+            log.info("jam: tenant %s no WB token, skip", tenant_id)
+            return {"tenant_id": tenant_id, "skipped": True, "reason": "no_token"}
+        session, wb = ctx
+
+        # Кастомный URL из settings (опционально)
+        custom_url_row = (
+            await session.execute(
+                select(AppSetting).where(AppSetting.key == "wb_jam_url")
+            )
+        ).scalar_one_or_none()
+        custom_path = custom_url_row.value if custom_url_row and custom_url_row.value else None
+
+        # Список SKU (только активные = не архивные)
+        nm_rows = (
+            await session.execute(
+                select(Product.nm_id).where(Product.is_archived.is_(False))
+            )
+        ).all()
+        nm_ids = [int(r[0]) for r in nm_rows]
+        if not nm_ids:
+            log.info("jam: tenant %s — no active SKUs", tenant_id)
+            await update_checkpoint(session, "jam", rows_processed=0)
+            return {"tenant_id": tenant_id, "skus": 0, "upserted": 0}
+
+        # Fetch по одному SKU за раз, лимит analytics 3/мин — пройдёмся аккуратно.
+        for nm in nm_ids:
+            try:
+                raw = await fetch_jam_for_nm(
+                    wb,
+                    nm_id=nm,
+                    date_from=start_date,
+                    date_to=end_date,
+                    limit=30,
+                    custom_path=custom_path,
+                )
+            except Exception as e:
+                msg = f"nm {nm}: {type(e).__name__}: {str(e)[:200]}"
+                errors.append(msg)
+                log.warning("jam: %s", msg)
+                # Если 401/403 — нет смысла продолжать всем SKU
+                if "401" in str(e) or "403" in str(e):
+                    log.error("jam: subscription/scope error — abort sync")
+                    break
+                continue
+            skus_processed += 1
+            for raw_row in raw:
+                norm = normalize_jam_row(
+                    raw_row, nm_id=nm, period_start=start_date, period_end=end_date
+                )
+                if not norm:
+                    continue
+                await upsert_jam_query(session, **norm)
+                upserted += 1
+            # Промежуточный commit для каждого SKU — чтобы прогресс сохранялся даже при сбое
+            await session.commit()
+
+        status = "ok" if not errors else ("skipped" if upserted == 0 else "partial")
+        await update_checkpoint(
+            session,
+            "jam",
+            rows_processed=upserted,
+            status=status,
+            error="; ".join(errors[:3])[:500] if errors else None,
+        )
+
+    return {
+        "tenant_id": tenant_id,
+        "skus_processed": skus_processed,
+        "queries_upserted": upserted,
+        "errors": errors[:5],
+    }
+
+
+@celery_app.task(name="app.sync.tasks.sync_jam_for_tenant")
+def sync_jam_for_tenant(tenant_id: int, days_back: int = 30) -> dict[str, Any]:
+    return asyncio.run(_sync_jam_async(tenant_id, days_back))
+
+
+@celery_app.task(name="app.sync.tasks.sync_jam")
+def sync_jam() -> dict[str, Any]:
+    return _fanout(sync_jam_for_tenant)
+
+
 @celery_app.task(name="app.sync.tasks.sync_all")
 def sync_all() -> dict[str, Any]:
     """Запустить все dispatcher'ы (fanout per-tenant для каждого синка)."""

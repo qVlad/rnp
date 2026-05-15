@@ -7,10 +7,11 @@
  *  - Кластеризация: на лету в backend (jam-сервис) — по общему слову.
  *  - Цветовая разметка: красный = CPC > MAX_CPC, жёлтый 70-100%, зелёный < 70%.
  */
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
+import { useAuth } from "@/contexts/AuthContext";
 
 const STATUS_COLORS: Record<string, string> = {
   red: "text-danger",
@@ -26,15 +27,29 @@ const STATUS_BG: Record<string, string> = {
 };
 
 export default function Jam() {
+  const { user } = useAuth();
+  const isDirector = user?.role === "director";
+  const qc = useQueryClient();
   const [nmId, setNmId] = useState<number | null>(null);
   const [organicPct, setOrganicPct] = useState(0);
   const [targetMargin, setTargetMargin] = useState(0);
   const [days, setDays] = useState(30);
+  const [syncResult, setSyncResult] = useState<any>(null);
+  const [urlInput, setUrlInput] = useState("");
 
   const status = useQuery({
     queryKey: ["jam-status"],
     queryFn: () => api.jamStatus(),
   });
+
+  const urlQ = useQuery({
+    queryKey: ["jam-url"],
+    queryFn: () => api.jamGetUrl(),
+    enabled: isDirector,
+  });
+  useEffect(() => {
+    if (urlQ.data) setUrlInput(urlQ.data.wb_jam_url || "");
+  }, [urlQ.data]);
 
   const skus = useQuery({
     queryKey: ["jam-skus"],
@@ -46,6 +61,26 @@ export default function Jam() {
     queryFn: () =>
       api.jamClusters(nmId!, { days_back: days, organic_pct: organicPct, target_margin_pct: targetMargin }),
     enabled: nmId != null,
+  });
+
+  const syncMut = useMutation({
+    mutationFn: () => api.jamSyncNow(days),
+    onSuccess: (data) => {
+      setSyncResult(data);
+      qc.invalidateQueries({ queryKey: ["jam-status"] });
+      qc.invalidateQueries({ queryKey: ["jam-skus"] });
+      qc.invalidateQueries({ queryKey: ["jam-clusters"] });
+    },
+    onError: (err: any) => {
+      setSyncResult({ error: String(err?.message || err) });
+    },
+  });
+
+  const urlMut = useMutation({
+    mutationFn: () => api.jamSetUrl(urlInput.trim()),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["jam-url"] });
+    },
   });
 
   return (
@@ -98,6 +133,85 @@ export default function Jam() {
         <div className="card text-xs text-muted">
           ✅ {status.data.message}
         </div>
+      )}
+
+      {isDirector && (
+        <section className="card">
+          <h2 className="font-medium mb-3">
+            Подключение WB Jam (синхронизация по API)
+          </h2>
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 mb-3">
+            <Field label="WB Jam URL (опционально, оставьте пусто для авто)">
+              <input
+                className="bg-surface border border-border rounded-md p-1.5 text-sm text-white w-full font-mono"
+                value={urlInput}
+                onChange={(e) => setUrlInput(e.target.value)}
+                placeholder="/api/v2/search-report/products"
+              />
+              <div className="text-[11px] text-muted mt-1 leading-snug">
+                Оставьте пустым — система попробует дефолтные кандидаты
+                (`/api/v2/search-report/products` и др.). Если знаете точный
+                путь — впишите. Хост подставится автоматически
+                (seller-analytics-api).
+              </div>
+            </Field>
+            <div className="flex items-end gap-2">
+              <button
+                className="btn"
+                onClick={() => urlMut.mutate()}
+                disabled={urlMut.isPending || urlInput === (urlQ.data?.wb_jam_url ?? "")}
+              >
+                {urlMut.isPending ? "Сохраняю…" : "Сохранить URL"}
+              </button>
+              <button
+                className="btn-primary"
+                onClick={() => syncMut.mutate()}
+                disabled={syncMut.isPending}
+                title="Запустить синхронизацию WB Jam прямо сейчас (длится ~10 мин)"
+              >
+                {syncMut.isPending ? "Sync…" : "Sync now"}
+              </button>
+            </div>
+          </div>
+          {syncResult && (
+            <div
+              className={`text-xs p-2 rounded ${
+                syncResult.error || (syncResult.errors && syncResult.errors.length > 0)
+                  ? "bg-danger/10 text-danger"
+                  : "bg-success/10 text-success"
+              }`}
+            >
+              {syncResult.error ? (
+                <>Ошибка: {syncResult.error}</>
+              ) : syncResult.skipped ? (
+                <>Пропущено: {syncResult.reason}</>
+              ) : (
+                <>
+                  Готово: обработано {syncResult.skus_processed ?? 0} SKU,
+                  upsert {syncResult.queries_upserted ?? 0} запросов.
+                  {syncResult.errors && syncResult.errors.length > 0 && (
+                    <div className="mt-1">
+                      Ошибки ({syncResult.errors.length}):
+                      <ul className="list-disc list-inside">
+                        {syncResult.errors.slice(0, 3).map((e: string, i: number) => (
+                          <li key={i}>{e}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+          <div className="text-xs text-muted mt-2 leading-relaxed">
+            WB Jam — платная подписка. Точный endpoint в публичных API-доках
+            не зафиксирован; система пробует кандидаты из своего списка. Если
+            sync даёт 404 на всех — впишите точный URL вручную (его можно
+            подсмотреть в DevTools-сетевых запросах WB-кабинета на странице
+            «Аналитика сравнения карточек»). Альтернатива — Excel-импорт через
+            /settings → jam_queries.
+          </div>
+        </section>
       )}
 
       <section className="card">
