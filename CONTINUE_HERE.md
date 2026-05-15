@@ -32,62 +32,130 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
-## Что сделано в последней сессии (2026-05-11, коммиты `999cac2` + `3b2a0d7`)
+## Что сделано в последней сессии (2026-05-14 / 15, ветка `main`, коммиты `ad1fa4f` … `f9a35e1`)
 
-**Multi-tenant SaaS:**
-- Миграция 0016: `tenants` table + `tenant_id` во все 22 пользовательские таблицы
-- `TenantScopedMixin` + SQLAlchemy event listener (`do_orm_execute` + `with_loader_criteria`) → авто-фильтр всех ORM SELECT'ов по `tenant_id` из `session.info`
-- `before_flush` hook + `_stamp_tenant()` helper для Core inserts
-- `get_db_tenant_scoped` FastAPI dep подключён во все protected endpoints
-- `POST /api/auth/signup` создаёт tenant + директора
-- Страница `/signup`, `/legal` (Privacy + Terms), блок «WB подключение» в Settings
-- Все 9 Celery sync-задач: dispatcher (beat) → fanout `sync_X_for_tenant.delay(tid)` для активных tenants
-- Lifespan auto-migrate: `.env WB_TOKEN` → `tenants(1).wb_token`
+Очень длинная сессия — 11 крупных блоков работы. Все коммиты в `main`, всё задеплоено на прод. Архивный снимок предыдущей сессии (multi-tenant + hardening) — в коммите `999cac2`.
 
-**Production hardening:**
-- Fernet AES шифрование `Tenant.wb_token` (`services/secrets_crypto.py`); `SECRETS_ENCRYPTION_KEY` в `.env`
-- Rate-limit: signup 5/час/IP, login 20/15мин/IP (Redis-based, X-Forwarded-For-aware)
-- HTTPS: uvicorn `--proxy-headers --forwarded-allow-ips=*`, nginx-spa.conf пробрасывает `X-Forwarded-Proto/Host/For`
-- Внешний Caddy на сервере проксирует rnp.sellerfriends.ru → 192.168.31.61:4098 (см. DEPLOY.md «Вариант A»)
-- Опциональный встроенный Caddy: `docker-compose.https.yml` + `Caddyfile`
+### 1. wb_report_detail расширен до 88 полей (миграция 0017)
+- Добавлено 58 новых колонок (всё что отдаёт `/api/finance/v1/sales-reports/detailed`): `ppvz_vw`, `ppvz_vw_nds`, `paid_acceptance`, `rebill_logistic_cost`, `bonus_type_name`, `currency`, `brand_name`, `spp`, `srid`, `is_b2b` и др.
+- Хелперы `_to_decimal` / `_to_int` / `_to_bool` в `sync/tasks.py` для безопасной нормализации
+- Авто-уменьшение chunk_size в `_bulk_upsert/_insert` — `_PARAM_LIMIT=30000` / ncols (asyncpg ограничение 32767 bind-params)
+- 🐛 **Sync alias bug**: API отдаёт `vw`/`vwNds`, наш код искал `ppvz_vw`/`ppvz_vw_nds` → NULL. Алиасы в `_LEGACY_ALIASES` (`statistics.py`) — поля теперь заполняются
 
-**Deploy & ops:**
-- `scripts/remote.sh` — единый CLI (setup / deploy / backup / restore / status / logs / shell / push-env)
-- `deploy` ВСЕГДА делает `pg_dump` (правило в CLAUDE.md)
-- `APP_VERSION` + `BUILD_TIME` (git short hash) проставляются в `.env` сервера автоматически
-- `/api/version` endpoint + `VersionBadge` в Layout + floating на Login/Signup
+### 2. Единый источник истины: `services/period_aggregates.py`
+Канонические предикаты для всех сервисов, читающих `wb_report_detail`:
+- `OP_SALE`, `OP_RETURN`, `OP_COMPENSATION_RETURN` (in_list с прописной + строчной)
+- `REVENUE_FIELD` = `coalesce(retail_price_withdisc_rub, retail_amount)`
+- `sale_dt_filter(date_from, date_to)` — полуоткрытый интервал `[d_from 00:00, d_to+1 00:00)`
+- `sale_day()` — `func.date(sale_dt)` для group_by
 
-**UI (более ранние правки той же сессии):**
-- Юнит-экономика: полная P&L разбивка под Excel-структуру (21 финансовая метрика per nm), date picker (preset + произвольный диапазон), per-tenant налог через `setting_timeline`, скрытие колонок (localStorage), hover-preview фото
-- Поставки: ИЛ + ИРП per cluster + размеры (`services/supply_distribution.py`, `services/clusters.py`)
-- WB Analytics paid_storage интегрирован (миграция 0015 + `integrations/wb/paid_storage.py`)
-- Все 3 раздела (Dashboard / Units / P&L) показывают одно и то же storage (через `services/storage_resolver.py`)
+**Каноничная дата = `sale_dt`** (не `rr_dt`). Совпадает с WB-кабинетом 1:1 (Δ=0₽). Все 4 сервиса (`pnl_builder`, `metrics`, `unit_economics`, `pnl_reconciliation`) переведены. Дает идеальное совпадение между страницами.
+
+🐛 Пофиксили off-by-one в `unit_economics.py:363` (ad spend ловил лишний день).
+
+### 3. Налоговый отчёт по WB (страница `/tax-report`)
+По методике клиентского бухгалтера 1С (УСН-15%):
+- `services/tax_report.py` + `api/tax_report.py` — per WB-реализация
+- 4 источника дохода: реализация + компенсация ущерба + Уведомления о выкупе + Взаимозачёты
+- 7 категорий расхода: ВВ без НДС, НДС с ВВ, эквайринг, логистика, ПВЗ, штрафы, прочие удержания, хранение, возмещение перевозки
+- Параметр `cogs_method`: `historical` или `weighted_avg`
+- Sub-page «Уведомления о выкупе» + кнопка ↻ синхронизации с polling-фидбэком
+
+**`tax_for_fns` колонка в P&L** (Option C — гибрид): рядом с управленческим налогом видишь налог по бух-методу. См. `_compute_tax_for_fns()` в `pnl_builder.py`.
+
+### 4. WB Documents API integration
+- Категория `documents` в `WbApiClient` (host `documents-api.wildberries.ru`, лимит 6/мин)
+- `integrations/wb/documents.py` — list / download (base64 ZIP) / parse (XLSX внутри ZIP)
+- Парсеры: `parse_redeem_notification` (Уведомление о выкупе) + `parse_offset_act` (Акт взаимозачёта)
+- Декодер русского числового формата `_parse_ru_decimal("16 064,07")` — NBSP + запятая
+- Миграция 0019: `wb_redeem_notification`
+- Миграция 0021: `wb_offset_act`
+- Celery tasks: `sync_redeem_notifications` (07:00 MSK), `sync_offset_acts` (07:15 MSK)
+- Backfill 400 дней по умолчанию (раньше 90) — покрывает весь текущий год
+
+На проде: **21 уведомление о выкупе** за период 25.12.2025 – 04.05.2026 на сумму ~330к₽ дополнительного дохода.
+
+### 5. Supplies + weighted-avg COGS (миграция 0020)
+- Таблица `supplies` (закупки у поставщиков): qty, cost_per_unit, paid_status, vendor, invoice_number, currency, paid_date, paid_amount
+- `services/cogs_weighted.py` — `compute_weighted_avg_cogs(nm_ids, period_end, paid_only=True)`: формула 1С
+- CRUD API `/api/supplies` (director_or_head, audit-logged)
+- Страница `/supplies` с фильтрами + формой ввода
+- Excel I/O round-trip (14-я сущность в `services/excel_io.py`)
+- В `/tax-report` селектор «Метод COGS»: `historical` vs `weighted_avg` с fallback
+
+### 6. Reconciliation wizard — 3 бага apples-vs-oranges
+В expanded-view 3 сравнения считались по разным формулам для WB-стороны и Нашей. Все три пофикшены — Δ <1₽ на закрытых неделях:
+1. «Выручка (Продажи − Возвраты)» теперь использует `revenue_gross − revenue_returns` с обеих сторон
+2. «Комиссия WB и эквайринг»: `ours.commission + ours.acquiring` (WB-side это уже net)
+3. «Чистая выручка (ppvz_for_pay)»: `ours.ppvz_for_pay` (новое поле в P&L totals)
+
+### 7. Extended backfill (с 1 января 2026)
+- Триггер `sync_report_detail_for_tenant.delay(1, 140)` на проде
+- 92,955 строк за 298 секунд, 21 неделя покрыта (25.12.2025 – 10.05.2026)
+- 42 реализационных id (по 2 на каждую неделю: основной + корректировки)
+
+### 8. UX улучшения `/tax-report`
+- Default period — «с начала текущего года» (раньше 89 дней)
+- Кнопка «Синхр. выкупы»: баннер «Запущено», polling каждые 8 сек, финальный toast «✓ добавлено N» / «новых нет»
+- Tooltip на счётчике «Отчётов X, Выкупов Y»: пояснение что 1 неделя=2 отчёта
+
+### 9. DateRangePicker (универсальный календарь)
+- Новый компонент `components/DateRangePicker.tsx` — popover с пресетами (Сегодня / 7д / 30д / С начала месяца / Прошлый месяц / С начала года) + календарь месяца + диапазонный выбор кликами
+- Заменён dual-input «С/По» на 6 страницах: `/`, `/pnl`, `/tax-report`, `/cash-flow`, `/units`, `/audit-log`
+- Никаких новых зависимостей — нативный TS/Tailwind, ~250 строк
+
+### 10. Калькулятор новинок (страница `/new-products`)
+Воспроизводит Excel-калькулятор клиента «Расчёт цены на новинки»:
+- Таблица «Импорт из Китая»: CIF-себестоимость (юань × курс + пошлина + НДС + доставка)
+- Таблица «WB Калькулятор» с привязкой к импорту через имя
+- Базовая логистика WB по step-функции от V (≤0.2→23, ≤0.4→26, ...)
+- 4 параллельных сценария НДС (В1: УСН без НДС / В2: УСН+НДС 5% / В3: УСН+НДС 7% / В4: НДС 22% возвратный)
+- Сохранение в `localStorage` (нет необходимости в БД для MVP)
+- Автоподстановка курсов ЦБ РФ через `cbr-xml-daily.ru` с возможностью редактирования
+
+### 11. P&L `ppvz_for_pay` в totals
+Поле было в `PnLRow`, но не в `to_dict()` и не в `_totals` fields — добавлено. Нужно reconciliation wizard'у для apples-to-apples сверки.
+
+## Состояние БД (миграции 0001-0023)
+
+Новые с этой сессии:
+- **0017** — wb_report_detail +58 колонок (full 88-field coverage)
+- **0019** — wb_redeem_notification (Уведомления о выкупе)
+- **0020** — supplies (закупки у поставщиков для weighted-avg COGS)
+- **0021** — wb_offset_act (Акты взаимозачёта)
+
+(0018, 0022, 0023 — добавлены в параллельных коммитах: opex_contractor, external_ad_period, jam_search)
 
 ## Известные ограничения / TODO для следующих сессий
 
 | Приоритет | Что |
 |---|---|
-| Medium | `send_daily_digest` пока работает только для default tenant (нужен fanout per-tenant) |
-| Medium | `audit_log.tenant_id` колонка есть, но `audit_log()` функция её не пишет |
-| Low | Settings: legacy блок «Подключение через .env» можно убрать когда уверены что никто не использует |
-| Low | `products.nm_id` глобальный PK — при двух реальных селлерах с пересекающимися SKU будет конфликт. Сейчас не проблема (только default tenant сейчас имеет данные) |
+| Medium | `paid_acceptance_total` в `tax_for_fns` использует Σ всех строк, бух берёт net Продажа−Возврат через ppvz_vw-аналог. Разница ~78₽ на тестовых данных — уточнить с бухгалтером какое поле правильное |
+| Medium | `ppvz_vw_net` знаковая конвенция: в марте на проде отрицательное (-131k) из-за WB-корректировок. Для текущей системы (`ausn_income`) не важно (wb_expenses не участвует). Но при миграции на УСН-15% — обсудить с бухгалтером: считать ли отрицательный vw_net как «уменьшение расхода» или «внереализационный доход» |
+| Low | Себестоимость 1С использует скользящую среднюю, у нас `historical` lookup по дате + `weighted_avg` через supplies. Точная сверка на реальных данных клиента не делалась — supplies пустая |
+| Low | Уведомления о выкупе формат XLSX от WB задокументирован, актов взаимозачёта — generic-парсер (у клиента 0 актов за 5 месяцев) |
+| Low | DateRangePicker не применён на формах где две даты — это разные поля (RevenueCorrections.order_dt+completion_dt, Supplies.supply_date+paid_date) |
 
 ## Состояние ветки на момент окончания сессии
 
+Ветка `main`, **запушена в origin**. Последние коммиты:
 ```
-3b2a0d7 fix(sync): per-tenant dispatcher event loop crash + empty token filter
-999cac2 feat: multi-tenant + production hardening (long session)
-386a59b docs: snapshot of 2026-05-08 session — WB-cabinet 1:1 + photo + KPI
+f9a35e1 feat(new-products): автоподстановка курсов ЦБ РФ с возможностью редактирования
+23272c0 feat(new-products): калькулятор новинок с CIF-импортом + 4 сценария НДС
+991c871 feat(ui): unified DateRangePicker — single calendar widget with presets
+5627d0c fix(reconciliation): 3 bugs in wizard-row comparisons (apples vs oranges)
+22cdd28 fix(tax-report): expand default window + sync feedback
+c6f0f97 feat(documents): offset acts + Excel I/O for supplies + daily beat schedule
+5a52a72 feat(supplies): weighted-average COGS calculation (1С / УСН method)
+ad1fa4f feat(tax-report): WB Documents API integration for buyback notifications
 ```
 
-Ветка `claude/modest-mayer-8126ec`, **2 коммита ahead of origin/main**, worktree clean.
+Всё задеплоено на прод (`./scripts/remote.sh deploy`). Бэкапы pre-deploy лежат в `/opt/rnp/backups/` на сервере.
 
-**Push не сделан** — пользователь решит сам когда мержить/push'ить. На сервере **не задеплоено** последнее (там старый код). Чтобы выкатить:
-
-```bash
-git push                                # отправить ветку на origin (или мерж в main)
-./scripts/remote.sh deploy              # выкатит на 192.168.31.61, бэкап автоматом
-```
+**Не закоммичено** (от линтера / параллельных авто-сессий, не блокирует, оставлено для следующей сессии):
+- Jam (поисковые кластеры): `backend/app/api/jam.py`, `services/jam.py`, миграция 0023, frontend `pages/Jam.tsx`
+- Локальные бэкапы `pgdata-*.sql.gz` (не для коммита, локальный диск)
+- Папки `.claude/worktrees/*` (служебные)
 
 ## Полезные тесты (если что-то ломается)
 

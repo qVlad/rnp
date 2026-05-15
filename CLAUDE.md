@@ -55,7 +55,18 @@ backend/
       models.py      все модели в одном файле
       migrations/    Alembic
     integrations/wb/ client + cooldown + rate_limiter + statistics + advert
-    services/        бизнес-логика (metrics, pnl_*, anomaly, audit, auth, ...)
+                     + analytics + paid_storage + finance + **documents** (Documents API)
+    services/        бизнес-логика. Ключевые модули:
+                     - period_aggregates.py — каноничные предикаты sale_dt
+                     - pnl_builder.py — управленческий P&L + tax_for_fns
+                     - tax_report.py — налоговый отчёт по методике 1С
+                     - cogs_weighted.py — средневзвешенная COGS из supplies
+                     - metrics.py — Dashboard KPI (preliminary / final / hybrid)
+                     - unit_economics.py — per-SKU
+                     - pnl_reconciliation.py — сверка WB vs наша P&L
+                     - storage_resolver.py — единая логика хранения
+                     - anomaly.py, audit.py, auth.py, secrets_crypto.py
+                     - excel_io.py — 14 справочников round-trip
     sync/            celery_app, checkpoints, tasks
     main.py          FastAPI app + auth_gate middleware + router includes
   scripts/           backfill, диагностика
@@ -75,7 +86,7 @@ docker-compose.yml
 .claude/settings.json   permissions для агента
 ```
 
-## Миграции БД (13 шт., 0001-0013)
+## Миграции БД (23 шт., 0001-0023)
 
 | № | Что добавлено |
 |---|---|
@@ -92,6 +103,16 @@ docker-compose.yml
 | 0011 | product_groups + assignments + audit_log |
 | 0012 | users (bcrypt + JWT, 3 роли) |
 | 0013 | brand_assignments (1 brand → 1 manager) |
+| 0014 | size_fields (chrt_id, tech_size в orders/sales) |
+| 0015 | wb_paid_storage (точное хранение per-day per-nm из Analytics API) |
+| 0016 | **tenants** + tenant_id во всех 22 пользовательских таблицах (multi-tenant) |
+| 0017 | wb_report_detail **+58 полей** = полное 88-полевое покрытие finance-api |
+| 0018 | opex_entries.contractor (поле «Контрагент/Подрядчик») |
+| 0019 | **wb_redeem_notification** (Уведомления о выкупе, Documents API) |
+| 0020 | **supplies** (закупки у поставщиков, weighted-avg COGS) |
+| 0021 | **wb_offset_act** (Акты взаимозачёта, Documents API) |
+| 0022 | external_ad_costs.end_date (период действия рекламной кампании) |
+| 0023 | jam_queries (поисковые запросы для 10X-кластеров) |
 
 ## Роли и RBAC
 
@@ -127,6 +148,8 @@ Helper `app.services.auth.current_brands_filter()` возвращает `set[str
 | `/api/audit-log*` | director | read-only лог |
 | `/api/settings*` | mutations = director | timeline налогов, валидатор WB-токена, Excel I/O |
 | `/api/products/{nm_id}/photo` | публ. (для `<img>` без cookie) | proxy на WB CDN с Redis-кешем 24h (positive) / 1h (negative) |
+| `/api/tax-report*`, `/buybacks`, `/sync-buybacks` | director_or_head | налоговый отчёт по методике 1С + sync Уведомлений о выкупе |
+| `/api/supplies*` | director_or_head | CRUD закупок у поставщиков (для weighted-avg COGS) |
 
 Видимость пунктов меню фронта — в `frontend/src/components/Layout.tsx` (`directorOnly`, `directorOrHead`).
 

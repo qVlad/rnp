@@ -804,14 +804,32 @@ export const api = {
       `/api/forecast/supply-distribution?velocity_window=${velocity_window}&target_days=${target_days}&irp_window=${irp_window}&include_archived=${includeArchived}`,
     ),
 
-  // ── Джем (поисковая аналитика, stub-API) ──
+  // ── Джем (поисковая аналитика по кластерам, 10X-методика) ──
   jamStatus: () =>
-    request<{ status: string; message: string; docs_url: string }>(
-      "/api/jam/status",
-    ),
-  jamClusters: (nm_id: number) =>
-    request<{ nm_id: number; status: string; clusters: any[]; message?: string }>(
-      `/api/jam/clusters/${nm_id}`,
+    request<{
+      status: "configured" | "empty";
+      message: string;
+      docs_url: string;
+      queries_count?: number;
+      skus_count?: number;
+    }>("/api/jam/status"),
+  jamSkus: () =>
+    request<{ items: { nm_id: number; queries: number }[] }>("/api/jam/skus"),
+  jamClusters: (
+    nm_id: number,
+    params: {
+      days_back?: number;
+      organic_pct?: number;
+      target_margin_pct?: number;
+    } = {},
+  ) =>
+    request<any>(
+      `/api/jam/clusters/${nm_id}?` +
+        new URLSearchParams(
+          Object.fromEntries(
+            Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]),
+          ),
+        ).toString(),
     ),
 
   // ── Season plan (10X-методика) ──

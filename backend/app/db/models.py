@@ -837,3 +837,38 @@ class SalesPlan(Base, TenantScopedMixin):
             unique=True,
         ),
     )
+
+
+# ----------------------------------------------------------------------
+# Джем — поисковые запросы (10X-методика).
+# Сырые ТОП-N запросов по карточке за период. Источник:
+#   - WB Jam API (когда подписка) — будущая sync таска.
+#   - Ручной импорт через Excel из «Аналитики сравнения карточек» WB.
+# Кластеризация — на лету в jam-сервисе (по общим словам в запросах).
+# ----------------------------------------------------------------------
+class JamQuery(Base, TenantScopedMixin):
+    __tablename__ = "jam_queries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    nm_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    query: Mapped[str] = mapped_column(String(512))
+    period_start: Mapped[date] = mapped_column(Date, index=True)
+    period_end: Mapped[date] = mapped_column(Date)
+    orders: Mapped[int] = mapped_column(Integer, default=0)
+    clicks: Mapped[int] = mapped_column(Integer, default=0)
+    views: Mapped[int] = mapped_column(Integer, default=0)
+    ad_spent: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_jam_queries_tenant_nm_query_period",
+            "tenant_id",
+            "nm_id",
+            "query",
+            "period_start",
+            unique=True,
+        ),
+    )

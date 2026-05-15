@@ -1,30 +1,25 @@
 """Джем — поисковая аналитика по кластерам (10X-методика).
 
-WB Jam — отдельная подписка WB, которая отдаёт ТОП-30 поисковых запросов
-по карточкам. Эта аналитика позволяет:
-  - Сгруппировать запросы в кластеры (наш ИИ).
-  - Посчитать «MAX CPC / MAX корзина / MAX заказ» по кластеру с учётом
-    конверсий и расходов на рекламу.
-  - Цветовая разметка: красный = выше MAX, оранжевый = 70-100% от MAX,
-    белый = ниже 70%.
+Источник данных:
+  - Сейчас: jam_queries таблица, наполняется через Excel-импорт юзером
+    (выгрузка из «Аналитики сравнения карточек» WB-кабинета).
+  - В будущем: WB Jam API — отдельная подписка, целевой автосинк.
 
-**Текущий статус**: stub. Реальная интеграция требует:
-  1. Подписки WB Jam в кабинете (платная).
-  2. WB-API endpoint для выгрузки запросов (предположительно
-     `/content/v3/...` или отдельный jam-api).
-  3. Кластеризации (можно простейшая по словам, можно ML).
-
-API возвращает пустой массив + status='not_configured', UI показывает
-empty state с инструкцией подключения.
+Endpoints:
+  GET /api/jam/status — есть ли загруженные данные
+  GET /api/jam/clusters/{nm_id} — кластеры запросов с MAX-границами
 """
 from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.auth import get_db_tenant_scoped
+from app.db.models import JamQuery, Product
+from app.services.auth import current_brands_filter, get_db_tenant_scoped
+from app.services.jam import build_jam_clusters
 
 
 router = APIRouter(prefix="/api/jam", tags=["jam"])
@@ -34,40 +29,77 @@ router = APIRouter(prefix="/api/jam", tags=["jam"])
 async def jam_status(
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
-    """Возвращает статус интеграции с WB Jam.
-
-    Сейчас всегда `not_configured` — реальная интеграция в roadmap.
-    """
+    """Сколько запросов в системе и за сколько SKU. Если 0 — show empty state."""
+    total = (await session.execute(select(func.count(JamQuery.id)))).scalar() or 0
+    nm_count = (
+        await session.execute(select(func.count(func.distinct(JamQuery.nm_id))))
+    ).scalar() or 0
     return {
-        "status": "not_configured",
+        "status": "configured" if total > 0 else "empty",
+        "queries_count": int(total),
+        "skus_count": int(nm_count),
         "message": (
-            "WB Jam — это платная подписка, которая отдаёт ТОП-30 поисковых "
-            "запросов по карточкам. Интеграция в разработке. Когда подключите "
-            "WB Jam в кабинете, мы добавим выгрузку запросов и кластеризацию."
+            f"Загружено {total} запросов по {nm_count} SKU."
+            if total > 0
+            else (
+                "Нет загруженных запросов. Выгрузите ТОП-30 запросов из WB-кабинета "
+                "(«Аналитика сравнения карточек») и импортируйте через Excel "
+                "(/settings → Excel I/O → jam_queries)."
+            )
         ),
-        "docs_url": "https://seller.wildberries.ru/jam",
+        "docs_url": "https://seller.wildberries.ru/analytics/cards-comparison",
     }
 
 
 @router.get("/clusters/{nm_id}")
 async def jam_clusters(
     nm_id: int,
-    days_back: Annotated[int, Query(ge=7, le=90)] = 30,
+    days_back: Annotated[int, Query(ge=7, le=180)] = 30,
+    organic_pct: Annotated[float, Query(ge=0, le=100)] = 0.0,
+    target_margin_pct: Annotated[float, Query(ge=0, le=100)] = 0.0,
     session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict[str, Any]:
-    """Кластеры поисковых запросов по SKU. Stub — возвращает пустой массив."""
-    # TODO: реальная имплементация:
-    #   1. Достать запросы из локальной таблицы jam_queries (sync таска)
-    #   2. Кластеризовать по словам (или взять готовые)
-    #   3. Для каждого кластера: orders, clicks, views, cart_conv, order_conv
-    #   4. MAX CPC/корзина/заказ — взять из калькулятора Unit для этой SKU
-    #   5. Color: red > MAX, yellow 70-100% MAX, white < 70%
+    """Кластеры поисковых запросов по SKU с MAX-границами рекламы."""
+    if brands is not None:
+        own = (
+            await session.execute(
+                select(Product.nm_id).where(
+                    Product.nm_id == nm_id, Product.brand.in_(list(brands))
+                )
+            )
+        ).scalar_one_or_none()
+        if own is None:
+            raise HTTPException(403, "SKU не принадлежит вашим брендам")
+    res = await build_jam_clusters(
+        session,
+        nm_id=nm_id,
+        days_back=days_back,
+        organic_pct=organic_pct,
+        target_margin_pct=target_margin_pct,
+    )
+    if not res["found"]:
+        raise HTTPException(404, f"product nm_id={nm_id} not found")
+    return res
+
+
+@router.get("/skus")
+async def jam_skus(
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
+) -> dict[str, Any]:
+    """Список SKU для которых есть jam_queries (для UI dropdown'а)."""
+    stmt = (
+        select(JamQuery.nm_id, func.count().label("queries"))
+        .group_by(JamQuery.nm_id)
+        .order_by(func.count().desc())
+    )
+    if brands is not None:
+        nm_sub = select(Product.nm_id).where(Product.brand.in_(list(brands)))
+        stmt = stmt.where(JamQuery.nm_id.in_(nm_sub))
+    rows = (await session.execute(stmt)).all()
     return {
-        "nm_id": nm_id,
-        "status": "not_configured",
-        "clusters": [],
-        "message": (
-            "Подключите WB Jam в кабинете и запустите синхронизацию запросов. "
-            "После этого здесь появятся кластеры с MAX-границами рекламы."
-        ),
+        "items": [
+            {"nm_id": int(r.nm_id), "queries": int(r.queries)} for r in rows
+        ]
     }

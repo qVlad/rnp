@@ -89,6 +89,10 @@ SCHEMAS: dict[str, list[str]] = {
         "paid_status", "paid_date", "paid_amount",
         "notes",
     ],
+    "jam_queries": [
+        "nm_id", "query", "period_start", "period_end",
+        "orders", "clicks", "views", "ad_spent",
+    ],
 }
 
 ENTITY_LABELS: dict[str, str] = {
@@ -106,6 +110,7 @@ ENTITY_LABELS: dict[str, str] = {
     "product_groups": "Группы товаров",
     "product_group_assignments": "Привязка SKU к группам",
     "supplies": "Закупки у поставщиков",
+    "jam_queries": "Джем — поисковые запросы",
 }
 
 
@@ -888,6 +893,69 @@ async def _import_supplies(
     return {"inserted": inserted, "updated": updated, "skipped": skipped, "errors": errors}
 
 
+async def _export_jam_queries(session: AsyncSession) -> list[list[Any]]:
+    from app.db.models import JamQuery
+
+    rows = (
+        await session.execute(
+            select(JamQuery).order_by(JamQuery.nm_id, JamQuery.period_start, JamQuery.id)
+        )
+    ).scalars().all()
+    return [
+        [r.nm_id, r.query, r.period_start, r.period_end, r.orders, r.clicks, r.views, r.ad_spent]
+        for r in rows
+    ]
+
+
+async def _import_jam_queries(
+    session: AsyncSession, rows: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Идемпотентный импорт. Уникальный ключ — (tenant, nm_id, query, period_start)."""
+    from app.db.models import JamQuery
+    from app.services.jam import upsert_jam_query
+
+    inserted = updated = skipped = 0
+    errors: list[str] = []
+    for i, r in enumerate(rows, start=2):
+        try:
+            nm_id = _to_int(r.get("nm_id"))
+            query = _to_str(r.get("query"))
+            period_start = _to_date(r.get("period_start"))
+            period_end = _to_date(r.get("period_end")) or period_start
+            if not (nm_id and query and period_start):
+                errors.append(f"строка {i}: nm_id, query, period_start обязательны")
+                skipped += 1
+                continue
+            was_existing = (
+                await session.execute(
+                    select(JamQuery.id).where(
+                        JamQuery.nm_id == nm_id,
+                        JamQuery.query == query,
+                        JamQuery.period_start == period_start,
+                    )
+                )
+            ).scalar_one_or_none() is not None
+            await upsert_jam_query(
+                session,
+                nm_id=int(nm_id),
+                query=query,
+                period_start=period_start,
+                period_end=period_end,
+                orders=_to_int(r.get("orders")) or 0,
+                clicks=_to_int(r.get("clicks")) or 0,
+                views=_to_int(r.get("views")) or 0,
+                ad_spent=float(_to_decimal(r.get("ad_spent")) or 0),
+            )
+            if was_existing:
+                updated += 1
+            else:
+                inserted += 1
+        except Exception as e:
+            errors.append(f"строка {i}: {e}")
+            skipped += 1
+    return {"inserted": inserted, "updated": updated, "skipped": skipped, "errors": errors}
+
+
 REGISTRY: dict[str, tuple[ExportFn, ImportFn]] = {
     "products": (_export_products, _import_products),
     "cogs": (_export_cogs, _import_cogs),
@@ -903,6 +971,7 @@ REGISTRY: dict[str, tuple[ExportFn, ImportFn]] = {
     "product_groups": (_export_product_groups, _import_product_groups),
     "product_group_assignments": (_export_pg_assignments, _import_pg_assignments),
     "supplies": (_export_supplies, _import_supplies),
+    "jam_queries": (_export_jam_queries, _import_jam_queries),
 }
 
 
