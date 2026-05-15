@@ -30,6 +30,7 @@ import Docs from "./pages/Docs";
 import Checklist from "./pages/Checklist";
 import SeasonPlan from "./pages/SeasonPlan";
 import Jam from "./pages/Jam";
+import NewProducts from "./pages/NewProducts";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, needsBootstrap } = useAuth();
@@ -194,6 +195,14 @@ export default function App() {
             }
           />
           <Route path="jam" element={<Jam />} />
+          <Route
+            path="new-products"
+            element={
+              <DirectorOrHead>
+                <NewProducts />
+              </DirectorOrHead>
+            }
+          />
           <Route
             path="settings"
             element={

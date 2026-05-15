@@ -22,6 +22,7 @@ const links: Link[] = [
   { to: "/checklist", label: "Чек-лист" },
   { to: "/jam", label: "Джем" },
   { to: "/calc", label: "Калькулятор" },
+  { to: "/new-products", label: "Новинки", directorOrHead: true },
   { to: "/abc", label: "ABC-анализ" },
   { to: "/supply", label: "Поставки" },
   { to: "/plans", label: "План-Факт" },

@@ -143,7 +143,7 @@ export const api = {
 
   dashboard: (
     range: { period: "day" | "week" | "month" } | { start: string; end: string },
-    mode: "preliminary" | "final" = "preliminary",
+    mode: "preliminary" | "final" | "hybrid" = "preliminary",
   ) => {
     const qs =
       "period" in range
@@ -151,17 +151,17 @@ export const api = {
         : `start_date=${range.start}&end_date=${range.end}`;
     return request(`/api/dashboard?${qs}&mode=${mode}`);
   },
-  timeseries: (days: number, mode: "preliminary" | "final" = "preliminary") =>
+  timeseries: (days: number, mode: "preliminary" | "final" | "hybrid" = "preliminary") =>
     request<{
       days: number;
-      mode: "preliminary" | "final";
+      mode: "preliminary" | "final" | "hybrid";
       rows: { date: string; revenue: number; orders: number }[];
     }>(`/api/dashboard/timeseries?days=${days}&mode=${mode}`),
   topSkus: (
     range: { period: "day" | "week" | "month" } | { start: string; end: string },
     by: "revenue" | "margin",
     limit = 5,
-    mode: "preliminary" | "final" = "preliminary",
+    mode: "preliminary" | "final" | "hybrid" = "preliminary",
   ) => {
     const qs =
       "period" in range
