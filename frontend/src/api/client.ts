@@ -273,6 +273,51 @@ export const api = {
       totals: Record<string, number>;
     }>(`/api/tax-report?from=${from}&to=${to}&cogs_method=${cogs_method}`),
 
+  taxReportAusn: (from: string, to: string, pay_offset_days = 10) =>
+    request<{
+      from: string;
+      to: string;
+      pay_offset_days: number;
+      methodology: string;
+      monthly: Array<{
+        month: string;
+        bank: number;
+        vzz_reports: number;
+        upd_delivery: number;
+        base: number;
+        tax_system: string;
+        tax_rate: number;
+        tax: number;
+        buyback_returns: number;
+        realizations_count: number;
+      }>;
+      totals: {
+        month: string;
+        bank: number;
+        vzz_reports: number;
+        upd_delivery: number;
+        base: number;
+        tax_system: string;
+        tax_rate: number;
+        tax: number;
+        buyback_returns: number;
+        realizations_count: number;
+      };
+      realizations: Array<{
+        realization_id: number;
+        report_date_from: string;
+        report_date_to: string;
+        pay_date_proxy: string;
+        report_type: string;
+        sale_gross: number;
+        bank_amount: number;
+        vzz_amount: number;
+        month: string;
+      }>;
+    }>(
+      `/api/tax-report/ausn?from=${from}&to=${to}&pay_offset_days=${pay_offset_days}`,
+    ),
+
   pnlReconciliation: (weeks = 12, diff_threshold_pct = 1.0) =>
     request<{
       weeks_back: number;

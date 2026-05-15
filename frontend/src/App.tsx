@@ -5,6 +5,7 @@ import Dashboard from "./pages/Dashboard";
 import PnL from "./pages/PnL";
 import PnLReconciliation from "./pages/PnLReconciliation";
 import TaxReport from "./pages/TaxReport";
+import TaxReportAusn from "./pages/TaxReportAusn";
 import Supplies from "./pages/Supplies";
 import Units from "./pages/Units";
 import Settings from "./pages/Settings";
@@ -101,6 +102,14 @@ export default function App() {
             element={
               <DirectorOrHead>
                 <TaxReport />
+              </DirectorOrHead>
+            }
+          />
+          <Route
+            path="tax-report-ausn"
+            element={
+              <DirectorOrHead>
+                <TaxReportAusn />
               </DirectorOrHead>
             }
           />

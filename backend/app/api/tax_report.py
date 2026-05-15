@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import WbRedeemNotification
 from app.services.auth import current_brands_filter, get_db_tenant_scoped, require_director_or_head
 from app.services.tax_report import build_tax_report
+from app.services.tax_report_ausn import build_ausn_monthly_report
 
 router = APIRouter(
     prefix="/api/tax-report",
@@ -91,6 +92,42 @@ async def list_buybacks(
         ],
         "total_sum": round(sum(float(r.total_sum_with_vat or 0) for r in rows), 2),
     }
+
+
+@router.get("/ausn")
+async def get_tax_report_ausn(
+    date_from: date | None = Query(default=None, alias="from"),
+    date_to: date | None = Query(default=None, alias="to"),
+    pay_offset_days: int = Query(default=10, ge=0, le=60),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict:
+    """Месячная свёртка налога АУСН «Доходы» по методике бухгалтера Стаса.
+
+    `from`/`to` фильтруют по месяцам (включаются полные месяцы попадания дат).
+    По умолчанию — последние 6 месяцев включая текущий.
+
+    `pay_offset_days` — сколько дней прибавлять к `report_date_to` чтобы
+    получить proxy-дату зачисления денег WB → р/с (для разнесения «Банка»
+    по месяцам). Default 14 дней — наблюдение из xlsx Стаса.
+
+    База месяца = Банк + ВЗЗ_отчёты + УПД_доставки. Налог = База × 8 %
+    (или ставка из settings_timeline на конец месяца).
+    """
+    if date_to is None:
+        date_to = date.today()
+    if date_from is None:
+        # 6 месяцев назад от первого числа текущего месяца
+        m_from = date_to.replace(day=1)
+        for _ in range(5):
+            prev_last = m_from - timedelta(days=1)
+            m_from = prev_last.replace(day=1)
+        date_from = m_from
+    return await build_ausn_monthly_report(
+        session,
+        date_from=date_from,
+        date_to=date_to,
+        pay_offset_days=pay_offset_days,
+    )
 
 
 @router.post("/sync-buybacks")

@@ -15,6 +15,7 @@ const links: Link[] = [
   { to: "/pnl", label: "P&L" },
   { to: "/pnl-reconciliation", label: "Сверка с WB" },
   { to: "/tax-report", label: "Налог. отчёт", directorOrHead: true },
+  { to: "/tax-report-ausn", label: "АУСН-Доходы 8%", directorOrHead: true },
   { to: "/cash-flow", label: "ДДС", directorOrHead: true },
   { to: "/capitalization", label: "Капитализация", directorOrHead: true },
   { to: "/product-groups", label: "Группы" },
