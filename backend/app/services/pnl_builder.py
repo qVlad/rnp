@@ -93,6 +93,67 @@ class PnLRow:
     profit: float = 0.0
     cash_flow: float = 0.0            # operating profit minus non-operating cash items + non-OP income
 
+    # ── Computed subtotals (ОПиУ-style) ──────────────────────────────────
+    # Не хранятся как поля — считаются из raw, чтобы строки и totals выводили
+    # одинаковые формулы. Маржа % меряется к revenue_after_vat (база, на
+    # которой компания реально получает деньги после НДС).
+
+    @property
+    def revenue_after_vat(self) -> float:
+        return self.revenue_net - self.vat
+
+    @property
+    def gross_profit(self) -> float:
+        """Валовая прибыль = выручка после НДС − COGS."""
+        return self.revenue_after_vat - self.cogs
+
+    @property
+    def commercial_expenses(self) -> float:
+        """Коммерческие расходы (selling): WB-удержания + маркетинг + подрядчики."""
+        return (
+            self.commission
+            + self.delivery
+            + self.storage
+            + self.penalty
+            + self.deduction
+            + self.acquiring
+            + self.ad_cost
+            + self.external_ad_cost
+            + self.contractor_fees
+        )
+
+    @property
+    def administrative_expenses(self) -> float:
+        """Управленческие расходы: operating OPEX + legacy fixed_costs_monthly."""
+        return self.opex_operating + self.other_costs
+
+    @property
+    def profit_from_sales(self) -> float:
+        """Прибыль от продаж = валовая − коммерческие."""
+        return self.gross_profit - self.commercial_expenses
+
+    @property
+    def operating_profit(self) -> float:
+        """EBIT = прибыль от продаж − управленческие."""
+        return self.profit_from_sales - self.administrative_expenses
+
+    @property
+    def ebitda(self) -> float:
+        """EBITDA = EBIT + D&A. D&A в модели пока не выделена → ==EBIT.
+        Когда появится отдельная категория «Амортизация» — прибавить её сюда."""
+        return self.operating_profit
+
+    @property
+    def profit_before_tax(self) -> float:
+        """EBT = EBIT (процентных расходов / прочих в модели пока нет)."""
+        return self.operating_profit
+
+    def _pct(self, num: float) -> float:
+        base = self.revenue_after_vat
+        if base <= 0:
+            return 0.0
+        return num / base * 100.0
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "period_start": self.period_start.isoformat(),
@@ -127,6 +188,23 @@ class PnLRow:
             "retail_amt_net": round(self.retail_amt_net, 2),
             "profit": round(self.profit, 2),
             "cash_flow": round(self.cash_flow, 2),
+            # ── ОПиУ subtotals (computed) ──
+            "revenue_after_vat": round(self.revenue_after_vat, 2),
+            "gross_profit": round(self.gross_profit, 2),
+            "commercial_expenses": round(self.commercial_expenses, 2),
+            "administrative_expenses": round(self.administrative_expenses, 2),
+            "profit_from_sales": round(self.profit_from_sales, 2),
+            "operating_profit": round(self.operating_profit, 2),
+            "ebitda": round(self.ebitda, 2),
+            "profit_before_tax": round(self.profit_before_tax, 2),
+            # ── Margins (% of revenue_after_vat) ──
+            "gross_margin_pct": round(self._pct(self.gross_profit), 2),
+            "profit_from_sales_margin_pct": round(
+                self._pct(self.profit_from_sales), 2
+            ),
+            "operating_margin_pct": round(self._pct(self.operating_profit), 2),
+            "ebitda_margin_pct": round(self._pct(self.ebitda), 2),
+            "net_margin_pct": round(self._pct(self.profit), 2),
         }
 
 
@@ -850,4 +928,48 @@ def _totals(rows: list[PnLRow]) -> dict[str, float]:
     for r in rows:
         for f in fields:
             out[f] = round(out[f] + getattr(r, f), 2)
+
+    # ── ОПиУ subtotals (derived from aggregated totals — must use the same
+    # formulas as PnLRow properties to stay consistent line-by-line). ──
+    revenue_after_vat = out["revenue_net"] - out["vat"]
+    gross_profit = revenue_after_vat - out["cogs"]
+    commercial_expenses = (
+        out["commission"]
+        + out["delivery"]
+        + out["storage"]
+        + out["penalty"]
+        + out["deduction"]
+        + out["acquiring"]
+        + out["ad_cost"]
+        + out["external_ad_cost"]
+        + out["contractor_fees"]
+    )
+    administrative_expenses = out["opex_operating"] + out["other_costs"]
+    profit_from_sales = gross_profit - commercial_expenses
+    operating_profit = profit_from_sales - administrative_expenses
+    ebitda = operating_profit  # ==EBIT until D&A is separated
+    profit_before_tax = operating_profit
+
+    def _pct(num: float) -> float:
+        if revenue_after_vat <= 0:
+            return 0.0
+        return num / revenue_after_vat * 100.0
+
+    out.update(
+        {
+            "revenue_after_vat": round(revenue_after_vat, 2),
+            "gross_profit": round(gross_profit, 2),
+            "commercial_expenses": round(commercial_expenses, 2),
+            "administrative_expenses": round(administrative_expenses, 2),
+            "profit_from_sales": round(profit_from_sales, 2),
+            "operating_profit": round(operating_profit, 2),
+            "ebitda": round(ebitda, 2),
+            "profit_before_tax": round(profit_before_tax, 2),
+            "gross_margin_pct": round(_pct(gross_profit), 2),
+            "profit_from_sales_margin_pct": round(_pct(profit_from_sales), 2),
+            "operating_margin_pct": round(_pct(operating_profit), 2),
+            "ebitda_margin_pct": round(_pct(ebitda), 2),
+            "net_margin_pct": round(_pct(out["profit"]), 2),
+        }
+    )
     return out

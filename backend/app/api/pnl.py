@@ -18,6 +18,13 @@ async def get_pnl(
     date_from: date | None = Query(default=None, alias="from"),
     date_to: date | None = Query(default=None, alias="to"),
     granularity: Literal["day", "week", "month"] = "day",
+    compare: bool = Query(
+        default=False,
+        description=(
+            "Если true — добавляет в ответ `previous` с totals за период такой "
+            "же длины, сдвинутый назад. Для сравнения «текущий vs предыдущий»."
+        ),
+    ),
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
@@ -33,6 +40,27 @@ async def get_pnl(
         brands=brands,
     )
     out["scope"] = "company" if brands is None else "brands"
+
+    if compare:
+        # Период такой же длины, сдвинутый назад на (N+1) дней, чтобы прошлый
+        # период не пересекался с текущим (включительные границы).
+        n_days = (date_to - date_from).days
+        prev_to = date_from - timedelta(days=1)
+        prev_from = prev_to - timedelta(days=n_days)
+        prev = await build_pnl(
+            session,
+            date_from=prev_from,
+            date_to=prev_to,
+            granularity=granularity,
+            brands=brands,
+        )
+        # Не возвращаем `rows` для прошлого периода — UI рисует только totals
+        # в дополнительной колонке. Это бережёт payload и кеш.
+        out["previous"] = {
+            "from": prev["from"],
+            "to": prev["to"],
+            "totals": prev["totals"],
+        }
     return out
 
 

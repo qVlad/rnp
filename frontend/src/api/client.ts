@@ -171,8 +171,17 @@ export const api = {
   },
   alerts: () => request<{ alerts: any[] }>("/api/dashboard/alerts"),
 
-  pnl: (from: string, to: string, granularity: "day" | "week" | "month") =>
-    request(`/api/pnl?from=${from}&to=${to}&granularity=${granularity}`),
+  pnl: (
+    from: string,
+    to: string,
+    granularity: "day" | "week" | "month",
+    compare: boolean = false,
+  ) =>
+    request(
+      `/api/pnl?from=${from}&to=${to}&granularity=${granularity}${
+        compare ? "&compare=true" : ""
+      }`,
+    ),
 
   listSupplies: (filters: {
     nm_id?: number;
