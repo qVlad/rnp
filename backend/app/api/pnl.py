@@ -64,6 +64,47 @@ async def get_pnl(
     return out
 
 
+@router.get("/timeseries")
+async def get_pnl_timeseries(
+    days: int = Query(default=30, ge=1, le=365),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
+) -> dict:
+    """Per-day P&L line items for dashboard drill-down (profit, gross_profit,
+    revenue_after_vat, commercial_expenses, administrative_expenses, tax).
+
+    Тонкая обёртка над `build_pnl(granularity="day")` — возвращает только
+    то, что нужно для drill-down графиков (без жирного rows-payload'а).
+    """
+    today = date.today()
+    date_from = today - timedelta(days=days - 1)
+    out = await build_pnl(
+        session,
+        date_from=date_from,
+        date_to=today,
+        granularity="day",
+        brands=brands,
+    )
+    keep = (
+        "period_start",
+        "revenue_after_vat",
+        "revenue_net",
+        "gross_profit",
+        "commercial_expenses",
+        "administrative_expenses",
+        "operating_profit",
+        "ebitda",
+        "tax",
+        "profit",
+        "cash_flow",
+    )
+    rows = [{k: r.get(k) for k in keep} for r in out["rows"]]
+    # Нормализуем дату в `date` для единообразия с /dashboard/timeseries.
+    for r in rows:
+        r["date"] = r.pop("period_start")
+    return {"days": days, "rows": rows}
+
+
 @router.get("/reconciliation")
 async def get_reconciliation(
     weeks: int = Query(default=12, ge=1, le=52),

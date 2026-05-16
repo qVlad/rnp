@@ -14,6 +14,7 @@ import KpiCard from "@/components/KpiCard";
 import MetricDrilldownModal, {
   type MetricKey,
 } from "@/components/MetricDrilldownModal";
+import { type CompositionSegment } from "@/components/CompositionBar";
 import AlertsBar from "@/components/AlertsBar";
 import {
   ColumnVisibilityButton,
@@ -375,6 +376,108 @@ function DashboardKpiGrid({
   const heroes = visible.filter((k) => HERO_KEYS.has(k.key));
   const rest = visible.filter((k) => !HERO_KEYS.has(k.key));
   const [drillMetric, setDrillMetric] = useState<MetricKey | null>(null);
+  const handleDrill = (m: "revenue" | "orders" | "ad_cost" | "profit") =>
+    setDrillMetric(m);
+
+  // Composition data — ищем KPI по ключу и собираем сегменты для hero-карточек.
+  // Нули/нулевые сегменты CompositionBar отфильтрует сам.
+  const byKey: Record<string, any> = {};
+  for (const k of kpis) byKey[k.key] = k;
+  const v = (key: string): number => Number(byKey[key]?.value ?? 0);
+
+  const compositionFor = (key: string):
+    | { segments: CompositionSegment[]; total?: number }
+    | undefined => {
+    if (key === "revenue_net") {
+      // «Что WB удержал из брутто vs осталось нам». Сумма == revenue_gross.
+      const gross = v("revenue_gross");
+      const net = v("revenue_net");
+      const commission = v("commission_wb");
+      const logistics = v("logistics_wb");
+      const storage = v("storage_wb");
+      // В preliminary большая часть WB-полей null → fallback на одну строку.
+      if (gross <= 0) return undefined;
+      return {
+        total: gross,
+        segments: [
+          { key: "net", label: "Поступило", value: net, color: "#34d399" },
+          {
+            key: "commission",
+            label: "Комиссия",
+            value: commission,
+            color: "#f87171",
+          },
+          {
+            key: "logistics",
+            label: "Логистика",
+            value: logistics,
+            color: "#fb923c",
+          },
+          {
+            key: "storage",
+            label: "Хранение",
+            value: storage,
+            color: "#fbbf24",
+          },
+          {
+            key: "other",
+            label: "Прочее",
+            value: Math.max(0, gross - net - commission - logistics - storage),
+            color: "#64748b",
+          },
+        ],
+      };
+    }
+    if (key === "net_profit") {
+      // «Куда ушли деньги: прибыль / реклама / комиссия / прочее».
+      const revenue = v("revenue_gross");
+      const profit = v("net_profit");
+      const ad = v("ad_cost");
+      const commission = v("commission_wb");
+      const logistics = v("logistics_wb");
+      const storage = v("storage_wb");
+      if (revenue <= 0) return undefined;
+      const knownOutflows = ad + commission + logistics + storage;
+      const remainder = Math.max(0, revenue - profit - knownOutflows);
+      return {
+        total: revenue,
+        segments: [
+          {
+            key: "profit",
+            label: "Чистая прибыль",
+            value: profit,
+            color: profit >= 0 ? "#34d399" : "#f87171",
+          },
+          { key: "ad", label: "Реклама", value: ad, color: "#a78bfa" },
+          {
+            key: "commission",
+            label: "Комиссия WB",
+            value: commission,
+            color: "#f87171",
+          },
+          {
+            key: "logistics",
+            label: "Логистика",
+            value: logistics,
+            color: "#fb923c",
+          },
+          {
+            key: "storage",
+            label: "Хранение",
+            value: storage,
+            color: "#fbbf24",
+          },
+          {
+            key: "rest",
+            label: "COGS / OPEX / налог",
+            value: remainder,
+            color: "#64748b",
+          },
+        ],
+      };
+    }
+    return undefined;
+  };
   return (
     <div className="flex flex-col gap-3">
       <div className="flex justify-end">
@@ -386,14 +489,19 @@ function DashboardKpiGrid({
       </div>
       {heroes.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {heroes.map((k: any) => (
-            <KpiCard
-              key={k.key}
-              kpi={k}
-              variant="hero"
-              onDrillDown={setDrillMetric}
-            />
-          ))}
+          {heroes.map((k: any) => {
+            const comp = compositionFor(k.key);
+            return (
+              <KpiCard
+                key={k.key}
+                kpi={k}
+                variant="hero"
+                onDrillDown={handleDrill}
+                composition={comp?.segments}
+                compositionTotal={comp?.total}
+              />
+            );
+          })}
         </div>
       )}
       {rest.length > 0 && (
@@ -403,7 +511,7 @@ function DashboardKpiGrid({
               key={k.key}
               kpi={k}
               variant="compact"
-              onDrillDown={setDrillMetric}
+              onDrillDown={handleDrill}
             />
           ))}
         </div>

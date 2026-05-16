@@ -4,6 +4,7 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
+  ReferenceDot,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -12,7 +13,7 @@ import {
 import { api } from "@/api/client";
 import { fmtNum, fmtRub } from "@/lib/format";
 
-export type MetricKey = "revenue" | "orders" | "ad_cost";
+export type MetricKey = "revenue" | "orders" | "ad_cost" | "profit";
 
 const METRIC_META: Record<
   MetricKey,
@@ -23,7 +24,7 @@ const METRIC_META: Record<
     sumLabel: string;
     pairLabel?: string;
     pairFmt?: (v: number) => string;
-    pairKey?: MetricKey;
+    pairKey?: string;
   }
 > = {
   revenue: {
@@ -53,6 +54,15 @@ const METRIC_META: Record<
     pairFmt: fmtRub,
     pairKey: "revenue",
   },
+  profit: {
+    label: "Чистая прибыль",
+    color: "#22d3ee", // cyan-400
+    fmt: fmtRub,
+    sumLabel: "Прибыль",
+    pairLabel: "Выручка после НДС",
+    pairFmt: fmtRub,
+    pairKey: "revenue_after_vat",
+  },
 };
 
 interface Props {
@@ -76,34 +86,57 @@ export default function MetricDrilldownModal({
 }: Props) {
   const meta = METRIC_META[metric];
   const [days, setDays] = useState<(typeof DAY_OPTIONS)[number]>(30);
+  // Locked tooltip index — click on chart to pin a specific date, click again
+  // (или ESC) — снять. Помогает зафиксировать значение чтобы скопировать.
+  const [lockedIndex, setLockedIndex] = useState<number | null>(null);
 
-  // ESC closes
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        if (lockedIndex !== null) setLockedIndex(null);
+        else onClose();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, lockedIndex]);
 
-  const q = useQuery({
+  // Reset lock when metric/period changes.
+  useEffect(() => {
+    setLockedIndex(null);
+  }, [metric, days]);
+
+  // profit uses the heavier pnl-timeseries endpoint (per-day full P&L).
+  // Остальные метрики — дешёвый /dashboard/timeseries.
+  const isPnl = metric === "profit";
+  const tsQ = useQuery({
     queryKey: ["timeseries", days, mode],
     queryFn: () => api.timeseries(days, mode),
+    enabled: !isPnl,
   });
+  const pnlQ = useQuery({
+    queryKey: ["pnl-timeseries", days],
+    queryFn: () => api.pnlTimeseries(days),
+    enabled: isPnl,
+  });
+  const data = isPnl ? pnlQ.data : tsQ.data;
+  const isLoading = isPnl ? pnlQ.isLoading : tsQ.isLoading;
+  const rows = data?.rows ?? [];
 
-  // Compute headline + WoW comparison (last 7 days vs prev 7 days).
-  // WoW лучше DoD: меньше шум выходных, ближе к реальному тренду.
   const summary = useMemo(() => {
-    if (!q.data?.rows) return null;
-    const rows = q.data.rows;
-    const total = rows.reduce((s, r) => s + (r as any)[metric], 0);
-
-    const last7 = rows.slice(-7).reduce((s, r) => s + (r as any)[metric], 0);
-    const prev7 = rows.slice(-14, -7).reduce((s, r) => s + (r as any)[metric], 0);
+    if (rows.length === 0) return null;
+    const total = rows.reduce((s, r) => s + ((r as any)[metric] ?? 0), 0);
+    const last7 = rows.slice(-7).reduce((s, r) => s + ((r as any)[metric] ?? 0), 0);
+    const prev7 = rows.slice(-14, -7).reduce((s, r) => s + ((r as any)[metric] ?? 0), 0);
     const wowDelta = last7 - prev7;
     const wowPct = prev7 === 0 ? null : (wowDelta / Math.abs(prev7)) * 100;
     return { total, last7, prev7, wowDelta, wowPct };
-  }, [q.data, metric]);
+  }, [rows, metric]);
+
+  const lockedRow = lockedIndex !== null ? (rows[lockedIndex] as any) : null;
+  const lockedValue = lockedRow ? lockedRow[metric] : null;
+  const lockedPairValue =
+    lockedRow && meta.pairKey ? lockedRow[meta.pairKey] : null;
 
   return (
     <div
@@ -121,7 +154,11 @@ export default function MetricDrilldownModal({
             <h2 className="text-lg font-medium">{meta.label}</h2>
             {summary && (
               <>
-                <div className="text-3xl font-semibold font-mono tabular-nums mt-1">
+                <div
+                  className={`text-3xl font-semibold font-mono tabular-nums mt-1 ${
+                    summary.total < 0 ? "text-red-400" : ""
+                  }`}
+                >
                   {meta.fmt(summary.total)}
                 </div>
                 <div className="text-xs mt-1">
@@ -147,6 +184,24 @@ export default function MetricDrilldownModal({
                     </span>
                   )}
                 </div>
+                {lockedRow && (
+                  <div className="text-xs mt-2 px-2 py-1 inline-flex items-center gap-2 bg-surface-2 rounded border border-accent/40">
+                    <span className="text-muted">📌 {lockedRow.date}:</span>
+                    <span className="font-mono">{meta.fmt(lockedValue ?? 0)}</span>
+                    {lockedPairValue !== null && meta.pairFmt && (
+                      <span className="text-muted font-mono">
+                        · {meta.pairLabel}: {meta.pairFmt(lockedPairValue)}
+                      </span>
+                    )}
+                    <button
+                      onClick={() => setLockedIndex(null)}
+                      className="text-muted hover:text-accent ml-1"
+                      title="Снять (Esc)"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -177,16 +232,23 @@ export default function MetricDrilldownModal({
 
         {/* Chart */}
         <div className="p-5">
-          {q.isLoading && <div className="text-muted">Загрузка…</div>}
-          {q.data && q.data.rows.length === 0 && (
+          {isLoading && <div className="text-muted">Загрузка…</div>}
+          {!isLoading && rows.length === 0 && (
             <div className="text-muted">Нет данных за выбранный период.</div>
           )}
-          {q.data && q.data.rows.length > 0 && (
-            <div className="h-[400px]">
+          {rows.length > 0 && (
+            <div className="h-[400px] select-none">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart
-                  data={q.data.rows}
+                  data={rows}
                   margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+                  onClick={(e: any) => {
+                    if (e && typeof e.activeTooltipIndex === "number") {
+                      setLockedIndex((curr) =>
+                        curr === e.activeTooltipIndex ? null : e.activeTooltipIndex,
+                      );
+                    }
+                  }}
                 >
                   <defs>
                     <linearGradient id={`grad-${metric}`} x1="0" y1="0" x2="0" y2="1">
@@ -238,7 +300,6 @@ export default function MetricDrilldownModal({
                     fill={`url(#grad-${metric})`}
                     isAnimationActive={false}
                   />
-                  {/* Pair metric — невидимая линия только ради tooltip */}
                   {meta.pairKey && (
                     <Area
                       type="monotone"
@@ -248,8 +309,22 @@ export default function MetricDrilldownModal({
                       isAnimationActive={false}
                     />
                   )}
+                  {lockedRow && (
+                    <ReferenceDot
+                      x={lockedRow.date}
+                      y={lockedValue ?? 0}
+                      r={5}
+                      fill={meta.color}
+                      stroke="#fff"
+                      strokeWidth={2}
+                      isFront
+                    />
+                  )}
                 </AreaChart>
               </ResponsiveContainer>
+              <div className="text-xs text-muted mt-2 text-center">
+                Клик по графику — закрепить точку. Esc или клик на пин — снять.
+              </div>
             </div>
           )}
         </div>

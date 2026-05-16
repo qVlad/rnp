@@ -183,6 +183,24 @@ export const api = {
       }`,
     ),
 
+  pnlTimeseries: (days: number = 30) =>
+    request<{
+      days: number;
+      rows: Array<{
+        date: string;
+        revenue_after_vat: number;
+        revenue_net: number;
+        gross_profit: number;
+        commercial_expenses: number;
+        administrative_expenses: number;
+        operating_profit: number;
+        ebitda: number;
+        tax: number;
+        profit: number;
+        cash_flow: number;
+      }>;
+    }>(`/api/pnl/timeseries?days=${days}`),
+
   listSupplies: (filters: {
     nm_id?: number;
     paid_status?: string;

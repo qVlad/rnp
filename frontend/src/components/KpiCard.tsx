@@ -1,6 +1,9 @@
 import { Link } from "react-router-dom";
 import { fmtChange, formatValue } from "@/lib/format";
 import { Icon } from "@/components/Icon";
+import CompositionBar, {
+  type CompositionSegment,
+} from "@/components/CompositionBar";
 
 interface Kpi {
   key: string;
@@ -14,11 +17,16 @@ interface Kpi {
 
 // KPI keys that have a per-day drill-down timeseries available.
 // Click on these → opens MetricDrilldownModal.
-export const DRILLDOWN_METRIC: Record<string, "revenue" | "orders" | "ad_cost"> = {
+export const DRILLDOWN_METRIC: Record<
+  string,
+  "revenue" | "orders" | "ad_cost" | "profit"
+> = {
   revenue_gross: "revenue",
   revenue_net: "revenue",
   orders: "orders",
   ad_cost: "ad_cost",
+  net_profit: "profit",
+  margin: "profit",
 };
 
 // Metrics where increase = bad (red on rise, green on fall).
@@ -38,10 +46,16 @@ export default function KpiCard({
   kpi,
   variant = "default",
   onDrillDown,
+  composition,
+  compositionTotal,
 }: {
   kpi: Kpi;
   variant?: Variant;
-  onDrillDown?: (metric: "revenue" | "orders" | "ad_cost") => void;
+  onDrillDown?: (metric: "revenue" | "orders" | "ad_cost" | "profit") => void;
+  /** Опциональная композиция — стэкнутая полоска с %. Показывается под
+   * change-pct строкой. Использовать только на hero-варианте (места мало). */
+  composition?: CompositionSegment[];
+  compositionTotal?: number;
 }) {
   const drillMetric = DRILLDOWN_METRIC[kpi.key];
   const isClickable = !!drillMetric && !!onDrillDown;
@@ -116,6 +130,15 @@ export default function KpiCard({
           </>
         )}
       </div>
+      {composition && composition.length > 0 && (
+        <div className="mt-2" onClick={(e: any) => e.stopPropagation()}>
+          <CompositionBar
+            segments={composition}
+            totalOverride={compositionTotal}
+            unit={kpi.unit}
+          />
+        </div>
+      )}
       {kpi.tooltip && (
         <div
           className="invisible group-hover:visible opacity-0 group-hover:opacity-100
