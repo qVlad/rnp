@@ -5,7 +5,7 @@
 """
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +17,7 @@ from app.services.payment_orders import (
 )
 from app.services.tax_report import build_tax_report
 from app.services.tax_report_ausn import build_ausn_monthly_report
+from app.services.tax_report_usn import build_usn_monthly_report
 
 router = APIRouter(
     prefix="/api/tax-report",
@@ -136,6 +137,46 @@ async def get_tax_report_ausn(
     )
 
 
+@router.get("/usn")
+async def get_tax_report_usn(
+    date_from: date | None = Query(default=None, alias="from"),
+    date_to: date | None = Query(default=None, alias="to"),
+    tax_rate: float | None = Query(default=None, ge=0, le=20),
+    vat_rate: float = Query(default=0.0, ge=0.0, le=20.0),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict:
+    """Месячная свёртка УСН-Доходы по методике бухгалтера.
+
+    `from`/`to` фильтруют по месяцам (включаются полные месяцы попадания дат).
+    По умолчанию — последние 6 месяцев включая текущий.
+
+    `tax_rate` — ставка УСН, default 6% (или из settings_timeline если
+    tax_system='usn_income').
+
+    `vat_rate` — невозвратный НДС (5% или 7% по 176-ФЗ для УСН с оборотом
+    >60M ₽/год; 0 = без НДС). НДС выделяется ИЗ gross-выручки, УСН считается
+    с net = gross − НДС. Общая нагрузка = УСН + НДС.
+
+    База месяца = Отчёты_реализации (G) + Тов_компенсация (Y) + Банк_выкупы (T)
+                  + УПД_доставки (Z) + Возвраты_выкупы (AA)
+    """
+    if date_to is None:
+        date_to = date.today()
+    if date_from is None:
+        m_from = date_to.replace(day=1)
+        for _ in range(5):
+            prev_last = m_from - timedelta(days=1)
+            m_from = prev_last.replace(day=1)
+        date_from = m_from
+    return await build_usn_monthly_report(
+        session,
+        date_from=date_from,
+        date_to=date_to,
+        tax_rate=tax_rate,
+        vat_rate=vat_rate,
+    )
+
+
 @router.post("/payment-orders/import")
 async def import_payment_orders(
     file: UploadFile = File(...),
@@ -197,11 +238,19 @@ async def list_payment_orders(
                 "payment_order_id": r.payment_order_id,
                 "created_dt": r.created_dt.isoformat(),
                 "paid_dt": r.paid_dt.isoformat() if r.paid_dt else None,
+                "period_end": r.period_end.isoformat() if r.period_end else None,
+                "report_type": r.report_type,
                 "amount": float(r.amount or 0),
+                "upd_delivery_amount": float(r.upd_delivery_amount or 0),
+                "buyout_returns_amount": float(r.buyout_returns_amount or 0),
                 "currency": r.currency,
                 "status": r.status,
                 "status_raw": r.status_raw,
                 "bank_comment": r.bank_comment,
+                "excluded_from_tax": bool(r.excluded_from_tax),
+                "excluded_from_ausn": bool(r.excluded_from_ausn),
+                "excluded_from_usn": bool(r.excluded_from_usn),
+                "exclusion_reason": r.exclusion_reason,
             }
             for r in rows
         ],
@@ -210,6 +259,67 @@ async def list_payment_orders(
             "paid_sum": round(paid_sum, 2),
             "processing_sum": round(proc_sum, 2),
         },
+    }
+
+
+@router.patch("/payment-orders/{payment_order_id:path}/exclude")
+async def toggle_payment_order_excluded(
+    payment_order_id: str,
+    scope: str = Body(..., embed=True, regex="^(ausn|usn|both)$"),
+    excluded: bool = Body(..., embed=True),
+    reason: str | None = Body(default=None, embed=True),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict:
+    """Пометить отчёт как «не входит в налоговую базу» (или снять флаг)
+    для одного из режимов: АУСН 8%, УСН 6%, или обоих.
+
+    Типичные кейсы:
+    - **Только УСН**: фискально-годовой переход (период декабря, оплата
+      в январе) — для УСН считается доходом 2025 года, для АУСН (cash)
+      доходом 2026.
+    - **Только АУСН**: редкая обратная ситуация.
+    - **Both**: ошибочный импорт, дубликат, тестовая строка.
+    """
+    from app.services.audit import audit_log
+    obj = await session.get(WbPaymentOrder, payment_order_id)
+    if obj is None:
+        raise HTTPException(404, "Не найдено")
+    before = {
+        "excluded_from_ausn": bool(obj.excluded_from_ausn),
+        "excluded_from_usn": bool(obj.excluded_from_usn),
+        "excluded_from_tax": bool(obj.excluded_from_tax),
+    }
+    val = bool(excluded)
+    if scope in ("ausn", "both"):
+        obj.excluded_from_ausn = val
+    if scope in ("usn", "both"):
+        obj.excluded_from_usn = val
+    # Legacy флаг = логический OR
+    obj.excluded_from_tax = bool(obj.excluded_from_ausn or obj.excluded_from_usn)
+    if obj.excluded_from_tax:
+        obj.exclusion_reason = reason
+    else:
+        obj.exclusion_reason = None
+    await session.flush()
+    await audit_log(
+        session,
+        table_name="wb_payment_order",
+        op="update",
+        entity_id=payment_order_id,
+        before=before,
+        after={
+            "excluded_from_ausn": bool(obj.excluded_from_ausn),
+            "excluded_from_usn": bool(obj.excluded_from_usn),
+            "exclusion_reason": obj.exclusion_reason,
+        },
+        comment=f"bookkeeper override: {scope} {'excluded' if val else 'included'}",
+    )
+    await session.commit()
+    return {
+        "status": "ok",
+        "excluded_from_ausn": bool(obj.excluded_from_ausn),
+        "excluded_from_usn": bool(obj.excluded_from_usn),
+        "exclusion_reason": obj.exclusion_reason,
     }
 
 

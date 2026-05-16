@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Icon } from "@/components/Icon";
 
 export type DateRange = { from: string; to: string };
 
@@ -120,7 +121,7 @@ export function DateRangePicker({
         className={`input flex items-center gap-2 ${compact ? "px-2 py-1" : ""}`}
         title="Выбрать период"
       >
-        <span aria-hidden>📅</span>
+        <Icon name="calendar" size={12} className="text-muted" />
         <span className="tabular-nums">
           {formatDisplay(from)} — {formatDisplay(to)}
         </span>
@@ -134,7 +135,7 @@ export function DateRangePicker({
               <button
                 key={p.label}
                 type="button"
-                className="text-left px-2 py-1 rounded hover:bg-card/70 text-muted hover:text-white"
+                className="text-left px-2 py-1 rounded hover:bg-surface-2/70 text-muted hover:text-white"
                 onClick={() => {
                   onChange(p.range());
                   setOpen(false);
@@ -190,7 +191,7 @@ function CalendarHeader({
       <button
         type="button"
         onClick={onPrev}
-        className="px-2 py-1 rounded hover:bg-card text-muted"
+        className="px-2 py-1 rounded hover:bg-surface-2 text-muted"
         aria-label="Предыдущий месяц"
       >
         ←
@@ -201,7 +202,7 @@ function CalendarHeader({
       <button
         type="button"
         onClick={onNext}
-        className="px-2 py-1 rounded hover:bg-card text-muted"
+        className="px-2 py-1 rounded hover:bg-surface-2 text-muted"
         aria-label="Следующий месяц"
       >
         →
@@ -244,7 +245,7 @@ function CalendarGrid({
         const cls = [
           "text-center py-1 rounded cursor-pointer tabular-nums",
           inCurrentMonth ? "text-white" : "text-muted/40",
-          inRange ? "bg-accent/30" : "hover:bg-card",
+          inRange ? "bg-accent/30" : "hover:bg-surface-2",
           (isStart || isEnd) ? "bg-accent text-white font-semibold" : "",
           isToday && !isStart && !isEnd ? "ring-1 ring-accent/50" : "",
         ].join(" ");

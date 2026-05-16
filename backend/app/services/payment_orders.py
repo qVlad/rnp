@@ -162,6 +162,8 @@ def _normalize_currency(raw: Any) -> str:
     return s.upper()[:8]
 
 
+
+
 def parse_payment_history_xlsx(
     file_bytes: bytes,
 ) -> tuple[list[dict[str, Any]], list[str]]:
@@ -269,17 +271,32 @@ async def upsert_payment_orders(
 
     values = [{**r, "tenant_id": tid} for r in rows]
     stmt = pg_insert(WbPaymentOrder).values(values)
+    # Включаем все поля что есть в values; используем COALESCE-like
+    # подход — обновляем поле только если оно есть в payload (для
+    # Стас-формата upd_delivery_amount/period_end/report_type/buyout_returns_amount
+    # передаются явно; для legacy «История платежей» — этих ключей нет).
+    update_set: dict[str, Any] = {
+        "created_dt": stmt.excluded.created_dt,
+        "paid_dt": stmt.excluded.paid_dt,
+        "amount": stmt.excluded.amount,
+        "currency": stmt.excluded.currency,
+        "status": stmt.excluded.status,
+        "status_raw": stmt.excluded.status_raw,
+        "bank_comment": stmt.excluded.bank_comment,
+    }
+    # Опциональные Стас-поля — обновляем только если хотя бы в одной
+    # строке payload они есть (определяем по наличию ключа).
+    if any("period_end" in r for r in rows):
+        update_set["period_end"] = stmt.excluded.period_end
+    if any("report_type" in r for r in rows):
+        update_set["report_type"] = stmt.excluded.report_type
+    if any("upd_delivery_amount" in r for r in rows):
+        update_set["upd_delivery_amount"] = stmt.excluded.upd_delivery_amount
+    if any("buyout_returns_amount" in r for r in rows):
+        update_set["buyout_returns_amount"] = stmt.excluded.buyout_returns_amount
     stmt = stmt.on_conflict_do_update(
         index_elements=["tenant_id", "payment_order_id"],
-        set_={
-            "created_dt": stmt.excluded.created_dt,
-            "paid_dt": stmt.excluded.paid_dt,
-            "amount": stmt.excluded.amount,
-            "currency": stmt.excluded.currency,
-            "status": stmt.excluded.status,
-            "status_raw": stmt.excluded.status_raw,
-            "bank_comment": stmt.excluded.bank_comment,
-        },
+        set_=update_set,
     )
     await session.execute(stmt)
 

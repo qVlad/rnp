@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, ORJSONResponse
 
 from app.api import (
+    ads,
     analytics,
     artificial_orders,
     audit,
@@ -18,6 +19,7 @@ from app.api import (
     excel,
     external_ad_costs,
     jam,
+    notifications,
     off_platform,
     opex,
     plans,
@@ -31,6 +33,7 @@ from app.api import (
     tenant_settings,
     units,
     users,
+    view_presets,
     wb_token,
 )
 from app.core.config import settings as cfg
@@ -155,6 +158,9 @@ async def whoami() -> dict[str, object]:
 app.include_router(dashboard.router)
 app.include_router(pnl.router)
 app.include_router(units.router)
+app.include_router(ads.router)
+app.include_router(view_presets.router)
+app.include_router(notifications.router)
 app.include_router(settings.router)
 app.include_router(artificial_orders.router)
 app.include_router(external_ad_costs.router)

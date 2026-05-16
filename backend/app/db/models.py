@@ -473,6 +473,34 @@ class WbPaymentOrder(Base, TenantScopedMixin):
     imported_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    # Опционально проставляется при импорте Стас-стиле файла где payment_order
+    # привязан к WB-realization-report. Для классической «История платежей»
+    # эти поля null (там нет привязки к конкретному отчёту).
+    period_end: Mapped[date | None] = mapped_column(Date)
+    report_type: Mapped[str | None] = mapped_column(String(16))  # 'Основной'|'По выкупам'
+    upd_delivery_amount: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=0, server_default="0"
+    )
+    # «Возвраты выкупы» (col AA в Стас xlsx) — для УСН 6% methodology
+    # включается в базу налога. Импортируется отдельно (нет в WB API).
+    buyout_returns_amount: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=0, server_default="0"
+    )
+    # Bookkeeper override: пометка «не учитывать в налоговой базе».
+    # Per-regime: бухгалтер может исключить отчёт из одного режима но
+    # оставить в другом (реальный кейс — фискально-годовой переход где
+    # cash-basis АУСН и accrual УСН расходятся).
+    # Legacy `excluded_from_tax` = логический OR двух новых полей.
+    excluded_from_tax: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    excluded_from_ausn: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    excluded_from_usn: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    exclusion_reason: Mapped[str | None] = mapped_column(String(255))
 
 
 class WbAdStatsDaily(Base, TenantScopedMixin):
@@ -902,5 +930,79 @@ class JamQuery(Base, TenantScopedMixin):
             "query",
             "period_start",
             unique=True,
+        ),
+    )
+
+
+class NotificationRule(Base, TenantScopedMixin):
+    """User-defined alert rule.
+
+    Examples:
+    - `metric='stock_below'`, `op='<'`, `threshold=50` — все SKU с остатком <50.
+    - `metric='dts_below'`, `op='<'`, `threshold=14`, `scope_filter={"brands":["ONYX"]}`
+      — SKU с days_to_stockout <14 в ONYX-бренде.
+    - `metric='drr_above'`, `op='>'`, `threshold=30` — кампании с ДРР >30%.
+
+    Evaluation via `services/notification_engine.py` через Celery beat.
+    """
+
+    __tablename__ = "notification_rule"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    metric: Mapped[str] = mapped_column(String(64), nullable=False)
+    operator: Mapped[str] = mapped_column(String(4), nullable=False)
+    threshold: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
+    scope_filter: Mapped[dict | None] = mapped_column(JSONB)
+    channel: Mapped[str] = mapped_column(String(32), default="telegram", nullable=False)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+    cooldown_minutes: Mapped[int] = mapped_column(Integer, default=1440, nullable=False)
+    last_fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_fire_payload: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class UserViewPreset(Base, TenantScopedMixin):
+    """Сохранённые пресеты страниц (Dashboard / Units / PnL).
+
+    Один user может сохранять несколько именованных конфигураций для
+    каждой страницы. См. migration 0029.
+    """
+
+    __tablename__ = "user_view_preset"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    scope: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "user_id", "scope", "name", name="uq_user_view_preset_name"
         ),
     )

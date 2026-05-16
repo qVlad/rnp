@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Icon } from "@/components/Icon";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
@@ -23,7 +24,7 @@ const TYPE_OPTIONS: {
     group: "fake",
     hint: "Сразу при оформлении заказа на платформе. Без обязательного выкупа.",
     effect: "вычитается из выручки",
-    color: "text-yellow-400",
+    color: "text-warn",
   },
   {
     value: "selfbuy",
@@ -31,7 +32,7 @@ const TYPE_OPTIONS: {
     group: "fake",
     hint: "Подрядчик забрал товар с ПВЗ. Между датой заказа и выкупа должно быть ~2-3 дня (WB не примет иначе).",
     effect: "вычитается из выручки",
-    color: "text-yellow-400",
+    color: "text-warn",
   },
   {
     value: "giveaway",
@@ -39,7 +40,7 @@ const TYPE_OPTIONS: {
     group: "fake",
     hint: "Бартер / инфлюенсер / большая скидка. В «Услуги подрядчика» — оплата блогеру или агентству.",
     effect: "вычитается из выручки",
-    color: "text-yellow-400",
+    color: "text-warn",
   },
   {
     value: "dbs",
@@ -47,7 +48,7 @@ const TYPE_OPTIONS: {
     group: "channel",
     hint: "Delivery by Seller — продажа через свою логистику. WB не считает её в /supplier/sales, добавляется вручную.",
     effect: "добавляется к выручке",
-    color: "text-emerald-400",
+    color: "text-success",
   },
   {
     value: "rfbs",
@@ -55,7 +56,7 @@ const TYPE_OPTIONS: {
     group: "channel",
     hint: "realFBS — продажа со своего склада, своими силами доставки. WB её тоже не учитывает в стат-API.",
     effect: "добавляется к выручке",
-    color: "text-emerald-400",
+    color: "text-success",
   },
 ];
 
@@ -64,13 +65,13 @@ const GROUP_META: Record<Group, { title: string; subtitle: string; color: string
     title: "Артефакты выручки",
     subtitle:
       "Фиктивные продажи которые искажают WB-цифры. Сумма вычитается из чистой выручки в P&L; услуги подрядчика идут отдельной статьёй расходов.",
-    color: "text-yellow-400",
+    color: "text-warn",
   },
   channel: {
     title: "Сторонний канал доставки (DBS / rFBS)",
     subtitle:
       "Реальные продажи через свою логистику. WB не видит их в /supplier/sales — вносите вручную, чтобы они попали в общую выручку и unit-economics.",
-    color: "text-emerald-400",
+    color: "text-success",
   },
 };
 
@@ -235,7 +236,7 @@ export default function RevenueCorrections() {
             )}
             {showCompletionHint && (
               <div className="text-[11px] text-warn mt-1 leading-snug">
-                ⚠ меньше 2 дней между заказом и выкупом — WB может не засчитать.
+                <Icon name="warning" size={12} className="inline mr-1" />меньше 2 дней между заказом и выкупом — WB может не засчитать.
               </div>
             )}
           </Field>

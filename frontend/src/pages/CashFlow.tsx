@@ -13,7 +13,7 @@ const startOfMonth = () => {
 
 const SECTION_META: Record<string, { color: string; hint: string }> = {
   operating: {
-    color: "border-emerald-700/40",
+    color: "border-success/40",
     hint: "Поступления и оттоки от ежедневных операций: продажи, расходы МП, маркетинг, COGS, ОПЕР-OPEX",
   },
   investing: {
@@ -21,7 +21,7 @@ const SECTION_META: Record<string, { color: string; hint: string }> = {
     hint: "Покупки оборудования, инвест.вложения, выходы из инвестиций",
   },
   financing: {
-    color: "border-yellow-700/40",
+    color: "border-warn/40",
     hint: "Кредиты получаемые/погашаемые, дивиденды, вложения учредителей",
   },
 };
@@ -53,7 +53,7 @@ export default function CashFlow() {
 
       <div className="card text-sm text-muted leading-relaxed">
         Отчёт построен на принципе «деньги по факту движения», не по начислению. Знак:
-        <span className="text-emerald-400"> +</span> — поступление,
+        <span className="text-success"> +</span> — поступление,
         <span className="text-red-400"> −</span> — выбытие.
         Принадлежность OPEX-категорий к секциям настраивается на странице{" "}
         <a className="text-accent" href="/opex">OPEX</a>.
@@ -72,7 +72,7 @@ export default function CashFlow() {
               </div>
               <div
                 className={`text-lg font-semibold mt-1 ${
-                  s.total >= 0 ? "text-emerald-400" : "text-red-400"
+                  s.total >= 0 ? "text-success" : "text-red-400"
                 }`}
               >
                 {fmtRub(s.total)}
@@ -89,7 +89,7 @@ export default function CashFlow() {
             </div>
             <div
               className={`text-2xl font-semibold mt-1 ${
-                q.data.net_cash_flow >= 0 ? "text-emerald-400" : "text-red-400"
+                q.data.net_cash_flow >= 0 ? "text-success" : "text-red-400"
               }`}
             >
               {fmtRub(q.data.net_cash_flow)}
@@ -126,7 +126,7 @@ export default function CashFlow() {
               <h2 className="font-medium">{s.title}</h2>
               <span
                 className={`font-mono text-lg ${
-                  s.total >= 0 ? "text-emerald-400" : "text-red-400"
+                  s.total >= 0 ? "text-success" : "text-red-400"
                 }`}
               >
                 {fmtRub(s.total)}
@@ -147,7 +147,7 @@ export default function CashFlow() {
                       <td
                         className={`p-2 text-right font-mono ${
                           l.amount > 0
-                            ? "text-emerald-400"
+                            ? "text-success"
                             : l.amount < 0
                             ? "text-red-400"
                             : "text-muted"

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Icon } from "@/components/Icon";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub, fmtPct } from "@/lib/format";
@@ -610,7 +611,7 @@ export default function UnitCalculator() {
               </div>
               {giveawayCalc.max_giveaways === 0 && giveawayCalc.margin_buffer === 0 && (
                 <div className="text-danger mt-1">
-                  ⚠ Уже на грани — текущая маржа ниже целевой, раздачи невозможны.
+                  <Icon name="warning" size={12} className="inline mr-1" />Уже на грани — текущая маржа ниже целевой, раздачи невозможны.
                 </div>
               )}
             </div>
@@ -665,11 +666,11 @@ function Row({
     .filter(Boolean)
     .join(" ");
   const valColor =
-    value > 0 ? "text-emerald-400" : value < 0 ? "text-red-400" : "text-muted";
+    value > 0 ? "text-success" : value < 0 ? "text-red-400" : "text-muted";
   const display =
     sign && sign === "+" && value >= 0 ? `+${fmtRub(value)}` : fmtRub(value);
   return (
-    <tr className={emphasize ? "bg-bg/30" : ""}>
+    <tr className={emphasize ? "bg-surface-2/40" : ""}>
       <td className={cls}>{label}</td>
       <td className={`${cls} text-right font-mono ${valColor}`}>{display}</td>
     </tr>
@@ -687,12 +688,12 @@ function BigKpi({
 }) {
   const color =
     tone === "good"
-      ? "text-emerald-400"
+      ? "text-success"
       : tone === "warn"
-      ? "text-yellow-400"
+      ? "text-warn"
       : "text-red-400";
   return (
-    <div className="border border-border rounded-md p-3 bg-bg/30">
+    <div className="border border-border rounded-md p-3 bg-surface-2/40">
       <div className="text-xs text-muted">{label}</div>
       <div className={`text-2xl font-semibold mt-1 ${color}`}>{value}</div>
     </div>
@@ -709,7 +710,7 @@ function SmallKpi({
   hint?: string;
 }) {
   return (
-    <div className="border border-border rounded-md p-3 bg-bg/30">
+    <div className="border border-border rounded-md p-3 bg-surface-2/40">
       <div className="text-xs text-muted">{label}</div>
       <div className="text-lg font-semibold mt-1">{value}</div>
       {hint && <div className="text-xs text-muted mt-1">{hint}</div>}

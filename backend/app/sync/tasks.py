@@ -1420,6 +1420,31 @@ def send_daily_digest() -> bool:
     return asyncio.run(_send_daily_digest_async())
 
 
+async def _evaluate_notifications_async() -> int:
+    """Прогоняет все active rules для каждого tenant. Возвращает количество
+    сработавших правил."""
+    from app.db.session import task_session_scope
+    from app.services.notification_engine import evaluate_all_rules
+    from app.services.tenant_context import set_tenant
+    total_fired = 0
+    tenant_ids = await _list_active_tenants()
+    for tid in tenant_ids:
+        async with task_session_scope() as session:
+            set_tenant(session, tid)
+            try:
+                evaluations = await evaluate_all_rules(session, dry_run=False)
+                total_fired += sum(1 for e in evaluations if e.triggered)
+            except Exception as e:
+                log.warning("notifications: tenant %s failed: %s", tid, e)
+    return total_fired
+
+
+@celery_app.task(name="app.sync.tasks.evaluate_notifications")
+def evaluate_notifications() -> int:
+    """Celery beat: проверка active rules + отправка уведомлений в TG."""
+    return asyncio.run(_evaluate_notifications_async())
+
+
 async def _sync_product_photos_async(tenant_id: int) -> int:
     """Заполняет `products.photo_url` через WB Content API (раз в сутки).
 

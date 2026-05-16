@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -89,3 +89,62 @@ async def get_alerts(
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
     return {"alerts": await collect_alerts(session, brands=brands)}
+
+
+@router.get("/today-vs-yesterday")
+async def get_today_vs_yesterday(
+    mode: Literal["preliminary", "final", "hybrid"] = "preliminary",
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
+) -> dict:
+    """Сегодня vs вчера: KPI с delta. Под "Рука на пульсе" — utility wrapper
+    над compute_dashboard, считает за оба дня и считает delta_pct.
+
+    Preliminary mode (default) использует wb_orders/wb_sales — данные
+    есть в течение часа после факта. Final mode имеет лаг 1-2 дня и
+    не подходит для today=сегодня.
+    """
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+    p_today = period_from_range(today, today)
+    p_yesterday = period_from_range(yesterday, yesterday)
+
+    d_today = await compute_dashboard(session, p_today, brands=brands, mode=mode)
+    d_yesterday = await compute_dashboard(session, p_yesterday, brands=brands, mode=mode)
+
+    # Build delta KPIs zip-aligned by `.key`
+    by_key_today = {k["key"]: k for k in d_today.get("kpis", [])}
+    by_key_yesterday = {k["key"]: k for k in d_yesterday.get("kpis", [])}
+    deltas = []
+    for key, t_kpi in by_key_today.items():
+        y_kpi = by_key_yesterday.get(key, {})
+        t_val = t_kpi.get("value") or 0
+        y_val = y_kpi.get("value") or 0
+        delta_abs = (t_val - y_val) if isinstance(t_val, (int, float)) and isinstance(y_val, (int, float)) else None
+        delta_pct = None
+        if isinstance(y_val, (int, float)) and y_val:
+            delta_pct = round((t_val - y_val) / y_val * 100.0, 2)
+        # «Хорошо» направление: для cost/return/drr — рост = плохо; для revenue/orders/margin — рост = хорошо
+        bad_growth_keys = {
+            "ad_cost", "commission_wb", "logistics_wb", "storage_wb",
+            "returns", "drr_pct", "drr_sales_pct",
+        }
+        good_direction = "up" if key not in bad_growth_keys else "down"
+        deltas.append({
+            "key": key,
+            "label": t_kpi.get("label"),
+            "tooltip": t_kpi.get("tooltip"),
+            "format": t_kpi.get("format"),
+            "today": t_val,
+            "yesterday": y_val,
+            "delta_abs": delta_abs,
+            "delta_pct": delta_pct,
+            "good_direction": good_direction,
+        })
+
+    return {
+        "today_date": today.isoformat(),
+        "yesterday_date": yesterday.isoformat(),
+        "mode": mode,
+        "kpis": deltas,
+    }

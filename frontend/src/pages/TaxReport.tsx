@@ -205,7 +205,7 @@ export default function TaxReport() {
 
       <section className="card overflow-auto">
         <table className="min-w-full text-xs">
-          <thead className="sticky top-0 bg-card border-b border-border z-10">
+          <thead className="sticky top-0 bg-surface-2 border-b border-border z-10">
             <tr>
               <th className="text-left py-2 px-2">Отчёт WB</th>
               <th className="text-left py-2 px-2">Период</th>
@@ -228,7 +228,7 @@ export default function TaxReport() {
               const incomeOnly = isIncomeOnlyMode(r.tax_system);
               const effRate = r.income_total > 0 ? (r.tax / r.income_total) * 100 : 0;
               return (
-                <tr key={r.realization_id} className="border-b border-border/40 hover:bg-card/60">
+                <tr key={r.realization_id} className="border-b border-border/40 hover:bg-surface-2/60">
                   <td className="py-2 px-2 font-mono">#{r.realization_id}</td>
                   <td className="py-2 px-2 text-muted">
                     {r.report_date_from} … {r.report_date_to}

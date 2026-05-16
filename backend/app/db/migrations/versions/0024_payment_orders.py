@@ -31,8 +31,9 @@ def upgrade() -> None:
         # Формат "4400004/53" — id селлера / порядковый номер заявки
         sa.Column("payment_order_id", sa.String(length=64), nullable=False),
         sa.Column("created_dt", sa.Date(), nullable=False, index=True),
-        # null если статус ещё "Оплата обрабатывается"
-        sa.Column("paid_dt", sa.Date(), nullable=True, index=True),
+        # null если статус ещё "Оплата обрабатывается". index создаётся
+        # явным compound (tenant_id, paid_dt) ниже.
+        sa.Column("paid_dt", sa.Date(), nullable=True),
         sa.Column("amount", sa.Numeric(14, 2), nullable=False, server_default="0"),
         sa.Column(
             "currency",

@@ -5,6 +5,7 @@
  * с сезонным коэффициентом и YoY-трендом. График + таблица.
  */
 import { useState } from "react";
+import { Icon } from "@/components/Icon";
 import { useQuery } from "@tanstack/react-query";
 import {
   Bar,
@@ -98,7 +99,7 @@ export default function SeasonPlan() {
       {q.isLoading && <div className="card text-muted">Загрузка…</div>}
       {data?.warning && (
         <div className="card bg-warn/10 border-warn/40 text-warn text-sm">
-          ⚠ {data.warning}
+          <Icon name="warning" size={12} className="inline mr-1" />{data.warning}
         </div>
       )}
 
@@ -164,7 +165,7 @@ export default function SeasonPlan() {
                 const tone =
                   f > 1.2 ? "text-success" : f < 0.8 ? "text-warn" : "text-muted";
                 return (
-                  <div key={m} className="bg-bg/40 rounded p-2 text-center">
+                  <div key={m} className="bg-surface-2/50 rounded p-2 text-center">
                     <div className="text-xs text-muted">{MONTH_LABELS[m]}</div>
                     <div className={`text-sm font-mono ${tone}`}>
                       ×{f.toFixed(2)}

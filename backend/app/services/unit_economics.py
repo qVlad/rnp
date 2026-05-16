@@ -779,6 +779,37 @@ async def build_unit_economics(
                 "vat": round(vat_nm, 2),
                 "net_profit": round(net_profit, 2),
                 "profitability_pct": round(profitability_pct, 2),
+                # ── Прогноз «до выкупа»: проекция маржи на ВСЕ заказы периода ──
+                # если бы они выкупились по историческому % (то есть сразу
+                # покажи сколько ты «уже заработал» по orders, не дожидаясь
+                # 2-недельного лага report_detail).
+                #
+                # forecast_units = total_orders × buyout_pct / 100
+                # forecast_revenue = forecast_units × avg_price
+                # forecast_margin = forecast_revenue × (1 − commission_pct/100)
+                #                   − forecast_units × cogs_unit − ad_cost
+                #
+                # Для закрытых периодов (orders ≈ sales × 100/buyout_pct)
+                # forecast почти равен фактическому margin. Для свежих —
+                # выше факта на ту часть orders, что ещё не выкупилась.
+                **(
+                    lambda fu, fr, fc, fm: {
+                        "forecast_units": round(fu, 2),
+                        "forecast_revenue": round(fr, 2),
+                        "forecast_commission": round(fc, 2),
+                        "forecast_margin": round(fm, 2),
+                    }
+                )(
+                    total_orders * buyout_pct / 100.0,
+                    total_orders * buyout_pct / 100.0 * (avg_price or 0),
+                    total_orders * buyout_pct / 100.0 * (avg_price or 0) * commission_pct / 100.0,
+                    (
+                        total_orders * buyout_pct / 100.0 * (avg_price or 0)
+                        * (1.0 - commission_pct / 100.0)
+                        - total_orders * buyout_pct / 100.0 * unit_cogs
+                        - ad_cost
+                    ),
+                ),
                 # Stock
                 "stock": stock,
                 "in_way_to_client": in_way_by_nm.get(nm, {}).get("to_client", 0),

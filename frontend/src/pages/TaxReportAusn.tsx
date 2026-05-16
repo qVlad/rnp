@@ -2,6 +2,8 @@ import { useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
+import { DateRangePicker } from "@/components/DateRangePicker";
+import PaymentOrdersTable from "@/components/PaymentOrdersTable";
 
 function isoDate(d: Date) {
   return d.toISOString().slice(0, 10);
@@ -151,24 +153,14 @@ export default function TaxReportAusn() {
       </div>
 
       <section className="card flex flex-wrap gap-4 items-end">
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted uppercase">С</span>
-          <input
-            type="date"
-            className="input"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-muted uppercase">Период</span>
+          <DateRangePicker
+            from={from}
+            to={to}
+            onChange={(r) => { setFrom(r.from); setTo(r.to); }}
           />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-xs text-muted uppercase">По</span>
-          <input
-            type="date"
-            className="input"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-          />
-        </label>
+        </div>
         <label className="flex flex-col gap-1">
           <span
             className="text-xs text-muted uppercase"
@@ -331,7 +323,7 @@ export default function TaxReportAusn() {
       <section className="card overflow-auto">
         <h2 className="font-medium mb-3">Месячная свёртка</h2>
         <table className="min-w-full text-xs">
-          <thead className="sticky top-0 bg-card border-b border-border z-10">
+          <thead className="sticky top-0 bg-surface-2 border-b border-border z-10">
             <tr>
               <th className="text-left py-2 px-2">Месяц</th>
               <th className="text-right py-2 px-2 text-muted">Банк</th>
@@ -356,7 +348,7 @@ export default function TaxReportAusn() {
           </thead>
           <tbody>
             {monthly.map((r) => (
-              <tr key={r.month} className="border-b border-border/40 hover:bg-card/60">
+              <tr key={r.month} className="border-b border-border/40 hover:bg-surface-2/60">
                 <td className="py-2 px-2 font-medium">{monthLabel(r.month)}</td>
                 <td className="py-2 px-2 text-right">{fmtRub(r.bank)}</td>
                 <td className="py-2 px-2 text-right">{fmtRub(r.vzz_reports)}</td>
@@ -379,7 +371,7 @@ export default function TaxReportAusn() {
               </tr>
             ))}
             {totals && (
-              <tr className="border-t-2 border-border bg-card/40 font-semibold">
+              <tr className="border-t-2 border-border bg-surface-2/40 font-semibold">
                 <td className="py-2 px-2">{monthLabel(totals.month)}</td>
                 <td className="py-2 px-2 text-right">{fmtRub(totals.bank)}</td>
                 <td className="py-2 px-2 text-right">
@@ -420,7 +412,7 @@ export default function TaxReportAusn() {
             По отчётам реализации ({realizations.length})
           </h2>
           <table className="min-w-full text-xs">
-            <thead className="sticky top-0 bg-card border-b border-border z-10">
+            <thead className="sticky top-0 bg-surface-2 border-b border-border z-10">
               <tr>
                 <th className="text-left py-2 px-2">Отчёт WB</th>
                 <th className="text-left py-2 px-2">Период</th>
@@ -456,7 +448,7 @@ export default function TaxReportAusn() {
               {realizations.map((r) => (
                 <tr
                   key={r.realization_id}
-                  className="border-b border-border/40 hover:bg-card/60"
+                  className="border-b border-border/40 hover:bg-surface-2/60"
                 >
                   <td className="py-2 px-2 font-mono">#{r.realization_id}</td>
                   <td className="py-2 px-2 text-muted">
@@ -497,67 +489,16 @@ export default function TaxReportAusn() {
               </span>
             </div>
           </div>
-          <table className="min-w-full text-xs">
-            <thead className="sticky top-0 bg-card border-b border-border z-10">
-              <tr>
-                <th className="text-left py-2 px-2">ID заявки</th>
-                <th className="text-left py-2 px-2 text-muted">Дата создания</th>
-                <th className="text-left py-2 px-2 text-muted">Дата зачисления</th>
-                <th className="text-right py-2 px-2">Сумма</th>
-                <th className="text-left py-2 px-2 text-muted">Валюта</th>
-                <th className="text-left py-2 px-2 text-muted">Статус</th>
-                <th className="text-left py-2 px-2 text-muted">Комментарий</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {(ordersQ.data?.items ?? []).map((o) => (
-                <tr
-                  key={o.payment_order_id}
-                  className="border-b border-border/40 hover:bg-card/60"
-                >
-                  <td className="py-2 px-2 font-mono">{o.payment_order_id}</td>
-                  <td className="py-2 px-2 text-muted">{o.created_dt}</td>
-                  <td className="py-2 px-2 text-muted">
-                    {o.paid_dt ?? <span className="text-warn">—</span>}
-                  </td>
-                  <td className="py-2 px-2 text-right">{fmtRub(o.amount)}</td>
-                  <td className="py-2 px-2 text-muted">{o.currency}</td>
-                  <td
-                    className={
-                      "py-2 px-2 " +
-                      (o.status === "paid"
-                        ? "text-success"
-                        : o.status === "processing"
-                        ? "text-warn"
-                        : "text-muted")
-                    }
-                  >
-                    {o.status}
-                  </td>
-                  <td className="py-2 px-2 text-muted truncate max-w-xs">
-                    {o.bank_comment}
-                  </td>
-                  <td className="py-2 px-2">
-                    <button
-                      className="text-error/70 hover:text-error text-xs"
-                      onClick={() => handleDelete(o.payment_order_id)}
-                      title="Удалить заявку"
-                    >
-                      ×
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {(ordersQ.data?.items ?? []).length === 0 && (
-                <tr>
-                  <td colSpan={8} className="text-center text-muted py-4">
-                    Заявок за выбранный период нет — загрузите XLSX выше.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+          <PaymentOrdersTable
+            items={ordersQ.data?.items ?? []}
+            scope="ausn"
+            onDelete={handleDelete}
+          />
+          {(ordersQ.data?.items ?? []).length === 0 && (
+            <div className="text-center text-muted py-4">
+              Заявок за выбранный период нет — загрузите XLSX выше.
+            </div>
+          )}
         </section>
       )}
     </div>

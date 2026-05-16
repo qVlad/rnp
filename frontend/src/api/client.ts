@@ -336,11 +336,19 @@ export const api = {
         payment_order_id: string;
         created_dt: string;
         paid_dt: string | null;
+        period_end: string | null;
+        report_type: string | null;
         amount: number;
+        upd_delivery_amount: number;
+        buyout_returns_amount: number;
         currency: string;
         status: string;
         status_raw: string | null;
         bank_comment: string | null;
+        excluded_from_tax: boolean;
+        excluded_from_ausn: boolean;
+        excluded_from_usn: boolean;
+        exclusion_reason: string | null;
       }>;
       totals: { count: number; paid_sum: number; processing_sum: number };
     }>(`/api/tax-report/payment-orders?from=${from}&to=${to}`),
@@ -367,7 +375,7 @@ export const api = {
     });
   },
 
-  paymentOrderDelete: (payment_order_id: string) =>
+paymentOrderDelete: (payment_order_id: string) =>
     request<{ deleted: string }>(
       `/api/tax-report/payment-orders/${encodeURIComponent(payment_order_id)}`,
       { method: "DELETE" },
@@ -412,6 +420,21 @@ export const api = {
     }
     qs.set("include_archived", String(includeArchived));
     return request(`/api/units?${qs}`);
+  },
+
+  unitSizes: (
+    nm_id: number,
+    range: { period: "day" | "week" | "month" } | { start: string; end: string },
+  ) => {
+    const qs = new URLSearchParams();
+    if ("period" in range) {
+      const days = range.period === "day" ? 1 : range.period === "week" ? 7 : 30;
+      qs.set("days_back", String(days));
+    } else {
+      qs.set("start_date", range.start);
+      qs.set("end_date", range.end);
+    }
+    return request(`/api/units/${nm_id}/sizes?${qs}`);
   },
 
   // ── Products (archive) ──
@@ -978,5 +1001,100 @@ export const api = {
       yellow_skus: number;
       green_skus: number;
     }>(`/api/checklist?${qs.toString()}`);
+  },
+
+  adsHeatmap: (from: string, to: string, metric: string) => {
+    const qs = new URLSearchParams({ from, to, metric });
+    return request(`/api/ads/heatmap?${qs}`);
+  },
+
+  dashboardTodayVsYesterday: (mode: "preliminary" | "final" | "hybrid" = "preliminary") =>
+    request(`/api/dashboard/today-vs-yesterday?mode=${mode}`),
+
+  // ── View presets (saved layouts) ──
+  viewPresetsList: (scope: string) =>
+    request<{
+      items: Array<{
+        id: number;
+        scope: string;
+        name: string;
+        state: any;
+        is_default: boolean;
+        created_at: string;
+        updated_at: string;
+      }>;
+    }>(`/api/view-presets?scope=${encodeURIComponent(scope)}`),
+
+  viewPresetCreate: (scope: string, name: string, state: any, is_default = false) =>
+    request(`/api/view-presets`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope, name, state, is_default }),
+    }),
+
+  viewPresetUpdate: (
+    id: number,
+    patch: { name?: string; state?: any; is_default?: boolean },
+  ) =>
+    request(`/api/view-presets/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }),
+
+  viewPresetDelete: (id: number) =>
+    request(`/api/view-presets/${id}`, { method: "DELETE" }),
+
+  // ── Notifications ──
+  notificationsList: () => request<any>(`/api/notifications/rules`),
+  notificationsCreate: (payload: any) =>
+    request(`/api/notifications/rules`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  notificationsUpdate: (id: number, patch: any) =>
+    request(`/api/notifications/rules/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }),
+  notificationsDelete: (id: number) =>
+    request(`/api/notifications/rules/${id}`, { method: "DELETE" }),
+  notificationsEvaluate: (dry_run = true) =>
+    request<any>(`/api/notifications/evaluate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dry_run }),
+    }),
+
+  taxReportUsn: (from: string, to: string, tax_rate?: number, vat_rate?: number) => {
+    const qs = new URLSearchParams({ from, to });
+    if (tax_rate != null) qs.set("tax_rate", String(tax_rate));
+    if (vat_rate != null) qs.set("vat_rate", String(vat_rate));
+    return request(`/api/tax-report/usn?${qs}`);
+  },
+
+  paymentOrderToggleExclude: (
+    payment_order_id: string,
+    scope: "ausn" | "usn" | "both",
+    excluded: boolean,
+    reason: string | null = null,
+  ) =>
+    request(
+      `/api/tax-report/payment-orders/${encodeURIComponent(payment_order_id)}/exclude`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope, excluded, reason }),
+      },
+    ),
+
+  paymentCalendar: (params: { days_forward?: number; pay_offset_days?: number; initial_balance?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.days_forward != null) qs.set("days_forward", String(params.days_forward));
+    if (params.pay_offset_days != null) qs.set("pay_offset_days", String(params.pay_offset_days));
+    if (params.initial_balance != null) qs.set("initial_balance", String(params.initial_balance));
+    return request(`/api/cash-flow/calendar?${qs}`);
   },
 };

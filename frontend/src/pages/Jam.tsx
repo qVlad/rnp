@@ -398,7 +398,7 @@ function Field({ label, children }: { label: string; children: any }) {
 
 function Mini({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-bg/40 rounded p-2">
+    <div className="bg-surface-2/50 rounded p-2">
       <div className="text-muted">{label}</div>
       <div className="font-mono text-white">{value}</div>
     </div>

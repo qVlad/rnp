@@ -2,6 +2,10 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
+import {
+  ColumnVisibilityButton,
+  useColumnVisibility,
+} from "@/components/ColumnVisibility";
 import { DateRangePicker } from "@/components/DateRangePicker";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -83,6 +87,7 @@ export default function PnL() {
   const [from, setFrom] = useState(daysAgo(29));
   const [to, setTo] = useState(today());
   const [granularity, setGranularity] = useState<"day" | "week" | "month">("day");
+  const { isHidden: rowHidden } = useColumnVisibility("pnl.rows.hidden.v1");
 
   const q = useQuery({
     queryKey: ["pnl", from, to, granularity],
@@ -122,6 +127,13 @@ export default function PnL() {
               </button>
             ))}
           </div>
+          <ColumnVisibilityButton
+            storageKey="pnl.rows.hidden.v1"
+            columns={lines
+              .filter((l) => l.kind !== "section" && l.key)
+              .map((l) => ({ key: l.key as string, label: l.label }))}
+            buttonLabel="Строки"
+          />
         </div>
       </div>
 
@@ -129,7 +141,7 @@ export default function PnL() {
         {q.isLoading && <div className="text-muted">Загрузка…</div>}
         {q.data && (
           <table className="w-full text-sm">
-            <thead>
+            <thead className="sticky top-0 bg-surface-2 z-10 shadow-[0_1px_0_var(--border)]">
               <tr className="text-muted text-xs uppercase">
                 <th className="text-left p-2 sticky left-0 bg-surface">Статья</th>
                 {q.data.rows.map((r: any) => (
@@ -143,10 +155,10 @@ export default function PnL() {
               </tr>
             </thead>
             <tbody>
-              {lines.map((line, idx) => {
+              {lines.filter((line) => !rowHidden(line.key || "")).map((line, idx) => {
                 if (line.kind === "section") {
                   return (
-                    <tr key={`s-${idx}`} className="border-t border-border bg-bg/30">
+                    <tr key={`s-${idx}`} className="border-t border-border bg-surface-2/40">
                       <td
                         className="p-2 sticky left-0 bg-surface text-xs uppercase tracking-wide text-muted font-semibold"
                         colSpan={(q.data.rows?.length ?? 0) + 2}
@@ -160,7 +172,7 @@ export default function PnL() {
                 return (
                   <tr
                     key={k}
-                    className={`border-t border-border ${line.emphasize ? "bg-bg/40 font-semibold" : ""}`}
+                    className={`border-t border-border ${line.emphasize ? "bg-surface-2/50 font-semibold" : ""}`}
                   >
                     <td
                       className="p-2 sticky left-0 bg-surface"

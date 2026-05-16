@@ -23,3 +23,13 @@ dist/
 
 # local scratch (WB exports, debug dumps, etc.)
 tmp/
+
+# DB backups (do not commit)
+*.sql.gz
+backup-*.gz
+pgdata-*.gz
+
+# Claude artifacts
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+.claude/scheduled_tasks/

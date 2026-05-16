@@ -24,7 +24,7 @@ export default function VersionBadge({ floating = false }: { floating?: boolean 
     (q.data.build_time
       ? `\nСобрано: ${new Date(q.data.build_time).toLocaleString("ru")}`
       : "");
-  const base = "text-xs text-muted font-mono px-2 py-1 rounded border border-border bg-bg/40";
+  const base = "text-xs text-muted font-mono px-2 py-1 rounded border border-border bg-surface-2/50";
   if (floating) {
     return (
       <div

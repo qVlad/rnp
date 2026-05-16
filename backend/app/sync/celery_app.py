@@ -30,6 +30,7 @@ celery_app.conf.update(
         "app.sync.tasks.sync_ad_campaign_details": {"queue": "advert"},
         "app.sync.tasks.sync_ad_stats": {"queue": "advert"},
         "app.sync.tasks.send_daily_digest": {"queue": "default"},
+        "app.sync.tasks.evaluate_notifications": {"queue": "default"},
     },
     # Beat schedule design constraints:
     #   - WB Statistics: docs say 1 req/min sustained, but the *real* burst
@@ -136,6 +137,11 @@ celery_app.conf.update(
         "tg-daily-digest": {
             "task": "app.sync.tasks.send_daily_digest",
             "schedule": crontab(hour=9, minute=0),
+        },
+        # Notification rules — каждый час, оценка active rules + send to TG
+        "notifications-hourly": {
+            "task": "app.sync.tasks.evaluate_notifications",
+            "schedule": crontab(minute=10),
         },
     },
 )

@@ -13,9 +13,12 @@ import {
 } from "@tanstack/react-table";
 import { api } from "@/api/client";
 import { DateRangePicker } from "@/components/DateRangePicker";
+import { DndTableProvider, SortableHeader } from "@/components/DraggableHeader";
+import { Icon } from "@/components/Icon";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
 
 const COL_VIS_KEY = "units.columnVisibility.v2";
+const COL_ORDER_KEY = "units.columnOrder.v1";
 
 type Period = "day" | "week" | "month";
 type Mode =
@@ -82,6 +85,11 @@ interface UnitRow {
   vat: number;
   net_profit: number;
   profitability_pct: number;
+  // Forecast (P2.2 «до выкупа»)
+  forecast_units: number;
+  forecast_revenue: number;
+  forecast_commission: number;
+  forecast_margin: number;
   // Stock
   stock: number;
   turnover_days: number | null;
@@ -125,6 +133,34 @@ export default function Units() {
     pageSize: 50,
   });
   const [hoverPhoto, setHoverPhoto] = useState<{ nm: number; x: number; y: number } | null>(null);
+  const [density, setDensity] = useState<"comfortable" | "compact" | "dense">(() => {
+    try {
+      const v = localStorage.getItem("units.density.v1");
+      return (v === "comfortable" || v === "compact" || v === "dense") ? v : "comfortable";
+    } catch {
+      return "comfortable";
+    }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("units.density.v1", density); } catch {}
+  }, [density]);
+  const cellPad = density === "dense" ? "p-1" : density === "compact" ? "p-1.5" : "p-2";
+  const [sizesModalFor, setSizesModalFor] = useState<number | null>(null);
+  const [columnOrder, setColumnOrder] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(COL_ORDER_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+  useEffect(() => {
+    try {
+      if (columnOrder.length > 0) {
+        localStorage.setItem(COL_ORDER_KEY, JSON.stringify(columnOrder));
+      }
+    } catch {}
+  }, [columnOrder]);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(() => {
     try {
       const raw = localStorage.getItem(COL_VIS_KEY);
@@ -172,6 +208,7 @@ export default function Units() {
         vat_rate: number;
       }>,
   });
+  const d = q.data;
   const archiveMut = useMutation({
     mutationFn: (nm_id: number) => api.archiveProduct(nm_id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["units"] }),
@@ -250,16 +287,16 @@ export default function Units() {
   };
 
   const filtered = useMemo(() => {
-    if (!q.data) return [];
+    if (!d) return [];
     const s = filter.trim().toLowerCase();
-    if (!s) return q.data.items;
-    return q.data.items.filter(
+    if (!s) return d.items;
+    return d.items.filter(
       (r) =>
         String(r.nm_id).includes(s) ||
         (r.vendor_code || "").toLowerCase().includes(s) ||
         (r.subject || "").toLowerCase().includes(s),
     );
-  }, [q.data, filter]);
+  }, [d, filter]);
 
   // ИТОГО — по отфильтрованным.
   const totals = useMemo(() => {
@@ -428,6 +465,35 @@ export default function Units() {
         },
       },
       {
+        header: () => (
+          <span title="Прогноз маржи на ВСЕ orders периода при историческом % выкупа. Покажет «прибыль до выкупа» для свежих периодов, где report_detail ещё не закрылся.">
+            Прогноз маржи
+          </span>
+        ),
+        accessorKey: "forecast_margin",
+        cell: (c) => {
+          const v = c.getValue<number>();
+          if (v == null) return "—";
+          return (
+            <span className={v >= 0 ? "text-success" : "text-danger"}>
+              {fmtRub(v)}
+            </span>
+          );
+        },
+      },
+      {
+        header: () => (
+          <span title="Сколько единиц должно выкупиться при historical buyout%. = total_orders × buyout_pct/100">
+            Прогноз шт
+          </span>
+        ),
+        accessorKey: "forecast_units",
+        cell: (c) => {
+          const v = c.getValue<number>();
+          return v != null ? fmtNum(Math.round(v)) : "—";
+        },
+      },
+      {
         header: "Чистая прибыль",
         accessorKey: "net_profit",
         cell: (c) => {
@@ -507,17 +573,28 @@ export default function Units() {
             );
           }
           return (
-            <button
-              className="btn text-xs whitespace-nowrap"
-              title="Архивировать SKU"
-              onClick={() => {
-                if (confirm(`Архивировать SKU ${r.nm_id}?`)) {
-                  archiveMut.mutate(r.nm_id);
-                }
-              }}
-            >
-              📦
-            </button>
+            <div className="flex gap-1">
+              <button
+                className="btn text-xs whitespace-nowrap"
+                title="Разбивка по размерам"
+                aria-label="Разбивка по размерам"
+                onClick={() => setSizesModalFor(r.nm_id)}
+              >
+                <Icon name="ruler" size={12} />
+              </button>
+              <button
+                className="btn text-xs whitespace-nowrap"
+                title="Архивировать SKU"
+                aria-label="Архивировать SKU"
+                onClick={() => {
+                  if (confirm(`Архивировать SKU ${r.nm_id}?`)) {
+                    archiveMut.mutate(r.nm_id);
+                  }
+                }}
+              >
+                <Icon name="archive" size={12} />
+              </button>
+            </div>
           );
         },
       },
@@ -528,9 +605,10 @@ export default function Units() {
   const table = useReactTable({
     data: filtered,
     columns,
-    state: { sorting, columnVisibility, pagination },
+    state: { sorting, columnVisibility, columnOrder, pagination },
     onSortingChange: setSorting,
     onColumnVisibilityChange: setColumnVisibility,
+    onColumnOrderChange: setColumnOrder,
     onPaginationChange: setPagination,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
@@ -592,6 +670,26 @@ export default function Units() {
               Применить
             </button>
           </div>
+          <div className="flex items-center gap-1" role="group" aria-label="Плотность таблицы">
+            {(["comfortable", "compact", "dense"] as const).map((d) => (
+              <button
+                key={d}
+                type="button"
+                className={`btn text-xs ${density === d ? "border-accent text-accent" : ""}`}
+                onClick={() => setDensity(d)}
+                aria-pressed={density === d}
+                title={
+                  d === "comfortable"
+                    ? "Comfortable — 36px строка"
+                    : d === "compact"
+                      ? "Compact — 28px строка"
+                      : "Dense — 22px строка (Bloomberg mode)"
+                }
+              >
+                {d === "comfortable" ? "Comf" : d === "compact" ? "Comp" : "Dense"}
+              </button>
+            ))}
+          </div>
           <div className="relative" ref={colMenuRef}>
             <button
               className="btn"
@@ -647,7 +745,7 @@ export default function Units() {
                     return (
                       <label
                         key={c.id}
-                        className="flex items-center gap-2 text-sm py-1 px-1 hover:bg-bg/40 rounded cursor-pointer"
+                        className="flex items-center gap-2 text-sm py-1 px-1 hover:bg-surface-2/50 rounded cursor-pointer"
                       >
                         <input
                           type="checkbox"
@@ -665,11 +763,11 @@ export default function Units() {
         </div>
       </div>
 
-      {q.data && (
+      {d && (
         <div className="card text-xs text-muted leading-relaxed">
-          Период {q.data.start_date} – {q.data.end_date} ({q.data.days_back} дн).
-          Налог: {q.data.tax_system} {q.data.tax_rate}%
-          {q.data.vat_payer ? ` · НДС ${q.data.vat_rate}%` : " · без НДС"}
+          Период {d.start_date} – {d.end_date} ({d.days_back} дн).
+          Налог: {d.tax_system} {d.tax_rate}%
+          {d.vat_payer ? ` · НДС ${d.vat_rate}%` : " · без НДС"}
           {" · "}Налог считается per-nm как approximation; точные цифры — на странице P&L.
         </div>
       )}
@@ -694,37 +792,49 @@ export default function Units() {
         style={{ maxHeight: "calc(100vh - 180px)" }}
       >
         {q.isLoading && <div className="text-muted">Загрузка…</div>}
-        {q.data && (
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-surface z-20">
-              {table.getHeaderGroups().map((hg) => (
-                <tr key={hg.id} className="text-muted text-[10px] uppercase">
-                  {hg.headers.map((h) => {
-                    const tip = COL_TOOLTIPS[h.column.id];
-                    return (
-                      <th
-                        key={h.id}
-                        onClick={h.column.getToggleSortingHandler()}
-                        title={tip}
-                        className={`text-right p-2 select-none whitespace-nowrap hover:text-white border-b border-border ${
-                          h.column.getCanSort() ? "cursor-pointer" : ""
-                        } ${tip ? "cursor-help" : ""}`}
-                      >
-                        {flexRender(h.column.columnDef.header, h.getContext())}
-                        {tip && <span className="ml-1 opacity-50">ⓘ</span>}
-                        {h.column.getIsSorted() === "asc" && " ▲"}
-                        {h.column.getIsSorted() === "desc" && " ▼"}
-                      </th>
-                    );
-                  })}
-                </tr>
-              ))}
-            </thead>
+        {d && (
+          <DndTableProvider
+            columnIds={table.getAllLeafColumns().map((c) => c.id)}
+            onReorder={(order) => setColumnOrder(order)}
+          >
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-surface-2 z-20 shadow-[0_1px_0_var(--border)]">
+                {table.getHeaderGroups().map((hg) => (
+                  <tr key={hg.id} className="text-muted text-[10px] uppercase">
+                    {hg.headers.map((h) => {
+                      const tip = COL_TOOLTIPS[h.column.id];
+                      return (
+                        <SortableHeader
+                          key={h.id}
+                          id={h.column.id}
+                          className={`text-right p-2 select-none whitespace-nowrap hover:text-white border-b border-border ${
+                            h.column.getCanSort() ? "cursor-pointer" : ""
+                          } ${tip ? "cursor-help" : ""}`}
+                        >
+                          <span
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const handler = h.column.getToggleSortingHandler();
+                              if (handler) handler(e);
+                            }}
+                            title={tip}
+                          >
+                            {flexRender(h.column.columnDef.header, h.getContext())}
+                            {tip && <span className="ml-1 opacity-50">ⓘ</span>}
+                            {h.column.getIsSorted() === "asc" && " ▲"}
+                            {h.column.getIsSorted() === "desc" && " ▼"}
+                          </span>
+                        </SortableHeader>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </thead>
             <tbody>
               {table.getRowModel().rows.map((r) => (
-                <tr key={r.id} className="border-t border-border hover:bg-bg/40">
+                <tr key={r.id} className="border-t border-border hover:bg-surface-2/50">
                   {r.getVisibleCells().map((c) => (
-                    <td key={c.id} className="p-2 whitespace-nowrap text-right font-mono text-xs">
+                    <td key={c.id} className={`${cellPad} whitespace-nowrap text-right font-mono text-xs`}>
                       {flexRender(c.column.columnDef.cell, c.getContext())}
                     </td>
                   ))}
@@ -732,7 +842,7 @@ export default function Units() {
               ))}
               {/* ИТОГО — динамически по видимым колонкам */}
               {filtered.length > 0 && (
-                <tr className="border-t-2 border-accent bg-bg/60 font-semibold sticky bottom-0">
+                <tr className="border-t-2 border-accent bg-surface-2/70 font-semibold sticky bottom-0">
                   {table.getVisibleLeafColumns().map((col, idx) => {
                     const id = col.id;
                     let content: any = null;
@@ -858,9 +968,21 @@ export default function Units() {
               )}
             </tbody>
           </table>
+          </DndTableProvider>
         )}
         <PaginationFooter table={table} />
       </div>
+      {sizesModalFor !== null && (
+        <SizesModal
+          nm_id={sizesModalFor}
+          range={
+            mode.kind === "custom" && customStart && customEnd
+              ? { start: customStart, end: customEnd }
+              : { period: mode.kind === "custom" ? "month" : (mode.period as "day" | "week" | "month") }
+          }
+          onClose={() => setSizesModalFor(null)}
+        />
+      )}
     </div>
   );
 }
@@ -924,6 +1046,101 @@ function PaginationFooter({ table }: { table: any }) {
         >
           »
         </button>
+      </div>
+    </div>
+  );
+}
+
+function SizesModal({
+  nm_id,
+  range,
+  onClose,
+}: {
+  nm_id: number;
+  range: { period: "day" | "week" | "month" } | { start: string; end: string };
+  onClose: () => void;
+}) {
+  const q = useQuery<any>({
+    queryKey: ["unit-sizes", nm_id, range],
+    queryFn: () => api.unitSizes(nm_id, range),
+  });
+  const d: any = q.data;
+  const sizes: any[] = d?.sizes || [];
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-bg border border-border rounded-lg shadow-xl max-w-3xl w-full max-h-[80vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex justify-between items-center p-4 border-b border-border">
+          <div>
+            <div className="text-lg font-semibold">Размеры SKU #{nm_id}</div>
+            {d && (
+              <div className="text-xs text-muted">
+                {d.vendor_code} · {d.brand} · {d.start_date} — {d.end_date}
+              </div>
+            )}
+          </div>
+          <button className="btn text-xs" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+        <div className="p-4">
+          {q.isLoading && <div className="text-muted">Загрузка…</div>}
+          {q.error && (
+            <div className="text-danger">Ошибка: {String((q.error as any).message)}</div>
+          )}
+          {!q.isLoading && sizes.length === 0 && (
+            <div className="text-muted">Нет данных за выбранный период.</div>
+          )}
+          {sizes.length > 0 && (
+            <table className="w-full text-sm">
+              <thead className="text-xs uppercase text-muted">
+                <tr className="border-b border-border">
+                  <th className="p-2 text-left">Размер</th>
+                  <th className="p-2 text-right">Заказы</th>
+                  <th className="p-2 text-right">Выкупы</th>
+                  <th className="p-2 text-right">% выкупа</th>
+                  <th className="p-2 text-right">Возвраты</th>
+                  <th className="p-2 text-right">Выручка нетто</th>
+                  <th className="p-2 text-right">К перечислению</th>
+                  <th className="p-2 text-right">Остаток</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sizes.map((s: any) => (
+                  <tr key={s.tech_size} className="border-b border-border/50">
+                    <td className="p-2 font-mono">{s.tech_size}</td>
+                    <td className="p-2 text-right">{fmtNum(s.orders)}</td>
+                    <td className="p-2 text-right">{fmtNum(s.qty_sale)}</td>
+                    <td className="p-2 text-right">
+                      <span
+                        className={
+                          s.buyout_pct >= 35 ? "text-success" : s.buyout_pct > 0 ? "text-warning" : ""
+                        }
+                      >
+                        {fmtPct(s.buyout_pct)}
+                      </span>
+                    </td>
+                    <td className="p-2 text-right">{fmtNum(s.qty_return)}</td>
+                    <td className="p-2 text-right">{fmtRub(s.revenue_net)}</td>
+                    <td className="p-2 text-right">{fmtRub(s.ppvz_net)}</td>
+                    <td className="p-2 text-right">{fmtNum(s.stock)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {d?.stock_snapshot_dt && (
+            <div className="text-xs text-muted mt-3">
+              Остатки на {d.stock_snapshot_dt}. Размер «—» — для строк WB-отчёта без маппинга по barcode.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

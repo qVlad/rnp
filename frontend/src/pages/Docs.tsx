@@ -390,13 +390,13 @@ const ARTICLES: Article[] = [
         </p>
         <ul className="list-disc list-inside space-y-1">
           <li>
-            <b className="text-yellow-400">Артефакты выручки</b> — самозаказ /
+            <b className="text-warn">Артефакты выручки</b> — самозаказ /
             самовыкуп / раздача. Это <i>фиктивные</i> продажи (накрутка
             рейтинга, бартер). Сумма <b>вычитается</b> из чистой выручки —
             чтобы P&L отражал только реальные деньги.
           </li>
           <li>
-            <b className="text-emerald-400">Сторонний канал доставки</b> — DBS
+            <b className="text-success">Сторонний канал доставки</b> — DBS
             и rFBS. Это <i>реальные</i> продажи через свою логистику, которые
             WB не показывает в /supplier/sales. Сумма <b>добавляется</b> к
             выручке.
@@ -606,7 +606,7 @@ export default function Docs() {
                           className={`text-left text-sm py-1 px-2 rounded-md w-full ${
                             a.id === active?.id
                               ? "bg-accent/10 text-accent"
-                              : "hover:bg-bg/40 text-white"
+                              : "hover:bg-surface-2/50 text-white"
                           }`}
                           onClick={() => setActiveId(a.id)}
                         >

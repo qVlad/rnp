@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { PeriodProvider } from "@/contexts/PeriodContext";
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import PnL from "./pages/PnL";
@@ -10,6 +11,10 @@ import Supplies from "./pages/Supplies";
 import Units from "./pages/Units";
 import Settings from "./pages/Settings";
 import RevenueCorrections from "./pages/RevenueCorrections";
+import AdsHeatmap from "./pages/AdsHeatmap";
+import PaymentCalendar from "./pages/PaymentCalendar";
+import TaxReportUsn, { TaxReportUsnVat5, TaxReportUsnVat7 } from "./pages/TaxReportUsn";
+import Notifications from "./pages/Notifications";
 import ExternalMarketing from "./pages/ExternalMarketing";
 import Opex from "./pages/Opex";
 import CostHistory from "./pages/CostHistory";
@@ -83,6 +88,7 @@ function DirectorOrHead({ children }: { children: React.ReactNode }) {
 export default function App() {
   return (
     <AuthProvider>
+      <PeriodProvider>
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
@@ -114,6 +120,30 @@ export default function App() {
             }
           />
           <Route
+            path="tax-report-usn"
+            element={
+              <DirectorOrHead>
+                <TaxReportUsn />
+              </DirectorOrHead>
+            }
+          />
+          <Route
+            path="tax-report-usn-vat5"
+            element={
+              <DirectorOrHead>
+                <TaxReportUsnVat5 />
+              </DirectorOrHead>
+            }
+          />
+          <Route
+            path="tax-report-usn-vat7"
+            element={
+              <DirectorOrHead>
+                <TaxReportUsnVat7 />
+              </DirectorOrHead>
+            }
+          />
+          <Route
             path="supplies"
             element={
               <DirectorOrHead>
@@ -135,6 +165,23 @@ export default function App() {
             element={
               <DirectorOrHead>
                 <ExternalMarketing />
+              </DirectorOrHead>
+            }
+          />
+          <Route path="ads-heatmap" element={<AdsHeatmap />} />
+          <Route
+            path="notifications"
+            element={
+              <DirectorOrHead>
+                <Notifications />
+              </DirectorOrHead>
+            }
+          />
+          <Route
+            path="payment-calendar"
+            element={
+              <DirectorOrHead>
+                <PaymentCalendar />
               </DirectorOrHead>
             }
           />
@@ -222,6 +269,7 @@ export default function App() {
           />
         </Route>
       </Routes>
+      </PeriodProvider>
     </AuthProvider>
   );
 }

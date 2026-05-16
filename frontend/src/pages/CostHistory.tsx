@@ -270,7 +270,7 @@ export default function CostHistory() {
                 </tbody>
               </table>
               <button
-                className="btn text-xs mt-3 text-yellow-400"
+                className="btn text-xs mt-3 text-warn"
                 onClick={() => {
                   const fromDate = prompt(
                     "Удалить все записи начиная с даты (YYYY-MM-DD):",

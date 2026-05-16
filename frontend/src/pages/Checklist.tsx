@@ -23,7 +23,7 @@ const STATUS_BG: Record<Status, string> = {
   red: "bg-danger/15 border-danger/40",
   yellow: "bg-warn/15 border-warn/40",
   green: "bg-success/15 border-success/40",
-  ok: "bg-bg/40 border-border",
+  ok: "bg-surface-2/50 border-border",
 };
 
 export default function Checklist() {
@@ -137,7 +137,7 @@ export default function Checklist() {
                     <tr
                       key={it.nm_id}
                       onClick={() => setSelectedNm(it.nm_id)}
-                      className={`border-t border-border cursor-pointer hover:bg-bg/40 ${
+                      className={`border-t border-border cursor-pointer hover:bg-surface-2/50 ${
                         sel ? "bg-accent/10" : ""
                       }`}
                     >
@@ -303,7 +303,7 @@ function KpiBox({
 
 function Mini({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-bg/40 rounded p-2">
+    <div className="bg-surface-2/50 rounded p-2">
       <div className="text-muted">{label}</div>
       <div className="font-mono text-white">{value}</div>
     </div>

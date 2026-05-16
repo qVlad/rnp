@@ -2,34 +2,134 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Design Tokens ──────────────────────────────────────────
+   Все цвета через CSS variables, чтобы:
+   1) recharts / inline styles могли использовать var(--...)
+   2) можно было менять palette без пересборки Tailwind
+   3) семантика «success/warn/danger» отделена от прямых цветов
+*/
 :root {
   color-scheme: dark;
+
+  /* Surfaces (5 уровней) */
+  --bg: #0a0c10;          /* канва */
+  --surface: #11141b;     /* карточки, инпуты */
+  --surface-2: #171b24;   /* thead, hover-row, sticky-bg */
+  --border: #252a36;      /* hairline 1px */
+  --border-hi: #363c4b;   /* hover-border */
+
+  /* Text */
+  --fg: #e8eaef;          /* base text */
+  --muted: #8b93a3;       /* secondary text (AA 5.1:1) */
+  --faint: #5b6271;       /* tertiary / disabled */
+
+  /* Brand + semantic */
+  --accent: #8b6eff;
+  --accent-subtle: rgba(139, 110, 255, 0.12);
+  --success: #34d399;
+  --success-subtle: rgba(52, 211, 153, 0.10);
+  --warn: #fbbf24;
+  --warn-subtle: rgba(251, 191, 36, 0.10);
+  --danger: #f87171;
+  --danger-subtle: rgba(248, 113, 113, 0.10);
+
+  /* Focus */
+  --focus-ring: #8b6eff;
 }
 
 html, body, #root {
   height: 100%;
-  background: #0b0d12;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: "Inter Variable", "Inter", system-ui, sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #262a35; border-radius: 5px; }
-::-webkit-scrollbar-thumb:hover { background: #3a3f4d; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-hi); }
 
+/* Глобальный focus-visible: видимый outline для tab-навигации */
+*:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+*:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Reduce motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Components ─── */
 @layer components {
   .card {
     @apply bg-surface border border-border rounded-lg p-4;
   }
   .btn {
-    @apply px-3 py-2 bg-surface border border-border rounded-md text-sm hover:border-accent transition-colors;
+    @apply inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-surface border border-border rounded-md text-sm text-fg
+           transition-colors duration-150 ease-out
+           hover:border-accent hover:bg-surface-2
+           disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:bg-surface;
   }
   .btn-primary {
-    @apply px-3 py-2 bg-accent text-white border border-accent rounded-md text-sm hover:opacity-90 transition-opacity;
+    @apply inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-accent text-white border border-accent rounded-md text-sm
+           transition-opacity duration-150 ease-out hover:opacity-90
+           disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .input {
+    @apply bg-surface border border-border rounded-md text-sm text-fg px-3 py-2
+           placeholder:text-muted
+           transition-colors duration-150 ease-out
+           focus:outline-none focus:border-accent
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .input:focus-visible {
+    box-shadow: 0 0 0 3px var(--accent-subtle);
   }
   .nav-link {
-    @apply px-3 py-2 rounded-md text-sm text-muted hover:text-white hover:bg-surface;
+    @apply px-3 py-2 rounded-md text-sm text-muted
+           transition-colors duration-150 ease-out
+           hover:text-fg hover:bg-surface;
   }
   .nav-link.active {
-    @apply text-white bg-surface border border-border;
+    @apply text-fg bg-surface border border-border;
   }
+  .hairline {
+    @apply border-t border-border;
+  }
+  /* tabular-nums по умолчанию для всех элементов с font-mono */
+  .font-mono, code, kbd, pre, samp {
+    font-variant-numeric: tabular-nums;
+  }
+  /* H1-стандарт: 24px / 32px line-height. Перебивает inline text-xl font-semibold */
+  h1 {
+    @apply text-h2 font-semibold leading-tight;
+  }
+  h2 {
+    @apply text-h3 font-semibold leading-tight;
+  }
+}
+
+/* Animations */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface) 0%,
+    var(--surface-2) 50%,
+    var(--surface) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
 }

@@ -21,6 +21,10 @@
 | `OWNER_GUIDE.md` / `ADMIN_GUIDE.md` / `MANAGER_GUIDE.md` | пользовательские гайды |
 | **Frontend `/glossary`** | формулы и источники всех KPI — самый быстрый способ войти в курс терминов |
 | `README.md` | quick start для нового человека |
+| **`TAX_AUSN_BANK.md`** | АУСН 8% (cash-basis) — методика Стаса (новое) |
+| **`TAX_USN_BANK.md`** | УСН 6% (3 режима: без НДС / + НДС 5% / + НДС 7%) — методика Стаса (новое) |
+| **`TAX_BOOKKEEPER_OVERRIDES.md`** | per-regime флаги исключения отчётов из налоговой базы (новое) |
+| **`UI_UX_AUDIT.md`** | 20 задач от art-director'а, все закрыты — для регрессий и понимания дизайн-системы (новое) |
 
 ## Первые 3 команды на старте
 
@@ -32,7 +36,104 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
-## Что сделано в последней сессии (2026-05-14 / 15, ветка `main`, коммиты `ad1fa4f` … `f9a35e1`)
+## ⭐ Что сделано в текущей сессии (2026-05-15 / 16) — **ВСЁ ЗАДЕПЛОЕНО НА ПРОД, НЕ ЗАКОММИЧЕНО**
+
+> `git status` покажет ~40 modified + 20 untracked. Деплоено через `./scripts/remote.sh deploy` напрямую с локальной копии (без git push). Перед коммитом — проверь diff, особенно sed-замены цветов в pages.
+
+### Документация (новые файлы, читать в новой сессии)
+
+| Файл | Назначение |
+|---|---|
+| [`TAX_AUSN_BANK.md`](TAX_AUSN_BANK.md) | АУСН-Доходы 8% (cash-basis по методике бухгалтера Стаса). Покрывает миграции 0024-0025, формулу, кейсы расхождения. |
+| [`TAX_USN_BANK.md`](TAX_USN_BANK.md) | УСН-Доходы 6% (без НДС / + НДС 5% / + НДС 7%). Объясняет режим невозвратного НДС (176-ФЗ от 12.07.2024). |
+| [`TAX_BOOKKEEPER_OVERRIDES.md`](TAX_BOOKKEEPER_OVERRIDES.md) | Per-regime флаги исключения отчётов из налоговой базы (`excluded_from_ausn` / `excluded_from_usn`). Миграции 0027-0028. |
+| [`UI_UX_AUDIT.md`](UI_UX_AUDIT.md) | Полный отчёт art-director агента — 20 приоритезированных задач улучшения UI. Все 20 закрыты в этой сессии. |
+
+### Миграции БД 0024-0030
+
+| № | Таблица / поле | Зачем |
+|---|---|---|
+| 0024 | `wb_payment_order` | История платежей WB (импорт XLSX из ЛК) |
+| 0025 | +`period_end`, `report_type`, `upd_delivery_amount` | Для УПД доставки в АУСН/УСН расчётах |
+| 0026 | +`buyout_returns_amount` | Возвраты выкупы (AA-колонка в Стас xlsx) |
+| 0027 | +`excluded_from_tax`, `exclusion_reason` | Manual bookkeeper override |
+| 0028 | +`excluded_from_ausn`, `excluded_from_usn` | Per-regime exclusion (отчёт может быть исключён из УСН, но включён в АУСН) |
+| 0029 | `user_view_preset` | Сохранённые «пресеты» страниц (period+mode+hidden cols) |
+| 0030 | `notification_rule` | User-defined alert rules (stock/revenue/drr/returns thresholds) |
+
+### Новые сервисы / endpoints
+
+- `services/payment_calendar.py` + `/api/cash-flow/calendar` — прогноз баланса на 30 дн вперёд
+- `services/size_breakdown.py` + `/api/units/{nm_id}/sizes` — per-`tech_size` breakdown SKU
+- `services/tax_report_ausn.py` + `/api/tax-report/ausn` — АУСН 8% (cash-basis)
+- `services/tax_report_usn.py` + `/api/tax-report/usn?vat_rate=0|5|7` — УСН 6% (3 режима)
+- `services/notification_engine.py` + Celery beat (каждый час) + `/api/notifications/rules`
+- `api/ads.py` + `/api/ads/heatmap?metric=drr|spent|revenue|orders|clicks`
+- `api/view_presets.py` + `/api/view-presets` (CRUD сохранённых view-state)
+- `api/dashboard.py:get_today_vs_yesterday` — KPI delta
+
+### Новые страницы UI
+
+`/payment-calendar`, `/ads-heatmap`, `/notifications`, `/tax-report-usn`, `/tax-report-usn-vat5`, `/tax-report-usn-vat7`.
+
+### UI-инфраструктура (вся новая)
+
+- **CSS variables** в `styles.css` как единый источник цветов (var(--bg)/--surface-2/--accent etc.). Tailwind colors маппятся в var(--*) — менять палитру можно без пересборки.
+- **Sidebar 240px** вместо 32-link horizontal menu (collapsable `[` hotkey)
+- **Lucide icons** через `<Icon name="..." />` wrapper. Emoji удалены.
+- **Mono + tabular-nums** на цифрах. `font-mono { font-variant-numeric: tabular-nums }` глобально.
+- **Hero KPI** (32px) + compact KPIs на Dashboard
+- **Sticky-headers** с `shadow-[0_1px_0_var(--border)]`
+- **AlertsBar redesign** — border-l-3px без bg-tint, dismissable через localStorage
+- **Command palette `⌘K`** через `cmdk` — поиск страниц / SKU / actions
+- **Density toggle** на /units (comfortable / compact / dense)
+- **Drag-and-drop columns** на /units (`@dnd-kit`)
+- **ViewPresetsBar** — сохранять named layouts page-state
+- **Sharable view links** — URL-hash base64 кодирование state, кнопка «Скопировать ссылку»
+- **PDF/PNG export Dashboard** — `html2canvas` + `jspdf`
+- **TodayVsYesterdayStrip** — полоска на Dashboard
+- **PeriodProvider** + `usePeriod()` hook (provider wired в App, opt-in для страниц)
+- Generic компоненты: `<PageHeader>`, `<HelpIcon>`, `<Skeleton/EmptyState/ErrorState>`, `<ColumnVisibilityButton>` — opt-in adoption
+
+### Финансовые подтверждения (QA passes, копейка-в-копейку с бухгалтером Стасом)
+
+- **АУСН-8% Jan-Apr 2026**: Bank/ВЗЗ/УПД/База/Tax — все 4 месяца Δ = 0.00 ₽
+- **УСН-6% (без НДС) Jan-Apr 2026**: same — Δ = 0.00 ₽ (после флага `excluded_from_usn=true` на `realization-572437010`)
+- **УСН-6% + НДС 5%/7%**: формула `НДС = gross × rate / (100 + rate)`, проверена арифметика; жди подтверждения от бухгалтера что Variant A (НДС внутри цены) — корректный
+- **forecast_units** (P2.2): = `total_orders × buyout_pct / 100` верифицировано
+
+### Бизнес-данные на проде
+
+- 32 paid + 8 processing записей `wb_payment_order` (импорт из Стас xlsx через одноразовый SQL)
+- `excluded_from_usn=true` для `realization-572437010` (12-15..12-21 paid 01-12, фискально-годовой переход)
+- Стас-импортер из xlsx удалён по запросу — пользоваться только «Историей платежей WB» через `/tax-report-ausn`
+
+### Что НЕ сделано (осознанно)
+
+- Ozon / Я.Маркет integration
+- Batch-level FIFO COGS
+- Tariff plans / лимиты
+- Light theme / spring animations / mobile-first / i18n / AI-чат (per art-director recommendation)
+- Стас-XLSX importer (был удалён по запросу user)
+
+### Known issues / TODO
+
+- **WB ad_stats** обрывается ~2026-04-15 — quota WB на `/adv/v3/fullstats`. Beat будет подхватывать по graf'у.
+- **PeriodProvider retrofit** на конкретные страницы (Dashboard/Units/PnL/Tax\*) — opt-in, не сделан. Hook доступен через `usePeriod()`.
+- **`<PageHeader>` / `<Skeleton>` / `<HelpIcon>`** — компоненты есть, retrofit на 30 страниц не делал (механическая работа, риск регрессий).
+- **DnD columns** работает только на /units. P&L — нет (line items in fixed order).
+- **Bookkeeper подтверждение** для УСН+НДС: формула «НДС внутри цены» (variant A) vs «НДС сверху» (variant B) — нужно подтвердить с бухгалтером.
+
+### Архитектурные решения
+
+- **Все цвета через CSS-vars** — `recharts/chartTheme.ts`, `inline-style`, Tailwind единым source of truth.
+- **localStorage state** для UX: density, column visibility, column order, applied preset, dismissed alerts, sidebar collapsed.
+- **Per-regime tax flags** вместо одного: `excluded_from_ausn` + `excluded_from_usn` — позволяет бухгалтеру разные правила для АУСН и УСН.
+- **DnD-kit с restrict-to-horizontal** на колонки таблицы — sortable + sensors с distance:5 чтобы click-to-sort работал.
+
+---
+
+## Что сделано в предыдущей сессии (2026-05-14 / 15, ветка `main`, коммиты `ad1fa4f` … `f9a35e1`)
 
 Очень длинная сессия — 11 крупных блоков работы. Все коммиты в `main`, всё задеплоено на прод. Архивный снимок предыдущей сессии (multi-tenant + hardening) — в коммите `999cac2`.
 

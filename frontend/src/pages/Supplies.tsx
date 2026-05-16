@@ -154,7 +154,7 @@ export default function Supplies() {
 
       <section className="card overflow-auto">
         <table className="min-w-full text-xs">
-          <thead className="border-b border-border sticky top-0 bg-card">
+          <thead className="border-b border-border sticky top-0 bg-surface-2">
             <tr>
               <th className="text-left py-2 px-2">Дата</th>
               <th className="text-left py-2 px-2">nm_id</th>
@@ -170,7 +170,7 @@ export default function Supplies() {
           </thead>
           <tbody>
             {items.map((s) => (
-              <tr key={s.id} className="border-b border-border/40 hover:bg-card/60">
+              <tr key={s.id} className="border-b border-border/40 hover:bg-surface-2/60">
                 <td className="py-2 px-2 text-muted">{s.supply_date}</td>
                 <td className="py-2 px-2 font-mono">{s.nm_id ?? "—"}</td>
                 <td className="py-2 px-2 text-muted">{s.vendor_code || "—"}</td>
@@ -366,7 +366,7 @@ function SupplyEditor({ form, onChange, onCancel, onSave, isPending }: {
         </label>
         <div className="flex flex-col gap-1">
           <span className="text-muted uppercase">Сумма (qty × цена)</span>
-          <div className="input bg-card/40 text-success font-medium">
+          <div className="input bg-surface-2/40 text-success font-medium">
             {fmtRub(total)}
           </div>
         </div>

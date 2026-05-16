@@ -603,11 +603,11 @@ export default function Settings() {
               <div className="text-xs text-muted">Бот</div>
               <div className="text-sm">
                 {tgQ.data.bot_info ? (
-                  <span className="text-emerald-400">
+                  <span className="text-success">
                     @{tgQ.data.bot_info.username} ({tgQ.data.bot_info.first_name})
                   </span>
                 ) : (
-                  <span className="text-yellow-400">токен задан, но бот не отвечает</span>
+                  <span className="text-warn">токен задан, но бот не отвечает</span>
                 )}
               </div>
             </div>
@@ -616,7 +616,7 @@ export default function Settings() {
               <div className="text-sm">
                 {tgQ.data.chat_id ? (
                   <>
-                    <span className="text-emerald-400">id {tgQ.data.chat_id}</span>{" "}
+                    <span className="text-success">id {tgQ.data.chat_id}</span>{" "}
                     <button
                       className="btn text-xs ml-2"
                       onClick={() => {
@@ -629,7 +629,7 @@ export default function Settings() {
                     </button>
                   </>
                 ) : (
-                  <span className="text-yellow-400">
+                  <span className="text-warn">
                     не привязан — отправьте <code>/start</code> боту
                   </span>
                 )}
@@ -656,7 +656,7 @@ export default function Settings() {
                 Отправить тестовое сообщение
               </button>
               {tgTestMut.isSuccess && (
-                <span className="text-emerald-400 text-xs">✓ Отправлено</span>
+                <span className="text-success text-xs">✓ Отправлено</span>
               )}
               {tgTestMut.isError && (
                 <span className="text-red-400 text-xs">

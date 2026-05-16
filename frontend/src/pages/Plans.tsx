@@ -364,14 +364,14 @@ export default function Plans() {
                   pct == null
                     ? "text-muted"
                     : pct >= 100
-                    ? "text-emerald-400"
+                    ? "text-success"
                     : pct >= 80
-                    ? "text-yellow-400"
+                    ? "text-warn"
                     : "text-red-400";
                 return (
                   <div
                     key={key}
-                    className="border border-border rounded-md p-3 bg-bg/30"
+                    className="border border-border rounded-md p-3 bg-surface-2/40"
                   >
                     <div className="text-xs text-muted">{meta.label}</div>
                     <div className="text-sm mt-1">
@@ -396,13 +396,13 @@ export default function Plans() {
                     )}
                     {/* progress bar */}
                     {pct != null && (
-                      <div className="h-1.5 bg-bg/60 rounded mt-2 overflow-hidden">
+                      <div className="h-1.5 bg-surface-2/70 rounded mt-2 overflow-hidden">
                         <div
                           className={`h-full ${
                             pct >= 100
-                              ? "bg-emerald-500"
+                              ? "bg-success-subtle"
                               : pct >= 80
-                              ? "bg-yellow-500"
+                              ? "bg-warn-subtle"
                               : "bg-red-500"
                           }`}
                           style={{ width: `${Math.min(100, pct)}%` }}

@@ -212,13 +212,13 @@ function Entries() {
                   <td className="p-2">
                     {row.category_name}
                     {row.category_kind === "income" && (
-                      <span className="ml-2 text-emerald-400 text-xs">доход</span>
+                      <span className="ml-2 text-success text-xs">доход</span>
                     )}
                   </td>
                   <td className="p-2 text-right font-mono">{fmtRub(row.amount)}</td>
                   <td className="p-2 text-xs">
                     {row.category_in_operating ? (
-                      <span className="text-emerald-400">да</span>
+                      <span className="text-success">да</span>
                     ) : (
                       <span className="text-muted">только ДДС</span>
                     )}
@@ -404,7 +404,7 @@ function Categories() {
                   <td className="p-2">{c.name}</td>
                   <td className="p-2 text-xs">
                     {c.kind === "income" ? (
-                      <span className="text-emerald-400">доход</span>
+                      <span className="text-success">доход</span>
                     ) : (
                       "расход"
                     )}
@@ -412,20 +412,20 @@ function Categories() {
                   <td className="p-2 text-xs">{c.is_fixed ? "пост." : "перем."}</td>
                   <td className="p-2 text-xs">
                     {c.in_operating ? (
-                      <span className="text-emerald-400">да</span>
+                      <span className="text-success">да</span>
                     ) : (
                       <span className="text-muted">только ДДС</span>
                     )}
                   </td>
                   <td className="p-2 text-xs">
                     {c.cf_section === "operating" && (
-                      <span className="text-emerald-400">опер.</span>
+                      <span className="text-success">опер.</span>
                     )}
                     {c.cf_section === "investing" && (
                       <span className="text-blue-400">инв.</span>
                     )}
                     {c.cf_section === "financing" && (
-                      <span className="text-yellow-400">фин.</span>
+                      <span className="text-warn">фин.</span>
                     )}
                   </td>
                   <td className="p-2 text-xs">

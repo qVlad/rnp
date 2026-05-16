@@ -34,6 +34,9 @@ Single-tenant аналитика для одного селлера WB. Лока
 | Работаешь с WB API (rate-limits, sunset, retry) | [`WB_API_REFERENCE.md`](WB_API_REFERENCE.md) |
 | План на следующие сессии | [`ROADMAP.md`](ROADMAP.md) |
 | Свежая сессия, надо войти в курс | [`CONTINUE_HERE.md`](CONTINUE_HERE.md) |
+| Расчёт АУСН-Доходы 8% по методике бухгалтера (cash-basis) | [`TAX_AUSN_BANK.md`](TAX_AUSN_BANK.md) |
+| Расчёт УСН-Доходы 6% (без НДС / + НДС 5% / + НДС 7%) | [`TAX_USN_BANK.md`](TAX_USN_BANK.md) |
+| Ручное исключение отчётов из налоговой базы (per-regime флаги) | [`TAX_BOOKKEEPER_OVERRIDES.md`](TAX_BOOKKEEPER_OVERRIDES.md) |
 
 ## Стек
 
@@ -235,6 +238,12 @@ exclusive `end` — даст лишний день рекламы в Units (бы
 - Не коммитим без явного запроса.
 - Перед нетривиальными WB-правками — `WB_API_REFERENCE.md` § 3 (limits) и § 9 (sunset).
 - Финансовые правки → прогон qa-tester subagent'а.
+
+## UI conventions (обязательно)
+
+- **Календарь / выбор периода** — ВСЕГДА `<DateRangePicker from={...} to={...} onChange={...} />` из `frontend/src/components/DateRangePicker.tsx`. Не использовать сырые `<input type="date">` для выбора периода — на проверке. Если нужна одиночная дата, не диапазон — обсуждать в коде, не лепить native input.
+- Дропдауны, кнопки, карточки — переиспользуем существующие классы `.input`, `.btn`, `.card` из глобального CSS. Не создавать локальные стилизованные input'ы.
+- Number inputs (для оффсетов, дней, %) — `<input type="number" className="input">` OK, это не календарь.
 
 ## Permissions config
 

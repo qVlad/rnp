@@ -22,3 +22,10 @@ export const formatValue = (value: number, unit: string) => {
   if (unit === "%") return fmtPct(value);
   return fmtNum(value);
 };
+
+/** Arrow для дельты: ▲ при росте, ▼ при падении, '' при нуле/null. */
+export const arrowForDelta = (v: number | null | undefined): string => {
+  if (v == null || v === 0) return "";
+  return v > 0 ? "▲" : "▼";
+};
+

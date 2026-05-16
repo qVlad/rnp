@@ -120,14 +120,28 @@ async def _fetch_realization_aggregates(
     date_from: date,
     date_to: date,
 ) -> list[dict[str, Any]]:
-    """Группируем wb_report_detail по realization_id и собираем поля
-    отчёта: gross sale (retail_amount net), bank (ppvz_for_pay net),
-    период отчёта.
+    """Группируем wb_report_detail по realization_id, считаем все поля
+    нужные для методики Стаса (формулы выведены reverse-engineering xlsx
+    «Стас Разметка банка»):
 
-    Берём расширенный диапазон по report_date_to: [date_from − 30d, date_to + 30d]
-    чтобы захватить отчёты, чья pay_date_proxy = report_date_to + offset_days
-    может оказаться в нужном месяце даже если сам период отчёта — нет.
+        G (Продажа)         = retail_amount_net = SUM(retail_amount Продажа − Возврат)
+        Y (Тов. компенсация) = SUM(ppvz_for_pay) для supplier_oper_name
+                              ='Добровольная компенсация при возврате'
+        T (Итого к оплате)   = ppvz_for_pay_net + Y
+                              − SUM(delivery_rub) − SUM(storage_fee)
+                              − SUM(deduction) − SUM(penalty)
+        ВЗЗ (X)             = G − T + Y   ⇔   доход признанный через
+                              взаимозачёт услуг WB (комиссия + логистика +
+                              хранение + удержания + штрафы). Для отчётов
+                              «По выкупам» ВЗЗ обнуляется (методика Стаса).
+
+    «По выкупам» определяется через наличие соответствующей записи в
+    wb_redeem_notification (notification_number = realization_id).
+
+    Расширенный диапазон по report_date_to (±60 дней / +30 дней) — чтобы
+    захватить отчёты с paid_dt в нужном месяце даже если период раньше.
     """
+    is_dobr = WbReportDetail.supplier_oper_name == "Добровольная компенсация при возврате"
     sale_amt_net = (
         func.sum(case((OP_SALE, WbReportDetail.retail_amount), else_=0))
         - func.sum(case((OP_RETURN, WbReportDetail.retail_amount), else_=0))
@@ -136,11 +150,30 @@ async def _fetch_realization_aggregates(
         func.sum(case((OP_SALE, WbReportDetail.ppvz_for_pay), else_=0))
         - func.sum(case((OP_RETURN, WbReportDetail.ppvz_for_pay), else_=0))
     ).label("ppvz_net")
+    dobr_komp = func.sum(
+        case((is_dobr, WbReportDetail.ppvz_for_pay), else_=0)
+    ).label("dobr_komp")
+    # Прочие ppvz_for_pay строки (не Продажа, не Возврат, не Добровольная
+    # компенсация): «Корректировка эквайринга», «Компенсация скидки по
+    # программе лояльности» и пр. Эти движения тоже идут в Итого к оплате
+    # с их знаком (обычно мелкие корректировки ±). Учитываем для совпадения
+    # с расчётом бухгалтера до копейки.
+    other_ppvz = func.sum(
+        case(
+            (
+                ~OP_SALE & ~OP_RETURN & ~is_dobr,
+                WbReportDetail.ppvz_for_pay,
+            ),
+            else_=0,
+        )
+    ).label("other_ppvz")
+    delivery = func.sum(WbReportDetail.delivery_rub).label("delivery")
+    storage = func.sum(WbReportDetail.storage_fee).label("storage")
+    deduction = func.sum(WbReportDetail.deduction).label("deduction")
+    penalty = func.sum(WbReportDetail.penalty).label("penalty")
     returns_ppvz = func.sum(
         case((OP_RETURN, WbReportDetail.ppvz_for_pay), else_=0)
     ).label("returns_ppvz")
-    has_sale = func.bool_or(OP_SALE).label("has_sale")
-    has_return = func.bool_or(OP_RETURN).label("has_return")
 
     stmt = (
         select(
@@ -149,9 +182,13 @@ async def _fetch_realization_aggregates(
             WbReportDetail.report_date_to,
             sale_amt_net,
             ppvz_net,
+            dobr_komp,
+            other_ppvz,
+            delivery,
+            storage,
+            deduction,
+            penalty,
             returns_ppvz,
-            has_sale,
-            has_return,
         )
         .where(WbReportDetail.report_date_to.is_not(None))
         .where(WbReportDetail.report_date_to >= date_from - timedelta(days=60))
@@ -164,20 +201,41 @@ async def _fetch_realization_aggregates(
         .order_by(WbReportDetail.report_date_to)
     )
     rows = (await session.execute(stmt)).all()
+
+    # Загружаем realization_ids, которые числятся в wb_redeem_notification
+    # — это «По выкупам» отчёты.
+    from app.db.models import WbRedeemNotification  # noqa: WPS433
+    redeem_ids_stmt = select(WbRedeemNotification.notification_number)
+    redeem_ids = {
+        int(rid) for (rid,) in (await session.execute(redeem_ids_stmt)).all()
+        if rid and str(rid).isdigit()
+    }
+
     out: list[dict[str, Any]] = []
     for r in rows:
-        # Эвристика типа отчёта: если в realization есть строки только для
-        # «Возврат» (без «Продажа») — считаем «По выкупам». В реальности WB
-        # не даёт явный type через finance API; в xlsx бухгалтер видит его
-        # из «Тип отчета» в выгрузке Sheet1. Для tax-base разница лишь в
-        # bank-агрегате (по выкупам ВЗЗ обычно = 0).
-        report_type = "По выкупам" if (r.has_return and not r.has_sale) else "Основной"
+        rid = int(r.realization_id) if r.realization_id else None
+        report_type = "По выкупам" if rid in redeem_ids else "Основной"
+        sale_net = float(r.sale_net or 0)
+        ppvz = float(r.ppvz_net or 0)
+        dk = float(r.dobr_komp or 0)
+        other = float(r.other_ppvz or 0)
+        dlv = float(r.delivery or 0)
+        stg = float(r.storage or 0)
+        ded = float(r.deduction or 0)
+        pen = float(r.penalty or 0)
+        # T = Итого к оплате = sum(все ppvz_for_pay со знаками) − удержания.
+        # Включает Корректировка эквайринга и пр. (other_ppvz).
+        itogo = ppvz + dk + other - dlv - stg - ded - pen
+        # ВЗЗ = G − T + Y (для Основной) / 0 (для По выкупам, методика Стаса)
+        vzz = sale_net - itogo + dk if report_type == "Основной" else 0.0
         out.append({
-            "realization_id": r.realization_id,
+            "realization_id": rid,
             "report_date_from": r.report_date_from,
             "report_date_to": r.report_date_to,
-            "sale_net": float(r.sale_net or 0),
-            "ppvz_net": float(r.ppvz_net or 0),
+            "sale_net": sale_net,
+            "ppvz_net": ppvz,
+            "itogo_to_pay": itogo,
+            "vzz": vzz,
             "returns_ppvz": float(r.returns_ppvz or 0),
             "report_type": report_type,
         })
@@ -221,20 +279,42 @@ async def build_ausn_monthly_report(
         session, period_start, period_end
     )
 
-    # 1.5) Payment orders (история платежей из ЛК WB, импорт XLSX)
+    # 1.5) Payment orders — Bank-агрегат по paid_dt (только paid строки).
     po_stmt = (
         select(
             WbPaymentOrder.payment_order_id,
             WbPaymentOrder.paid_dt,
             WbPaymentOrder.amount,
             WbPaymentOrder.status,
+            WbPaymentOrder.period_end,
+            WbPaymentOrder.report_type,
+            WbPaymentOrder.upd_delivery_amount,
         )
         .where(WbPaymentOrder.paid_dt.is_not(None))
         .where(WbPaymentOrder.paid_dt >= period_start)
         .where(WbPaymentOrder.paid_dt <= period_end)
         .where(WbPaymentOrder.status == "paid")
+        # Bookkeeper override — не учитываем помеченные отчёты в Bank.
+        .where(WbPaymentOrder.excluded_from_ausn.is_(False))
     )
     po_rows = (await session.execute(po_stmt)).all()
+
+    # 1.6) УПД доставки бакетируется по period_end (а не paid_dt) — методика
+    # Стаса: услуги признаются когда оказаны. Отдельный запрос — независимый
+    # от paid_dt, чтобы захватить ещё неоплаченные отчёты с УПД.
+    upd_stmt = (
+        select(
+            WbPaymentOrder.period_end,
+            func.sum(WbPaymentOrder.upd_delivery_amount).label("upd"),
+        )
+        .where(WbPaymentOrder.upd_delivery_amount > 0)
+        .where(WbPaymentOrder.period_end.is_not(None))
+        .where(WbPaymentOrder.period_end >= period_start)
+        .where(WbPaymentOrder.period_end <= period_end)
+        .where(WbPaymentOrder.excluded_from_ausn.is_(False))
+        .group_by(WbPaymentOrder.period_end)
+    )
+    upd_rows = (await session.execute(upd_stmt)).all()
     has_payment_orders = len(po_rows) > 0
     # Решаем фактический источник
     if pay_date_source == "auto":
@@ -267,19 +347,18 @@ async def build_ausn_monthly_report(
         pay_date_proxy = rdt + timedelta(days=pay_offset_days)
         bank_month_proxy = _month_key(pay_date_proxy)
         vzz_month = _month_key(rdt)
-        sale_net = r["sale_net"]
-        ppvz_net = r["ppvz_net"]
-        vzz = max(0.0, sale_net - ppvz_net)  # удержания WB ≥ 0
+        itogo = r["itogo_to_pay"]
+        vzz = r["vzz"]  # уже = 0 для «По выкупам» из _fetch_realization_aggregates
 
         # Bank — только если effective_source='proxy' (если 'actual' —
         # bank-агрегат строим ниже из payment_orders).
         if effective_source == "proxy" and bank_month_proxy in monthly:
-            monthly[bank_month_proxy].bank += ppvz_net
+            monthly[bank_month_proxy].bank += itogo
             monthly[bank_month_proxy].realizations_count += 1
             monthly[bank_month_proxy].buyback_returns += r["returns_ppvz"]
 
-        # ВЗЗ — только для «Основной» (у «По выкупам» удержание = 0 в моделе Стаса)
-        if vzz_month in monthly and r["report_type"] == "Основной":
+        # ВЗЗ — по period_end_to месяца. vzz уже обнулён для «По выкупам».
+        if vzz_month in monthly:
             monthly[vzz_month].vzz_reports += vzz
 
         realization_rows.append(AusnReportRow(
@@ -288,24 +367,49 @@ async def build_ausn_monthly_report(
             report_date_to=rdt,
             pay_date_proxy=pay_date_proxy,
             report_type=r["report_type"],
-            sale_gross=sale_net,
-            bank_amount=ppvz_net,
-            vzz_amount=vzz if r["report_type"] == "Основной" else 0.0,
+            sale_gross=r["sale_net"],
+            bank_amount=itogo,
+            vzz_amount=vzz,
             month=bank_month_proxy,
         ))
 
-    # Bank-агрегат из payment_orders (если effective_source='actual')
+    # Bank-агрегат из payment_orders.paid (если 'actual').
+    # Бакетируется по paid_dt — это правило по умолчанию. Единственное
+    # исключение (методика Стаса для фискально-годового перехода): отчёт
+    # типа «Основной» с period_end в предыдущем календарном году НЕ
+    # включается в Bank нового года — он уже учтён в декларации за
+    # прошлый год. Для «По выкупам» этого правила нет (мелкие выкупные
+    # отчёты признаются cash-basis независимо от фискального года).
     if effective_source == "actual":
-        for poid, paid_dt, amount, status in po_rows:
-            m = _month_key(paid_dt)
-            if m in monthly:
-                monthly[m].bank += float(amount or 0)
-                monthly[m].realizations_count += 1
+        for poid, paid_dt, amount, status, p_end, p_rtype, _upd in po_rows:
+            target_month = _month_key(paid_dt)
+            # Фискально-годовой переход: исключаем Основной отчёты,
+            # период которых закрыт в прошлом году.
+            if (
+                p_end is not None
+                and p_rtype == "Основной"
+                and p_end.year < paid_dt.year
+            ):
+                continue
+            if target_month in monthly:
+                monthly[target_month].bank += float(amount or 0)
+                monthly[target_month].realizations_count += 1
 
-    for nd, amount in redeem_rows:
-        m = _month_key(nd)
-        if m in monthly:
-            monthly[m].upd_delivery += float(amount or 0)
+    # УПД доставки — приоритетно из payment_orders (Стас-стиль), fallback
+    # на wb_redeem_notification (total_sum_with_vat — ВНИМАНИЕ: это не
+    # совсем то же что Стас Z колонка; используется только если кастомных
+    # данных нет).
+    has_upd_from_payment_orders = bool(upd_rows)
+    if has_upd_from_payment_orders:
+        for p_end, upd in upd_rows:
+            m = _month_key(p_end)
+            if m in monthly:
+                monthly[m].upd_delivery += float(upd or 0)
+    else:
+        for nd, amount in redeem_rows:
+            m = _month_key(nd)
+            if m in monthly:
+                monthly[m].upd_delivery += float(amount or 0)
 
     # 5) База + налог
     for m, row in monthly.items():

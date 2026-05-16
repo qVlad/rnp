@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   CartesianGrid,
@@ -12,7 +12,16 @@ import {
 import { api } from "@/api/client";
 import KpiCard from "@/components/KpiCard";
 import AlertsBar from "@/components/AlertsBar";
+import {
+  ColumnVisibilityButton,
+  useColumnVisibility,
+} from "@/components/ColumnVisibility";
 import { DateRangePicker } from "@/components/DateRangePicker";
+import TodayVsYesterdayStrip from "@/components/TodayVsYesterdayStrip";
+import ViewPresetsBar from "@/components/ViewPresetsBar";
+import { exportToPdf, exportToPng } from "@/lib/exportPdf";
+import { Icon } from "@/components/Icon";
+import { chartTheme } from "@/lib/chartTheme";
 import { fmtNum, fmtRub } from "@/lib/format";
 
 type Period = "day" | "week" | "month";
@@ -69,9 +78,28 @@ export default function Dashboard() {
     setMode({ kind: "custom", start: customStart, end: customEnd });
   };
 
+  const dashboardRef = useRef<HTMLDivElement>(null);
+  const [exporting, setExporting] = useState<"pdf" | "png" | null>(null);
+  const doExport = async (kind: "pdf" | "png") => {
+    if (!dashboardRef.current) return;
+    setExporting(kind);
+    try {
+      if (kind === "pdf") {
+        await exportToPdf(dashboardRef.current, "rnp-dashboard", "RNP — Главное");
+      } else {
+        await exportToPng(dashboardRef.current, "rnp-dashboard");
+      }
+    } catch (e: any) {
+      alert(`Не удалось экспортировать: ${e?.message || e}`);
+    } finally {
+      setExporting(null);
+    }
+  };
+
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4" ref={dashboardRef}>
       <AlertsBar alerts={alertsQ.data?.alerts ?? []} />
+      <TodayVsYesterdayStrip />
 
       <div className="flex items-center justify-between">
         <div className="flex items-baseline gap-3 flex-wrap">
@@ -155,17 +183,50 @@ export default function Dashboard() {
             >
               Применить
             </button>
+            <div className="ml-2">
+              <ViewPresetsBar
+                scope="dashboard"
+                stateForSave={{
+                  dataMode,
+                  mode,
+                  customStart,
+                  customEnd,
+                  topBy,
+                  tsDays,
+                }}
+                applyState={(s: any) => {
+                  if (s.dataMode) setDataMode(s.dataMode);
+                  if (s.mode) setMode(s.mode);
+                  if (s.customStart) setCustomStart(s.customStart);
+                  if (s.customEnd) setCustomEnd(s.customEnd);
+                  if (s.topBy) setTopBy(s.topBy);
+                  if (s.tsDays) setTsDays(s.tsDays);
+                }}
+              />
+            </div>
+            <button
+              className="btn text-xs"
+              onClick={() => doExport("pdf")}
+              disabled={exporting !== null}
+              title="Снимок дашборда в PDF (одна страница A4 landscape, в т.ч. графики)"
+            >
+              <Icon name={exporting === "pdf" ? "spinner" : "pdf"} size={12} className={exporting === "pdf" ? "animate-spin" : ""} /> PDF
+            </button>
+            <button
+              className="btn text-xs"
+              onClick={() => doExport("png")}
+              disabled={exporting !== null}
+              title="Снимок дашборда в PNG"
+            >
+              <Icon name={exporting === "png" ? "spinner" : "png"} size={12} className={exporting === "png" ? "animate-spin" : ""} /> PNG
+            </button>
           </div>
         </div>
       </div>
 
       {dashQ.isLoading && <div className="text-muted">Загрузка…</div>}
       {dashQ.data && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {dashQ.data.kpis.map((k: any) => (
-            <KpiCard key={k.key} kpi={k} />
-          ))}
-        </div>
+        <DashboardKpiGrid kpis={dashQ.data.kpis} />
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
@@ -220,11 +281,11 @@ export default function Dashboard() {
             {tsQ.data && (
               <ResponsiveContainer>
                 <LineChart data={tsQ.data.rows}>
-                  <CartesianGrid stroke="#262a35" strokeDasharray="3 3" />
-                  <XAxis dataKey="date" stroke="#7d8492" fontSize={11} />
-                  <YAxis stroke="#7d8492" fontSize={11} />
+                  <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
+                  <XAxis dataKey="date" stroke={chartTheme.axis} fontSize={11} />
+                  <YAxis stroke={chartTheme.axis} fontSize={11} />
                   <Tooltip
-                    contentStyle={{ background: "#13161d", border: "1px solid #262a35" }}
+                    contentStyle={chartTheme.tooltipStyle}
                     formatter={(v: any, name: any) =>
                       name === "revenue" ? fmtRub(v) : fmtNum(v)
                     }
@@ -232,7 +293,7 @@ export default function Dashboard() {
                   <Line
                     type="monotone"
                     dataKey="revenue"
-                    stroke="#7c5cff"
+                    stroke={chartTheme.primary}
                     strokeWidth={2}
                     dot={false}
                     hide={!showRevenue}
@@ -240,7 +301,7 @@ export default function Dashboard() {
                   <Line
                     type="monotone"
                     dataKey="orders"
-                    stroke="#3ddc97"
+                    stroke={chartTheme.positive}
                     strokeWidth={2}
                     dot={false}
                     hide={!showOrders}
@@ -292,6 +353,41 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+const HERO_KEYS = new Set(["revenue_net", "net_profit", "margin_pct"]);
+
+function DashboardKpiGrid({ kpis }: { kpis: any[] }) {
+  const { isHidden } = useColumnVisibility("dashboard.kpi.hidden.v1");
+  const columns = kpis.map((k) => ({ key: k.key, label: k.label || k.key }));
+  const visible = kpis.filter((k) => !isHidden(k.key));
+  const heroes = visible.filter((k) => HERO_KEYS.has(k.key));
+  const rest = visible.filter((k) => !HERO_KEYS.has(k.key));
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex justify-end">
+        <ColumnVisibilityButton
+          storageKey="dashboard.kpi.hidden.v1"
+          columns={columns}
+          buttonLabel="KPI"
+        />
+      </div>
+      {heroes.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {heroes.map((k: any) => (
+            <KpiCard key={k.key} kpi={k} variant="hero" />
+          ))}
+        </div>
+      )}
+      {rest.length > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+          {rest.map((k: any) => (
+            <KpiCard key={k.key} kpi={k} variant="compact" />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

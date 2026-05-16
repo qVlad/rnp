@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { Icon } from "@/components/Icon";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
@@ -168,7 +169,7 @@ export default function PnLReconciliation() {
                 return (
                   <React.Fragment key={key}>
                   <tr
-                    className={`border-t border-border cursor-pointer hover:bg-bg/40 ${
+                    className={`border-t border-border cursor-pointer hover:bg-surface-2/50 ${
                       p.diff.alert ? "bg-danger/10" : ""
                     }`}
                     onClick={() => setExpanded(isOpen ? null : key)}
@@ -360,7 +361,7 @@ function WizardRow({ p, fees }: { p: any; fees: number }) {
 
             {p.diff.alert && (
               <div className="card border-danger/40 bg-danger/10 text-xs text-danger">
-                ⚠ Δ Выручка {p.diff.revenue_gross_pct.toFixed(2)}% превышает
+                <Icon name="warning" size={12} className="inline mr-1" />Δ Выручка {p.diff.revenue_gross_pct.toFixed(2)}% превышает
                 порог {`(`}
                 {fmtRub(p.diff.revenue_gross_abs)}
                 {`)`}. Возможные причины:

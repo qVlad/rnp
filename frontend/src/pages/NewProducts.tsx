@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Icon } from "@/components/Icon";
 import { fmtRub } from "@/lib/format";
 import {
   DEFAULT_MARKET,
@@ -136,7 +137,7 @@ export default function NewProducts() {
           <li>Справа — 4 сценария НДС. Переключай вкладки сравнения.</li>
         </ol>
         <div className="mt-2 text-warn">
-          ⚠ Данные хранятся локально в браузере, не на сервере. Не работает между устройствами и слетит при clear-cache.
+          <Icon name="warning" size={12} className="inline mr-1" />Данные хранятся локально в браузере, не на сервере. Не работает между устройствами и слетит при clear-cache.
         </div>
       </div>
 
@@ -156,7 +157,7 @@ export default function NewProducts() {
       )}
       {cbrError && (
         <section className="card text-xs text-warn">
-          ⚠ {cbrError} — используются ваши значения. Можно повторить через кнопку ↻ в параметрах.
+          <Icon name="warning" size={12} className="inline mr-1" />{cbrError} — используются ваши значения. Можно повторить через кнопку ↻ в параметрах.
         </section>
       )}
 

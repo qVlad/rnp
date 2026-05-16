@@ -5,8 +5,8 @@ import { fmtNum } from "@/lib/format";
 
 const URGENCY_STYLE: Record<string, { label: string; color: string }> = {
   critical: { label: "Критично", color: "bg-red-700/40 text-red-200" },
-  warning: { label: "Внимание", color: "bg-orange-700/40 text-orange-200" },
-  ok: { label: "ОК", color: "bg-emerald-700/40 text-emerald-200" },
+  warning: { label: "Внимание", color: "bg-orange-700/40 text-warn" },
+  ok: { label: "ОК", color: "bg-success-subtle/40 text-success" },
   no_sales: { label: "Без продаж", color: "bg-zinc-700/40 text-zinc-300" },
 };
 
@@ -255,7 +255,7 @@ export default function Supply() {
                   <>
                     <tr
                       key={it.nm_id}
-                      className="border-t border-border cursor-pointer hover:bg-bg/40"
+                      className="border-t border-border cursor-pointer hover:bg-surface-2/50"
                       onClick={() => toggle(it.nm_id)}
                     >
                       <td className="p-2 text-muted text-xs">
@@ -308,7 +308,7 @@ export default function Supply() {
                       </td>
                     </tr>
                     {isOpen && dist && (
-                      <tr key={`${it.nm_id}-exp`} className="bg-bg/40 border-t border-border/50">
+                      <tr key={`${it.nm_id}-exp`} className="bg-surface-2/50 border-t border-border/50">
                         <td colSpan={11} className="p-3">
                           <div className="text-xs text-muted mb-2">
                             Распределение по кластерам за {distQ.data?.irp_window ?? irpWin} дн.
@@ -339,7 +339,7 @@ export default function Supply() {
                                     <>
                                       <tr
                                         key={c.code}
-                                        className={`border-t border-border/40 ${hasSizes ? "cursor-pointer hover:bg-bg/60" : ""}`}
+                                        className={`border-t border-border/40 ${hasSizes ? "cursor-pointer hover:bg-surface-2/70" : ""}`}
                                         onClick={() => hasSizes && toggleCluster(it.nm_id, c.code)}
                                       >
                                         <td className="p-1.5 text-muted text-[10px]">
@@ -362,7 +362,7 @@ export default function Supply() {
                                         </td>
                                       </tr>
                                       {cOpen && hasSizes && (
-                                        <tr key={`${c.code}-sizes`} className="bg-bg/60">
+                                        <tr key={`${c.code}-sizes`} className="bg-surface-2/70">
                                           <td colSpan={6} className="p-2 pl-8">
                                             <table className="w-full text-[11px]">
                                               <thead>

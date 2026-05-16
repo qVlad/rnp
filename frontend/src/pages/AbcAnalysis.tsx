@@ -19,13 +19,13 @@ const PERIODS = [
 ];
 
 const ABC_COLOR: Record<string, string> = {
-  A: "bg-emerald-700/40 text-emerald-200",
-  B: "bg-yellow-700/40 text-yellow-200",
+  A: "bg-success-subtle/40 text-success",
+  B: "bg-warn-subtle/40 text-warn",
   C: "bg-zinc-700/40 text-zinc-300",
 };
 const XYZ_COLOR: Record<string, string> = {
   X: "bg-blue-700/40 text-blue-200",
-  Y: "bg-orange-700/40 text-orange-200",
+  Y: "bg-orange-700/40 text-warn",
   Z: "bg-red-700/40 text-red-200",
 };
 
@@ -154,9 +154,9 @@ export default function AbcAnalysis() {
                   <button
                     key={combo}
                     title={COMBO_HINT[combo] ?? ""}
-                    className={`text-center p-3 rounded border text-xs hover:bg-bg/60 ${
+                    className={`text-center p-3 rounded border text-xs hover:bg-surface-2/70 ${
                       active
-                        ? "border-accent bg-bg/40"
+                        ? "border-accent bg-surface-2/50"
                         : "border-border bg-surface"
                     }`}
                     onClick={() => setClassFilter(active ? "" : combo)}
