@@ -163,6 +163,9 @@ class WbApiClient:
         *,
         params: dict[str, Any] | None = None,
         json: Any = None,
+        files: dict[str, Any] | None = None,
+        data: dict[str, Any] | None = None,
+        extra_headers: dict[str, str] | None = None,
         max_retries: int = 4,
     ) -> Any:
         """Send an authenticated request to WB.
@@ -191,7 +194,20 @@ class WbApiClient:
         for attempt in range(1, max_retries + 1):
             await self._limiters[category].acquire()
             try:
-                resp = await client.request(method, url, params=params, json=json)
+                # `files`/`data` для multipart; `json` для обычных POST. Нельзя
+                # одновременно `json` и `files` — httpx ругнётся.
+                req_kwargs: dict[str, Any] = {"params": params}
+                if files is not None:
+                    req_kwargs["files"] = files
+                    if data is not None:
+                        req_kwargs["data"] = data
+                elif json is not None:
+                    req_kwargs["json"] = json
+                elif data is not None:
+                    req_kwargs["data"] = data
+                if extra_headers:
+                    req_kwargs["headers"] = extra_headers
+                resp = await client.request(method, url, **req_kwargs)
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError) as e:
                 last_exc = e
                 log.warning("WB transport error (%s) on %s, attempt %d", e, path, attempt)
@@ -301,3 +317,6 @@ class WbApiClient:
 
     async def post(self, path: str, category: Category, **kwargs) -> Any:
         return await self.request("POST", path, category, **kwargs)
+
+    async def put(self, path: str, category: Category, **kwargs) -> Any:
+        return await self.request("PUT", path, category, **kwargs)

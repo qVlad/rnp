@@ -201,6 +201,88 @@ async def fetch_advert_account_balance(client: WbApiClient) -> dict[str, Any]:
     }
 
 
+async def fetch_campaign_budget(
+    client: WbApiClient,
+    advert_id: int,
+) -> dict[str, Any] | None:
+    """`GET /adv/v1/budget?id=<advert_id>` — остаток бюджета **одной** кампании.
+
+    Не путать с `fetch_advert_account_balance` (выше) — там общий счёт
+    рекламного кабинета селлера (`/adv/v1/balance` без id).
+
+    Ответ WB (наблюдаемые формы):
+        {"total": int, "balance": int, "autoBudget": bool}
+        {"total": int, "balance": int, "auto": bool}
+    Поля в РУБЛЯХ. `total` — основной показатель остатка; для некоторых
+    типов кампаний только `balance`. Берём `total or balance`.
+
+    Возвращает `{"balance_rub": int, "auto_topup": bool}` или `None` при
+    любой ошибке/cooldown (caller — A/B budget poller — должен пережить
+    одиночный fail, кампания может быть в статусе где budget недоступен).
+    """
+    try:
+        data = await client.get(
+            "/adv/v1/budget",
+            category="advert",
+            params={"id": advert_id},
+        )
+    except Exception as e:
+        log.warning(
+            "fetch_campaign_budget(%d) failed: %s", advert_id, type(e).__name__
+        )
+        return None
+    if not isinstance(data, dict):
+        return None
+    balance = int(data.get("total") or data.get("balance") or 0)
+    auto_topup = bool(data.get("autoBudget") or data.get("auto") or False)
+    return {"balance_rub": balance, "auto_topup": auto_topup}
+
+
+async def deposit_campaign_budget(
+    client: WbApiClient,
+    advert_id: int,
+    sum_rub: int,
+    *,
+    source: int = 0,
+    enable_return: bool = True,
+) -> bool:
+    """`POST /adv/v1/budget/deposit?id=<advert_id>` — пополнение бюджета РК.
+
+    Параметры (по WB docs):
+        sum    — рубли (целое)
+        type   — источник средств: 0=баланс продавца (default), 1=бонусы
+        return — 1=включить «возврат если кампания закрыта», 0=не возвращать
+
+    Используется в A/B auto-topup: когда `wb_campaign_budget.balance` падает
+    ниже `abtest.budget_min_threshold`, переводим `budget_topup_amount` ₽
+    с проверкой дневного лимита `budget_daily_limit` и счётчика
+    `budget_topup_spent_today` (см. services/abtest/budget_cache.py).
+
+    Возвращает True если WB подтвердил (HTTP 200 без error-поля).
+    На исключении — False (caller лог-варнинг, в test_alert пишет).
+    """
+    try:
+        await client.post(
+            "/adv/v1/budget/deposit",
+            category="advert",
+            params={"id": advert_id},
+            json={"sum": int(sum_rub), "type": int(source), "return": 1 if enable_return else 0},
+        )
+        return True
+    except WbApiError as e:
+        log.warning(
+            "deposit_campaign_budget(%d, %d ₽) failed: %s — %s",
+            advert_id, sum_rub, e.status, (e.body or "")[:200],
+        )
+        return False
+    except Exception as e:
+        log.warning(
+            "deposit_campaign_budget(%d, %d ₽) failed: %s",
+            advert_id, sum_rub, type(e).__name__,
+        )
+        return False
+
+
 async def fetch_fullstats(
     client: WbApiClient,
     advert_ids: list[int],
