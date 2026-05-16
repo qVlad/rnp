@@ -395,8 +395,10 @@ function DashboardKpiGrid({
       const commission = v("commission_wb");
       const logistics = v("logistics_wb");
       const storage = v("storage_wb");
-      // В preliminary большая часть WB-полей null → fallback на одну строку.
       if (gross <= 0) return undefined;
+      // В preliminary режиме commission_wb/logistics/storage = 0 (нет данных),
+      // и composition схлопывается в «5% / 95% Прочее» — бесполезно. Скрываем.
+      if (commission + logistics + storage === 0) return undefined;
       return {
         total: gross,
         segments: [
@@ -437,6 +439,8 @@ function DashboardKpiGrid({
       const logistics = v("logistics_wb");
       const storage = v("storage_wb");
       if (revenue <= 0) return undefined;
+      // В preliminary WB-метрики 0 → бар становится «100% Прочее». Скрываем.
+      if (commission + logistics + storage === 0) return undefined;
       const knownOutflows = ad + commission + logistics + storage;
       const remainder = Math.max(0, revenue - profit - knownOutflows);
       return {
