@@ -7,7 +7,7 @@ report-detail table (1-2 day lag); see `pnl_builder.py`.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -938,6 +938,30 @@ async def _sold_units_and_cogs(
     return float(units), float(cogs)
 
 
+async def _ad_cost_by_day(
+    session: AsyncSession,
+    start: datetime,
+    end: datetime,
+    nm_sub: Any | None,
+) -> dict[date, float]:
+    """Daily WB ad spend over [start, end). Brand-scoped if nm_sub given."""
+    stmt = (
+        select(
+            WbAdStatsDaily.stat_date.label("day"),
+            func.coalesce(func.sum(WbAdStatsDaily.sum_spent), 0).label("ad_cost"),
+        )
+        .where(
+            WbAdStatsDaily.stat_date >= start.date(),
+            WbAdStatsDaily.stat_date < end.date(),
+        )
+        .group_by(WbAdStatsDaily.stat_date)
+    )
+    if nm_sub is not None:
+        stmt = stmt.where(WbAdStatsDaily.nm_id.in_(nm_sub))
+    rows = (await session.execute(stmt)).all()
+    return {r.day: _f(r.ad_cost) for r in rows}
+
+
 async def revenue_timeseries(
     session: AsyncSession,
     days: int = 30,
@@ -950,6 +974,7 @@ async def revenue_timeseries(
     start = end - timedelta(days=days)
 
     nm_sub = _nm_id_subq(brands)
+    ad_by_day = await _ad_cost_by_day(session, start, end, nm_sub)
 
     if mode == "final":
         bucket = func.date_trunc("day", WbReportDetail.sale_dt).label("day")
@@ -978,7 +1003,14 @@ async def revenue_timeseries(
             stmt = stmt.where(WbReportDetail.nm_id.in_(nm_sub))
         rows = (await session.execute(stmt)).all()
         return [
-            {"date": r.day.isoformat(), "revenue": _f(r.revenue), "orders": int(r.orders or 0)}
+            {
+                "date": r.day.date().isoformat() if hasattr(r.day, "date") else r.day.isoformat(),
+                "revenue": _f(r.revenue),
+                "orders": int(r.orders or 0),
+                "ad_cost": ad_by_day.get(
+                    r.day.date() if hasattr(r.day, "date") else r.day, 0.0
+                ),
+            }
             for r in rows
         ]
 
@@ -1008,7 +1040,12 @@ async def revenue_timeseries(
         stmt = stmt.where(WbOrder.nm_id.in_(nm_sub))
     rows = (await session.execute(stmt)).all()
     return [
-        {"date": r.day.date().isoformat(), "revenue": _f(r.revenue), "orders": int(r.orders or 0)}
+        {
+            "date": r.day.date().isoformat(),
+            "revenue": _f(r.revenue),
+            "orders": int(r.orders or 0),
+            "ad_cost": ad_by_day.get(r.day.date(), 0.0),
+        }
         for r in rows
     ]
 

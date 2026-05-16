@@ -155,7 +155,7 @@ export const api = {
     request<{
       days: number;
       mode: "preliminary" | "final" | "hybrid";
-      rows: { date: string; revenue: number; orders: number }[];
+      rows: { date: string; revenue: number; orders: number; ad_cost: number }[];
     }>(`/api/dashboard/timeseries?days=${days}&mode=${mode}`),
   topSkus: (
     range: { period: "day" | "week" | "month" } | { start: string; end: string },

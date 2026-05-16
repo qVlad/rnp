@@ -11,6 +11,9 @@ import {
 } from "recharts";
 import { api } from "@/api/client";
 import KpiCard from "@/components/KpiCard";
+import MetricDrilldownModal, {
+  type MetricKey,
+} from "@/components/MetricDrilldownModal";
 import AlertsBar from "@/components/AlertsBar";
 import {
   ColumnVisibilityButton,
@@ -226,7 +229,7 @@ export default function Dashboard() {
 
       {dashQ.isLoading && <div className="text-muted">Загрузка…</div>}
       {dashQ.data && (
-        <DashboardKpiGrid kpis={dashQ.data.kpis} />
+        <DashboardKpiGrid kpis={dashQ.data.kpis} mode={dataMode} />
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
@@ -359,12 +362,19 @@ export default function Dashboard() {
 
 const HERO_KEYS = new Set(["revenue_net", "net_profit", "margin_pct"]);
 
-function DashboardKpiGrid({ kpis }: { kpis: any[] }) {
+function DashboardKpiGrid({
+  kpis,
+  mode,
+}: {
+  kpis: any[];
+  mode: "preliminary" | "final" | "hybrid";
+}) {
   const { isHidden } = useColumnVisibility("dashboard.kpi.hidden.v1");
   const columns = kpis.map((k) => ({ key: k.key, label: k.label || k.key }));
   const visible = kpis.filter((k) => !isHidden(k.key));
   const heroes = visible.filter((k) => HERO_KEYS.has(k.key));
   const rest = visible.filter((k) => !HERO_KEYS.has(k.key));
+  const [drillMetric, setDrillMetric] = useState<MetricKey | null>(null);
   return (
     <div className="flex flex-col gap-3">
       <div className="flex justify-end">
@@ -377,16 +387,33 @@ function DashboardKpiGrid({ kpis }: { kpis: any[] }) {
       {heroes.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {heroes.map((k: any) => (
-            <KpiCard key={k.key} kpi={k} variant="hero" />
+            <KpiCard
+              key={k.key}
+              kpi={k}
+              variant="hero"
+              onDrillDown={setDrillMetric}
+            />
           ))}
         </div>
       )}
       {rest.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
           {rest.map((k: any) => (
-            <KpiCard key={k.key} kpi={k} variant="compact" />
+            <KpiCard
+              key={k.key}
+              kpi={k}
+              variant="compact"
+              onDrillDown={setDrillMetric}
+            />
           ))}
         </div>
+      )}
+      {drillMetric && (
+        <MetricDrilldownModal
+          metric={drillMetric}
+          mode={mode}
+          onClose={() => setDrillMetric(null)}
+        />
       )}
     </div>
   );

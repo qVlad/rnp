@@ -12,6 +12,15 @@ interface Kpi {
   tooltip?: string;
 }
 
+// KPI keys that have a per-day drill-down timeseries available.
+// Click on these → opens MetricDrilldownModal.
+export const DRILLDOWN_METRIC: Record<string, "revenue" | "orders" | "ad_cost"> = {
+  revenue_gross: "revenue",
+  revenue_net: "revenue",
+  orders: "orders",
+  ad_cost: "ad_cost",
+};
+
 // Metrics where increase = bad (red on rise, green on fall).
 const LOWER_IS_BETTER = new Set([
   "ad_cost",
@@ -25,7 +34,17 @@ const LOWER_IS_BETTER = new Set([
 
 type Variant = "hero" | "default" | "compact";
 
-export default function KpiCard({ kpi, variant = "default" }: { kpi: Kpi; variant?: Variant }) {
+export default function KpiCard({
+  kpi,
+  variant = "default",
+  onDrillDown,
+}: {
+  kpi: Kpi;
+  variant?: Variant;
+  onDrillDown?: (metric: "revenue" | "orders" | "ad_cost") => void;
+}) {
+  const drillMetric = DRILLDOWN_METRIC[kpi.key];
+  const isClickable = !!drillMetric && !!onDrillDown;
   const positive = (kpi.change_pct ?? 0) >= 0;
   const lowerIsBetter = LOWER_IS_BETTER.has(kpi.key);
   const changeColor =
@@ -51,9 +70,26 @@ export default function KpiCard({ kpi, variant = "default" }: { kpi: Kpi; varian
         ? "text-lg font-semibold"
         : "text-2xl font-semibold";
   return (
-    <div className={`card flex flex-col gap-1.5 relative group ${sizeCls}`}>
+    <div
+      className={`card flex flex-col gap-1.5 relative group ${sizeCls} ${
+        isClickable
+          ? "cursor-pointer hover:border-accent/60 hover:bg-surface-2/40 transition-colors"
+          : ""
+      }`}
+      onClick={isClickable ? () => onDrillDown!(drillMetric!) : undefined}
+      title={isClickable ? "Открыть график за период" : undefined}
+    >
       <div className="text-tiny text-muted uppercase tracking-wide flex items-center gap-1">
         <span className="truncate">{kpi.label}</span>
+        {isClickable && (
+          <span
+            className="text-muted/60 text-[10px]"
+            aria-hidden="true"
+            title="клик для drill-down"
+          >
+            ↗
+          </span>
+        )}
         {kpi.tooltip && (
           <Link
             to={`/glossary#${kpi.key}`}
