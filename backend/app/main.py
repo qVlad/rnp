@@ -5,6 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, ORJSONResponse
 
 from app.api import (
+    abtest,
+    abtest_uploads,
     ads,
     analytics,
     artificial_orders,
@@ -29,6 +31,7 @@ from app.api import (
     season_plan,
     settings,
     supplies,
+    sync_status,
     tax_report,
     tenant_settings,
     units,
@@ -185,3 +188,6 @@ app.include_router(supplies.router)
 app.include_router(checklist.router)
 app.include_router(season_plan.router)
 app.include_router(jam.router)
+app.include_router(sync_status.router)
+app.include_router(abtest.router)
+app.include_router(abtest_uploads.router)

@@ -58,6 +58,10 @@ services:
     # via docker internal network. Backend stays out of the public internet.
     expose:
       - "8000"
+    volumes:
+      # A/B-test photo variants (multipart uploads from API, read by rotation
+      # worker). Same volume mounted on worker-default below.
+      - abtest_photos:/app/storage/photos
 
   worker-stats:
     image: rnp-app:latest
@@ -73,6 +77,13 @@ services:
     # IMPORTANT: concurrency=1 here. WB Statistics rate limit is per-token, not
     # per-process — multiple parallel processes would multiply the request rate.
     command: celery -A app.sync.celery_app:celery_app worker -Q stats -n stats@%h -l info -c 1
+    # Graceful shutdown: SIGTERM → warm shutdown (дождаться текущей задачи)
+    # → SIGKILL только через 30 мин. report_detail backfill за весь год может
+    # идти ~50 мин, но он попадает в очередь stats и обычно длится 5-15 мин.
+    # Если задача всё-таки не успеет: acks_late + reject_on_worker_lost вернут
+    # её в очередь, новый worker подберёт.
+    stop_grace_period: 1800s
+    stop_signal: SIGTERM
 
   worker-advert:
     image: rnp-app:latest
@@ -86,6 +97,8 @@ services:
       redis:
         condition: service_healthy
     command: celery -A app.sync.celery_app:celery_app worker -Q advert -n advert@%h -l info -c 1
+    stop_grace_period: 1800s
+    stop_signal: SIGTERM
 
   worker-default:
     image: rnp-app:latest
@@ -99,6 +112,11 @@ services:
       redis:
         condition: service_healthy
     command: celery -A app.sync.celery_app:celery_app worker -Q default -n default@%h -l info -c 2
+    stop_grace_period: 1800s
+    stop_signal: SIGTERM
+    volumes:
+      # rotation worker читает фото-варианты при ротации (POST /content/v3/media/file)
+      - abtest_photos:/app/storage/photos
 
   beat:
     image: rnp-app:latest
@@ -134,3 +152,4 @@ services:
 
 volumes:
   pgdata:
+  abtest_photos:
