@@ -1006,3 +1006,359 @@ class UserViewPreset(Base, TenantScopedMixin):
             "tenant_id", "user_id", "scope", "name", name="uq_user_view_preset_name"
         ),
     )
+
+
+# ----------------------------------------------------------------------
+# A/B testing — портировано из отдельного сервиса wbab (Next.js + Prisma).
+# Тест меняет фотографии WB-карточки между N вариантами по триггеру
+# (показы / время / расход бюджета РК). По завершении считается Z-test +
+# Wilson CI на CTR/CR/Buyout — победитель применяется навсегда.
+# WbAccount из wbab свёрнут в Tenant (1:1) — токен в tenants.wb_token.
+# ----------------------------------------------------------------------
+
+
+class AbTest(Base, TenantScopedMixin):
+    """A/B-тест одной WB-карточки (nm_id) с N вариантами фото."""
+
+    __tablename__ = "abtest"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL")
+    )
+    # FK на products(nm_id) — нет смысла иметь тест без карточки.
+    nm_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("products.nm_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # draft | running | paused | completed | cancelled
+    status: Mapped[str] = mapped_column(String(16), default="draft", index=True)
+    # VIEWS | TIME | BUDGET
+    trigger_mode: Mapped[str] = mapped_column(String(16), default="VIEWS")
+    # Значение триггера: показов на вариант (VIEWS) | минут (TIME) | ₽ (BUDGET)
+    trigger_value: Mapped[int] = mapped_column(Integer, nullable=False)
+    # ANY | ADV_ONLY | BOTH — источник трафика для атрибуции
+    traffic_source: Mapped[str] = mapped_column(String(16), default="ANY")
+    # PHOTO (только главное фото) | FUNNEL (вся фото-воронка)
+    test_mode: Mapped[str] = mapped_column(String(16), default="PHOTO")
+    # WB advertId для ADV_ONLY-тестов
+    campaign_id: Mapped[int | None] = mapped_column(BigInteger)
+    # Тип РК: 9=авто, 8=поиск+каталог, 5=поиск, 4=каталог
+    campaign_type: Mapped[int] = mapped_column(Integer, default=9)
+    min_sample_size: Mapped[int] = mapped_column(Integer, default=1500)
+    confidence_level: Mapped[Decimal] = mapped_column(
+        Numeric(4, 3), default=Decimal("0.95")
+    )
+    keep_leaders_after_24h: Mapped[bool] = mapped_column(Boolean, default=False)
+    leaders_culled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Снапшот фото карточки на момент старта (для "Остановить и вернуть исходное").
+    # Формат: [{order: 1, url: "...", path: "...", ext: "jpg"}, ...]
+    original_photos: Mapped[list | None] = mapped_column(JSONB)
+    # Автопополнение баланса РК (надстройка над WB, для ADV_ONLY)
+    budget_auto_topup: Mapped[bool] = mapped_column(Boolean, default=False)
+    budget_min_threshold: Mapped[int] = mapped_column(Integer, default=500)
+    budget_topup_amount: Mapped[int] = mapped_column(Integer, default=1000)
+    budget_daily_limit: Mapped[int] = mapped_column(Integer, default=10000)
+    budget_topup_spent_today: Mapped[int] = mapped_column(Integer, default=0)
+    budget_topup_reset_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AbTestVariant(Base, TenantScopedMixin):
+    """Вариант теста — комплект фотографий с лейблом A/B/C/D."""
+
+    __tablename__ = "abtest_variant"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    abtest_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("abtest.id", ondelete="CASCADE"), index=True
+    )
+    label: Mapped[str] = mapped_column(String(8), nullable=False)  # "A".."Z"
+    eliminated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("abtest_id", "label", name="uq_abtest_variant_label"),
+    )
+
+
+class AbTestVariantPhoto(Base, TenantScopedMixin):
+    """Одно фото варианта. photo_order=1 — главное, 2..N — доп/инфографика."""
+
+    __tablename__ = "abtest_variant_photo"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    variant_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("abtest_variant.id", ondelete="CASCADE"), index=True
+    )
+    photo_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Относительный путь в STORAGE_PATH (default: /app/storage/photos)
+    photo_path: Mapped[str] = mapped_column(Text, nullable=False)
+    content_type: Mapped[str] = mapped_column(String(64), default="image/jpeg")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "variant_id", "photo_order", name="uq_abtest_variant_photo_order"
+        ),
+    )
+
+
+class AbTestRotation(Base, TenantScopedMixin):
+    """Журнал ротаций — каждое применение варианта к WB-карточке."""
+
+    __tablename__ = "abtest_rotation"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    abtest_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("abtest.id", ondelete="CASCADE"), index=True
+    )
+    variant_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("abtest_variant.id", ondelete="CASCADE"), index=True
+    )
+    applied_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    success: Mapped[bool] = mapped_column(Boolean, default=False)
+    wb_response: Mapped[dict | None] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+    # URL главного фото на WB после ротации — для детекции ручных правок
+    wb_photo_url_after: Mapped[str | None] = mapped_column(Text)
+
+
+class AbTestAlert(Base, TenantScopedMixin):
+    """Предупреждения по тесту (ручные правки фото на WB, ошибки ротации)."""
+
+    __tablename__ = "abtest_alert"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    abtest_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("abtest.id", ondelete="CASCADE"), index=True
+    )
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    resolved: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class AbTestEvent(Base, TenantScopedMixin):
+    """Журнал действий: variant_eliminated, variant_returned, winner_applied, test_stopped."""
+
+    __tablename__ = "abtest_event"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    abtest_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("abtest.id", ondelete="CASCADE"), index=True
+    )
+    variant_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("abtest_variant.id", ondelete="SET NULL")
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    source: Mapped[str] = mapped_column(String(16), default="manual")  # manual | auto
+    actor_user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL")
+    )
+    # `metadata` — зарезервированное имя в SQLAlchemy DeclarativeBase, поэтому event_metadata.
+    event_metadata: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
+class AbTestDailyStat(Base, TenantScopedMixin):
+    """Per-variant per-day per-source статистика (источник: nm-report | adv)."""
+
+    __tablename__ = "abtest_daily_stat"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    variant_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("abtest_variant.id", ondelete="CASCADE"), index=True
+    )
+    stat_date: Mapped[date] = mapped_column(Date, nullable=False)
+    source: Mapped[str] = mapped_column(String(16), default="nm-report")
+    impressions: Mapped[int] = mapped_column(Integer, default=0)
+    clicks: Mapped[int] = mapped_column(Integer, default=0)
+    cart_adds: Mapped[int] = mapped_column(Integer, default=0)
+    orders: Mapped[int] = mapped_column(Integer, default=0)
+    revenue: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal(0))
+    ad_spend: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal(0))
+    ctr: Mapped[Decimal] = mapped_column(Numeric(8, 6), default=Decimal(0))
+    cr: Mapped[Decimal] = mapped_column(Numeric(8, 6), default=Decimal(0))
+    # Buyout/cancel из CSV DETAIL_HISTORY_REPORT (требует Jam)
+    buyouts: Mapped[int] = mapped_column(Integer, default=0)
+    cancels: Mapped[int] = mapped_column(Integer, default=0)
+    buyout_revenue: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=Decimal(0)
+    )
+    cancel_loss: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal(0))
+    wishlist_adds: Mapped[int] = mapped_column(Integer, default=0)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "variant_id", "stat_date", "source", name="uq_abtest_daily_stat"
+        ),
+    )
+
+
+class AbTestAdPlatformStat(Base, TenantScopedMixin):
+    """Разбивка adv-статистики по платформам (IOS/ANDROID/WEB/OTHER)."""
+
+    __tablename__ = "abtest_ad_platform_stat"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    variant_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("abtest_variant.id", ondelete="CASCADE")
+    )
+    stat_date: Mapped[date] = mapped_column(Date, nullable=False)
+    platform: Mapped[str] = mapped_column(String(16), nullable=False)
+    impressions: Mapped[int] = mapped_column(Integer, default=0)
+    clicks: Mapped[int] = mapped_column(Integer, default=0)
+    orders: Mapped[int] = mapped_column(Integer, default=0)
+    ad_spend: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal(0))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "variant_id", "stat_date", "platform", name="uq_abtest_ad_platform"
+        ),
+        Index(
+            "ix_abtest_ad_platform_variant_plat",
+            "variant_id",
+            "platform",
+        ),
+    )
+
+
+class AbTestAdPlatformSnapshot(Base, TenantScopedMixin):
+    """Snapshot кумулятивов per-platform для дельта-атрибуции."""
+
+    __tablename__ = "abtest_ad_platform_snapshot"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    abtest_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("abtest.id", ondelete="CASCADE")
+    )
+    day_date: Mapped[date] = mapped_column(Date, nullable=False)
+    platform: Mapped[str] = mapped_column(String(16), nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    cum_impressions: Mapped[int] = mapped_column(Integer, default=0)
+    cum_clicks: Mapped[int] = mapped_column(Integer, default=0)
+    cum_orders: Mapped[int] = mapped_column(Integer, default=0)
+    cum_ad_spend: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal(0))
+
+    __table_args__ = (
+        Index(
+            "ix_abtest_ad_plat_snap_lookup",
+            "abtest_id",
+            "day_date",
+            "platform",
+            "captured_at",
+        ),
+    )
+
+
+class AbTestResult(Base, TenantScopedMixin):
+    """Финальный результат теста — Z-test p-values + Wilson CI."""
+
+    __tablename__ = "abtest_result"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    abtest_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("abtest.id", ondelete="CASCADE"), unique=True
+    )
+    winner_variant_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("abtest_variant.id", ondelete="SET NULL")
+    )
+    p_value_ctr: Mapped[Decimal | None] = mapped_column(Numeric(10, 8))
+    p_value_cr: Mapped[Decimal | None] = mapped_column(Numeric(10, 8))
+    # p-value по buyouts/orders для FUNNEL-тестов
+    p_value_buyout: Mapped[Decimal | None] = mapped_column(Numeric(10, 8))
+    ci_ctr_low: Mapped[Decimal | None] = mapped_column(Numeric(10, 8))
+    ci_ctr_high: Mapped[Decimal | None] = mapped_column(Numeric(10, 8))
+    ci_cr_low: Mapped[Decimal | None] = mapped_column(Numeric(10, 8))
+    ci_cr_high: Mapped[Decimal | None] = mapped_column(Numeric(10, 8))
+    recommendation: Mapped[str | None] = mapped_column(Text)
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class AbTestStatsSnapshot(Base, TenantScopedMixin):
+    """Snapshot кумулятивов за день — для дельта-атрибуции между вариантами.
+
+    WB API не даёт почасовых данных, но кумулятивы за день обновляются ~ раз
+    в час. Делая частые snapshot'ы и вычитая, получаем эффективную почасовую
+    гранулярность и правильно атрибутируем показы к активному варианту.
+    """
+
+    __tablename__ = "abtest_stats_snapshot"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    abtest_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("abtest.id", ondelete="CASCADE")
+    )
+    source: Mapped[str] = mapped_column(String(16), nullable=False)  # adv | nm-report
+    day_date: Mapped[date] = mapped_column(Date, nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    cum_impressions: Mapped[int] = mapped_column(Integer, default=0)
+    cum_clicks: Mapped[int] = mapped_column(Integer, default=0)
+    cum_cart_adds: Mapped[int] = mapped_column(Integer, default=0)
+    cum_orders: Mapped[int] = mapped_column(Integer, default=0)
+    cum_ad_spend: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal(0))
+    cum_revenue: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal(0))
+
+    __table_args__ = (
+        Index(
+            "ix_abtest_stats_snapshot_lookup",
+            "abtest_id",
+            "source",
+            "day_date",
+            "captured_at",
+        ),
+    )
+
+
+class WbCampaignBudget(Base, TenantScopedMixin):
+    """Текущий снимок баланса РК — один per (tenant_id, campaign_id).
+
+    Polling раз в 30 мин: UPSERT через worker. Не хранит историю — только
+    актуальное значение для UI без вызова WB API на каждый рендер.
+    """
+
+    __tablename__ = "wb_campaign_budget"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    campaign_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    balance: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    # Признак включённого WB-стороннего автопополнения (не наш — у WB своё).
+    wb_auto_topup: Mapped[bool] = mapped_column(Boolean, default=False)
+    checked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "campaign_id", name="uq_wb_campaign_budget"
+        ),
+    )
