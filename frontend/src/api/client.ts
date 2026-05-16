@@ -23,15 +23,15 @@ async function request<T>(
   });
   if (resp.status === 401) {
     // Tell the AuthProvider, which clears state + redirects to /login.
-    // Don't redirect from inside the auth/login or auth/needs-bootstrap call,
-    // those hit 401 by design when there's no session yet.
-    if (
-      on401Handler &&
-      !path.startsWith("/api/auth/login") &&
-      !path.startsWith("/api/auth/bootstrap") &&
-      !path.startsWith("/api/auth/needs-bootstrap") &&
-      !path.startsWith("/api/auth/signup")
-    ) {
+    // ВАЖНО: НИ ОДИН /api/auth/* эндпоинт не должен триггерить редирект:
+    //   login/bootstrap/signup — могут 401-ить при неверном пароле
+    //   me/needs-bootstrap — 401 при отсутствии сессии (нормальное состояние
+    //                       до логина). Без этого исключения AuthProvider
+    //                       при монтировании на /signup получал 401 от /me
+    //                       и сразу выкидывал юзера обратно на /login —
+    //                       страница регистрации была недоступна.
+    //   logout — 401 если сессия уже expired, не нужен бесконечный loop.
+    if (on401Handler && !path.startsWith("/api/auth/")) {
       on401Handler();
     }
   }

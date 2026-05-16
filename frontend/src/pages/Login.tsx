@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate, useLocation, Link } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import VersionBadge from "@/components/VersionBadge";
 
@@ -118,9 +118,9 @@ export default function Login() {
         {!needsBootstrap && (
           <div className="text-xs text-muted text-center mt-2">
             Нет аккаунта?{" "}
-            <a href="/signup" className="underline text-accent">
+            <Link to="/signup" className="underline text-accent">
               Зарегистрировать компанию
-            </a>
+            </Link>
           </div>
         )}
       </form>
