@@ -122,6 +122,17 @@ async def sync_test_stats(
         except Exception as e:
             log.warning("[stats] nm-report sync failed for test %d: %s", test.id, e)
 
+    # Auto-topup check — каждый раз когда мы и так общаемся с WB по тесту.
+    # Дубликат с poll_all_budgets_for_tenant исключён через дневной счётчик.
+    # Только при full sync (quick_sync=False) — иначе rotation hot-path
+    # делал бы лишний GET /adv/v1/budget каждые 15 мин.
+    if not quick_sync:
+        from app.services.abtest.budget import maybe_topup_budget
+        try:
+            await maybe_topup_budget(session, test, wb)
+        except Exception as e:
+            log.warning("[stats] budget topup check failed for test %d: %s", test.id, e)
+
 
 async def sync_running_tests_for_tenant(
     tenant_id: int, *, quick_sync: bool = False
