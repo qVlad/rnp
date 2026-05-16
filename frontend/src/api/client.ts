@@ -183,6 +183,25 @@ export const api = {
       }`,
     ),
 
+  pnlYoY: (year?: number) =>
+    request<{
+      scope: "company" | "brands";
+      current: {
+        year: number;
+        from: string;
+        to: string;
+        rows: Array<Record<string, any>>;
+        totals: Record<string, number>;
+      };
+      previous: {
+        year: number;
+        from: string;
+        to: string;
+        rows: Array<Record<string, any>>;
+        totals: Record<string, number>;
+      };
+    }>(`/api/pnl/yoy${year ? `?year=${year}` : ""}`),
+
   pnlTimeseries: (days: number = 30) =>
     request<{
       days: number;

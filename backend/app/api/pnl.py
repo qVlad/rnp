@@ -64,6 +64,65 @@ async def get_pnl(
     return out
 
 
+@router.get("/yoy")
+async def get_pnl_yoy(
+    year: int | None = Query(
+        default=None,
+        description="Год для текущего среза. По умолчанию — текущий.",
+    ),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
+) -> dict:
+    """Year-over-year P&L: текущий год (помесячно до сегодня) + прошлый год
+    (полные 12 месяцев) для cards-view на /pnl.
+
+    Возвращает totals для каждого года и 12 ежемесячных rows каждого года —
+    они идут как точки sparkline'а на карточках. Прошлый год всегда полный,
+    чтобы карточки могли отрисовать одинаковую sparkline (для незавершённого
+    текущего года часть значений будет 0 — это ОК).
+    """
+    today = date.today()
+    if year is None:
+        year = today.year
+
+    cur_from = date(year, 1, 1)
+    cur_to = min(today, date(year, 12, 31))
+    prev_from = date(year - 1, 1, 1)
+    prev_to = date(year - 1, 12, 31)
+
+    cur = await build_pnl(
+        session,
+        date_from=cur_from,
+        date_to=cur_to,
+        granularity="month",
+        brands=brands,
+    )
+    prev = await build_pnl(
+        session,
+        date_from=prev_from,
+        date_to=prev_to,
+        granularity="month",
+        brands=brands,
+    )
+    return {
+        "scope": "company" if brands is None else "brands",
+        "current": {
+            "year": year,
+            "from": cur_from.isoformat(),
+            "to": cur_to.isoformat(),
+            "rows": cur["rows"],
+            "totals": cur["totals"],
+        },
+        "previous": {
+            "year": year - 1,
+            "from": prev_from.isoformat(),
+            "to": prev_to.isoformat(),
+            "rows": prev["rows"],
+            "totals": prev["totals"],
+        },
+    }
+
+
 @router.get("/timeseries")
 async def get_pnl_timeseries(
     days: int = Query(default=30, ge=1, le=365),

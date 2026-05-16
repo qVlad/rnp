@@ -7,6 +7,7 @@ import {
   useColumnVisibility,
 } from "@/components/ColumnVisibility";
 import { DateRangePicker } from "@/components/DateRangePicker";
+import PnLCardsView from "@/components/PnLCardsView";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const daysAgo = (n: number) => {
@@ -151,11 +152,26 @@ function deltaCell(curr: number | undefined, prev: number | undefined): {
   };
 }
 
+type ViewMode = "table" | "cards";
+const VIEW_KEY = "pnl.view.v1";
+
 export default function PnL() {
   const [from, setFrom] = useState(daysAgo(29));
   const [to, setTo] = useState(today());
   const [granularity, setGranularity] = useState<"day" | "week" | "month">("day");
   const [compare, setCompare] = useState(false);
+  const [view, setView] = useState<ViewMode>(() => {
+    try {
+      const v = localStorage.getItem(VIEW_KEY);
+      return v === "cards" ? "cards" : "table";
+    } catch {
+      return "table";
+    }
+  });
+  const onSetView = (v: ViewMode) => {
+    setView(v);
+    try { localStorage.setItem(VIEW_KEY, v); } catch {}
+  };
   const { isHidden: rowHidden } = useColumnVisibility("pnl.rows.hidden.v1");
 
   const q = useQuery({
@@ -179,47 +195,70 @@ export default function PnL() {
       <div className="flex items-end justify-between flex-wrap gap-3">
         <h1 className="text-xl font-semibold">P&L — Отчёт о прибылях и убытках</h1>
         <div className="flex items-end gap-3 flex-wrap">
-          <div className="flex flex-col text-xs text-muted">
-            Период
-            <DateRangePicker
-              from={from}
-              to={to}
-              onChange={(r) => { setFrom(r.from); setTo(r.to); }}
-            />
+          <div className="flex gap-1" title="Вид отчёта">
+            <button
+              className={`btn ${view === "table" ? "border-accent text-accent" : ""}`}
+              onClick={() => onSetView("table")}
+              title="Детальная таблица: периоды по столбцам, статьи по строкам"
+            >
+              Таблица
+            </button>
+            <button
+              className={`btn ${view === "cards" ? "border-accent text-accent" : ""}`}
+              onClick={() => onSetView("cards")}
+              title="Карточки ОПиУ: годовая шапка с YoY и sparkline"
+            >
+              Карточки
+            </button>
           </div>
-          <div className="flex gap-1">
-            {(["day", "week", "month"] as const).map((g) => (
-              <button
-                key={g}
-                className={`btn ${granularity === g ? "border-accent text-accent" : ""}`}
-                onClick={() => setGranularity(g)}
+          {view === "table" && (
+            <>
+              <div className="flex flex-col text-xs text-muted">
+                Период
+                <DateRangePicker
+                  from={from}
+                  to={to}
+                  onChange={(r) => { setFrom(r.from); setTo(r.to); }}
+                />
+              </div>
+              <div className="flex gap-1">
+                {(["day", "week", "month"] as const).map((g) => (
+                  <button
+                    key={g}
+                    className={`btn ${granularity === g ? "border-accent text-accent" : ""}`}
+                    onClick={() => setGranularity(g)}
+                  >
+                    {g === "day" ? "День" : g === "week" ? "Неделя" : "Месяц"}
+                  </button>
+                ))}
+              </div>
+              <label
+                className={`btn cursor-pointer ${compare ? "border-accent text-accent" : ""}`}
+                title="Сравнить с предыдущим периодом такой же длины"
               >
-                {g === "day" ? "День" : g === "week" ? "Неделя" : "Месяц"}
-              </button>
-            ))}
-          </div>
-          <label
-            className={`btn cursor-pointer ${compare ? "border-accent text-accent" : ""}`}
-            title="Сравнить с предыдущим периодом такой же длины"
-          >
-            <input
-              type="checkbox"
-              checked={compare}
-              onChange={(e) => setCompare(e.target.checked)}
-              className="mr-1.5 align-middle"
-            />
-            Сравнить с прошлым
-          </label>
-          <ColumnVisibilityButton
-            storageKey="pnl.rows.hidden.v1"
-            columns={lines
-              .filter((l) => l.kind !== "section" && l.key)
-              .map((l) => ({ key: l.key as string, label: l.label }))}
-            buttonLabel="Строки"
-          />
+                <input
+                  type="checkbox"
+                  checked={compare}
+                  onChange={(e) => setCompare(e.target.checked)}
+                  className="mr-1.5 align-middle"
+                />
+                Сравнить с прошлым
+              </label>
+              <ColumnVisibilityButton
+                storageKey="pnl.rows.hidden.v1"
+                columns={lines
+                  .filter((l) => l.kind !== "section" && l.key)
+                  .map((l) => ({ key: l.key as string, label: l.label }))}
+                buttonLabel="Строки"
+              />
+            </>
+          )}
         </div>
       </div>
 
+      {view === "cards" && <PnLCardsView />}
+
+      {view === "table" && (
       <div className="card overflow-x-auto">
         {q.isLoading && <div className="text-muted">Загрузка…</div>}
         {q.data && (
@@ -336,13 +375,16 @@ export default function PnL() {
           </table>
         )}
       </div>
+      )}
 
-      <div className="text-xs text-muted leading-relaxed">
-        Источник истины — отчёт WB <code>report_detail</code> (final-логика по{" "}
-        <code>supplier_oper_name</code>, задержка 1–2 дня). Реклама и COGS сводятся
-        по дате операции. <strong>Маржа %</strong> считается к выручке после НДС.
-        EBITDA = EBIT, пока амортизация не вынесена в отдельную OPEX-категорию.
-      </div>
+      {view === "table" && (
+        <div className="text-xs text-muted leading-relaxed">
+          Источник истины — отчёт WB <code>report_detail</code> (final-логика по{" "}
+          <code>supplier_oper_name</code>, задержка 1–2 дня). Реклама и COGS сводятся
+          по дате операции. <strong>Маржа %</strong> считается к выручке после НДС.
+          EBITDA = EBIT, пока амортизация не вынесена в отдельную OPEX-категорию.
+        </div>
+      )}
     </div>
   );
 }
