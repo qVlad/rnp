@@ -270,11 +270,16 @@ export default function MetricDrilldownModal({
                   />
                   <YAxis
                     tick={{ fontSize: 11, fill: "#8b92a5" }}
-                    tickFormatter={(v) =>
-                      metric === "orders"
-                        ? fmtNum(v)
-                        : `${Math.round(v / 1000)}k`
-                    }
+                    tickFormatter={(v) => {
+                      if (metric === "orders") return fmtNum(v);
+                      // Компактный формат: 1.2M / 700k / 500 — чтобы и крупные
+                      // и мелкие значения читались на одинаковой шкале.
+                      const abs = Math.abs(v);
+                      if (abs >= 1_000_000)
+                        return `${(v / 1_000_000).toFixed(1)}M`;
+                      if (abs >= 1_000) return `${Math.round(v / 1000)}k`;
+                      return String(Math.round(v));
+                    }}
                     width={60}
                   />
                   <Tooltip
@@ -284,12 +289,38 @@ export default function MetricDrilldownModal({
                       borderRadius: 6,
                       fontSize: 12,
                     }}
-                    labelFormatter={(v: string) => v}
-                    formatter={(value: any, name: string) => {
-                      if (name === metric) return [meta.fmt(value), meta.sumLabel];
-                      if (meta.pairKey && name === meta.pairKey && meta.pairFmt)
-                        return [meta.pairFmt(value), meta.pairLabel];
-                      return [value, name];
+                    cursor={{ stroke: meta.color, strokeWidth: 1, strokeOpacity: 0.4 }}
+                    content={({ active, payload, label }: any) => {
+                      if (!active || !payload || payload.length === 0) return null;
+                      const row = payload[0].payload;
+                      const v = row[metric];
+                      const pair =
+                        meta.pairKey && row[meta.pairKey] !== undefined
+                          ? row[meta.pairKey]
+                          : null;
+                      return (
+                        <div
+                          style={{
+                            background: "#1a1d26",
+                            border: "1px solid #262a35",
+                            borderRadius: 6,
+                            fontSize: 12,
+                            padding: "8px 10px",
+                          }}
+                        >
+                          <div style={{ color: "#8b92a5", marginBottom: 4 }}>{label}</div>
+                          <div>
+                            <span style={{ color: meta.color }}>● </span>
+                            {meta.sumLabel}:{" "}
+                            <strong>{meta.fmt(v ?? 0)}</strong>
+                          </div>
+                          {pair !== null && meta.pairFmt && (
+                            <div style={{ color: "#8b92a5" }}>
+                              {meta.pairLabel}: {meta.pairFmt(pair)}
+                            </div>
+                          )}
+                        </div>
+                      );
                     }}
                   />
                   <Area
@@ -300,15 +331,6 @@ export default function MetricDrilldownModal({
                     fill={`url(#grad-${metric})`}
                     isAnimationActive={false}
                   />
-                  {meta.pairKey && (
-                    <Area
-                      type="monotone"
-                      dataKey={meta.pairKey}
-                      stroke="transparent"
-                      fill="transparent"
-                      isAnimationActive={false}
-                    />
-                  )}
                   {lockedRow && (
                     <ReferenceDot
                       x={lockedRow.date}

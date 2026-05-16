@@ -287,7 +287,25 @@ export default function Dashboard() {
                 <LineChart data={tsQ.data.rows}>
                   <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
                   <XAxis dataKey="date" stroke={chartTheme.axis} fontSize={11} />
-                  <YAxis stroke={chartTheme.axis} fontSize={11} />
+                  {/* Двойная Y-ось: revenue (₽, слева) vs orders (шт, справа).
+                      Без этого orders (~70) лежали на дне, потому что одна ось
+                      масштабировалась под revenue (~700k). */}
+                  <YAxis
+                    yAxisId="revenue"
+                    stroke={chartTheme.axis}
+                    fontSize={11}
+                    tickFormatter={(v) =>
+                      Math.abs(v) >= 1000 ? `${Math.round(v / 1000)}k` : String(v)
+                    }
+                    hide={!showRevenue}
+                  />
+                  <YAxis
+                    yAxisId="orders"
+                    orientation="right"
+                    stroke={chartTheme.axis}
+                    fontSize={11}
+                    hide={!showOrders}
+                  />
                   <Tooltip
                     contentStyle={chartTheme.tooltipStyle}
                     formatter={(v: any, name: any) =>
@@ -295,6 +313,7 @@ export default function Dashboard() {
                     }
                   />
                   <Line
+                    yAxisId="revenue"
                     type="monotone"
                     dataKey="revenue"
                     stroke={chartTheme.primary}
@@ -303,6 +322,7 @@ export default function Dashboard() {
                     hide={!showRevenue}
                   />
                   <Line
+                    yAxisId="orders"
                     type="monotone"
                     dataKey="orders"
                     stroke={chartTheme.positive}
