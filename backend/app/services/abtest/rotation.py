@@ -14,24 +14,22 @@
                                               и переводим тест в completed.
 
 Зависимости:
-- WbApiClient + content_media.upload_media_file — Phase 2 (готовы)
-- photo_storage.read_variant_photo            — Phase 3a (готов)
-- stats_queries.get_impressions_for_variant_since — Phase 3b-i (новый)
-- leaders_cull.run_leader_cull_for_test       — Phase 3b-i (новый)
+- WbApiClient + content_media.upload_media_file — Phase 2
+- photo_storage.read_variant_photo            — Phase 3a
+- stats_queries.get_impressions_for_variant_since — Phase 3b-i
+- leaders_cull.run_leader_cull_for_test       — Phase 3b-i
+- stats.sync_test_stats                       — Phase 3b-ii (для pre-rotation
+  snapshot — фиксирует кумулятивные показы перед сменой фото).
 - Self-scheduling (`_schedule_test_rotation_check`) — stub до Phase 5
   (когда подключим Celery task). Пока полагаемся на beat cadence (15 мин).
-- `sync_stats_for_tests([test.id])` — Phase 3b-ii (не порт ещё); пока
-  no-op с предупреждением в лог. BUDGET-триггер будет работать только
-  после Phase 3b-ii (нет snapshot'ов = нет дельты spent).
 """
 from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Sequence
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
@@ -46,6 +44,7 @@ from app.integrations.wb import content_media
 from app.integrations.wb.client import WbApiClient, WbApiError
 from app.services.abtest import photo_storage
 from app.services.abtest.leaders_cull import run_leader_cull_for_test
+from app.services.abtest.stats import sync_test_stats
 from app.services.abtest.stats_queries import (
     get_impressions_for_variant_since,
     latest_adv_snapshot,
@@ -281,8 +280,16 @@ async def _check_and_rotate_one(
                 await _schedule_test_rotation_check(test.id, remaining_s)
         return False
 
-    # Pre-rotation snapshot: фиксирует cumulative показы текущего варианта.
-    await _sync_stats_for_tests([test.id], quick=False)
+    # Pre-rotation snapshot: фиксирует cumulative показы текущего варианта
+    # ДО смены фото, чтобы дельта после ротации правильно атрибутировалась
+    # новому варианту (snapshot-diff в services.abtest.snapshot).
+    try:
+        await sync_test_stats(session, test, wb, quick_sync=False)
+    except Exception as e:
+        log.warning(
+            "[rotation] pre-rotation snapshot failed for test %d: %s — proceeding",
+            test.id, e,
+        )
 
     idx = next(i for i, v in enumerate(live) if v.id == current.id)
     next_v = live[(idx + 1) % len(live)]
@@ -490,22 +497,3 @@ async def _schedule_test_rotation_check(abtest_id: int, delay_s: float) -> None:
     )
 
 
-async def _sync_stats_for_tests(
-    abtest_ids: Sequence[int], quick: bool = False
-) -> None:
-    """Pre-rotation stats sync — будет реализован в Phase 3b-ii в `stats.py`.
-
-    Стейк (что должно быть): сходить в nm-report и adv API, дописать
-    abtest_daily_stat и снять snapshot в abtest_stats_snapshot ДО смены
-    фото — чтобы дельта показов после ротации правильно атрибутировалась
-    к новому варианту.
-
-    Сейчас no-op: snapshot'ы не накапливаются → BUDGET-триггер не работает,
-    VIEWS-триггер тоже (нет данных в abtest_daily_stat). TIME-триггер
-    работает независимо. Это сознательное упрощение Phase 3b-i — после
-    Phase 3b-ii все триггеры заработают.
-    """
-    log.debug(
-        "[rotation] would sync stats for tests %s (TODO Phase 3b-ii)",
-        list(abtest_ids),
-    )
