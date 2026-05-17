@@ -2,9 +2,9 @@
  * Создание нового A/B теста — простая форма.
  * После создания → редирект на /abtest/:id (детали — там загружаем фото).
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   abtestApi,
   TrafficSource,
@@ -12,11 +12,172 @@ import {
   TriggerMode,
 } from "@/api/abtest";
 
+interface ProductOption {
+  nm_id: number;
+  vendor_code: string | null;
+  subject: string | null;
+  brand: string | null;
+  photo_url: string | null;
+}
+
+/**
+ * Searchable combobox по products. /api/products?search=, debounce 200ms.
+ * Показывает превью карточки (фото-прокси WB CDN).
+ */
+function ProductPicker({
+  value,
+  onChange,
+}: {
+  value: number | null;
+  onChange: (nmId: number | null) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [debounced, setDebounced] = useState("");
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(query), 200);
+    return () => clearTimeout(id);
+  }, [query]);
+
+  const selectedQ = useQuery({
+    queryKey: ["product-detail", value],
+    queryFn: async (): Promise<ProductOption | null> => {
+      if (!value) return null;
+      const resp = await fetch(`/api/products?search=${value}`, {
+        credentials: "include",
+      });
+      if (!resp.ok) return null;
+      const data = (await resp.json()) as { items?: ProductOption[] };
+      return data.items?.find((p) => p.nm_id === value) || null;
+    },
+    enabled: !!value,
+  });
+
+  const searchQ = useQuery({
+    queryKey: ["product-search", debounced],
+    queryFn: async (): Promise<ProductOption[]> => {
+      const url = debounced
+        ? `/api/products?search=${encodeURIComponent(debounced)}`
+        : `/api/products`;
+      const resp = await fetch(url, { credentials: "include" });
+      if (!resp.ok) throw new Error("Не удалось загрузить products");
+      const data = (await resp.json()) as { items?: ProductOption[] };
+      return (data.items || []).slice(0, 30);
+    },
+    enabled: open,
+  });
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  const selected = selectedQ.data;
+  const items = searchQ.data || [];
+
+  return (
+    <div className="relative" ref={wrapRef}>
+      {value && selected ? (
+        <div className="flex items-center gap-2 input">
+          <img
+            src={`/api/products/${selected.nm_id}/photo`}
+            alt=""
+            className="w-10 h-10 object-cover rounded"
+            onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
+          />
+          <div className="flex-1 min-w-0">
+            <div className="font-mono text-sm">{selected.nm_id}</div>
+            <div className="text-xs text-muted truncate">
+              {selected.subject || selected.vendor_code || "—"}
+              {selected.brand ? ` · ${selected.brand}` : ""}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn-link text-xs"
+            onClick={() => {
+              onChange(null);
+              setQuery("");
+              setOpen(true);
+            }}
+          >
+            ✕ Сменить
+          </button>
+        </div>
+      ) : (
+        <input
+          className="input w-full"
+          placeholder="Найти карточку: nm_id, артикул, бренд…"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+        />
+      )}
+
+      {open && !value && (
+        <div className="absolute top-full left-0 right-0 mt-1 bg-bg-1 border border-border-1 rounded shadow-lg max-h-80 overflow-y-auto z-10">
+          {searchQ.isLoading && (
+            <div className="p-3 text-muted text-sm">Загрузка…</div>
+          )}
+          {searchQ.error && (
+            <div className="p-3 text-warn text-sm">
+              {(searchQ.error as Error).message}
+            </div>
+          )}
+          {!searchQ.isLoading && items.length === 0 && (
+            <div className="p-3 text-muted text-sm">
+              {debounced
+                ? "Ничего не нашлось. Засинкайте карточки в /settings → WB sync."
+                : "Список products пуст. Засинкайте карточки в /settings → WB sync."}
+            </div>
+          )}
+          {items.map((p) => (
+            <button
+              key={p.nm_id}
+              type="button"
+              className="flex items-center gap-2 w-full text-left p-2 hover:bg-bg-2 border-b border-border-1 last:border-b-0"
+              onClick={() => {
+                onChange(p.nm_id);
+                setOpen(false);
+                setQuery("");
+              }}
+            >
+              <img
+                src={`/api/products/${p.nm_id}/photo`}
+                alt=""
+                className="w-8 h-8 object-cover rounded shrink-0"
+                onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
+              />
+              <div className="flex-1 min-w-0">
+                <div className="font-mono text-sm">{p.nm_id}</div>
+                <div className="text-xs text-muted truncate">
+                  {p.subject || p.vendor_code || "—"}
+                  {p.brand ? ` · ${p.brand}` : ""}
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AbTestNew() {
   const nav = useNavigate();
   const [form, setForm] = useState({
     name: "",
-    nm_id: "",
+    nm_id: null as number | null,
     trigger_mode: "VIEWS" as TriggerMode,
     trigger_value: 1500,
     traffic_source: "ANY" as TrafficSource,
@@ -33,10 +194,11 @@ export default function AbTestNew() {
   });
 
   const createMut = useMutation({
-    mutationFn: () =>
-      abtestApi.create({
+    mutationFn: () => {
+      if (form.nm_id == null) throw new Error("Выберите карточку");
+      return abtestApi.create({
         name: form.name,
-        nm_id: Number(form.nm_id),
+        nm_id: form.nm_id,
         trigger_mode: form.trigger_mode,
         trigger_value: Number(form.trigger_value),
         traffic_source: form.traffic_source,
@@ -53,7 +215,8 @@ export default function AbTestNew() {
           .split(",")
           .map((s) => s.trim())
           .filter(Boolean),
-      }),
+      });
+    },
     onSuccess: (data) => nav(`/abtest/${data.id}`),
   });
 
@@ -76,17 +239,14 @@ export default function AbTestNew() {
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-sm text-muted mb-1">nm_id WB</label>
-            <input
-              type="number"
-              className="input w-full"
+            <label className="block text-sm text-muted mb-1">Карточка WB</label>
+            <ProductPicker
               value={form.nm_id}
-              onChange={(e) => setForm({ ...form, nm_id: e.target.value })}
-              placeholder="123456789"
+              onChange={(nmId) => setForm({ ...form, nm_id: nmId })}
             />
             <div className="text-xs text-muted mt-1">
-              Карточка должна быть синхронизирована в products (через WB Content
-              API sync).
+              Поиск по nm_id, артикулу или названию. Если списка нет —
+              синхронизируйте карточки в /settings → WB sync.
             </div>
           </div>
           <div>

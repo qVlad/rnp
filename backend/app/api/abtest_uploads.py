@@ -34,8 +34,20 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/abtest", tags=["abtest-uploads"])
 
 
-MAX_PHOTO_BYTES = 2 * 1024 * 1024  # 2 MB
-ALLOWED_MIME = {"image/jpeg", "image/png", "image/webp"}
+# WB Content media принимает до ~32 МБ для фото и до ~50 МБ для видео.
+# wbab (старый сервис) использовал per-file лимит 256 МБ ради видео-вариантов.
+# Берём 256 МБ — покрывает любые WB-валидные форматы с запасом. Дальнейшую
+# проверку размера и формата делает WB при `POST /content/v3/media/file`.
+MAX_PHOTO_BYTES = 256 * 1024 * 1024  # 256 MB
+ALLOWED_MIME = {
+    # Фото
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    # Видео (для FUNNEL-тестов с видео-вариантами карточки)
+    "video/mp4",
+    "video/quicktime",
+}
 
 
 async def _check_variant(
