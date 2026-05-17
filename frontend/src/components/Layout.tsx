@@ -11,6 +11,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import VersionBadge from "@/components/VersionBadge";
 import { Icon, IconName } from "@/components/Icon";
 import CommandPalette from "@/components/CommandPalette";
+import SyncStatusIndicator from "@/components/SyncStatusIndicator";
 
 type Link = {
   to: string;
@@ -66,6 +67,7 @@ const GROUPS: Group[] = [
     items: [
       { to: "/external-marketing", label: "Внеш. маркетинг", directorOrHead: true },
       { to: "/ads-heatmap", label: "Реклама heatmap" },
+      { to: "/abtest", label: "A/B тесты" },
     ],
   },
   {
@@ -197,6 +199,11 @@ export default function Layout() {
             );
           })}
         </nav>
+        {!collapsed && (
+          <div className="border-t border-border px-2 py-1">
+            <SyncStatusIndicator />
+          </div>
+        )}
         <div className="border-t border-border px-3 py-2 text-tiny">
           {!collapsed && user && (
             <div className="text-muted leading-tight mb-2">

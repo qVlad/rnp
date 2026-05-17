@@ -37,6 +37,9 @@ import Checklist from "./pages/Checklist";
 import SeasonPlan from "./pages/SeasonPlan";
 import Jam from "./pages/Jam";
 import NewProducts from "./pages/NewProducts";
+import AbTestList from "./pages/AbTestList";
+import AbTestNew from "./pages/AbTestNew";
+import AbTestDetail from "./pages/AbTestDetail";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, needsBootstrap } = useAuth();
@@ -251,6 +254,9 @@ export default function App() {
             }
           />
           <Route path="jam" element={<Jam />} />
+          <Route path="abtest" element={<AbTestList />} />
+          <Route path="abtest/new" element={<AbTestNew />} />
+          <Route path="abtest/:id" element={<AbTestDetail />} />
           <Route
             path="new-products"
             element={
