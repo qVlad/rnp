@@ -435,7 +435,118 @@ WB применяет penalty (расширенный cooldown) на уровн�
 
 ---
 
+#### `GET /adv/v1/budget?id=<advert_id>` — остаток бюджета одной кампании
+
+**Назначение:** Per-кампания баланс РК (НЕ путать с `/adv/v1/balance` —
+общий счёт кабинета). Используется в A/B-тестах для polling баланса и
+триггера autoTopup.
+
+**Response:** `{"total": int, "balance": int, "autoBudget": bool}` —
+оба поля в РУБЛЯХ. `total` приоритетнее `balance`. `autoBudget` — флаг
+включённого WB-стороннего автопополнения (наша надстройка `budget_auto_topup`
+в `abtest` — отдельный механизм с дневным лимитом).
+
+**Rate limit:** общий advert (3/мин, min_interval 20s). Обёртка:
+`advert.fetch_campaign_budget(client, advert_id)`.
+
+---
+
+#### `POST /adv/v1/budget/deposit?id=<advert_id>` — пополнение бюджета РК
+
+**Назначение:** Перевести средства с основного баланса кабинета на бюджет
+одной кампании. Используется для A/B-autoTopup.
+
+**Body:** `{"sum": int_rub, "type": 0|1, "return": 0|1}`
+- `type=0` — баланс продавца (default), `type=1` — бонусы
+- `return=1` — включить «возврат если кампания закрыта»
+
+**Response:** 200 OK без тела при успехе.
+
+**Rate limit:** общий advert. Идемпотентность: WB сам не дедупликацирует —
+наш `maybe_topup_budget` использует `budget_topup_spent_today` + дневной
+сброс на UTC-midnight (`budget_topup_reset_at`).
+
+**Обёртка:** `advert.deposit_campaign_budget(client, advert_id, sum_rub)`.
+
+---
+
+### Content API (`https://content-api.wildberries.ru`)
+
+#### `POST /content/v2/get/cards/list` — пагинированный список карточек
+
+Используется в `sync_product_photos` для заполнения `products.photo_url`.
+В A/B-тестах — для `get_card_by_nm_id()` (поиск карточки перед стартом теста
+для сохранения `original_photos`).
+
+**Rate limit:** ~100/min по доке, мы лимитируем 60/min (категория `content`).
+
+---
+
+#### `POST /content/v3/media/file` — загрузка фото бинарником на позицию
+
+**Назначение:** Заменить фотографию на конкретной позиции (`X-Photo-Number` =
+1..N) карточки. **Ключевой endpoint A/B-ротации.**
+
+**Headers (обязательные):**
+- `Authorization: <token>` (auto)
+- `X-Nm-Id: <nm_id>`
+- `X-Photo-Number: <position>` (1 = главное фото)
+
+**Body:** multipart/form-data, поле `uploadfile` — байты файла.
+
+**Constraints:** WB принимает JPEG/PNG/WebP, размер до ~10 MB. Мы ограничиваем
+2 MB в API (`MAX_PHOTO_BYTES` в `api/abtest_uploads.py`).
+
+**Rate limit:** ~10 req/min на media endpoints (отдельно от cards/list по
+докам WB). У нас общая категория `content` (60/min) — на rotation worker
+concurrency=1 + sleep 7s между фото = ~8.5/min, безопасно.
+
+**Обёртка:** `content_media.upload_media_file(client, nm_id, photo_number,
+file_bytes, filename, content_type)`.
+
+---
+
+#### `POST /content/v3/media/save` — установка фото по списку URL (async)
+
+**Назначение:** Применить комплект фото к карточке по списку URL'ов.
+Используется для «вернуть исходное» — URL'ы оригинала сохранены в
+`abtest.original_photos`.
+
+**Body:** `{"nmId": int, "data": ["https://...", ...]}`
+
+**Async:** WB подтверждает приёмку (200) сразу, фактическая замена через 1-5 мин.
+
+**Обёртка:** `content_media.save_media_by_url(client, nm_id, media_urls)`.
+
+---
+
 ### Analytics API (`https://seller-analytics-api.wildberries.ru`)
+
+#### `POST /api/analytics/v3/sales-funnel/products/history` — per-day funnel by nmID
+
+**Назначение:** Дневные показатели воронки продаж по конкретным `nmIds`.
+Замена deprecated `/api/v2/nm-report/grouped` (отключён апрель 2025) и
+`/api/v2/nm-report/detail/history` (конец 2025). Используется для A/B-атрибуции
+показов карточки между вариантами теста.
+
+**Request body (JSON):**
+```json
+{
+  "nmIDs": [123456],
+  "period": {"begin": "2026-05-01", "end": "2026-05-17"},
+  "aggregationLevel": "day"
+}
+```
+
+**Rate limit:** 3/мин, min_interval 20с. Категория `analytics` в `WbApiClient`.
+**Limit на payload:** до 1000 nmIDs за запрос (с декабря 2025).
+
+**Response items:** `{"nmID", "vendorCode", "history": [{"dt": "YYYY-MM-DD",
+"openCardCount", "addToCartCount", "ordersCount", "buyoutsCount", "ordersSumRub", ...}]}`.
+
+**Доступен:** Personal + Service token. Обёртка: `analytics.fetch_nm_report_history`.
+
+---
 
 #### `POST /api/analytics/v1/stocks-report/wb-warehouses` — замена /supplier/stocks
 

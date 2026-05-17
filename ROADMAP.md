@@ -1,6 +1,23 @@
 # Roadmap
 
-Текущее состояние: 13 миграций, 3 роли с brand-RBAC, P&L scope-aware, Reconciliation **Δ 0%** к WB на всех закрытых неделях, Dashboard preliminary↔final toggle с **Δ 0₽** в final-режиме vs WB-кабинет, Glossary, photo-proxy с 24h-кешем. Фронт собирается без TS-ошибок, все 9 контейнеров Up.
+Текущее состояние: 31 миграция (последняя — abtest = слияние с wbab), 3 роли с brand-RBAC, P&L scope-aware, Reconciliation **Δ 0%** к WB на всех закрытых неделях, Dashboard preliminary↔final toggle с **Δ 0₽** в final-режиме vs WB-кабинет, Glossary, photo-proxy с 24h-кешем. A/B-тестирование фото карточек (порт wbab, фазы 1-7 в ветке `abtest`) — backend готов, фронт `/abtest`, Celery beat запускает rotation/stats/budget автоматически. Фронт собирается без TS-ошибок, все 9 контейнеров Up.
+
+## ✅ Сделано — слияние wbab → rnp (фазы 1-7, ветка `abtest`)
+
+| Фаза | LOC | Артефакт |
+|---|---|---|
+| 1 | ~470 | Alembic 0031 + 11 SQLAlchemy моделей (abtest, abtest_variant, abtest_*, wb_campaign_budget) |
+| 2 | ~440 | WB client extensions: `content_media.py`, `analytics.py`, +budget endpoints в advert |
+| 3a | ~430 | `significance.py` (Z-test, Wilson CI) + `photo_storage.py` + 11 unit-тестов |
+| 3b-i | ~826 | `rotation.py`, `leaders_cull.py`, `stats_queries.py` |
+| 3b-ii | ~1087 | `snapshot.py` + `stats.py` + платформы + 15 unit-тестов на атрибуцию |
+| 3b-iii | ~218 | `budget.py` (poll + auto-topup) |
+| 4 | ~1003 | REST API: `api/abtest.py` + `abtest_uploads.py` + docker volume `abtest_photos` |
+| 5 | ~200 | Celery: `tasks_abtest.py` + beat schedule (rotate 15м / poll budget 30м / stats full 4×/день) + wire self-scheduling |
+| 6 | ~1266 | Frontend: AbTestList/AbTestNew/AbTestDetail + sidebar «A/B тесты» + recharts |
+| 7 | ~600 | `scripts/migrate_wbab_to_rnp.py` + docs update (CLAUDE.md / WB_API_REFERENCE.md / ROADMAP.md) |
+
+Отложено: **Phase 8** — Chrome-расширение `wbab/extension/` ретаргет на rnp API (~50 LOC правок в `wbab-api.ts`, делается параллельно в репо wbab после cutover).
 
 ---
 

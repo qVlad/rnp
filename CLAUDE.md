@@ -34,9 +34,13 @@ Single-tenant аналитика для одного селлера WB. Лока
 | Работаешь с WB API (rate-limits, sunset, retry) | [`WB_API_REFERENCE.md`](WB_API_REFERENCE.md) |
 | План на следующие сессии | [`ROADMAP.md`](ROADMAP.md) |
 | Свежая сессия, надо войти в курс | [`CONTINUE_HERE.md`](CONTINUE_HERE.md) |
+| Роле-система агентов (Lead/Developer/Designer/Art/QA) + backlog задач/багов | [`agents/README.md`](agents/README.md), [`agents/RULES.md`](agents/RULES.md) |
 | Расчёт АУСН-Доходы 8% по методике бухгалтера (cash-basis) | [`TAX_AUSN_BANK.md`](TAX_AUSN_BANK.md) |
 | Расчёт УСН-Доходы 6% (без НДС / + НДС 5% / + НДС 7%) | [`TAX_USN_BANK.md`](TAX_USN_BANK.md) |
 | Ручное исключение отчётов из налоговой базы (per-regime флаги) | [`TAX_BOOKKEEPER_OVERRIDES.md`](TAX_BOOKKEEPER_OVERRIDES.md) |
+| Конкурентный анализ vs Eggheads.solutions + план развития | [`COMPETITIVE_EGGHEADS.md`](COMPETITIVE_EGGHEADS.md) |
+| Конкурентный анализ vs Evirma (Chrome-расширение) + 3 идеи для web-app | [`COMPETITIVE_EVIRMA.md`](COMPETITIVE_EVIRMA.md) |
+| Конкурентный анализ vs TrueStats + Sprint-план (custom-metrics, триал, аудит-режим) | [`COMPETITIVE_TRUESTATS.md`](COMPETITIVE_TRUESTATS.md) |
 
 ## Стек
 
@@ -89,7 +93,7 @@ docker-compose.yml
 .claude/settings.json   permissions для агента
 ```
 
-## Миграции БД (23 шт., 0001-0023)
+## Миграции БД (31 шт., 0001-0031)
 
 | № | Что добавлено |
 |---|---|
@@ -116,6 +120,8 @@ docker-compose.yml
 | 0021 | **wb_offset_act** (Акты взаимозачёта, Documents API) |
 | 0022 | external_ad_costs.end_date (период действия рекламной кампании) |
 | 0023 | jam_queries (поисковые запросы для 10X-кластеров) |
+| 0024-0030 | payment_orders, payment_upd_delivery, payment_buyout_returns, payment_excluded_from_tax, payment_per_regime_exclusion, user_view_preset, notification_rules |
+| 0031 | **A/B testing** — 11 таблиц: abtest, abtest_variant, abtest_variant_photo, abtest_rotation, abtest_alert, abtest_event, abtest_daily_stat, abtest_ad_platform_stat, abtest_ad_platform_snapshot, abtest_stats_snapshot, abtest_result + wb_campaign_budget (порт сервиса wbab) |
 
 ## Роли и RBAC
 
@@ -153,6 +159,7 @@ Helper `app.services.auth.current_brands_filter()` возвращает `set[str
 | `/api/products/{nm_id}/photo` | публ. (для `<img>` без cookie) | proxy на WB CDN с Redis-кешем 24h (positive) / 1h (negative) |
 | `/api/tax-report*`, `/buybacks`, `/sync-buybacks` | director_or_head | налоговый отчёт по методике 1С + sync Уведомлений о выкупе |
 | `/api/supplies*` | director_or_head | CRUD закупок у поставщиков (для weighted-avg COGS) |
+| `/api/abtest*`, `/api/abtest/.../photos` | brands-filter (manager видит только свои nm_id) | A/B-тестирование фото карточек: CRUD тестов/вариантов, multipart upload фото, lifecycle (start/pause/stop/apply-winner), results с p-value и Wilson CI |
 
 Видимость пунктов меню фронта — в `frontend/src/components/Layout.tsx` (`directorOnly`, `directorOrHead`).
 
@@ -203,9 +210,77 @@ exclusive `end` — даст лишний день рекламы в Units (бы
 
 Расписание в `sync/celery_app.py`, **calibrated for Base token** (см. [`WB_API_REFERENCE.md`](WB_API_REFERENCE.md) § 3 для полных лимитов). Кратко: orders/sales каждые 2-3 часа, stocks 2x/день, report_detail 04:15 ежедневно, ad_stats 4 раза в день.
 
+### Graceful deploy (не убиваем активные таски)
+
+- **`task_acks_late=True` + `task_reject_on_worker_lost=True`** — если worker
+  упал/убит mid-task, задача возвращается в очередь и подхватывается
+  следующим worker'ом. Все наши sync-таски идемпотентны (upsert по PK),
+  повторное выполнение безопасно.
+- **`stop_grace_period: 1800s`** для worker-stats/advert/default в
+  `docker-compose.yml` — SIGTERM запускает Celery warm shutdown, который ждёт
+  завершения текущих задач до 30 минут, потом SIGKILL.
+- **`./scripts/remote.sh deploy`** перед rsync/`up -d --build` делает
+  `inspect active`. Если есть активные таски → спрашивает: ждать (опрос
+  каждые 30 сек, max 30 мин) / форсировать / отменить.
+  - `FORCE=1` — пропускает диалог (всё равно warm shutdown до 30 мин)
+  - `FAST=1` — быстрый деплой: stop --timeout=10 + SIGKILL, задачи вернутся
+    в очередь автоматически (для срочных UI-фиксов когда worker'ы заняты
+    долгим backfill'ом)
+  - `WAIT_MAX_SEC=N` — таймаут ожидания в pre-flight (default 1800)
+- **UI индикатор**: в sidebar внизу — точка-индикатор `SyncStatusIndicator`,
+  цвет: 🟢 ok / 🟡 cooldown / 🔴 ошибки / 🔵 pulse — идёт sync. Клик →
+  drawer с активными тасками (uptime, args), WB cooldown'ами с TTL и
+  таблицей всех 12 сущностей с возрастом последнего sync.
+- **Backend**: `GET /api/sync/status` (`api/sync_status.py`) — checkpoints +
+  Redis `wb:cooldown:*` + Celery `inspect.active`. Поллится с фронта.
+
 **Sunset deadlines:**
 - 2026-06-23 — `/supplier/stocks` → `/api/analytics/v1/stocks-report/wb-warehouses`
 - 2026-07-15 — `/reportDetailByPeriod` → `/api/finance/v1/sales-reports/detailed` (async)
+
+## A/B testing карточек (порт wbab)
+
+Сервис wbab перенесён в rnp как модуль `/abtest` (фазы 1-7 в ветке `abtest`).
+Тест меняет фотографии WB-карточки между N вариантами по триггеру и считает
+победителя через Z-test + Wilson CI.
+
+**Backend:**
+- `services/abtest/` — 9 модулей: `significance`, `photo_storage`, `stats_queries`,
+  `leaders_cull`, `rotation`, `snapshot`, `platforms`, `stats`, `budget`
+- `api/abtest.py` + `api/abtest_uploads.py` — REST + multipart
+- `sync/tasks_abtest.py` — Celery beat tasks
+
+**Celery beat расписание (см. `celery_app.py`):**
+- `abtest-rotate-running` — каждые 15 мин (проверка триггеров + ротация)
+- `abtest-poll-budgets` — каждые 30 мин (UPSERT баланса РК + auto-topup)
+- `abtest-sync-stats-full` — 4×/день 01:50/07:50/13:50/19:50 MSK
+
+**Self-scheduling:** для TIME-триггера после ротации `_schedule_test_rotation_check`
+ставит точечный `rotation_check_one_test` с `countdown=trigger_value*60`.
+При ошибке ротации — retry через 2 мин. Защита от шторма — Redis cooldown на 429.
+
+**Storage:** `abtest_photos` docker volume на `/app/storage/photos` смонтирован
+на backend и worker-default. Layout файлов: `{abtest_id}/{label}{ext}` (главное)
+и `{abtest_id}/{label}_{N}{ext}` (доп. фото) — идентично wbab для rsync-migration.
+
+**Триггеры:** VIEWS (показов на вариант), TIME (минут), BUDGET (₽ потрачено в РК).
+**Источники:** ANY (nm-report) / ADV_ONLY (adv) / BOTH (оба, для BOTH триггер
+VIEWS считает только adv-показы — иначе double-count через openCount).
+
+**Snapshot-diff атрибуция:** WB отдаёт кумулятивы за день, мы делаем snapshot
+перед каждой ротацией и при beat-sync, дельта между snapshot'ами делится между
+вариантами по доле фактического времени активности (см. `snapshot.py:_attribute_interval_to_variants`).
+
+**Photo upload:** WB endpoint `POST /content/v3/media/file` (multipart, X-Nm-Id +
+X-Photo-Number headers). Rate limit ~10/min — на rotation worker concurrency=1
++ sleep 7 сек между фото = ~8.5/min, в лимите.
+
+**Миграция данных из старого wbab:**
+- `scripts/migrate_wbab_to_rnp.py` — переносит User/WbAccount/Test/Variant/
+  Stats/Snapshots. cuid → bigint, WbAccount → Tenant (1:1).
+- Файлы фото: `sudo rsync /var/lib/docker/volumes/wbab_storage/_data/photos/
+  /var/lib/docker/volumes/rnp_abtest_photos/_data/` + переименовать
+  каталоги cuid → bigint (скрипт выведет команды `mv`).
 
 ## Telegram-бот
 
