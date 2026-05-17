@@ -483,17 +483,24 @@ async def _execute_rotation(
 
 
 async def _schedule_test_rotation_check(abtest_id: int, delay_s: float) -> None:
-    """Self-scheduled per-test ротация — будет реализована в Phase 5 как
-    `celery_app.send_task("...", args=[abtest_id], countdown=delay_s)`.
+    """Self-scheduled per-test ротация через Celery countdown.
 
-    Пока no-op: beat-cycle (15 мин) подберёт тест на следующем тике. Это
-    означает чуть «худшую» точность TIME-триггера (±15 мин) и медленный
-    retry после ошибок ротации (тоже до 15 мин). После Phase 5 — точно по
-    countdown.
+    Используется для:
+    - TIME-триггера: после успешной ротации планируем следующую ровно
+      через trigger_value минут (вместо ожидания следующего 15-мин
+      beat-тика).
+    - Retry: при ошибке ротации — попробовать ещё раз через 2 мин.
+
+    Защита от шторма: WB rate-limit в Redis cooldown'е уже не даёт
+    повторного 429 даже при упорных ошибках; новая countdown-задача
+    просто упадёт в WbCooldownActive и поставит ещё один retry.
     """
-    log.debug(
-        "[rotation] would schedule test %d in %.1f sec (TODO Phase 5)",
-        abtest_id, delay_s,
-    )
+    # Local import — избегаем циклической зависимости services.abtest →
+    # sync.tasks_abtest → services.abtest на уровне модулей.
+    from app.sync.tasks_abtest import rotation_check_one_test
+
+    delay = max(1, int(delay_s))
+    rotation_check_one_test.apply_async(args=[abtest_id], countdown=delay)
+    log.debug("[rotation] scheduled test %d in %d sec", abtest_id, delay)
 
 

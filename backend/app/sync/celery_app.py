@@ -7,7 +7,7 @@ celery_app = Celery(
     "rnp",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.sync.tasks"],
+    include=["app.sync.tasks", "app.sync.tasks_abtest"],
 )
 
 celery_app.conf.update(
@@ -17,6 +17,26 @@ celery_app.conf.update(
     timezone=settings.timezone,
     enable_utc=False,
     task_acks_late=True,
+    # Если worker умирает посреди задачи (SIGKILL, OOM, deploy без warm
+    # shutdown) — задача возвращается в очередь и подхватывается другим
+    # worker'ом. Наши sync-таски все идемпотентны (upsert по PK), поэтому
+    # повторное выполнение безопасно. Без этого флага acks_late не работает
+    # при ungraceful kill.
+    task_reject_on_worker_lost=True,
+    # Worker должен подтверждать broker'у что он жив каждые ~10 сек.
+    # Long-running task (например report_detail backfill ~30 мин) без этого
+    # может быть ошибочно помечен как мёртвый и таск вернётся в очередь.
+    broker_heartbeat=30,
+    # Redis broker visibility_timeout: сколько времени задача висит в
+    # `unacked` пока worker её обрабатывает. Если worker умер до acks_late
+    # → задача re-delivered другому worker'у только после истечения этого
+    # таймаута. Default Celery = 3600s = 1 час (слишком долго при деплоях).
+    # Ставим 600s = 10 мин: достаточно для самой долгой задачи (report_detail
+    # backfill за год идёт ~50 мин, но мы делим на rrd-курсорные чанки которые
+    # ack'ятся отдельно, так что одна "ack'аемая единица" не превышает 5 мин).
+    broker_transport_options={
+        "visibility_timeout": 600,
+    },
     worker_prefetch_multiplier=1,
     task_default_queue="default",
     task_routes={
@@ -31,6 +51,14 @@ celery_app.conf.update(
         "app.sync.tasks.sync_ad_stats": {"queue": "advert"},
         "app.sync.tasks.send_daily_digest": {"queue": "default"},
         "app.sync.tasks.evaluate_notifications": {"queue": "default"},
+        # A/B test tasks — rotation reads photo files from abtest_photos
+        # volume mounted only on worker-default, so routing matters.
+        "app.sync.tasks_abtest.rotate_running_tests": {"queue": "default"},
+        "app.sync.tasks_abtest.rotation_check_one_test": {"queue": "default"},
+        "app.sync.tasks_abtest.poll_abtest_budgets": {"queue": "advert"},
+        "app.sync.tasks_abtest.poll_abtest_budgets_for_tenant": {"queue": "advert"},
+        "app.sync.tasks_abtest.sync_abtest_stats_full": {"queue": "advert"},
+        "app.sync.tasks_abtest.sync_abtest_stats_for_tenant": {"queue": "advert"},
     },
     # Beat schedule design constraints:
     #   - WB Statistics: docs say 1 req/min sustained, but the *real* burst
@@ -142,6 +170,33 @@ celery_app.conf.update(
         "notifications-hourly": {
             "task": "app.sync.tasks.evaluate_notifications",
             "schedule": crontab(minute=10),
+        },
+        # --- A/B testing ---
+        # Rotation проверка каждые 15 мин — sufficient гранулярность даже
+        # для TIME-триггера 30 мин (max джиттер 15 мин, что приемлемо).
+        # При активных тестах с быстрым TIME-триггером (<15 мин) — точечная
+        # самоплан через rotation_check_one_test с countdown.
+        "abtest-rotate-running": {
+            "task": "app.sync.tasks_abtest.rotate_running_tests",
+            "schedule": crontab(minute="*/15"),
+        },
+        # Budget polling — лёгкий GET /adv/v1/budget per running test с
+        # autoTopup. 30 мин гранулярности достаточно — при пополнении 1000₽
+        # реклама обычно идёт 1-3 часа.
+        "abtest-poll-budgets": {
+            "task": "app.sync.tasks_abtest.poll_abtest_budgets",
+            "schedule": crontab(minute="5,35"),
+        },
+        # Full stats sync — 4x/day. Adv API ограничения строгие (3/min,
+        # min_interval 20s) — поэтому редко. Промежуточные snapshots
+        # делает сама rotation через `_check_and_rotate_one` → `sync_test_stats`.
+        # Это покрывает «снять снапшот при каждой ротации» — full sync здесь
+        # для тестов без частых ротаций (например long TIME-триггер) и для
+        # nm-report (более частый чем daily, что бы новые impressions попадали
+        # в abtest_daily_stat без ожидания ротации).
+        "abtest-sync-stats-full": {
+            "task": "app.sync.tasks_abtest.sync_abtest_stats_full",
+            "schedule": crontab(hour="1,7,13,19", minute=50),
         },
     },
 )
