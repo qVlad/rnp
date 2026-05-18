@@ -12,7 +12,8 @@ const STATUS_LABELS: Record<AbTestStatus | string, string> = {
   running: "Идёт",
   paused: "Пауза",
   completed: "Завершён",
-  cancelled: "Остановлен",
+  stopped: "Остановлен",
+  cancelled: "Остановлен", // legacy alias
 };
 
 const STATUS_COLOR: Record<string, string> = {
@@ -20,6 +21,7 @@ const STATUS_COLOR: Record<string, string> = {
   running: "text-success",
   paused: "text-warn",
   completed: "text-info",
+  stopped: "text-muted",
   cancelled: "text-muted",
 };
 

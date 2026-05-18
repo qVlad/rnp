@@ -3,6 +3,7 @@
  * последние ротации, alerts, результат (значимость + графики).
  */
 import { useState } from "react";
+import StopDialog from "@/components/abtest/StopDialog";
 import { Link, useParams } from "react-router-dom";
 import {
   useMutation,
@@ -31,7 +32,8 @@ const STATUS_BADGE: Record<AbTestStatus | string, string> = {
   running: "bg-success-bg text-success",
   paused: "bg-warn-bg text-warn",
   completed: "bg-info-bg text-info",
-  cancelled: "bg-surface-2 text-muted",
+  stopped: "bg-surface-2 text-muted",
+  cancelled: "bg-surface-2 text-muted", // legacy alias
 };
 
 function fmtDate(s: string | null): string {
@@ -110,6 +112,7 @@ export default function AbTestDetail() {
   const { id: idStr } = useParams<{ id: string }>();
   const id = Number(idStr);
   const qc = useQueryClient();
+  const [stopOpen, setStopOpen] = useState(false);
 
   const q = useQuery({
     queryKey: ["abtest", id],
@@ -193,7 +196,7 @@ export default function AbTestDetail() {
               </button>
               <button
                 className="btn"
-                onClick={() => action(() => abtestApi.stop(id))}
+                onClick={() => setStopOpen(true)}
               >
                 Остановить
               </button>
@@ -457,6 +460,23 @@ export default function AbTestDetail() {
           </div>
         )}
       </section>
+
+      <StopDialog
+        open={stopOpen}
+        hasOriginalSnapshot={
+          Array.isArray(test.original_photos) && test.original_photos.length > 0
+        }
+        onClose={() => setStopOpen(false)}
+        onStop={async (mode) => {
+          try {
+            await abtestApi.stop(id, mode);
+            setStopOpen(false);
+            invalidate();
+          } catch (e) {
+            alert(`Не удалось остановить: ${(e as Error).message}`);
+          }
+        }}
+      />
     </div>
   );
 }

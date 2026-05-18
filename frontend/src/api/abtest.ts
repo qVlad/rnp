@@ -4,7 +4,13 @@
  * Соответствует backend/app/api/abtest.py + abtest_uploads.py.
  */
 
-export type AbTestStatus = "draft" | "running" | "paused" | "completed" | "cancelled";
+export type AbTestStatus =
+  | "draft"
+  | "running"
+  | "paused"
+  | "completed"
+  | "stopped"
+  | "cancelled"; // legacy alias for stopped — old tests created before rename
 export type TriggerMode = "VIEWS" | "TIME" | "BUDGET";
 export type TrafficSource = "ANY" | "ADV_ONLY" | "BOTH";
 export type TestMode = "PHOTO" | "FUNNEL";
@@ -33,6 +39,9 @@ export interface AbTest {
   budget_topup_amount: number;
   budget_daily_limit: number;
   budget_topup_spent_today: number;
+  /** Snapshot URL'ов фото WB-карточки на момент start. Заполняется на бэке
+   *  при первом start_test. `null` если ещё не стартовал или WB не вернул. */
+  original_photos: Array<{ order: number; url: string }> | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -206,8 +215,11 @@ export const abtestApi = {
     req<{ test: AbTest }>(`/api/abtest/${id}/pause`, { method: "POST" }),
   resume: (id: number) =>
     req<{ test: AbTest }>(`/api/abtest/${id}/resume`, { method: "POST" }),
-  stop: (id: number) =>
-    req<{ test: AbTest }>(`/api/abtest/${id}/stop`, { method: "POST" }),
+  stop: (id: number, mode: "keep" | "restore" = "keep") =>
+    req<{ test: AbTest; restored: boolean }>(
+      `/api/abtest/${id}/stop?mode=${mode}`,
+      { method: "POST" },
+    ),
   archive: (id: number) =>
     req<{ test: AbTest }>(`/api/abtest/${id}/archive`, { method: "POST" }),
   unarchive: (id: number) =>
@@ -255,6 +267,20 @@ export const abtestApi = {
     req<{ nm_id: number; photos: WbPhoto[] }>(
       `/api/abtest/wb-photos/${nmId}?count=${count}`,
     ),
+
+  /** Список активных РК тенанта. nmId — опциональный фильтр. */
+  listCampaigns: (nmId?: number | null) =>
+    req<{
+      items: Array<{
+        advertId: number;
+        name: string;
+        type: number | null;
+        status: number | null;
+        dailyBudget: number | null;
+        nmIds: number[];
+      }>;
+      count: number;
+    }>(`/api/abtest/campaigns${nmId ? `?nm_id=${nmId}` : ""}`),
 
   /** Multipart upload — отдельный helper потому что fetch не любит JSON+FormData. */
   uploadPhoto: async (

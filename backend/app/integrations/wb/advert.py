@@ -135,6 +135,17 @@ async def fetch_campaigns_info(
                 first_nm = nm_settings[0] if nm_settings else {}
                 bids = first_nm.get("bids_kopecks") or {}
                 placements = settings.get("placements") or {}
+                # nmIds: новая схема — `nm_settings[].nm_id`; старая v2 — `params[].nms[]`.
+                nm_ids: list[int] = []
+                for ns in nm_settings:
+                    val = ns.get("nm_id") or ns.get("nmId")
+                    if val:
+                        nm_ids.append(int(val))
+                for p in raw.get("params") or []:
+                    for n in p.get("nms") or []:
+                        nm_ids.append(int(n))
+                    if p.get("nmId"):
+                        nm_ids.append(int(p["nmId"]))
                 out.append({
                     "advertId": raw.get("id") or raw.get("advertId"),
                     "name": settings.get("name") or raw.get("name"),
@@ -150,6 +161,7 @@ async def fetch_campaigns_info(
                     "placementSearch": bool(placements.get("search")),
                     "placementRecommendations": bool(placements.get("recommendations")),
                     "currency": raw.get("currency"),
+                    "nmIds": list(dict.fromkeys(nm_ids)),  # de-dup, preserve order
                 })
         except WbApiError as e:
             # Graceful degradation: keep ids we already collected and try the

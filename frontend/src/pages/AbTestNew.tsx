@@ -210,6 +210,95 @@ function ProductPicker({
 }
 
 // ----------------------------------------------------------------------
+// CampaignPicker — выбор активной РК (для ADV-сценариев).
+// ----------------------------------------------------------------------
+
+function CampaignPicker({
+  nmId,
+  value,
+  onChange,
+}: {
+  nmId: number | null;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [filterByNm, setFilterByNm] = useState(true);
+  const q = useQuery({
+    queryKey: ["abtest-campaigns", filterByNm ? nmId : null],
+    queryFn: () => abtestApi.listCampaigns(filterByNm ? nmId : null),
+    enabled: nmId != null,
+  });
+
+  const STATUS_TXT: Record<number, string> = {
+    4: "пауза",
+    7: "активна",
+    9: "готова",
+    11: "приостановлена",
+  };
+  const TYPE_TXT: Record<number, string> = {
+    4: "Каталог",
+    5: "Поиск",
+    8: "Поиск+Каталог",
+    9: "Авто",
+  };
+
+  const items = q.data?.items || [];
+
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-2 items-center">
+        <select
+          className="input flex-1"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={q.isLoading || !nmId}
+        >
+          <option value="">
+            {!nmId
+              ? "Сначала выберите карточку"
+              : q.isLoading
+                ? "Загрузка кампаний…"
+                : items.length === 0
+                  ? filterByNm
+                    ? "Нет РК для этой карточки"
+                    : "Нет активных РК"
+                  : "Выберите РК…"}
+          </option>
+          {items.map((c) => (
+            <option key={c.advertId} value={String(c.advertId)}>
+              [{c.advertId}] {c.name} ·{" "}
+              {TYPE_TXT[c.type || 0] || `type=${c.type}`} ·{" "}
+              {STATUS_TXT[c.status || 0] || `status=${c.status}`}
+            </option>
+          ))}
+        </select>
+        <input
+          type="number"
+          className="input w-32"
+          placeholder="или ID вручную"
+          value={items.find((c) => String(c.advertId) === value) ? "" : value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      </div>
+      {nmId && items.length === 0 && filterByNm && !q.isLoading && (
+        <button
+          type="button"
+          className="btn-link text-xs"
+          onClick={() => setFilterByNm(false)}
+        >
+          Показать все РК тенанта (без фильтра по nm_id)
+        </button>
+      )}
+      {q.error && (
+        <div className="text-warn text-xs">
+          {(q.error as Error).message}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------
 // Preset triggers — соответствуют wbab «Быстрая / Стандартная / Точная».
 // Цель: пользователь не задаёт VIEWS=1500 руками — кликает preset и идёт
 // дальше. «Точная» включается только когда у карточки трафик ≥1000/день
@@ -562,16 +651,12 @@ export default function AbTestNew() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm text-muted mb-1">
-                  campaign_id WB (для ADV)
+                  Рекламная кампания
                 </label>
-                <input
-                  type="number"
-                  className="input w-full"
+                <CampaignPicker
+                  nmId={form.nm_id}
                   value={form.campaign_id}
-                  onChange={(e) =>
-                    setForm({ ...form, campaign_id: e.target.value })
-                  }
-                  placeholder="123456"
+                  onChange={(v) => setForm({ ...form, campaign_id: v })}
                 />
               </div>
               <div>

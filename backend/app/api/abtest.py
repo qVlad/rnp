@@ -181,6 +181,7 @@ def _serialize_test(t: AbTest) -> dict[str, Any]:
         "budget_topup_amount": t.budget_topup_amount,
         "budget_daily_limit": t.budget_daily_limit,
         "budget_topup_spent_today": t.budget_topup_spent_today,
+        "original_photos": t.original_photos,
         "created_at": t.created_at.isoformat() if t.created_at else None,
         "updated_at": t.updated_at.isoformat() if t.updated_at else None,
     }
@@ -219,6 +220,74 @@ def _serialize_alert(a: AbTestAlert) -> dict[str, Any]:
         "resolved": a.resolved,
         "created_at": a.created_at.isoformat(),
     }
+
+
+# ----------------------------------------------------------------------
+# Campaign picker — список РК тенанта (опционально фильтр по nm_id)
+# ----------------------------------------------------------------------
+
+
+@router.get("/campaigns")
+async def list_campaigns(
+    nm_id: Annotated[int | None, Query()] = None,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Список активных РК тенанта. Если задан `nm_id` — фильтрует те, в
+    которых этот артикул присутствует (`nmIds` из `/api/advert/v2/adverts`).
+
+    Кэшируется в Redis 5 минут per-tenant — у крупных селлеров /count
+    + /adverts тяжёлые, форма создания может открываться часто.
+    """
+    from app.sync.tenants import wb_client_for_tenant
+    from app.integrations.wb.advert import (
+        fetch_campaigns_overview,
+        fetch_campaigns_info,
+    )
+    import json
+    import redis.asyncio as redis_async
+    from app.core.config import settings as cfg
+
+    cache_key = f"abtest:campaigns:{user.tenant_id}"
+    r = redis_async.from_url(cfg.redis_url, decode_responses=True)
+    try:
+        cached = await r.get(cache_key)
+        if cached:
+            campaigns = json.loads(cached)
+        else:
+            try:
+                wb_client = await wb_client_for_tenant(session, user.tenant_id)
+            except RuntimeError as e:
+                raise HTTPException(400, str(e))
+            async with wb_client as wb:
+                overview = await fetch_campaigns_overview(wb)
+                # Показываем только status ∈ {7=active, 9=ready, 11=paused}
+                active = [c for c in overview if c.get("status") in (7, 9, 11)]
+                ids = [int(c["advertId"]) for c in active]
+                details = await fetch_campaigns_info(wb, ids)
+                # Merge status/changeTime из overview в details.
+                by_id = {int(c["advertId"]): c for c in active}
+                campaigns = []
+                for d in details:
+                    aid = int(d.get("advertId") or 0)
+                    if aid == 0:
+                        continue
+                    ov = by_id.get(aid, {})
+                    campaigns.append({
+                        "advertId": aid,
+                        "name": d.get("name") or f"[{aid}]",
+                        "type": d.get("type") or ov.get("type"),
+                        "status": d.get("status") or ov.get("status"),
+                        "dailyBudget": d.get("dailyBudget"),
+                        "nmIds": d.get("nmIds") or [],
+                    })
+            await r.set(cache_key, json.dumps(campaigns), ex=300)
+    finally:
+        await r.aclose()
+
+    if nm_id is not None:
+        campaigns = [c for c in campaigns if nm_id in (c.get("nmIds") or [])]
+    return {"items": campaigns, "count": len(campaigns)}
 
 
 # ----------------------------------------------------------------------
@@ -470,7 +539,10 @@ async def start_test(
     test = await _check_test_access(session, abtest_id, brands)
     if test.status not in ("draft", "paused"):
         raise HTTPException(400, f"cannot start from status {test.status}")
-    # Все варианты должны иметь хотя бы 1 фото.
+    # Все варианты должны иметь хотя бы 1 фото + порядок photo_order без gap'ов.
+    # Gap опасен: при ротации `_execute_rotation` грузит на WB только
+    # перечисленные позиции — остальные на карточке остаются от прошлого
+    # варианта (грязный mix). Запрещаем старт пока gap не закрыт.
     variants = (
         await session.execute(
             select(AbTestVariant).where(AbTestVariant.abtest_id == abtest_id)
@@ -479,15 +551,51 @@ async def start_test(
     if len(variants) < 2:
         raise HTTPException(400, "test needs at least 2 variants")
     for v in variants:
-        has_photo = (
-            await session.scalar(
-                select(exists().where(AbTestVariantPhoto.variant_id == v.id))
+        ph_rows = (
+            await session.execute(
+                select(AbTestVariantPhoto.photo_order)
+                .where(AbTestVariantPhoto.variant_id == v.id)
+                .order_by(AbTestVariantPhoto.photo_order)
             )
-        )
-        if not has_photo:
+        ).scalars().all()
+        if not ph_rows:
             raise HTTPException(400, f"variant {v.label} has no photos")
+        expected = list(range(1, len(ph_rows) + 1))
+        if list(ph_rows) != expected:
+            raise HTTPException(
+                400,
+                f"variant {v.label}: gap in photo_order {list(ph_rows)}. "
+                f"Expected consecutive 1..{len(ph_rows)} — удалите старшие позиции или "
+                f"загрузите фото на пропущенные.",
+            )
 
     was_draft = test.status == "draft"
+    # При первом старте — снимок исходных фото WB-карточки для возможности
+    # «Остановить и вернуть исходное» при stop?mode=restore.
+    if was_draft and not test.original_photos:
+        try:
+            from app.integrations.wb.content_media import get_card_by_nm_id
+            from app.sync.tenants import wb_client_for_tenant
+
+            wb_client = await wb_client_for_tenant(session, test.tenant_id)
+            async with wb_client as wb:
+                card = await get_card_by_nm_id(wb, int(test.nm_id))
+            if card:
+                photos = card.get("photos") or []
+                snap = []
+                for i, p in enumerate(photos[:10], start=1):
+                    if not isinstance(p, dict):
+                        continue
+                    url = p.get("big") or p.get("c516x688") or p.get("c246x328")
+                    if isinstance(url, str) and url.startswith("http"):
+                        snap.append({"order": i, "url": url})
+                test.original_photos = snap if snap else None
+        except Exception as e:
+            log.warning(
+                "[abtest] test %d: original_photos snapshot failed: %s",
+                test.id, e,
+            )
+
     test.status = "running"
     if test.started_at is None:
         test.started_at = datetime.now(timezone.utc)
@@ -536,19 +644,56 @@ async def resume_test(
 @router.post("/{abtest_id}/stop")
 async def stop_test(
     abtest_id: int,
+    mode: Annotated[Literal["keep", "restore"], Query()] = "keep",
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict[str, Any]:
+    """Остановить тест.
+
+    `mode=keep` (по умолчанию) — статус "stopped", фото на WB-карточке
+    остаётся последним применённым вариантом теста. Юзер может вручную
+    зафиксировать победителя через apply-winner.
+
+    `mode=restore` — если в `original_photos` (snapshot перед стартом теста)
+    есть URL'ы, восстанавливает исходный комплект фото через `POST
+    /content/v3/media/save`. WB обрабатывает асинхронно (1-5 мин).
+    """
     test = await _check_test_access(session, abtest_id, brands)
     if test.status not in ("running", "paused"):
         raise HTTPException(400, f"cannot stop from status {test.status}")
-    test.status = "cancelled"
+
+    restored = False
+    if mode == "restore":
+        snap = test.original_photos
+        if not snap or not isinstance(snap, list):
+            raise HTTPException(
+                400,
+                "Нет snapshot'а исходных фото — этот тест стартовал до фичи "
+                "snapshot'а либо WB не вернул фото на момент старта. "
+                "Используйте mode=keep.",
+            )
+        urls = [
+            p["url"] for p in snap
+            if isinstance(p, dict) and isinstance(p.get("url"), str)
+        ]
+        if not urls:
+            raise HTTPException(400, "Snapshot пуст")
+        try:
+            from app.integrations.wb.content_media import save_media_by_url
+            from app.sync.tenants import wb_client_for_tenant
+
+            wb_client = await wb_client_for_tenant(session, test.tenant_id)
+            async with wb_client as wb:
+                await save_media_by_url(wb, int(test.nm_id), urls)
+            restored = True
+        except Exception as e:
+            log.warning("[abtest] test %d: restore failed: %s", test.id, e)
+            raise HTTPException(502, f"WB restore failed: {e}")
+
+    test.status = "stopped"
     test.completed_at = datetime.now(timezone.utc)
-    # TODO Phase 6: восстановление исходных фото через
-    # `content_media.save_media_by_url(original_photos)`. Сейчас просто помечаем
-    # cancelled — фото на WB остаются последнего применённого варианта.
     await session.commit()
-    return {"test": _serialize_test(test)}
+    return {"test": _serialize_test(test), "restored": restored}
 
 
 @router.post("/{abtest_id}/archive")
