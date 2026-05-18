@@ -19,9 +19,19 @@
 Все таблицы tenant-scoped (BIGINT tenant_id, FK CASCADE на tenants).
 WbAccount из wbab свёрнут в Tenant (1:1): один WB-токен на тенанта.
 
-Revision ID: 0031
-Revises: 0030
+Revision ID: 0033
+Revises: 0032
 Create Date: 2026-05-16 00:00:00
+
+ВАЖНО: revision был "0031" на проде до merge с origin/main, который принёс
+0031_brand_assignments_nm и 0032_external_ad_brand. Чтобы развести head'ы
+после merge — переименован в 0033 с down_revision="0032". На проде нужно
+вручную обновить `alembic_version` перед следующим deploy:
+    1) alembic stamp 0030     (откат до общей точки до конфликта)
+    2) deploy кода (0031/0032 от main + 0033 здесь)
+    3) alembic upgrade 0032   (применяет 0031_brand + 0032_external_ad)
+    4) alembic stamp 0033     (mark abtest как applied — таблицы уже есть
+                              с прошлого deploy'я 16 мая)
 """
 from typing import Sequence, Union
 
@@ -29,8 +39,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
-revision: str = "0031"
-down_revision: Union[str, None] = "0030"
+revision: str = "0033"
+down_revision: Union[str, None] = "0032"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
