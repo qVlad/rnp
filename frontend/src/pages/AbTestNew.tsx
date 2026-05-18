@@ -204,13 +204,58 @@ function ProductPicker({
   );
 }
 
+// ----------------------------------------------------------------------
+// Preset triggers — соответствуют wbab «Быстрая / Стандартная / Точная».
+// Цель: пользователь не задаёт VIEWS=1500 руками — кликает preset и идёт
+// дальше. «Точная» включается только когда у карточки трафик ≥1000/день
+// (мы это не оцениваем, поэтому показываем всегда но с подсказкой).
+// ----------------------------------------------------------------------
+type PresetId = "quick" | "standard" | "precise" | "custom";
+
+const PRESETS: Record<PresetId, {
+  label: string;
+  description: string;
+  trigger_mode: TriggerMode;
+  trigger_value: number;
+  min_sample_size: number;
+}> = {
+  quick: {
+    label: "Быстрая проверка",
+    description: "TIME-ротация 120 мин, выборка 500 показов на вариант",
+    trigger_mode: "TIME",
+    trigger_value: 120,
+    min_sample_size: 500,
+  },
+  standard: {
+    label: "Стандартная",
+    description: "TIME-ротация 360 мин (6ч), выборка 1500 показов",
+    trigger_mode: "TIME",
+    trigger_value: 360,
+    min_sample_size: 1500,
+  },
+  precise: {
+    label: "Точная",
+    description: "VIEWS-ротация 1500 на вариант (для трафика ≥1000/день)",
+    trigger_mode: "VIEWS",
+    trigger_value: 1500,
+    min_sample_size: 1500,
+  },
+  custom: {
+    label: "Свои настройки",
+    description: "Ручная настройка триггера и выборки",
+    trigger_mode: "TIME",
+    trigger_value: 360,
+    min_sample_size: 1500,
+  },
+};
+
 export default function AbTestNew() {
   const nav = useNavigate();
   const [form, setForm] = useState({
     name: "",
     nm_id: null as number | null,
-    trigger_mode: "VIEWS" as TriggerMode,
-    trigger_value: 1500,
+    trigger_mode: "TIME" as TriggerMode,
+    trigger_value: 360,
     traffic_source: "ANY" as TrafficSource,
     test_mode: "PHOTO" as TestMode,
     campaign_id: "",
@@ -221,7 +266,38 @@ export default function AbTestNew() {
     budget_min_threshold: 500,
     budget_topup_amount: 1000,
     budget_daily_limit: 10000,
-    variant_labels: "A,B",
+    variant_count: 2,
+  });
+  const [preset, setPreset] = useState<PresetId>("standard");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  // Текущие фото с WB для Варианта A (предпросмотр перед сабмитом).
+  const [currentPhotosA, setCurrentPhotosA] = useState<{ order: number; url: string }[]>([]);
+
+  const applyPreset = (id: PresetId) => {
+    setPreset(id);
+    const p = PRESETS[id];
+    setForm((f) => ({
+      ...f,
+      trigger_mode: p.trigger_mode,
+      trigger_value: p.trigger_value,
+      min_sample_size: p.min_sample_size,
+    }));
+  };
+
+  // Сброс current-photos при смене карточки или test_mode — нужна другая воронка.
+  useEffect(() => {
+    setCurrentPhotosA([]);
+  }, [form.nm_id, form.test_mode]);
+
+  // Подгрузка текущих фото WB-карточки.
+  const loadCurrentMut = useMutation({
+    mutationFn: async () => {
+      if (form.nm_id == null) throw new Error("Сначала выберите карточку");
+      const count = form.test_mode === "PHOTO" ? 1 : 10;
+      const r = await abtestApi.getWbCurrentPhotos(form.nm_id, count);
+      return r.photos;
+    },
+    onSuccess: (photos) => setCurrentPhotosA(photos),
   });
 
   const createMut = useMutation({
@@ -242,10 +318,8 @@ export default function AbTestNew() {
         budget_min_threshold: Number(form.budget_min_threshold),
         budget_topup_amount: Number(form.budget_topup_amount),
         budget_daily_limit: Number(form.budget_daily_limit),
-        variant_labels: form.variant_labels
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
+        variant_count: form.variant_count,
+        current_photos_a: currentPhotosA.map((p) => p.url),
       });
     },
     onSuccess: (data) => nav(`/abtest/${data.id}`),
@@ -253,12 +327,21 @@ export default function AbTestNew() {
 
   const needsAdvert =
     form.traffic_source === "ADV_ONLY" || form.traffic_source === "BOTH";
+  const LABELS = ["A", "B", "C", "D"] as const;
+  const variantLabels = LABELS.slice(0, form.variant_count);
 
   return (
     <div className="space-y-4 max-w-3xl">
       <h1 className="text-2xl font-semibold">Новый A/B тест</h1>
+      <p className="text-muted text-sm">
+        Создадим черновик. Фото вариантов B/{form.variant_count >= 3 ? "C/" : ""}
+        {form.variant_count >= 4 ? "D" : "—"} загрузите на странице теста после
+        создания. Запустить можно отдельной кнопкой.
+      </p>
 
+      {/* ---------- 1. Основные ---------- */}
       <div className="card space-y-3">
+        <h2 className="font-semibold">1. Основные настройки</h2>
         <div>
           <label className="block text-sm text-muted mb-1">Название</label>
           <input
@@ -268,59 +351,35 @@ export default function AbTestNew() {
             placeholder="Например: фото инфографика для X-100500"
           />
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-sm text-muted mb-1">Карточка WB</label>
-            <ProductPicker
-              value={form.nm_id}
-              onChange={(nmId) => setForm({ ...form, nm_id: nmId })}
-            />
-            <div className="text-xs text-muted mt-1">
-              Поиск по nm_id, артикулу или названию. Если списка нет —
-              синхронизируйте карточки в /settings → WB sync.
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm text-muted mb-1">Лейблы вариантов</label>
-            <input
-              className="input w-full font-mono"
-              value={form.variant_labels}
-              onChange={(e) =>
-                setForm({ ...form, variant_labels: e.target.value })
-              }
-              placeholder="A,B"
-            />
-            <div className="text-xs text-muted mt-1">
-              Через запятую, 2-8 шт. Фото загрузишь на странице теста.
-            </div>
+        <div>
+          <label className="block text-sm text-muted mb-1">Карточка WB</label>
+          <ProductPicker
+            value={form.nm_id}
+            onChange={(nmId) => setForm({ ...form, nm_id: nmId })}
+          />
+          <div className="text-xs text-muted mt-1">
+            Поиск по nm_id, артикулу или названию. Если списка нет — синхронизируйте
+            карточки в /settings → WB sync.
           </div>
         </div>
+      </div>
 
-        <div className="grid grid-cols-3 gap-3">
+      {/* ---------- 2. Сценарий ---------- */}
+      <div className="card space-y-3">
+        <h2 className="font-semibold">2. Сценарий</h2>
+        <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-sm text-muted mb-1">Триггер</label>
+            <label className="block text-sm text-muted mb-1">Режим теста</label>
             <select
               className="input w-full"
-              value={form.trigger_mode}
+              value={form.test_mode}
               onChange={(e) =>
-                setForm({ ...form, trigger_mode: e.target.value as TriggerMode })
+                setForm({ ...form, test_mode: e.target.value as TestMode })
               }
             >
-              <option value="VIEWS">VIEWS (показы)</option>
-              <option value="TIME">TIME (минуты)</option>
-              <option value="BUDGET">BUDGET (₽ потрачено)</option>
+              <option value="PHOTO">PHOTO — только главное фото</option>
+              <option value="FUNNEL">FUNNEL — вся фото-воронка (до 10 фото)</option>
             </select>
-          </div>
-          <div>
-            <label className="block text-sm text-muted mb-1">Значение триггера</label>
-            <input
-              type="number"
-              className="input w-full"
-              value={form.trigger_value}
-              onChange={(e) =>
-                setForm({ ...form, trigger_value: Number(e.target.value) })
-              }
-            />
           </div>
           <div>
             <label className="block text-sm text-muted mb-1">Источник трафика</label>
@@ -338,171 +397,310 @@ export default function AbTestNew() {
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-3">
-          <div>
-            <label className="block text-sm text-muted mb-1">Режим теста</label>
-            <select
-              className="input w-full"
-              value={form.test_mode}
-              onChange={(e) =>
-                setForm({ ...form, test_mode: e.target.value as TestMode })
-              }
-            >
-              <option value="PHOTO">PHOTO (только главное фото)</option>
-              <option value="FUNNEL">FUNNEL (вся фото-воронка)</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm text-muted mb-1">Мин. выборка</label>
-            <input
-              type="number"
-              className="input w-full"
-              value={form.min_sample_size}
-              onChange={(e) =>
-                setForm({ ...form, min_sample_size: Number(e.target.value) })
-              }
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-muted mb-1">Confidence</label>
-            <input
-              type="number"
-              step={0.01}
-              min={0.5}
-              max={0.999}
-              className="input w-full"
-              value={form.confidence_level}
-              onChange={(e) =>
-                setForm({ ...form, confidence_level: Number(e.target.value) })
-              }
-            />
-          </div>
-        </div>
-
         {needsAdvert && (
-          <div className="grid grid-cols-2 gap-3 border-t border-border pt-3">
-            <div>
-              <label className="block text-sm text-muted mb-1">campaign_id WB</label>
-              <input
-                type="number"
-                className="input w-full"
-                value={form.campaign_id}
-                onChange={(e) =>
-                  setForm({ ...form, campaign_id: e.target.value })
-                }
-              />
-            </div>
-            <div>
-              <label className="flex items-center gap-2 text-sm mt-6">
+          <div className="border-t border-border pt-3 space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm text-muted mb-1">
+                  campaign_id WB (для ADV)
+                </label>
                 <input
-                  type="checkbox"
-                  checked={form.budget_auto_topup}
+                  type="number"
+                  className="input w-full"
+                  value={form.campaign_id}
                   onChange={(e) =>
-                    setForm({ ...form, budget_auto_topup: e.target.checked })
+                    setForm({ ...form, campaign_id: e.target.value })
                   }
+                  placeholder="123456"
                 />
-                Авто-пополнение РК
-              </label>
+              </div>
+              <div>
+                <label className="flex items-center gap-2 text-sm mt-6">
+                  <input
+                    type="checkbox"
+                    checked={form.budget_auto_topup}
+                    onChange={(e) =>
+                      setForm({ ...form, budget_auto_topup: e.target.checked })
+                    }
+                  />
+                  Авто-пополнение РК
+                </label>
+              </div>
             </div>
             {form.budget_auto_topup && (
-              <>
+              <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-sm text-muted mb-1">
-                    Min остаток (₽)
-                  </label>
+                  <label className="block text-sm text-muted mb-1">Порог (₽)</label>
                   <input
                     type="number"
                     className="input w-full"
                     value={form.budget_min_threshold}
                     onChange={(e) =>
-                      setForm({
-                        ...form,
-                        budget_min_threshold: Number(e.target.value),
-                      })
+                      setForm({ ...form, budget_min_threshold: Number(e.target.value) })
                     }
                   />
                 </div>
                 <div>
-                  <label className="block text-sm text-muted mb-1">
-                    Сумма пополнения (₽)
-                  </label>
+                  <label className="block text-sm text-muted mb-1">Сумма (₽)</label>
                   <input
                     type="number"
                     className="input w-full"
                     value={form.budget_topup_amount}
                     onChange={(e) =>
-                      setForm({
-                        ...form,
-                        budget_topup_amount: Number(e.target.value),
-                      })
+                      setForm({ ...form, budget_topup_amount: Number(e.target.value) })
                     }
                   />
                 </div>
-                <div className="col-span-2">
-                  <label className="block text-sm text-muted mb-1">
-                    Дневной лимит пополнений (₽)
-                  </label>
+                <div>
+                  <label className="block text-sm text-muted mb-1">Лимит/сутки</label>
                   <input
                     type="number"
                     className="input w-full"
                     value={form.budget_daily_limit}
                     onChange={(e) =>
-                      setForm({
-                        ...form,
-                        budget_daily_limit: Number(e.target.value),
-                      })
+                      setForm({ ...form, budget_daily_limit: Number(e.target.value) })
                     }
                   />
                 </div>
-              </>
+              </div>
             )}
           </div>
         )}
+      </div>
 
-        <div>
-          <label className="flex items-center gap-2 text-sm">
+      {/* ---------- 3. Параметры (preset + расширенные) ---------- */}
+      <div className="card space-y-3">
+        <h2 className="font-semibold">3. Параметры ротации</h2>
+        <div className="grid grid-cols-2 gap-2">
+          {(["quick", "standard", "precise"] as const).map((id) => {
+            const p = PRESETS[id];
+            const active = preset === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => applyPreset(id)}
+                className={`text-left p-3 rounded border ${
+                  active
+                    ? "border-accent bg-accent-subtle"
+                    : "border-border hover:bg-surface-2"
+                }`}
+              >
+                <div className="font-medium text-sm">{p.label}</div>
+                <div className="text-xs text-muted mt-1">{p.description}</div>
+              </button>
+            );
+          })}
+        </div>
+
+        <details
+          open={advancedOpen || preset === "custom"}
+          className="border-t border-border pt-3"
+        >
+          <summary
+            className="cursor-pointer text-sm font-medium select-none"
+            onClick={(e) => {
+              e.preventDefault();
+              setAdvancedOpen((v) => !v);
+            }}
+          >
+            Расширенные настройки
+          </summary>
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm text-muted mb-1">Тип триггера</label>
+              <select
+                className="input w-full"
+                value={form.trigger_mode}
+                onChange={(e) => {
+                  setForm({ ...form, trigger_mode: e.target.value as TriggerMode });
+                  setPreset("custom");
+                }}
+              >
+                <option value="VIEWS">VIEWS — показы на вариант</option>
+                <option value="TIME">TIME — минуты</option>
+                {needsAdvert && <option value="BUDGET">BUDGET — ₽ из РК</option>}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm text-muted mb-1">Значение</label>
+              <input
+                type="number"
+                className="input w-full"
+                value={form.trigger_value}
+                onChange={(e) => {
+                  setForm({ ...form, trigger_value: Number(e.target.value) });
+                  setPreset("custom");
+                }}
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-muted mb-1">
+                Мин. выборка
+              </label>
+              <input
+                type="number"
+                className="input w-full"
+                value={form.min_sample_size}
+                onChange={(e) => {
+                  setForm({ ...form, min_sample_size: Number(e.target.value) });
+                  setPreset("custom");
+                }}
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-muted mb-1">Уровень доверия</label>
+              <select
+                className="input w-full"
+                value={form.confidence_level}
+                onChange={(e) =>
+                  setForm({ ...form, confidence_level: Number(e.target.value) })
+                }
+              >
+                <option value={0.9}>90%</option>
+                <option value={0.95}>95% (стандарт)</option>
+                <option value={0.99}>99%</option>
+              </select>
+            </div>
+          </div>
+        </details>
+      </div>
+
+      {/* ---------- 4. Варианты ---------- */}
+      <div className="card space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold">4. Варианты</h2>
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-muted">Количество:</span>
+            <div className="flex items-center gap-1">
+              {[2, 3, 4].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setForm({ ...form, variant_count: n })}
+                  className={`px-2 py-1 rounded text-xs ${
+                    form.variant_count === n
+                      ? "bg-accent text-white"
+                      : "bg-surface-2 text-muted hover:text-fg"
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="text-sm text-muted">
+          Будут созданы: <strong className="font-mono">{variantLabels.join(", ")}</strong>.
+          Фото каждого варианта загрузите на странице теста после создания.
+        </div>
+
+        {/* «Подгрузить текущее с WB как Вариант A» */}
+        {form.nm_id != null && currentPhotosA.length === 0 && (
+          <div className="border border-dashed border-border rounded p-3 flex items-start gap-3">
+            <div className="flex-1">
+              <div className="text-sm font-medium">
+                📥 Использовать текущее фото с WB как Вариант A
+              </div>
+              <div className="text-xs text-muted mt-1">
+                Подгрузим{" "}
+                {form.test_mode === "PHOTO"
+                  ? "главное фото"
+                  : "всю воронку (до 10 фото)"}{" "}
+                карточки прямо с WB — оно станет базой для сравнения. Сравнивайте с новыми
+                версиями в B{form.variant_count >= 3 ? "/C" : ""}
+                {form.variant_count >= 4 ? "/D" : ""}.
+              </div>
+              {loadCurrentMut.error && (
+                <div className="text-warn text-xs mt-1">
+                  {(loadCurrentMut.error as Error).message}
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              className="btn shrink-0"
+              onClick={() => loadCurrentMut.mutate()}
+              disabled={loadCurrentMut.isPending}
+            >
+              {loadCurrentMut.isPending ? "Загрузка…" : "Подгрузить"}
+            </button>
+          </div>
+        )}
+
+        {currentPhotosA.length > 0 && (
+          <div className="border border-success rounded p-3 space-y-2 bg-success-bg/30">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-medium text-success">
+                ✓ Вариант A — {currentPhotosA.length === 1 ? "главное фото" : `${currentPhotosA.length} фото`} с WB
+              </div>
+              <button
+                type="button"
+                className="btn-link text-xs"
+                onClick={() => setCurrentPhotosA([])}
+              >
+                Очистить
+              </button>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              {currentPhotosA.map((p) => (
+                <div key={p.order} className="relative">
+                  <img
+                    src={p.url}
+                    alt={`photo ${p.order}`}
+                    className="w-16 h-16 object-cover rounded border border-border"
+                  />
+                  <div className="absolute bottom-0 left-0 text-xs bg-surface px-1">
+                    #{p.order}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {form.variant_count > 2 && (
+          <label className="flex items-start gap-2 text-sm cursor-pointer border border-border rounded p-2">
             <input
               type="checkbox"
               checked={form.keep_leaders_after_24h}
               onChange={(e) =>
                 setForm({ ...form, keep_leaders_after_24h: e.target.checked })
               }
+              className="mt-0.5"
             />
-            Оставить топ-2 лидеров через 24 ч (для 3+ вариантов)
+            <span>
+              <span className="font-medium">Оставить топ-2 лидеров через 24 ч</span>
+              <span className="block text-xs text-muted">
+                Через сутки после старта 2 варианта с самым высоким CTR останутся, остальные
+                отсеются.
+              </span>
+            </span>
           </label>
-        </div>
-
-        {createMut.error && (
-          <div className="text-warn text-sm">
-            {(createMut.error as Error).message}
-          </div>
         )}
-        <div className="flex gap-2 justify-end">
-          <button
-            className="btn"
-            onClick={() => history.back()}
-            disabled={createMut.isPending}
-          >
-            Отмена
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={() => createMut.mutate()}
-            disabled={
-              createMut.isPending ||
-              !form.name ||
-              !form.nm_id ||
-              !form.variant_labels
-            }
-          >
-            {createMut.isPending ? "Создаём…" : "Создать черновик"}
-          </button>
+      </div>
+
+      {createMut.error && (
+        <div className="card text-warn text-sm">
+          {(createMut.error as Error).message}
         </div>
-        <div className="text-xs text-muted">
-          После создания: загрузите фото для каждого варианта на странице теста,
-          затем нажмите «Запустить» — фото варианта A будет применено к карточке
-          на WB.
-        </div>
+      )}
+
+      <div className="flex gap-2 justify-end sticky bottom-0 bg-bg-1 py-2 -mx-4 px-4 border-t border-border">
+        <button
+          className="btn"
+          onClick={() => history.back()}
+          disabled={createMut.isPending}
+        >
+          Отмена
+        </button>
+        <button
+          className="btn btn-primary"
+          onClick={() => createMut.mutate()}
+          disabled={createMut.isPending || !form.name || !form.nm_id}
+        >
+          {createMut.isPending ? "Создаём…" : "Создать черновик"}
+        </button>
       </div>
     </div>
   );

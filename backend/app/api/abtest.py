@@ -93,8 +93,13 @@ class TestCreate(BaseModel):
     budget_min_threshold: int = 500
     budget_topup_amount: int = 1000
     budget_daily_limit: int = 10000
-    # Минимум 2 варианта — пользователь даёт лейблы, фото добавляются отдельно.
-    variant_labels: list[str] = Field(min_length=2, max_length=8)
+    # Число вариантов (2-4). Лейблы генерируются автоматически: A, B, C, D.
+    variant_count: int = Field(default=2, ge=2, le=4)
+    # Опционально: URL'ы текущих WB-фото карточки для скачивания в Вариант A.
+    # Если задан непустой список — backend скачает их и создаст
+    # `abtest_variant_photo` для варианта A. UI получает эти URL'ы через
+    # `GET /api/abtest/wb-photos/{nm_id}` перед сабмитом.
+    current_photos_a: list[str] = Field(default_factory=list)
 
 
 class TestUpdate(BaseModel):
@@ -217,6 +222,49 @@ def _serialize_alert(a: AbTestAlert) -> dict[str, Any]:
 
 
 # ----------------------------------------------------------------------
+# WB current photos (preview before create)
+# ----------------------------------------------------------------------
+
+
+@router.get("/wb-photos/{nm_id}")
+async def get_wb_current_photos(
+    nm_id: int,
+    count: Annotated[int, Query(ge=1, le=10)] = 10,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
+) -> dict[str, Any]:
+    """Возвращает URL'ы текущих фото WB-карточки.
+
+    Используется UI перед созданием теста: «Подгрузить текущее как Вариант A»
+    показывает превью, и на сабмит URL'ы попадают в `current_photos_a`
+    payload'а. Backend на создании скачает их и сохранит как фото Варианта A.
+
+    Для PHOTO-теста достаточно `count=1` (главное фото). Для FUNNEL —
+    до 10. Может занять до 1-2 минут на медленном WB (пагинация cards/list).
+    """
+    prod = await _check_nm_id_allowed(session, nm_id, brands)
+    try:
+        client = await wb_client_for_tenant_helper(session, prod.tenant_id)
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    from app.services.abtest.wb_photos import fetch_current_photo_urls
+
+    async with client as wb:
+        urls = await fetch_current_photo_urls(wb, nm_id, count=count)
+    if not urls:
+        raise HTTPException(
+            404, "WB не вернул фото для этой карточки (нет в кабинете?)"
+        )
+    return {"nm_id": nm_id, "photos": [{"order": i + 1, "url": u} for i, u in enumerate(urls)]}
+
+
+async def wb_client_for_tenant_helper(session: AsyncSession, tenant_id: int):
+    """Тонкая обёртка чтобы избежать цикла импорта на module level."""
+    from app.sync.tenants import wb_client_for_tenant
+    return await wb_client_for_tenant(session, tenant_id)
+
+
+# ----------------------------------------------------------------------
 # Top-level CRUD
 # ----------------------------------------------------------------------
 
@@ -253,10 +301,8 @@ async def create_test(
 ) -> dict[str, Any]:
     await _check_nm_id_allowed(session, payload.nm_id, brands)
 
-    # Уникальность лейблов
-    labels = [lbl.strip() for lbl in payload.variant_labels]
-    if len(set(labels)) != len(labels):
-        raise HTTPException(400, "variant labels must be unique")
+    # Лейблы генерируются автоматически: A, B, C, D.
+    labels = ["A", "B", "C", "D"][: payload.variant_count]
 
     test = AbTest(
         name=payload.name,
@@ -280,8 +326,34 @@ async def create_test(
     session.add(test)
     await session.flush()
 
+    variants_by_label: dict[str, AbTestVariant] = {}
     for label in labels:
-        session.add(AbTestVariant(abtest_id=test.id, label=label))
+        v = AbTestVariant(abtest_id=test.id, label=label)
+        session.add(v)
+        variants_by_label[label] = v
+    await session.flush()  # чтобы variants_by_label["A"].id был доступен ниже
+
+    # Если переданы URL'ы текущих WB-фото — скачиваем и кладём в Вариант A.
+    # Best-effort: даже если скачается частично, тест создан и пользователь
+    # увидит подгруженное на странице деталей.
+    if payload.current_photos_a:
+        from app.services.abtest.wb_photos import download_photos_for_variant
+        variant_a = variants_by_label["A"]
+        try:
+            saved = await download_photos_for_variant(
+                session,
+                abtest_id=test.id,
+                variant_id=variant_a.id,
+                variant_label="A",
+                urls=payload.current_photos_a,
+            )
+            log.info(
+                "[abtest] test %d: pre-loaded %d/%d WB photos into Variant A",
+                test.id, saved, len(payload.current_photos_a),
+            )
+        except Exception as e:
+            log.warning("[abtest] test %d: WB photo preload failed: %s", test.id, e)
+
     await session.commit()
     await session.refresh(test)
 

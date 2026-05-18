@@ -88,7 +88,16 @@ export interface AbTestCreatePayload {
   budget_min_threshold?: number;
   budget_topup_amount?: number;
   budget_daily_limit?: number;
-  variant_labels: string[];
+  /** Число вариантов 2-4. Лейблы A/B/C/D генерируются автоматически на бэке. */
+  variant_count: number;
+  /** URL'ы фото с WB-карточки для предзагрузки в Вариант A.
+   *  Получаются через /api/abtest/wb-photos/{nm_id} перед сабмитом. */
+  current_photos_a?: string[];
+}
+
+export interface WbPhoto {
+  order: number;
+  url: string;
 }
 
 export interface VariantRate {
@@ -236,6 +245,12 @@ export const abtestApi = {
     req<{ status: string }>(`/api/abtest/${id}/sync-now`, { method: "POST" }),
   budgetRefresh: (id: number) =>
     req<{ status: string }>(`/api/abtest/${id}/budget-refresh`, { method: "POST" }),
+
+  /** Получить URL'ы текущих фото WB-карточки для предзагрузки в Вариант A. */
+  getWbCurrentPhotos: (nmId: number, count = 10) =>
+    req<{ nm_id: number; photos: WbPhoto[] }>(
+      `/api/abtest/wb-photos/${nmId}?count=${count}`,
+    ),
 
   /** Multipart upload — отдельный helper потому что fetch не любит JSON+FormData. */
   uploadPhoto: async (
