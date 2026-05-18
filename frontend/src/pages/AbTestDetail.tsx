@@ -109,50 +109,89 @@ function VariantCard({
         </button>
       </div>
 
-      <div className="flex gap-2 flex-wrap">
-        {variant.photos.length === 0 ? (
-          <div className="text-muted text-sm">Фото не загружены</div>
-        ) : (
-          variant.photos.map((p) => (
-            <div key={p.id} className="relative group">
-              <img
-                src={abtestApi.photoUrl(abtestId, variant.id, p.id)}
-                alt={`#${p.photo_order}`}
-                className="w-24 h-24 object-cover rounded border border-border"
-              />
-              <div className="absolute bottom-0 left-0 text-xs bg-surface px-1">
-                #{p.photo_order}
+      {(() => {
+        const sorted = [...variant.photos].sort((a, b) => a.photo_order - b.photo_order);
+        const main = sorted.find((p) => p.photo_order === 1) ?? sorted[0];
+        const extras = sorted.filter((p) => p !== main);
+        // Главное фото: aspect-[3/4] (WB стандарт 900×1200) на всю ширину
+        // колонки. Доп. фото — сетка 3-в-ряд, aspect-[3/4] поменьше.
+        return (
+          <>
+            {/* Главное фото варианта (photo_order=1) */}
+            {main ? (
+              <div className="relative group">
+                <img
+                  src={abtestApi.photoUrl(abtestId, variant.id, main.id)}
+                  alt={`Вариант ${variant.label} — главное`}
+                  className="aspect-[3/4] w-full object-cover rounded-lg border border-border"
+                />
+                <div className="absolute bottom-1 left-1 text-xs bg-surface/90 backdrop-blur px-1.5 py-0.5 rounded">
+                  #{main.photo_order} главное
+                </div>
+                {canEdit && (
+                  <button
+                    className="absolute top-1 right-1 grid h-6 w-6 place-items-center rounded-full bg-fg/80 text-bg text-xs opacity-0 group-hover:opacity-100"
+                    onClick={() => deletePhotoMut.mutate(main.id)}
+                    title="Удалить главное"
+                  >
+                    ✕
+                  </button>
+                )}
               </div>
-              {canEdit && (
-                <button
-                  className="absolute top-0 right-0 bg-warn text-white rounded-bl text-xs px-1 opacity-0 group-hover:opacity-100"
-                  onClick={() => deletePhotoMut.mutate(p.id)}
-                  title="Удалить"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          ))
-        )}
-      </div>
+            ) : (
+              <div className="aspect-[3/4] w-full rounded-lg border-2 border-dashed border-border bg-surface-2 flex items-center justify-center text-muted text-sm">
+                Главное фото не загружено
+              </div>
+            )}
+            {/* Доп. фото — 3-в-ряд, aspect-3/4 */}
+            {extras.length > 0 && (
+              <div className="grid grid-cols-3 gap-2 mt-2">
+                {extras.map((p) => (
+                  <div key={p.id} className="relative group">
+                    <img
+                      src={abtestApi.photoUrl(abtestId, variant.id, p.id)}
+                      alt={`#${p.photo_order}`}
+                      className="aspect-[3/4] w-full object-cover rounded border border-border"
+                    />
+                    <div className="absolute bottom-0.5 left-0.5 text-[10px] bg-surface/90 backdrop-blur px-1 rounded">
+                      #{p.photo_order}
+                    </div>
+                    {canEdit && (
+                      <button
+                        className="absolute top-0.5 right-0.5 grid h-5 w-5 place-items-center rounded-full bg-fg/80 text-bg text-[10px] opacity-0 group-hover:opacity-100"
+                        onClick={() => deletePhotoMut.mutate(p.id)}
+                        title="Удалить"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        );
+      })()}
 
       {canEdit && (
         <div className="border-t border-border pt-3 space-y-2">
-          <div className="flex items-center gap-2 text-sm">
-            <label>Позиция фото:</label>
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <label>Позиция:</label>
             <input
               type="number"
               min={1}
               max={20}
-              className="input w-16"
+              className="input w-14"
               value={photoOrder}
               onChange={(e) => setPhotoOrder(Number(e.target.value))}
             />
+            <span className="text-xs text-muted">
+              (1 = главное, 2-10 = доп.)
+            </span>
             <input
               ref={fileRef}
               type="file"
-              accept="image/jpeg,image/png,image/webp"
+              accept="image/jpeg,image/png,image/webp,video/mp4"
               className="text-xs"
               onChange={(e) => {
                 const f = e.target.files?.[0];
@@ -352,7 +391,18 @@ export default function AbTestDetail() {
             </button>
           </div>
         )}
-        <div className="grid grid-cols-2 gap-3">
+        {/* 2-4 варианта на ряд (зависит от количества). Для 2 — две большие
+            колонки 1:1, фото aspect-3/4 займут ~50% ширины контента → крупно,
+            как в wbab. Для 3-4 вариантов плотнее. */}
+        <div
+          className={`grid gap-3 ${
+            variants.length <= 2
+              ? "grid-cols-1 md:grid-cols-2"
+              : variants.length === 3
+                ? "grid-cols-1 md:grid-cols-3"
+                : "grid-cols-1 md:grid-cols-2 lg:grid-cols-4"
+          }`}
+        >
           {variants.map((v) => (
             <VariantCard
               key={v.id}

@@ -331,7 +331,7 @@ export default function AbTestNew() {
   const variantLabels = LABELS.slice(0, form.variant_count);
 
   return (
-    <div className="space-y-4 max-w-3xl">
+    <div className="space-y-4 max-w-5xl">
       <h1 className="text-2xl font-semibold">Новый A/B тест</h1>
       <p className="text-muted text-sm">
         Создадим черновик. Фото вариантов B/{form.variant_count >= 3 ? "C/" : ""}
@@ -642,20 +642,45 @@ export default function AbTestNew() {
                 Очистить
               </button>
             </div>
-            <div className="flex gap-2 flex-wrap">
-              {currentPhotosA.map((p) => (
-                <div key={p.order} className="relative">
-                  <img
-                    src={p.url}
-                    alt={`photo ${p.order}`}
-                    className="w-16 h-16 object-cover rounded border border-border"
-                  />
-                  <div className="absolute bottom-0 left-0 text-xs bg-surface px-1">
-                    #{p.order}
-                  </div>
+            {(() => {
+              const sorted = [...currentPhotosA].sort((a, b) => a.order - b.order);
+              const main = sorted[0];
+              const extras = sorted.slice(1);
+              return (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {/* Главное фото — большое, занимает 1/3 на широких экранах */}
+                  {main && (
+                    <div className="relative">
+                      <img
+                        src={main.url}
+                        alt="Главное"
+                        className="aspect-[3/4] w-full object-cover rounded-lg border border-border"
+                      />
+                      <div className="absolute bottom-1 left-1 text-xs bg-surface/90 backdrop-blur px-1.5 py-0.5 rounded">
+                        #{main.order} главное
+                      </div>
+                    </div>
+                  )}
+                  {/* Доп. фото — сетка 4-в-ряд в оставшихся 2/3 ширины */}
+                  {extras.length > 0 && (
+                    <div className="sm:col-span-2 grid grid-cols-4 gap-2 content-start">
+                      {extras.map((p) => (
+                        <div key={p.order} className="relative">
+                          <img
+                            src={p.url}
+                            alt={`photo ${p.order}`}
+                            className="aspect-[3/4] w-full object-cover rounded border border-border"
+                          />
+                          <div className="absolute bottom-0.5 left-0.5 text-[10px] bg-surface/90 backdrop-blur px-1 rounded">
+                            #{p.order}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              ))}
-            </div>
+              );
+            })()}
           </div>
         )}
 
