@@ -53,8 +53,44 @@ function VariantCard({
   const fileRef = useRef<HTMLInputElement>(null);
   const [photoOrder, setPhotoOrder] = useState(1);
   const [uploading, setUploading] = useState(false);
+  const [aspectWarning, setAspectWarning] = useState<string | null>(null);
 
   const canEdit = testStatus === "draft" || testStatus === "paused";
+
+  // Проверка 3:4 (WB-стандарт 900×1200). Не блокируем загрузку — WB сам
+  // обрежет — но предупреждаем (порт wbab `test-form.tsx:561-583`).
+  const checkAspectRatio = (file: File) =>
+    new Promise<void>((resolve) => {
+      if (!file.type.startsWith("image/")) {
+        setAspectWarning(null);
+        resolve();
+        return;
+      }
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const ratio = img.naturalWidth / img.naturalHeight;
+        const target = 3 / 4; // 0.75
+        const tolerance = 0.02;
+        if (Math.abs(ratio - target) > tolerance) {
+          const orientation =
+            ratio > 1.05 ? "горизонтальное" : ratio < 0.7 ? "вертикальное" : "квадратное";
+          setAspectWarning(
+            `${img.naturalWidth}×${img.naturalHeight} — это ${orientation} фото (${ratio.toFixed(2)}:1), WB ждёт 3:4 (≈900×1200). WB обрежет края при показе в листинге.`,
+          );
+        } else {
+          setAspectWarning(null);
+        }
+        URL.revokeObjectURL(url);
+        resolve();
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        setAspectWarning(null);
+        resolve();
+      };
+      img.src = url;
+    });
 
   const uploadMut = useMutation({
     mutationFn: async (file: File) => {
@@ -69,6 +105,8 @@ function VariantCard({
       onChange();
       qc.invalidateQueries({ queryKey: ["abtest", abtestId] });
       if (fileRef.current) fileRef.current.value = "";
+      // Warning не сбрасываем — пусть пользователь видит что предыдущая
+      // загрузка была не 3:4 даже после success. Сбрасывается на next pick.
     },
   });
 
@@ -193,14 +231,21 @@ function VariantCard({
               type="file"
               accept="image/jpeg,image/png,image/webp,video/mp4"
               className="text-xs"
-              onChange={(e) => {
+              onChange={async (e) => {
                 const f = e.target.files?.[0];
-                if (f) uploadMut.mutate(f);
+                if (!f) return;
+                await checkAspectRatio(f);
+                uploadMut.mutate(f);
               }}
               disabled={uploading}
             />
             {uploading && <span className="text-xs text-muted">загрузка…</span>}
           </div>
+          {aspectWarning && (
+            <div className="text-warn text-xs border border-warn/30 bg-warn-bg/30 rounded px-2 py-1">
+              ⚠ {aspectWarning}
+            </div>
+          )}
           {uploadMut.error && (
             <div className="text-warn text-xs">
               {(uploadMut.error as Error).message}
@@ -216,8 +261,6 @@ export default function AbTestDetail() {
   const { id: idStr } = useParams<{ id: string }>();
   const id = Number(idStr);
   const qc = useQueryClient();
-  const [addingVariant, setAddingVariant] = useState(false);
-  const [newLabel, setNewLabel] = useState("");
 
   const q = useQuery({
     queryKey: ["abtest", id],
@@ -239,13 +282,17 @@ export default function AbTestDetail() {
   const action = (fn: () => Promise<unknown>) =>
     fn().then(invalidate).catch((e) => alert(`Ошибка: ${e.message}`));
 
+  // Auto-label: следующий неиспользованный из A/B/C/D/E. Пользователь не
+  // должен вводить «C» вручную — система знает что уже занято.
+  const ALL_LABELS = ["A", "B", "C", "D", "E", "F", "G", "H"] as const;
+  const nextLabel = (used: string[]): string | null => {
+    const taken = new Set(used);
+    return ALL_LABELS.find((l) => !taken.has(l)) ?? null;
+  };
+
   const addVariantMut = useMutation({
-    mutationFn: () => abtestApi.addVariant(id, newLabel),
-    onSuccess: () => {
-      setAddingVariant(false);
-      setNewLabel("");
-      invalidate();
-    },
+    mutationFn: (label: string) => abtestApi.addVariant(id, label),
+    onSuccess: invalidate,
   });
 
   if (q.isLoading) return <div className="text-muted">Загрузка…</div>;
@@ -359,38 +406,30 @@ export default function AbTestDetail() {
       )}
 
       <section>
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg font-medium">Варианты</h2>
-          {canEdit && !addingVariant && (
-            <button
-              className="btn-link text-sm"
-              onClick={() => setAddingVariant(true)}
-            >
-              + Вариант
-            </button>
-          )}
-        </div>
-        {addingVariant && (
-          <div className="card mb-2 flex gap-2 items-center">
-            <input
-              className="input"
-              value={newLabel}
-              onChange={(e) => setNewLabel(e.target.value)}
-              placeholder="Лейбл (C, D, ...)"
-              maxLength={8}
-            />
-            <button
-              className="btn btn-primary"
-              onClick={() => addVariantMut.mutate()}
-              disabled={!newLabel || addVariantMut.isPending}
-            >
-              Добавить
-            </button>
-            <button className="btn" onClick={() => setAddingVariant(false)}>
-              Отмена
-            </button>
-          </div>
-        )}
+        {(() => {
+          const usedLabels = variants.map((v) => v.label);
+          const next = nextLabel(usedLabels);
+          const canAdd = canEdit && next !== null && variants.length < 4;
+          return (
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-lg font-medium">
+                Варианты{" "}
+                <span className="text-muted text-sm font-normal">
+                  ({variants.length}/4)
+                </span>
+              </h2>
+              {canAdd && (
+                <button
+                  className="btn-link text-sm"
+                  onClick={() => addVariantMut.mutate(next!)}
+                  disabled={addVariantMut.isPending}
+                >
+                  + Вариант {next}
+                </button>
+              )}
+            </div>
+          );
+        })()}
         {/* 2-4 варианта на ряд (зависит от количества). Для 2 — две большие
             колонки 1:1, фото aspect-3/4 займут ~50% ширины контента → крупно,
             как в wbab. Для 3-4 вариантов плотнее. */}

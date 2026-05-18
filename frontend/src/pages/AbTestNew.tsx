@@ -56,11 +56,15 @@ function ProductPicker({
   });
 
   const searchQ = useQuery({
-    queryKey: ["product-search", debounced],
+    queryKey: ["product-search-abtest", debounced],
     queryFn: async (): Promise<ProductOption[]> => {
+      // has_photo=true — отсекаем карточки без photo_url. Без этого picker
+      // показывал бы SKU, для которых «Подгрузить текущее» вернёт 404
+      // (~2% products по QA-аудиту, но именно они порождали жалобу).
+      const base = "/api/products?has_photo=true";
       const url = debounced
-        ? `/api/products?search=${encodeURIComponent(debounced)}`
-        : `/api/products`;
+        ? `${base}&search=${encodeURIComponent(debounced)}`
+        : base;
       const resp = await fetch(url, { credentials: "include" });
       if (!resp.ok) throw new Error("Не удалось загрузить products");
       const data = (await resp.json()) as { items?: ProductOption[] };
@@ -249,17 +253,76 @@ const PRESETS: Record<PresetId, {
   },
 };
 
+// ----------------------------------------------------------------------
+// Scenario — 4 готовых комбинации traffic_source × test_mode (как в wbab).
+// Невалидные комбинации (ANY+PHOTO, BOTH+PHOTO) исключены: на органике нет
+// «клика по обложке», мерять CTR без adv нельзя.
+// ----------------------------------------------------------------------
+type ScenarioId = "ADV_PHOTO" | "ADV_FUNNEL" | "ANY_FUNNEL" | "BOTH_FUNNEL";
+
+const SCENARIOS: Array<{
+  id: ScenarioId;
+  emoji: string;
+  title: string;
+  description: string;
+  trafficSource: TrafficSource;
+  testMode: TestMode;
+  needsAdv: boolean;
+}> = [
+  {
+    id: "ADV_PHOTO",
+    emoji: "📸",
+    title: "Главное фото на рекламе",
+    description:
+      'Меняем только обложку (главное фото). Сравниваем варианты по «Показы рекламы → Клик» — это моментальная реакция на обложку в рекламной выдаче, без лагов. Требует рекламной кампании. Период 3-7 дней, выборка от 1500 показов на вариант.',
+    trafficSource: "ADV_ONLY",
+    testMode: "PHOTO",
+    needsAdv: true,
+  },
+  {
+    id: "ADV_FUNNEL",
+    emoji: "📸📣",
+    title: "Полная воронка через рекламу",
+    description:
+      'Меняем все фото варианта. Сравниваем по «Клик рекламы → В корзину, %» — Adv API отдаёт корзину (поле atbs) без лагов и с точной атрибуцией к варианту. Знаменатель — клики по рекламе (это «дошёл до карточки»). Самый чистый сценарий для воронки. Требует РК. Период 5-10 дней, выборка от 3000 показов на вариант.',
+    trafficSource: "ADV_ONLY",
+    testMode: "FUNNEL",
+    needsAdv: true,
+  },
+  {
+    id: "ANY_FUNNEL",
+    emoji: "🎯",
+    title: "Полная воронка на общем трафике",
+    description:
+      'Меняем все фото варианта (главное + доп.). Сравниваем по «Открытие карточки → В корзину, %» — единственная честная метрика на органике (есть точные данные WB nm-report). Заказы и выкупы показываем справочно. Без РК. Период 7-14 дней, выборка от 3000 показов на вариант.',
+    trafficSource: "ANY",
+    testMode: "FUNNEL",
+    needsAdv: false,
+  },
+  {
+    id: "BOTH_FUNNEL",
+    emoji: "🎯📣",
+    title: "Полная воронка + реклама",
+    description:
+      'То же что выше, но дополнительно собираем рекламную статистику отдельно. Победитель — по «Открытие → В корзину, %» из общего трафика (nm-report). Реклама и органика разделены в UI для анализа, но решение принимаем по корзине. Требует РК. Период 7-14 дней, выборка от 3000 показов на вариант.',
+    trafficSource: "BOTH",
+    testMode: "FUNNEL",
+    needsAdv: true,
+  },
+];
+
 export default function AbTestNew() {
   const nav = useNavigate();
+  const [scenario, setScenario] = useState<ScenarioId>("ANY_FUNNEL");
+  const currentScenario =
+    SCENARIOS.find((s) => s.id === scenario) ?? SCENARIOS[2];
   const [form, setForm] = useState({
     name: "",
     nm_id: null as number | null,
     trigger_mode: "TIME" as TriggerMode,
     trigger_value: 360,
-    traffic_source: "ANY" as TrafficSource,
-    test_mode: "PHOTO" as TestMode,
     campaign_id: "",
-    min_sample_size: 1500,
+    min_sample_size: 3000,
     confidence_level: 0.95,
     keep_leaders_after_24h: false,
     budget_auto_topup: false,
@@ -284,16 +347,16 @@ export default function AbTestNew() {
     }));
   };
 
-  // Сброс current-photos при смене карточки или test_mode — нужна другая воронка.
+  // Сброс current-photos при смене карточки или сценария — нужна другая воронка.
   useEffect(() => {
     setCurrentPhotosA([]);
-  }, [form.nm_id, form.test_mode]);
+  }, [form.nm_id, scenario]);
 
   // Подгрузка текущих фото WB-карточки.
   const loadCurrentMut = useMutation({
     mutationFn: async () => {
       if (form.nm_id == null) throw new Error("Сначала выберите карточку");
-      const count = form.test_mode === "PHOTO" ? 1 : 10;
+      const count = currentScenario.testMode === "PHOTO" ? 1 : 10;
       const r = await abtestApi.getWbCurrentPhotos(form.nm_id, count);
       return r.photos;
     },
@@ -308,8 +371,10 @@ export default function AbTestNew() {
         nm_id: form.nm_id,
         trigger_mode: form.trigger_mode,
         trigger_value: Number(form.trigger_value),
-        traffic_source: form.traffic_source,
-        test_mode: form.test_mode,
+        // Сценарий ↔ (traffic_source, test_mode) — backend-схема осталась как
+        // в Phase 4. Маппинг 1:1 через объект SCENARIOS.
+        traffic_source: currentScenario.trafficSource,
+        test_mode: currentScenario.testMode,
         campaign_id: form.campaign_id ? Number(form.campaign_id) : null,
         min_sample_size: Number(form.min_sample_size),
         confidence_level: Number(form.confidence_level),
@@ -325,8 +390,7 @@ export default function AbTestNew() {
     onSuccess: (data) => nav(`/abtest/${data.id}`),
   });
 
-  const needsAdvert =
-    form.traffic_source === "ADV_ONLY" || form.traffic_source === "BOTH";
+  const needsAdvert = currentScenario.needsAdv;
   const LABELS = ["A", "B", "C", "D"] as const;
   const variantLabels = LABELS.slice(0, form.variant_count);
 
@@ -364,38 +428,53 @@ export default function AbTestNew() {
         </div>
       </div>
 
-      {/* ---------- 2. Сценарий ---------- */}
+      {/* ---------- 2. Сценарий — 4 карточки как в wbab ---------- */}
       <div className="card space-y-3">
-        <h2 className="font-semibold">2. Сценарий</h2>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-sm text-muted mb-1">Режим теста</label>
-            <select
-              className="input w-full"
-              value={form.test_mode}
-              onChange={(e) =>
-                setForm({ ...form, test_mode: e.target.value as TestMode })
-              }
-            >
-              <option value="PHOTO">PHOTO — только главное фото</option>
-              <option value="FUNNEL">FUNNEL — вся фото-воронка (до 10 фото)</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm text-muted mb-1">Источник трафика</label>
-            <select
-              className="input w-full"
-              value={form.traffic_source}
-              onChange={(e) =>
-                setForm({ ...form, traffic_source: e.target.value as TrafficSource })
-              }
-            >
-              <option value="ANY">ANY (вся карточка)</option>
-              <option value="ADV_ONLY">ADV_ONLY (только РК)</option>
-              <option value="BOTH">BOTH (оба источника)</option>
-            </select>
-          </div>
+        <h2 className="font-semibold">2. Сценарий теста</h2>
+        <p className="text-xs text-muted">
+          Выберите готовый сценарий — он определяет методику сравнения
+          (что считаем «победой») и тип трафика. Невалидные комбинации
+          (общий трафик + только главное фото) исключены: на органике нет
+          моментального «клика по обложке», результаты неинтерпретируемы.
+        </p>
+        <div className="space-y-2">
+          {SCENARIOS.map((s) => {
+            const active = scenario === s.id;
+            return (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => setScenario(s.id)}
+                className={`w-full text-left rounded-lg border p-3 transition-colors ${
+                  active
+                    ? "border-accent bg-accent-subtle"
+                    : "border-border hover:bg-surface-2"
+                }`}
+              >
+                <div className="flex items-start gap-2">
+                  <span className="text-xl shrink-0 leading-none mt-0.5">
+                    {s.emoji}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium">{s.title}</div>
+                    <div className="text-xs text-muted mt-1 leading-relaxed">
+                      {s.description}
+                    </div>
+                  </div>
+                  {active && <span className="text-accent shrink-0">●</span>}
+                </div>
+              </button>
+            );
+          })}
         </div>
+
+        {currentScenario.testMode === "FUNNEL" && (
+          <div className="text-xs text-warn border border-warn/30 bg-warn-bg/30 rounded p-2">
+            ⚠ Для воронки в каждый вариант загружайте полный комплект фото
+            (главное + до 9 доп.) — иначе тест мало отличается от теста главного
+            фото, и эффект новых фото не будет измерен.
+          </div>
+        )}
 
         {needsAdvert && (
           <div className="border-t border-border pt-3 space-y-3">
@@ -604,7 +683,7 @@ export default function AbTestNew() {
               </div>
               <div className="text-xs text-muted mt-1">
                 Подгрузим{" "}
-                {form.test_mode === "PHOTO"
+                {currentScenario.testMode === "PHOTO"
                   ? "главное фото"
                   : "всю воронку (до 10 фото)"}{" "}
                 карточки прямо с WB — оно станет базой для сравнения. Сравнивайте с новыми

@@ -82,6 +82,11 @@ async def list_products(
     include_archived: Annotated[bool, Query()] = False,
     only_archived: Annotated[bool, Query()] = False,
     search: Annotated[str | None, Query()] = None,
+    # Для A/B-теста: подгружать только карточки с заполненным photo_url.
+    # Это эквивалент wbab-поведения, где picker не показывает SKU без фото
+    # на WB CDN. Без фильтра picker показывал бы карточки, для которых
+    # "Подгрузить текущее" вернёт 404.
+    has_photo: Annotated[bool, Query()] = False,
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict[str, Any]:
@@ -90,6 +95,8 @@ async def list_products(
         stmt = stmt.where(Product.is_archived.is_(True))
     elif not include_archived:
         stmt = stmt.where(Product.is_archived.is_(False))
+    if has_photo:
+        stmt = stmt.where(Product.photo_url.is_not(None), Product.photo_url != "")
     if search:
         like = f"%{search}%"
         conditions = (

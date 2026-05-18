@@ -4,7 +4,7 @@
  */
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { abtestApi, AbTestStatus } from "@/api/abtest";
 
 const STATUS_LABELS: Record<AbTestStatus | string, string> = {
@@ -34,6 +34,7 @@ function fmtDate(s: string | null): string {
 export default function AbTestList() {
   const [includeArchived, setIncludeArchived] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("");
+  const qc = useQueryClient();
 
   const q = useQuery({
     queryKey: ["abtest-list", includeArchived, statusFilter],
@@ -42,6 +43,21 @@ export default function AbTestList() {
         include_archived: includeArchived,
         status: statusFilter || undefined,
       }),
+  });
+
+  const archiveMut = useMutation({
+    mutationFn: ({ id, archived }: { id: number; archived: boolean }) =>
+      archived ? abtestApi.unarchive(id) : abtestApi.archive(id),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["abtest-list"] }),
+    onError: (e) => alert(`Не удалось: ${(e as Error).message}`),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (id: number) => abtestApi.delete(id),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["abtest-list"] }),
+    onError: (e) => alert(`Не удалось: ${(e as Error).message}`),
   });
 
   const items = q.data?.items || [];
@@ -100,36 +116,77 @@ export default function AbTestList() {
                 <th className="text-left p-3">Режим</th>
                 <th className="text-left p-3">Триггер</th>
                 <th className="text-left p-3">Старт</th>
-                <th className="text-left p-3">Архив</th>
+                <th className="text-right p-3">Действия</th>
               </tr>
             </thead>
             <tbody>
-              {items.map((t) => (
-                <tr key={t.id} className="border-t border-border hover:bg-surface-2">
-                  <td className="p-3">
-                    <Link
-                      to={`/abtest/${t.id}`}
-                      className="text-link font-medium"
-                    >
-                      {t.name}
-                    </Link>
-                  </td>
-                  <td className="p-3 font-mono">{t.nm_id}</td>
-                  <td className={`p-3 ${STATUS_COLOR[t.status] || ""}`}>
-                    {STATUS_LABELS[t.status] || t.status}
-                  </td>
-                  <td className="p-3">
-                    {t.test_mode}/{t.traffic_source}
-                  </td>
-                  <td className="p-3">
-                    {t.trigger_mode}={t.trigger_value}
-                    {t.trigger_mode === "TIME" && " мин"}
-                    {t.trigger_mode === "BUDGET" && " ₽"}
-                  </td>
-                  <td className="p-3 text-muted">{fmtDate(t.started_at)}</td>
-                  <td className="p-3 text-muted">{fmtDate(t.archived_at)}</td>
-                </tr>
-              ))}
+              {items.map((t) => {
+                const archived = t.archived_at != null;
+                const canDelete = t.status !== "running";
+                return (
+                  <tr
+                    key={t.id}
+                    className="border-t border-border hover:bg-surface-2"
+                  >
+                    <td className="p-3">
+                      <Link
+                        to={`/abtest/${t.id}`}
+                        className="text-link font-medium"
+                      >
+                        {t.name}
+                      </Link>
+                      {archived && (
+                        <span className="ml-2 text-xs text-muted">📦</span>
+                      )}
+                    </td>
+                    <td className="p-3 font-mono">{t.nm_id}</td>
+                    <td className={`p-3 ${STATUS_COLOR[t.status] || ""}`}>
+                      {STATUS_LABELS[t.status] || t.status}
+                    </td>
+                    <td className="p-3">
+                      {t.test_mode}/{t.traffic_source}
+                    </td>
+                    <td className="p-3">
+                      {t.trigger_mode}={t.trigger_value}
+                      {t.trigger_mode === "TIME" && " мин"}
+                      {t.trigger_mode === "BUDGET" && " ₽"}
+                    </td>
+                    <td className="p-3 text-muted">{fmtDate(t.started_at)}</td>
+                    <td className="p-3 text-right whitespace-nowrap">
+                      <button
+                        className="btn-link text-xs mr-2"
+                        title={archived ? "Вернуть из архива" : "В архив"}
+                        onClick={() =>
+                          archiveMut.mutate({ id: t.id, archived })
+                        }
+                        disabled={archiveMut.isPending || t.status === "running"}
+                      >
+                        {archived ? "↺ Из архива" : "📦 Архив"}
+                      </button>
+                      <button
+                        className="btn-link text-xs text-warn"
+                        title={
+                          canDelete
+                            ? "Удалить тест и все его данные"
+                            : "Сначала остановите тест"
+                        }
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              `Удалить тест «${t.name}»? Это удалит варианты, фото и историю ротаций.`,
+                            )
+                          ) {
+                            deleteMut.mutate(t.id);
+                          }
+                        }}
+                        disabled={deleteMut.isPending || !canDelete}
+                      >
+                        ✕ Удалить
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
