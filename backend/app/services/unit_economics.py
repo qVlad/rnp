@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -391,18 +391,51 @@ async def build_unit_economics(
     ext_rows = (await session.execute(ext_stmt)).all()
     ext_ad_by_nm: dict[int, float] = {int(r.nm_id): _f(r.ext_cost) for r in ext_rows}
 
-    # Brand-level external marketing (nm_id=NULL) — distribute pro-rata by revenue.
-    brand_ext_total = _f(
-        (
-            await session.execute(
-                select(func.coalesce(func.sum(ExternalAdCost.amount), 0)).where(
-                    ExternalAdCost.spend_date >= start.date(),
-                    ExternalAdCost.spend_date < end.date(),
-                    ExternalAdCost.nm_id.is_(None),
-                )
-            )
-        ).scalar_one()
+    # External marketing distribution (см. миграцию 0032). Три уровня:
+    #   1. nm_id NOT NULL → прямой расход на SKU (выше — `ext_ad_by_nm`).
+    #   2. nm_id IS NULL, brand IS NOT NULL → бренд-level. Распределяется
+    #      pro-rata по выручке SKU **этого** бренда (manager видит свои).
+    #   3. nm_id IS NULL, brand IS NULL → company-wide. Распределяется
+    #      pro-rata по выручке всех видимых SKU. Manager НЕ видит
+    #      (только director/head).
+    brand_ext_rows_stmt = (
+        select(
+            ExternalAdCost.brand,
+            func.coalesce(func.sum(ExternalAdCost.amount), 0).label("amt"),
+        )
+        .where(
+            ExternalAdCost.spend_date >= start.date(),
+            ExternalAdCost.spend_date < end.date(),
+            ExternalAdCost.nm_id.is_(None),
+            ExternalAdCost.brand.is_not(None),
+        )
+        .group_by(ExternalAdCost.brand)
     )
+    if brands is not None:
+        brand_ext_rows_stmt = brand_ext_rows_stmt.where(
+            ExternalAdCost.brand.in_(list(brands))
+        )
+    brand_ext_total_by_brand: dict[str, float] = {
+        r.brand: _f(r.amt)
+        for r in (await session.execute(brand_ext_rows_stmt)).all()
+    }
+
+    # Company-wide расход видят только полные роли. Manager (brands ≠ None) — нет.
+    if brands is None:
+        company_ext_total = _f(
+            (
+                await session.execute(
+                    select(func.coalesce(func.sum(ExternalAdCost.amount), 0)).where(
+                        ExternalAdCost.spend_date >= start.date(),
+                        ExternalAdCost.spend_date < end.date(),
+                        ExternalAdCost.nm_id.is_(None),
+                        ExternalAdCost.brand.is_(None),
+                    )
+                )
+            ).scalar_one()
+        )
+    else:
+        company_ext_total = 0.0
 
     latest_dt = select(func.max(WbStockSnapshot.snapshot_dt)).scalar_subquery()
     stock_stmt = (
@@ -555,10 +588,29 @@ async def build_unit_economics(
             return (1.0 / len(nm_set)) if nm_set else 0.0
         return units_sold_by_nm.get(nm, 0) / total_units_sold_for_alloc
 
+    # Подсчёт выручки в разрезе бренда — нужен для pro-rata распределения
+    # бренд-level расходов внутри своего бренда.
+    revenue_by_brand: dict[str, float] = {}
+    nm_to_brand: dict[int, str | None] = {}
+    for nm in nm_set:
+        prod = products.get(nm)
+        b = prod.brand if prod else None
+        nm_to_brand[nm] = b
+        if b:
+            revenue_by_brand[b] = revenue_by_brand.get(b, 0.0) + revenue_by_nm.get(nm, 0.0)
+
     def brand_share_for(nm: int) -> float:
-        if total_revenue <= 0 or brand_ext_total <= 0:
-            return 0.0
-        return brand_ext_total * (revenue_by_nm.get(nm, 0.0) / total_revenue)
+        share = 0.0
+        # 1. Бренд-level: распределяется по выручке SKU внутри своего бренда.
+        b = nm_to_brand.get(nm)
+        brand_pool = brand_ext_total_by_brand.get(b or "", 0.0) if b else 0.0
+        brand_rev = revenue_by_brand.get(b or "", 0.0) if b else 0.0
+        if brand_pool > 0 and brand_rev > 0:
+            share += brand_pool * (revenue_by_nm.get(nm, 0.0) / brand_rev)
+        # 2. Company-wide: pro-rata по всей видимой выручке (для director/head).
+        if company_ext_total > 0 and total_revenue > 0:
+            share += company_ext_total * (revenue_by_nm.get(nm, 0.0) / total_revenue)
+        return share
 
     items: list[dict[str, Any]] = []
     for nm in nm_set:

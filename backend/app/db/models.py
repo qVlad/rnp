@@ -567,8 +567,14 @@ class User(Base, TenantScopedMixin):
 class BrandAssignment(Base, TenantScopedMixin):
     """Maps a WB brand (text from products.brand) to a responsible user.
 
-    1:1 — UNIQUE(brand). user_id may be NULL when an assignment row exists
-    but the manager has been removed (ON DELETE SET NULL on users.id).
+    N:M — UNIQUE(tenant_id, brand, user_id). Both directions are many: one
+    brand may have several managers, and one manager may own several brands.
+    "No assignees for brand X" means no rows at all (instead of one row with
+    user_id IS NULL — was the 1:1 convention pre-migration 0031).
+
+    `user_id` is still nullable at the column level: `ON DELETE SET NULL`
+    fires when a user is deleted while assigned, and we clean those up in a
+    background sweep rather than blocking user deletion.
     """
 
     __tablename__ = "brand_assignments"
@@ -792,6 +798,10 @@ class ExternalAdCost(Base, TenantScopedMixin):
     # (legacy-совместимое поведение).
     end_date: Mapped[date | None] = mapped_column(Date)
     nm_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    # Бренд для строк уровня бренда (nm_id IS NULL). Если nm_id задан,
+    # `brand` обычно избыточен (берётся из products) и может быть NULL.
+    # См. миграцию 0032 — три уровня атрибуции: SKU / brand / company-wide.
+    brand: Mapped[str | None] = mapped_column(String(128), index=True)
     channel: Mapped[str] = mapped_column(String(64))  # blogger / infographic / photo / banner / other
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     comment: Mapped[str | None] = mapped_column(Text)

@@ -89,64 +89,108 @@ async def fetch_stocks(
     return data or []
 
 
-# Field mapping: legacy /supplier/stocks vs new /analytics/v1/stocks-report
-# differ in key names and structure. Normalize to legacy shape so downstream
-# code (sync/tasks._sync_stocks_async) consumes both transparently.
-_STOCKS_V2_KEYS = {
-    "nmId": "nmId",
-    "barcode": "barcode",
-    "supplierArticle": "supplierArticle",
-    "warehouseName": "warehouseName",
-    "quantity": "quantity",
-    "inWayToClient": "inWayToClient",
-    "inWayFromClient": "inWayFromClient",
-    "quantityFull": "quantityFull",
-    "Price": "Price",
-    "Discount": "Discount",
-    "subject": "subject",
-    "brand": "brand",
-    "category": "category",
+# Field aliases for new /analytics/v1/stocks-report response.
+# Legacy /supplier/stocks returned: nmId, barcode, supplierArticle,
+# warehouseName, quantity, inWayToClient, inWayFromClient, quantityFull,
+# Price, Discount, chrtId, techSize, subject, brand, category.
+# The new endpoint mostly mirrors these names; this dict maps any known
+# rename to its legacy form so downstream sync code (sync/tasks._sync_stocks_async)
+# keeps working unchanged. Unknown keys pass through verbatim.
+_STOCKS_V2_ALIASES: dict[str, str] = {
+    # No renames confirmed against live API yet. If a key like "nm_id"
+    # or "warehouse" appears in production responses, add the mapping here.
 }
 
 
 def _normalize_stocks_v2_row(row: dict[str, Any]) -> dict[str, Any]:
     """Перевести строку нового /analytics/v1/stocks-report формата в legacy
-    /supplier/stocks shape. Неизвестные ключи пропускаются — downstream код
-    использует только конкретные поля (см. sync/tasks._sync_stocks_async).
+    /supplier/stocks shape. Неизвестные ключи проходят насквозь.
 
-    Если WB введёт переименования полей в новом endpoint — добавить мэппинг
-    сюда (как `_LEGACY_ALIASES` для report_detail)."""
-    # Текущее предположение: ключи совпадают. Если живой curl покажет
-    # переименования — расширить логику ниже.
-    return {_STOCKS_V2_KEYS.get(k, k): v for k, v in row.items()}
+    Downstream sync code читает только конкретные поля (см.
+    sync/tasks._sync_stocks_async): `nmId`, `barcode`, `supplierArticle`,
+    `warehouseName`, `quantity`, `inWayToClient`, `inWayFromClient`,
+    `quantityFull`, `Price`, `Discount`, `chrtId`, `techSize`. Если WB
+    переименует одно из них — добавить алиас в `_STOCKS_V2_ALIASES`."""
+    return {_STOCKS_V2_ALIASES.get(k, k): v for k, v in row.items()}
+
+
+# Per WB docs (dev.wildberries.ru/openapi), the new stocks-report endpoint
+# supports a max page size of 250000. We use 100000 to stay symmetric with
+# /reportDetailByPeriod and to be safe against potential server-side caps.
+_STOCKS_V2_PAGE_LIMIT = 100_000
+
+
+def _extract_stocks_v2_rows(payload: Any) -> list[dict[str, Any]]:
+    """Unwrap one page of /analytics/v1/stocks-report/wb-warehouses response.
+
+    WB analytics endpoints inconsistently wrap rows: some return a flat list,
+    some `{"data": [...]}`, some `{"data": {"items": [...]}}`. Without a
+    live sample we accept all three shapes and fail open (empty list) on
+    anything else.
+    """
+    if payload is None:
+        return []
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        data = payload.get("data")
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            items = data.get("items")
+            if isinstance(items, list):
+                return items
+    return []
 
 
 async def fetch_stocks_v2(
     client: WbApiClient,
     date_from: datetime | None = None,
+    *,
+    nm_ids: list[int] | None = None,
+    page_limit: int = _STOCKS_V2_PAGE_LIMIT,
 ) -> list[dict[str, Any]]:
     """`POST /api/analytics/v1/stocks-report/wb-warehouses` — replacement for
     sunset-2026-06-23 `/supplier/stocks` on seller-analytics-api.
 
-    Key differences:
-    - POST with JSON body (not GET with query string)
-    - 3 req/min with hard 20s interval (vs legacy 1/min with burst)
-    - Same conceptual "full snapshot" semantics (dateFrom не фильтр)
+    Key differences vs legacy:
+    - POST with JSON body (not GET with query string).
+    - Body shape: `{"limit": int, "offset": int, "nmIds": [...]?}` — NO `dateFrom`.
+      Without `nmIds` the response covers all products.
+    - Offset-based pagination: re-issue the request with `offset += len(page)`
+      until an empty page comes back.
+    - 3 req/min with 20s min-interval (vs legacy 1/min with burst).
+    - "Full snapshot" semantics: data is the current state at request time.
 
-    Rows are normalized to legacy snake/Pascal mix so the caller treats the
-    response identical to `fetch_stocks()`. If WB renames fields, extend
-    `_STOCKS_V2_KEYS` instead of patching downstream code.
+    `date_from` is accepted for API compatibility with the legacy fetcher
+    but ignored — the new endpoint has no time-filter parameter.
+
+    Rows are normalized to legacy snake/Pascal mix (see
+    `_normalize_stocks_v2_row`) so callers can treat both fetchers
+    interchangeably.
     """
-    if date_from is None:
-        date_from = datetime(2019, 6, 20)
-    body: dict[str, Any] = {"dateFrom": _format_dt(date_from)}
-    data = await client.post(
-        "/api/analytics/v1/stocks-report/wb-warehouses",
-        category="analytics",
-        json=body,
-    )
-    rows = data if isinstance(data, list) else (data or {}).get("data") or []
-    return [_normalize_stocks_v2_row(r) for r in rows]
+    del date_from  # legacy compat, ignored — new endpoint has no time filter
+    collected: list[dict[str, Any]] = []
+    offset = 0
+    # WB sometimes returns the same page forever if `offset` is ignored; cap
+    # iterations at a safe ceiling to avoid an infinite loop on bad response.
+    for _ in range(100):
+        body: dict[str, Any] = {"limit": page_limit, "offset": offset}
+        if nm_ids:
+            body["nmIds"] = nm_ids
+        payload = await client.post(
+            "/api/analytics/v1/stocks-report/wb-warehouses",
+            category="analytics",
+            json=body,
+        )
+        page = _extract_stocks_v2_rows(payload)
+        if not page:
+            break
+        collected.extend(_normalize_stocks_v2_row(r) for r in page)
+        if len(page) < page_limit:
+            break
+        offset += len(page)
+    return collected
 
 
 async def fetch_stocks_with_fallback(

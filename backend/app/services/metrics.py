@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from typing import Literal
@@ -455,6 +455,12 @@ async def _ad_aggregate(
     wb_ad_cost = _f(row.ad_cost)
 
     # External (off-WB) ad costs — bloggers, infographics, banners.
+    # Three attribution levels (см. миграцию 0032):
+    #   1. nm_id NOT NULL                    → SKU-level
+    #   2. nm_id IS NULL, brand IS NOT NULL  → brand-level
+    #   3. nm_id IS NULL, brand IS NULL      → company-wide
+    # Manager-scope видит #1 (по своим nm) и #2 (по своим брендам), но
+    # НЕ видит #3 (общие расходы компании).
     ext_stmt = select(
         func.coalesce(func.sum(ExternalAdCost.amount), 0).label("ext_cost")
     ).where(
@@ -462,9 +468,15 @@ async def _ad_aggregate(
         ExternalAdCost.spend_date < end.date(),
     )
     if sub is not None:
-        # Manager scope: only nm_id-attributed external ads. Brand-level
-        # rows (nm_id IS NULL) are not split per-brand.
-        ext_stmt = ext_stmt.where(ExternalAdCost.nm_id.in_(sub))
+        ext_stmt = ext_stmt.where(
+            or_(
+                ExternalAdCost.nm_id.in_(sub),
+                and_(
+                    ExternalAdCost.nm_id.is_(None),
+                    ExternalAdCost.brand.in_(brands or []),
+                ),
+            )
+        )
     ext_cost = _f((await session.execute(ext_stmt)).scalar_one())
 
     return {

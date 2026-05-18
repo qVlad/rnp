@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import User
 from app.db.session import get_db
+from app.services.audit import audit_log, snapshot
 from app.services.auth import get_db_tenant_scoped
 from app.services.auth import (
     CurrentUser,
@@ -23,6 +24,10 @@ router = APIRouter(
     tags=["users"],
     dependencies=[Depends(require_director)],
 )
+
+# password_hash is excluded — audit log goes into JSONB and is readable by
+# anyone with director access, which would defeat bcrypt.
+_AUDIT_FIELDS = ["id", "username", "role", "full_name", "is_active"]
 
 
 class UserCreatePayload(BaseModel):
@@ -62,7 +67,9 @@ async def list_users(session: AsyncSession = Depends(get_db_tenant_scoped)) -> d
 
 @router.post("")
 async def create_user(
-    payload: UserCreatePayload, session: AsyncSession = Depends(get_db_tenant_scoped)
+    payload: UserCreatePayload,
+    actor: CurrentUser = Depends(require_director),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     username = payload.username.strip().lower()
     if not username or len(username) < 3:
@@ -88,6 +95,13 @@ async def create_user(
         is_active=payload.is_active,
     )
     session.add(user)
+    await session.flush()
+    await audit_log(
+        session, "users", "create",
+        entity_id=str(user.id),
+        after=snapshot(user, _AUDIT_FIELDS),
+        actor=actor.username,
+    )
     await session.commit()
     await session.refresh(user)
     return _row(user)
@@ -111,6 +125,8 @@ async def update_user(
         raise HTTPException(
             400, "you cannot demote or disable your own account"
         )
+    before = snapshot(user, _AUDIT_FIELDS)
+    password_changed = False
     if payload.role is not None:
         if payload.role not in ROLES:
             raise HTTPException(400, f"unknown role; allowed: {list(ROLES)}")
@@ -124,8 +140,17 @@ async def update_user(
             raise HTTPException(400, "password must be >= 8 chars")
         try:
             user.password_hash = hash_password(payload.password)
+            password_changed = True
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
+    await audit_log(
+        session, "users", "update",
+        entity_id=str(user.id),
+        before=before,
+        after=snapshot(user, _AUDIT_FIELDS),
+        actor=actor.username,
+        comment="password changed" if password_changed else None,
+    )
     await session.commit()
     await session.refresh(user)
     return _row(user)
@@ -142,6 +167,13 @@ async def delete_user(
         raise HTTPException(404, "user not found")
     if user.id == actor.id:
         raise HTTPException(400, "cannot delete your own account")
+    before = snapshot(user, _AUDIT_FIELDS)
     await session.delete(user)
+    await audit_log(
+        session, "users", "delete",
+        entity_id=str(user_id),
+        before=before,
+        actor=actor.username,
+    )
     await session.commit()
     return {"status": "deleted"}

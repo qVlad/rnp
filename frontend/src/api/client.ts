@@ -572,9 +572,12 @@ paymentOrderDelete: (payment_order_id: string) =>
     request(`/api/artificial-orders/${id}`, { method: "DELETE" }),
 
   // ── External marketing costs ──
-  listExternalAds: (params: { nm_id?: number; channel?: string } = {}) => {
+  listExternalAds: (
+    params: { nm_id?: number; brand?: string; channel?: string } = {},
+  ) => {
     const qs = new URLSearchParams();
     if (params.nm_id != null) qs.set("nm_id", String(params.nm_id));
+    if (params.brand) qs.set("brand", params.brand);
     if (params.channel) qs.set("channel", params.channel);
     return request<{ items: any[]; channels: string[] }>(
       `/api/external-ad-costs?${qs.toString()}`,
@@ -630,22 +633,29 @@ paymentOrderDelete: (payment_order_id: string) =>
   listMissingCogs: () =>
     request<{ items: any[] }>("/api/cost-history/missing"),
 
-  // ── Brands ──
+  // ── Brands (N:M brand ↔ manager) ──
   listBrands: () =>
     request<{
       items: {
         brand: string;
         nm_count: number;
-        user_id: number | null;
-        username: string | null;
-        user_full_name: string | null;
+        assignees: {
+          user_id: number;
+          username: string;
+          user_full_name: string | null;
+          assignment_id: number;
+        }[];
         updated_at: string | null;
       }[];
     }>("/api/brands"),
-  setBrandAssignee: (brand: string, user_id: number | null) =>
-    request(`/api/brands/${encodeURIComponent(brand)}/assignee`, {
-      method: "PUT",
+  addBrandAssignee: (brand: string, user_id: number) =>
+    request(`/api/brands/${encodeURIComponent(brand)}/assignees`, {
+      method: "POST",
       body: JSON.stringify({ user_id }),
+    }),
+  removeBrandAssignee: (brand: string, user_id: number) =>
+    request(`/api/brands/${encodeURIComponent(brand)}/assignees/${user_id}`, {
+      method: "DELETE",
     }),
   addCostHistory: (body: any) =>
     request("/api/cost-history", { method: "POST", body: JSON.stringify(body) }),

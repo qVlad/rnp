@@ -14,10 +14,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import NotificationRule
+from app.services.audit import audit_log, snapshot
 from app.services.auth import CurrentUser, get_current_user, get_db_tenant_scoped
 from app.services.notification_engine import evaluate_all_rules
 
 router = APIRouter(prefix="/api/notifications", tags=["notifications"])
+
+_AUDIT_FIELDS = [
+    "id", "name", "metric", "operator", "threshold", "scope_filter",
+    "channel", "is_active", "cooldown_minutes",
+]
 
 ALLOWED_METRICS = {
     "stock_below",
@@ -91,6 +97,13 @@ async def create_rule(
         cooldown_minutes=max(60, cooldown_minutes),
     )
     session.add(rule)
+    await session.flush()
+    await audit_log(
+        session, "notification_rule", "create",
+        entity_id=str(rule.id),
+        after=snapshot(rule, _AUDIT_FIELDS),
+        actor=user.username,
+    )
     await session.commit()
     await session.refresh(rule)
     return _to_dict(rule)
@@ -106,11 +119,12 @@ async def update_rule(
     is_active: bool | None = Body(default=None, embed=True),
     cooldown_minutes: int | None = Body(default=None, embed=True),
     session: AsyncSession = Depends(get_db_tenant_scoped),
-    _user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     rule = await session.get(NotificationRule, rule_id)
     if rule is None:
         raise HTTPException(404, "Не найдено")
+    before = snapshot(rule, _AUDIT_FIELDS)
     if name is not None:
         rule.name = name.strip()[:128]
     if threshold is not None:
@@ -126,6 +140,13 @@ async def update_rule(
     if cooldown_minutes is not None:
         rule.cooldown_minutes = max(60, cooldown_minutes)
     rule.updated_at = datetime.utcnow()
+    await audit_log(
+        session, "notification_rule", "update",
+        entity_id=str(rule.id),
+        before=before,
+        after=snapshot(rule, _AUDIT_FIELDS),
+        actor=user.username,
+    )
     await session.commit()
     await session.refresh(rule)
     return _to_dict(rule)
@@ -135,12 +156,19 @@ async def update_rule(
 async def delete_rule(
     rule_id: int,
     session: AsyncSession = Depends(get_db_tenant_scoped),
-    _user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, str]:
     rule = await session.get(NotificationRule, rule_id)
     if rule is None:
         raise HTTPException(404, "Не найдено")
+    before = snapshot(rule, _AUDIT_FIELDS)
     await session.delete(rule)
+    await audit_log(
+        session, "notification_rule", "delete",
+        entity_id=str(rule_id),
+        before=before,
+        actor=user.username,
+    )
     await session.commit()
     return {"status": "ok"}
 

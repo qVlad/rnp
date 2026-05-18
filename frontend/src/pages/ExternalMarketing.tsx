@@ -8,6 +8,7 @@ const blank = () => ({
   spend_date: today(),
   end_date: "",
   nm_id: "",
+  brand: "",
   channel: "blogger",
   amount: 0,
   comment: "",
@@ -33,6 +34,10 @@ export default function ExternalMarketing() {
     queryKey: ["external-ads", filter],
     queryFn: () => api.listExternalAds(filter ? { channel: filter } : {}),
   });
+  const brandsQ = useQuery({
+    queryKey: ["brands"],
+    queryFn: () => api.listBrands(),
+  });
 
   const reset = () => {
     setForm(blank());
@@ -45,6 +50,7 @@ export default function ExternalMarketing() {
         spend_date: form.spend_date,
         end_date: form.end_date || null,
         nm_id: form.nm_id ? Number(form.nm_id) : null,
+        brand: form.nm_id ? null : (form.brand || null),
         channel: form.channel,
         amount: Number(form.amount) || 0,
         comment: form.comment || null,
@@ -69,6 +75,7 @@ export default function ExternalMarketing() {
       spend_date: row.spend_date,
       end_date: row.end_date || "",
       nm_id: row.nm_id ?? "",
+      brand: row.brand ?? "",
       channel: row.channel,
       amount: row.amount,
       comment: row.comment || "",
@@ -78,6 +85,7 @@ export default function ExternalMarketing() {
 
   const items = q.data?.items ?? [];
   const channels = q.data?.channels ?? Object.keys(CHANNEL_LABELS);
+  const brandList: string[] = (brandsQ.data?.items ?? []).map((b: any) => b.brand);
 
   return (
     <div className="flex flex-col gap-4">
@@ -99,10 +107,11 @@ export default function ExternalMarketing() {
 
       <div className="card text-sm text-muted leading-relaxed">
         Расходы на маркетинг <strong>вне</strong> WB Promotion (блогеры, инфографика, фотосъёмка,
-        баннеры на сторонних площадках, посевы). Учитываются:
+        баннеры на сторонних площадках, посевы). Три уровня атрибуции:
         <ul className="list-disc list-inside mt-2 space-y-1">
-          <li>Если указан <code>nmId</code> — расходы привязываются к конкретному SKU и идут в его DRR / маржу.</li>
-          <li>Без <code>nmId</code> — расход бренд-уровня; в юнит-экономике распределяется пропорционально выручке по SKU.</li>
+          <li><strong>SKU:</strong> укажи <code>nmId</code> — расход целиком идёт в DRR/маржу этого SKU.</li>
+          <li><strong>Бренд:</strong> без <code>nmId</code>, но с выбранным брендом — распределяется pro-rata по выручке SKU <em>этого</em> бренда. Manager бренда увидит расход в своём scope.</li>
+          <li><strong>Компания:</strong> без <code>nmId</code> и без бренда — распределяется по всей выручке. Видит только director / РОП.</li>
         </ul>
       </div>
 
@@ -145,13 +154,31 @@ export default function ExternalMarketing() {
               ))}
             </select>
           </Field>
-          <Field label="nmId (оставьте пустым = бренд)">
+          <Field label="nmId (пусто → бренд/компания)">
             <input
               className="input"
               value={form.nm_id}
               onChange={(e: any) => setForm({ ...form, nm_id: e.target.value })}
               placeholder="123456789"
             />
+          </Field>
+          <Field label="Бренд (если nmId пуст)">
+            <select
+              className="input"
+              value={form.brand}
+              disabled={!!form.nm_id}
+              onChange={(e: any) => setForm({ ...form, brand: e.target.value })}
+            >
+              <option value="">— компания (все бренды) —</option>
+              {brandList.map((b) => (
+                <option key={b} value={b}>
+                  {b}
+                </option>
+              ))}
+            </select>
+            <div className="text-[11px] text-muted mt-1 leading-snug">
+              Если nmId задан — поле не используется (бренд берётся из SKU).
+            </div>
           </Field>
           <Field label="Сумма (₽)">
             <input
@@ -197,7 +224,7 @@ export default function ExternalMarketing() {
               <tr className="text-muted text-xs uppercase">
                 <th className="text-left p-2">Дата</th>
                 <th className="text-left p-2">Канал</th>
-                <th className="text-left p-2">SKU</th>
+                <th className="text-left p-2">SKU / Бренд</th>
                 <th className="text-right p-2">Сумма</th>
                 <th className="text-left p-2">Комментарий</th>
                 <th className="p-2"></th>
@@ -209,7 +236,9 @@ export default function ExternalMarketing() {
                   <td className="p-2 font-mono">{row.spend_date}</td>
                   <td className="p-2">{CHANNEL_LABELS[row.channel] ?? row.channel}</td>
                   <td className="p-2 font-mono">
-                    {row.nm_id ?? <span className="text-muted">бренд</span>}
+                    {row.nm_id ?? (row.brand
+                      ? <span className="text-muted">бренд: {row.brand}</span>
+                      : <span className="text-muted">компания</span>)}
                   </td>
                   <td className="p-2 text-right font-mono">{fmtRub(row.amount)}</td>
                   <td className="p-2 text-muted">{row.comment ?? ""}</td>

@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings as cfg
 from app.db.models import Product
 from app.db.session import get_db
-from app.services.auth import get_db_tenant_scoped
+from app.services.audit import audit_log
+from app.services.auth import CurrentUser, get_current_user, get_db_tenant_scoped
 from app.services.auth import current_brands_filter
 
 log = logging.getLogger(__name__)
@@ -227,24 +228,52 @@ async def traffic_estimate(
 
 
 @router.post("/{nm_id}/archive")
-async def archive_product(nm_id: int, session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
+async def archive_product(
+    nm_id: int,
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
     obj = await session.get(Product, nm_id)
     if not obj:
         raise HTTPException(404, "product not found")
+    was_archived = obj.is_archived
     obj.is_archived = True
     obj.archived_at = datetime.now(timezone.utc)
+    if not was_archived:
+        await audit_log(
+            session, "products", "update",
+            entity_id=str(nm_id),
+            before={"is_archived": False},
+            after={"is_archived": True, "archived_at": obj.archived_at.isoformat()},
+            actor=user.username,
+            comment="archive",
+        )
     await session.commit()
     await session.refresh(obj)
     return _row(obj)
 
 
 @router.post("/{nm_id}/unarchive")
-async def unarchive_product(nm_id: int, session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
+async def unarchive_product(
+    nm_id: int,
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
     obj = await session.get(Product, nm_id)
     if not obj:
         raise HTTPException(404, "product not found")
+    was_archived = obj.is_archived
     obj.is_archived = False
     obj.archived_at = None
+    if was_archived:
+        await audit_log(
+            session, "products", "update",
+            entity_id=str(nm_id),
+            before={"is_archived": True},
+            after={"is_archived": False},
+            actor=user.username,
+            comment="unarchive",
+        )
     await session.commit()
     await session.refresh(obj)
     return _row(obj)
