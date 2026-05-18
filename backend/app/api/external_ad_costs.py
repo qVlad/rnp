@@ -27,7 +27,7 @@ router = APIRouter(
 )
 
 
-_AUDIT_FIELDS = ["id", "spend_date", "end_date", "nm_id", "channel", "amount", "comment"]
+_AUDIT_FIELDS = ["id", "spend_date", "end_date", "nm_id", "brand", "channel", "amount", "comment"]
 
 
 CHANNEL_PRESETS = [
@@ -45,6 +45,7 @@ class ExternalAdCostIn(BaseModel):
     spend_date: date
     end_date: date | None = None
     nm_id: int | None = None
+    brand: str | None = None
     channel: str
     amount: float
     comment: str | None = None
@@ -56,6 +57,7 @@ def _row(o: ExternalAdCost) -> dict[str, Any]:
         "spend_date": o.spend_date.isoformat(),
         "end_date": o.end_date.isoformat() if o.end_date else None,
         "nm_id": o.nm_id,
+        "brand": o.brand,
         "channel": o.channel,
         "amount": float(o.amount),
         "comment": o.comment,
@@ -65,6 +67,7 @@ def _row(o: ExternalAdCost) -> dict[str, Any]:
 @router.get("")
 async def list_costs(
     nm_id: Annotated[int | None, Query()] = None,
+    brand: Annotated[str | None, Query()] = None,
     channel: Annotated[str | None, Query()] = None,
     date_from: Annotated[date | None, Query()] = None,
     date_to: Annotated[date | None, Query()] = None,
@@ -75,6 +78,8 @@ async def list_costs(
     )
     if nm_id is not None:
         stmt = stmt.where(ExternalAdCost.nm_id == nm_id)
+    if brand:
+        stmt = stmt.where(ExternalAdCost.brand == brand)
     if channel:
         stmt = stmt.where(ExternalAdCost.channel == channel)
     if date_from:

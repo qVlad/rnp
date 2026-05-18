@@ -798,6 +798,10 @@ class ExternalAdCost(Base, TenantScopedMixin):
     # (legacy-совместимое поведение).
     end_date: Mapped[date | None] = mapped_column(Date)
     nm_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    # Бренд для строк уровня бренда (nm_id IS NULL). Если nm_id задан,
+    # `brand` обычно избыточен (берётся из products) и может быть NULL.
+    # См. миграцию 0032 — три уровня атрибуции: SKU / brand / company-wide.
+    brand: Mapped[str | None] = mapped_column(String(128), index=True)
     channel: Mapped[str] = mapped_column(String(64))  # blogger / infographic / photo / banner / other
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     comment: Mapped[str | None] = mapped_column(Text)

@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -222,9 +222,16 @@ async def build_plan_fact(
         ExternalAdCost.spend_date <= period_end,
     )
     if nm_filter is not None:
-        # Manager scope: drop brand-level external marketing (nm_id NULL).
+        # Manager scope: SKU-level (nm_id in scope) + brand-level (brand in
+        # manager's brand assignments). Company-wide rows (both NULL) — нет.
         ext_ads_total_stmt = ext_ads_total_stmt.where(
-            ExternalAdCost.nm_id.in_(nm_filter)
+            or_(
+                ExternalAdCost.nm_id.in_(nm_filter),
+                and_(
+                    ExternalAdCost.nm_id.is_(None),
+                    ExternalAdCost.brand.in_(brands or []),
+                ),
+            )
         )
     ext_ads_total = _f((await session.execute(ext_ads_total_stmt)).scalar_one())
 

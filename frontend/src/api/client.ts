@@ -561,9 +561,12 @@ paymentOrderDelete: (payment_order_id: string) =>
     request(`/api/artificial-orders/${id}`, { method: "DELETE" }),
 
   // ── External marketing costs ──
-  listExternalAds: (params: { nm_id?: number; channel?: string } = {}) => {
+  listExternalAds: (
+    params: { nm_id?: number; brand?: string; channel?: string } = {},
+  ) => {
     const qs = new URLSearchParams();
     if (params.nm_id != null) qs.set("nm_id", String(params.nm_id));
+    if (params.brand) qs.set("brand", params.brand);
     if (params.channel) qs.set("channel", params.channel);
     return request<{ items: any[]; channels: string[] }>(
       `/api/external-ad-costs?${qs.toString()}`,
