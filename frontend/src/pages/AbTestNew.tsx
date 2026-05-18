@@ -120,22 +120,16 @@ function ProductPicker({
             setQuery(e.target.value);
             setOpen(true);
           }}
-          onFocus={() => setOpen(true)}
+          // onMouseDown а не onFocus: если input уже сфокусирован после
+          // первой попытки выбрать товар — клик заново должен открыть
+          // dropdown. onFocus в этом случае не сработает.
+          onMouseDown={() => setOpen(true)}
         />
       )}
 
       {open && !value && (
         <div
-          // z-50 чтобы перекрыть следующие элементы формы (grid соседи + строки ниже).
-          // bg-surface + border-border — стандартные токены rnp (а не bg-bg-1 как
-          // было — таких классов в Tailwind config нет → транспарентный фон).
           className="absolute top-full left-0 right-0 mt-1 bg-surface border border-border rounded shadow-xl max-h-80 overflow-y-auto z-50"
-          // Останавливаем mousedown чтобы document-listener не закрыл dropdown
-          // ДО того как сработает onClick на кнопке (mousedown событие
-          // bubbles → document.addEventListener('mousedown') → setOpen(false)
-          // → React unmounts → click never fires). preventDefault также
-          // сохраняет фокус — input не теряет caret.
-          onMouseDown={(e) => e.preventDefault()}
         >
           {searchQ.isLoading && (
             <div className="p-3 text-muted text-sm">Загрузка…</div>
@@ -153,30 +147,47 @@ function ProductPicker({
             </div>
           )}
           {items.map((p) => (
-            <button
+            <div
               key={p.nm_id}
-              type="button"
-              className="flex items-center gap-2 w-full text-left p-2 hover:bg-surface-2 border-b border-border last:border-b-0"
-              onClick={() => {
+              role="button"
+              tabIndex={0}
+              // Селекция на mousedown (а НЕ click) с stopPropagation чтобы
+              // document-listener не успел закрыть dropdown раньше.
+              // preventDefault сохраняет фокус и предотвращает text-select.
+              // Используем <div role=button> а не <button>, потому что
+              // <button> внутри React-flow с document-mousedown-listener
+              // регулярно теряет click (timing race).
+              onMouseDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
                 onChange(p.nm_id);
                 setOpen(false);
                 setQuery("");
               }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onChange(p.nm_id);
+                  setOpen(false);
+                  setQuery("");
+                }
+              }}
+              className="flex items-center gap-2 w-full text-left p-2 hover:bg-surface-2 border-b border-border last:border-b-0 cursor-pointer select-none"
             >
               <img
                 src={`/api/products/${p.nm_id}/photo`}
                 alt=""
-                className="w-8 h-8 object-cover rounded shrink-0"
+                className="w-8 h-8 object-cover rounded shrink-0 pointer-events-none"
                 onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
               />
-              <div className="flex-1 min-w-0">
+              <div className="flex-1 min-w-0 pointer-events-none">
                 <div className="font-mono text-sm">{p.nm_id}</div>
                 <div className="text-xs text-muted truncate">
                   {p.subject || p.vendor_code || "—"}
                   {p.brand ? ` · ${p.brand}` : ""}
                 </div>
               </div>
-            </button>
+            </div>
           ))}
         </div>
       )}
