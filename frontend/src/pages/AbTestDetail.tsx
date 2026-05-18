@@ -41,6 +41,143 @@ function fmtDate(s: string | null): string {
   return new Date(s).toLocaleString("ru-RU");
 }
 
+// Метки top/bottom метрик зависят от сценария (port wbab M-матрицы).
+function scenarioLabels(testMode: string, trafficSource: string): {
+  top: string;
+  bottom: string;
+} {
+  if (testMode === "PHOTO") {
+    // ADV_ONLY+PHOTO: показ → клик
+    return { top: "Показ → Клик, %", bottom: "Клик → Заказ, %" };
+  }
+  // FUNNEL
+  if (trafficSource === "ADV_ONLY") {
+    return { top: "Клик → В корзину, %", bottom: "В корзину → Заказ, %" };
+  }
+  // ANY_FUNNEL / BOTH_FUNNEL
+  return { top: "Открытие → В корзину, %", bottom: "В корзину → Заказ, %" };
+}
+
+const EVENT_LABELS: Record<string, string> = {
+  variant_eliminated: "✕ Вариант отсеян",
+  variant_returned: "↩ Вариант возвращён",
+  winner_applied: "🏆 Применён победитель",
+  test_stopped: "⏹ Тест остановлен",
+};
+
+function TimelineSection({
+  abtestId,
+  variants,
+  rotations,
+}: {
+  abtestId: number;
+  variants: AbTestVariant[];
+  rotations: Array<{
+    id: number;
+    variant_id: number;
+    applied_at: string;
+    success: boolean;
+    error: string | null;
+  }>;
+}) {
+  const eventsQ = useQuery({
+    queryKey: ["abtest-events", abtestId],
+    queryFn: () => abtestApi.getEvents(abtestId),
+  });
+  const events = eventsQ.data?.items || [];
+  // Merge rotations + events into one sorted-desc timeline.
+  type Row = {
+    key: string;
+    at: string;
+    kind: "rotation" | "event";
+    rotation?: (typeof rotations)[number];
+    event?: (typeof events)[number];
+  };
+  const rows: Row[] = [
+    ...rotations.map((r) => ({
+      key: `r${r.id}`,
+      at: r.applied_at,
+      kind: "rotation" as const,
+      rotation: r,
+    })),
+    ...events.map((e) => ({
+      key: `e${e.id}`,
+      at: e.created_at,
+      kind: "event" as const,
+      event: e,
+    })),
+  ].sort((a, b) => (a.at < b.at ? 1 : -1));
+
+  if (rows.length === 0) {
+    return (
+      <section>
+        <h2 className="text-lg font-medium mb-2">История</h2>
+        <div className="card text-muted">Событий ещё не было.</div>
+      </section>
+    );
+  }
+  return (
+    <section>
+      <h2 className="text-lg font-medium mb-2">История</h2>
+      <div className="card overflow-x-auto p-0">
+        <table className="min-w-full text-sm">
+          <thead className="bg-surface-2 text-muted text-xs uppercase">
+            <tr>
+              <th className="text-left p-2">Время</th>
+              <th className="text-left p-2">Тип</th>
+              <th className="text-left p-2">Вариант</th>
+              <th className="text-left p-2">Статус/Источник</th>
+              <th className="text-left p-2">Детали</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              if (row.kind === "rotation") {
+                const r = row.rotation!;
+                const v = variants.find((x) => x.id === r.variant_id);
+                return (
+                  <tr key={row.key} className="border-t border-border">
+                    <td className="p-2 text-muted">{fmtDate(r.applied_at)}</td>
+                    <td className="p-2">Ротация</td>
+                    <td className="p-2">{v?.label || `#${r.variant_id}`}</td>
+                    <td
+                      className={`p-2 ${r.success ? "text-success" : "text-warn"}`}
+                    >
+                      {r.success ? "✓ OK" : "✕ FAIL"}
+                    </td>
+                    <td className="p-2 text-muted text-xs">{r.error || "—"}</td>
+                  </tr>
+                );
+              }
+              const e = row.event!;
+              const v = e.variant_id
+                ? variants.find((x) => x.id === e.variant_id)
+                : null;
+              return (
+                <tr key={row.key} className="border-t border-border">
+                  <td className="p-2 text-muted">{fmtDate(e.created_at)}</td>
+                  <td className="p-2">{EVENT_LABELS[e.kind] || e.kind}</td>
+                  <td className="p-2">{v?.label || (e.variant_id ? `#${e.variant_id}` : "—")}</td>
+                  <td className="p-2 text-muted">
+                    {e.source === "auto" ? "🤖 auto" : "👤 manual"}
+                  </td>
+                  <td className="p-2 text-muted text-xs">
+                    {e.event_metadata
+                      ? Object.entries(e.event_metadata)
+                          .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+                          .join(" · ")
+                      : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 
 function VariantCard({
   abtestId,
@@ -313,9 +450,9 @@ export default function AbTestDetail() {
           {result.ctr_winner && (
             <div className="card border-success">
               <div className="text-success font-medium">
-                Победитель по CTR: вариант {result.ctr_winner.label}
+                🏆 Победитель по «{scenarioLabels(test.test_mode, test.traffic_source).top}»: вариант {result.ctr_winner.label}
               </div>
-              {test.status === "running" && (
+              {(test.status === "running" || test.status === "paused") && (
                 <button
                   className="btn btn-primary mt-2"
                   onClick={() =>
@@ -330,6 +467,25 @@ export default function AbTestDetail() {
             </div>
           )}
 
+          {/* Прогресс выборки — визуальные бары per variant */}
+          <div className="card space-y-2">
+            <h3 className="text-sm text-muted">Прогресс выборки</h3>
+            {result.sample_progress.map((s) => (
+              <div key={s.variant_id} className="flex items-center gap-2 text-sm">
+                <span className="font-mono w-6">{s.label}</span>
+                <div className="flex-1 bg-surface-2 rounded overflow-hidden h-2 relative">
+                  <div
+                    className={`h-full ${s.pct >= 100 ? "bg-success" : "bg-accent"}`}
+                    style={{ width: `${Math.min(s.pct, 100)}%` }}
+                  />
+                </div>
+                <span className="text-muted text-xs font-mono w-32 text-right">
+                  {s.current}/{s.target} ({s.pct}%)
+                </span>
+              </div>
+            ))}
+          </div>
+
           <div className="card overflow-x-auto p-0">
             <table className="min-w-full text-sm">
               <thead className="bg-surface-2 text-muted text-xs uppercase">
@@ -338,7 +494,12 @@ export default function AbTestDetail() {
                   <th className="text-right p-2">Показы</th>
                   <th className="text-right p-2">Клики</th>
                   <th className="text-right p-2">Заказы</th>
-                  <th className="text-right p-2">CTR</th>
+                  <th
+                    className="text-right p-2"
+                    title={scenarioLabels(test.test_mode, test.traffic_source).top}
+                  >
+                    {scenarioLabels(test.test_mode, test.traffic_source).top}
+                  </th>
                   <th className="text-right p-2">CI (95%)</th>
                   <th className="text-right p-2">Выборка</th>
                 </tr>
@@ -424,42 +585,11 @@ export default function AbTestDetail() {
         </section>
       )}
 
-      <section>
-        <h2 className="text-lg font-medium mb-2">Последние ротации</h2>
-        {recent_rotations.length === 0 ? (
-          <div className="card text-muted">Ротаций ещё не было.</div>
-        ) : (
-          <div className="card overflow-x-auto p-0">
-            <table className="min-w-full text-sm">
-              <thead className="bg-surface-2 text-muted text-xs uppercase">
-                <tr>
-                  <th className="text-left p-2">Время</th>
-                  <th className="text-left p-2">Вариант</th>
-                  <th className="text-left p-2">Статус</th>
-                  <th className="text-left p-2">Ошибка</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recent_rotations.map((r) => {
-                  const v = variants.find((x) => x.id === r.variant_id);
-                  return (
-                    <tr key={r.id} className="border-t border-border">
-                      <td className="p-2 text-muted">{fmtDate(r.applied_at)}</td>
-                      <td className="p-2">{v?.label || `#${r.variant_id}`}</td>
-                      <td
-                        className={`p-2 ${r.success ? "text-success" : "text-warn"}`}
-                      >
-                        {r.success ? "✓ OK" : "✕ FAIL"}
-                      </td>
-                      <td className="p-2 text-muted text-xs">{r.error || "—"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+      <TimelineSection
+        abtestId={id}
+        variants={variants}
+        rotations={recent_rotations}
+      />
 
       <StopDialog
         open={stopOpen}

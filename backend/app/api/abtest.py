@@ -1009,6 +1009,41 @@ async def get_alerts(
     return {"items": [_serialize_alert(a) for a in rows]}
 
 
+@router.get("/{abtest_id}/events")
+async def get_events(
+    abtest_id: int,
+    limit: Annotated[int, Query(le=500)] = 100,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
+) -> dict[str, Any]:
+    """Список событий теста (отсев варианта, возврат, applied winner и т.п.)."""
+    from app.db.models import AbTestEvent
+
+    await _check_test_access(session, abtest_id, brands)
+    rows = (
+        await session.execute(
+            select(AbTestEvent)
+            .where(AbTestEvent.abtest_id == abtest_id)
+            .order_by(desc(AbTestEvent.created_at))
+            .limit(limit)
+        )
+    ).scalars().all()
+    return {
+        "items": [
+            {
+                "id": e.id,
+                "variant_id": e.variant_id,
+                "kind": e.kind,
+                "source": e.source,
+                "actor_user_id": e.actor_user_id,
+                "event_metadata": e.event_metadata,
+                "created_at": e.created_at.isoformat(),
+            }
+            for e in rows
+        ]
+    }
+
+
 @router.post("/alerts/{alert_id}/resolve")
 async def resolve_alert(
     alert_id: int,

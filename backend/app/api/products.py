@@ -133,6 +133,95 @@ async def list_products(
     }
 
 
+@router.get("/{nm_id}/traffic-estimate")
+async def traffic_estimate(
+    nm_id: int,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
+) -> dict[str, Any]:
+    """Оценка дневного трафика карточки за последние 7 дней.
+
+    Используется в форме создания A/B-теста чтобы предупредить когда
+    выборка не наберётся в разумный срок. Источник — nm-report
+    sales-funnel (поле openCardCount = открытия карточки = impressions
+    в нашей терминологии).
+
+    Возвращает:
+    - avg_daily_impressions: int | null — среднее в день; None если данных нет
+    - days_observed: int — за сколько дней есть данные (для интерпретации)
+    - source: "nm-report" | "wb-error" | "no-token"
+    - http_status: int | null — для понятной ошибки в UI
+    """
+    from datetime import date, timedelta
+    from app.integrations.wb.analytics import fetch_nm_report_history
+    from app.integrations.wb.client import WbApiError
+    from app.sync.tenants import wb_client_for_tenant
+
+    prod = await session.get(Product, nm_id)
+    if prod is None:
+        raise HTTPException(404, "product not found")
+    if brands is not None and (prod.brand or "") not in brands:
+        raise HTTPException(403, "not in your brands")
+
+    try:
+        wb_client = await wb_client_for_tenant(session, prod.tenant_id)
+    except RuntimeError:
+        return {
+            "avg_daily_impressions": None,
+            "days_observed": 0,
+            "source": "no-token",
+            "http_status": None,
+        }
+
+    today = date.today()
+    week_ago = today - timedelta(days=7)
+    try:
+        async with wb_client as wb:
+            cards = await fetch_nm_report_history(
+                wb, nm_ids=[nm_id], date_from=week_ago, date_to=today,
+                aggregation_level="day",
+            )
+    except WbApiError as e:
+        return {
+            "avg_daily_impressions": None,
+            "days_observed": 0,
+            "source": "wb-error",
+            "http_status": e.status,
+        }
+    except Exception:
+        return {
+            "avg_daily_impressions": None,
+            "days_observed": 0,
+            "source": "wb-error",
+            "http_status": None,
+        }
+
+    if not cards:
+        return {
+            "avg_daily_impressions": 0,
+            "days_observed": 0,
+            "source": "nm-report",
+            "http_status": 200,
+        }
+    card = next(
+        (c for c in cards if int((c.get("product") or {}).get("nmId") or c.get("nmID") or c.get("nmId") or 0) == nm_id),
+        None,
+    )
+    if card is None:
+        return {"avg_daily_impressions": 0, "days_observed": 0, "source": "nm-report", "http_status": 200}
+
+    history = card.get("history") or []
+    days = len(history)
+    total = sum(int(d.get("openCardCount") or d.get("openCount") or 0) for d in history)
+    avg = int(total / days) if days > 0 else None
+    return {
+        "avg_daily_impressions": avg,
+        "days_observed": days,
+        "source": "nm-report",
+        "http_status": 200,
+    }
+
+
 @router.post("/{nm_id}/archive")
 async def archive_product(nm_id: int, session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     obj = await session.get(Product, nm_id)

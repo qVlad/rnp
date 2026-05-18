@@ -257,6 +257,18 @@ export const abtestApi = {
     ),
   resolveAlert: (alertId: number) =>
     req(`/api/abtest/alerts/${alertId}/resolve`, { method: "POST" }),
+  getEvents: (id: number, limit = 100) =>
+    req<{
+      items: Array<{
+        id: number;
+        variant_id: number | null;
+        kind: string;
+        source: string;
+        actor_user_id: number | null;
+        event_metadata: Record<string, unknown> | null;
+        created_at: string;
+      }>;
+    }>(`/api/abtest/${id}/events?limit=${limit}`),
   syncNow: (id: number) =>
     req<{ status: string }>(`/api/abtest/${id}/sync-now`, { method: "POST" }),
   budgetRefresh: (id: number) =>

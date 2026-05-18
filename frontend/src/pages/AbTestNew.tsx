@@ -210,6 +210,119 @@ function ProductPicker({
 }
 
 // ----------------------------------------------------------------------
+// TrafficEstimateBanner — предупреждение о времени набора выборки.
+// ----------------------------------------------------------------------
+
+function TrafficEstimateBanner({
+  nmId,
+  variantCount,
+  minSampleSize,
+  triggerMode,
+  triggerValue,
+}: {
+  nmId: number | null;
+  variantCount: number;
+  minSampleSize: number;
+  triggerMode: TriggerMode;
+  triggerValue: number;
+}) {
+  const q = useQuery({
+    queryKey: ["traffic-estimate", nmId],
+    queryFn: async () => {
+      const r = await fetch(`/api/products/${nmId}/traffic-estimate`, {
+        credentials: "include",
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json() as Promise<{
+        avg_daily_impressions: number | null;
+        days_observed: number;
+        source: string;
+        http_status: number | null;
+      }>;
+    },
+    enabled: nmId != null,
+  });
+
+  if (!nmId) return null;
+  if (q.isLoading)
+    return <div className="text-xs text-muted">Оценка трафика…</div>;
+  const data = q.data;
+  if (!data) return null;
+
+  if (data.source === "no-token") {
+    return (
+      <div className="text-xs border border-info/30 bg-info-bg/30 rounded p-2 text-info">
+        Сначала добавьте WB-токен в /settings — без него мы не оценим трафик
+        карточки.
+      </div>
+    );
+  }
+  if (data.source === "wb-error") {
+    return (
+      <div className="text-xs border border-warn/30 bg-warn-bg/30 rounded p-2 text-warn">
+        WB API вернул ошибку{data.http_status ? ` (${data.http_status})` : ""} —
+        параметры можно выбрать без оценки.
+      </div>
+    );
+  }
+  const avg = data.avg_daily_impressions ?? 0;
+  if (avg === 0) {
+    return (
+      <div className="text-xs border border-info/30 bg-info-bg/30 rounded p-2 text-info">
+        У карточки нет показов за последние 7 дней. Тест запустится, но
+        реалистичная оценка появится после первого дня.
+      </div>
+    );
+  }
+  const dailyPerVariant = Math.max(1, Math.floor(avg / Math.max(2, variantCount)));
+  const daysToMin = Math.ceil(minSampleSize / dailyPerVariant);
+  const warnings: string[] = [];
+  if (triggerMode === "VIEWS") {
+    const cycleDays = Math.ceil(triggerValue / dailyPerVariant);
+    if (cycleDays > 3) {
+      warnings.push(
+        `Один цикл VIEWS-ротации займёт ~${cycleDays} дн. при ~${avg} показах/сутки. Это много — внешние факторы исказят сравнение. Лучше выбрать «Быстрая» или «Стандартная» (TIME).`,
+      );
+    }
+  }
+  if (daysToMin > 14) {
+    warnings.push(
+      `До набора минимальной выборки (${minSampleSize} показов на вариант) пройдёт ~${daysToMin} дн. при ~${avg} показах/сутки. Уменьшите «Мин. выборку» либо примите долгое ожидание.`,
+    );
+  }
+  const ok = warnings.length === 0;
+  return (
+    <div
+      className={`text-xs rounded p-2 border ${
+        ok
+          ? "border-success/30 bg-success-bg/30 text-success"
+          : "border-warn/30 bg-warn-bg/30 text-warn"
+      }`}
+    >
+      <div className="font-medium">
+        {ok ? "✓ Параметры подходят" : "⚠ Внимание"}
+        <span className="ml-2 opacity-80 font-normal">
+          Трафик ~{avg} показов/сутки ({data.days_observed} дн. истории)
+        </span>
+      </div>
+      {ok ? (
+        <div className="mt-1 opacity-80">
+          {triggerMode === "VIEWS"
+            ? `Один цикл ~${Math.ceil(triggerValue / dailyPerVariant)} дн., до выборки ~${daysToMin} дн.`
+            : `До набора выборки ~${daysToMin} дн.`}
+        </div>
+      ) : (
+        <ul className="mt-1 list-disc pl-4 space-y-1">
+          {warnings.map((w, i) => (
+            <li key={i}>{w}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------
 // CampaignPicker — выбор активной РК (для ADV-сценариев).
 // ----------------------------------------------------------------------
 
@@ -809,6 +922,14 @@ export default function AbTestNew() {
             </div>
           </div>
         </details>
+
+        <TrafficEstimateBanner
+          nmId={form.nm_id}
+          variantCount={form.variant_count}
+          minSampleSize={form.min_sample_size}
+          triggerMode={form.trigger_mode}
+          triggerValue={form.trigger_value}
+        />
       </div>
 
       {/* ---------- 4. Варианты + inline фото ---------- */}
