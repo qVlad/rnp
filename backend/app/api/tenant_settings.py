@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Tenant
 from app.db.session import get_db
 from app.integrations.wb.client import WbApiClient, WbApiError
+from app.services.audit import audit_log
 from app.services.auth import CurrentUser, get_current_user, require_director
 from app.services.secrets_crypto import encrypt
 
@@ -93,11 +94,23 @@ async def set_wb_token(
     tenant = await session.get(Tenant, user.tenant_id)
     if tenant is None:
         raise HTTPException(404, "tenant not found")
+    had_token_before = bool(tenant.wb_token)
+    prev_seller_id = tenant.wb_token_seller_id
     # Шифруем перед сохранением (Fernet) — если ключ настроен; иначе
     # plaintext + warning в логах.
     tenant.wb_token = encrypt(token)
     tenant.wb_token_validated_at = datetime.now(timezone.utc)
     tenant.wb_token_seller_id = _decode_wb_token_sid(token)
+    # Не пишем сам токен в audit — даже у director'а не должно быть
+    # plain-доступа к чужим JWT через UI лога. Фиксируем только seller_id
+    # и факт замены.
+    await audit_log(
+        session, "tenant_wb_token", "update" if had_token_before else "create",
+        entity_id=str(tenant.id),
+        before={"seller_id": prev_seller_id} if had_token_before else None,
+        after={"seller_id": tenant.wb_token_seller_id},
+        actor=user.username,
+    )
     await session.commit()
     return {
         "set": True,
@@ -130,8 +143,17 @@ async def clear_wb_token(
     tenant = await session.get(Tenant, user.tenant_id)
     if tenant is None:
         raise HTTPException(404, "tenant not found")
+    prev_seller_id = tenant.wb_token_seller_id
+    had_token_before = bool(tenant.wb_token)
     tenant.wb_token = None
     tenant.wb_token_validated_at = None
     tenant.wb_token_seller_id = None
+    if had_token_before:
+        await audit_log(
+            session, "tenant_wb_token", "delete",
+            entity_id=str(tenant.id),
+            before={"seller_id": prev_seller_id},
+            actor=user.username,
+        )
     await session.commit()
     return {"cleared": True}
