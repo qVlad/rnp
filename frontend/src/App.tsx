@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { PeriodProvider } from "@/contexts/PeriodContext";
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
+import Audit from "./pages/Audit";
 import PnL from "./pages/PnL";
 import PnLReconciliation from "./pages/PnLReconciliation";
 import TaxReport from "./pages/TaxReport";
@@ -106,6 +107,14 @@ export default function App() {
           <Route index element={<Dashboard />} />
           <Route path="pnl" element={<PnL />} />
           <Route path="pnl-reconciliation" element={<PnLReconciliation />} />
+          <Route
+            path="audit"
+            element={
+              <DirectorOrHead>
+                <Audit />
+              </DirectorOrHead>
+            }
+          />
           <Route
             path="tax-report"
             element={

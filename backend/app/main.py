@@ -11,6 +11,7 @@ from app.api import (
     analytics,
     artificial_orders,
     audit,
+    audit_mode,
     auth as auth_api,
     brands,
     calc,
@@ -185,6 +186,7 @@ app.include_router(users.router)
 app.include_router(brands.router)
 app.include_router(tenant_settings.router)
 app.include_router(tenant_modules.router)
+app.include_router(audit_mode.router)
 app.include_router(tax_report.router)
 app.include_router(supplies.router)
 app.include_router(checklist.router)

@@ -1374,6 +1374,65 @@ class WbCampaignBudget(Base, TenantScopedMixin):
     )
 
 
+class AuditImport(Base, TenantScopedMixin):
+    """Импортированный XLSX из WB-кабинета или от бухгалтера для 3-source аудита.
+
+    Один период × один источник = одна запись (UNIQUE на (tenant, source, period_start,
+    period_end)). При повторной загрузке — UPSERT (заменяет старую запись).
+
+    `data_json` — нормализованный формат: {"lines": [{"code", "label", "amount"}, ...],
+                                            "raw_meta": {"file_name", "sheet_name", ...}}.
+    `mapping_json` — только для source='bookkeeper': {"col_name": "canonical_code", ...}.
+    Миграция 0035.
+    """
+
+    __tablename__ = "audit_imports"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    file_name: Mapped[str | None] = mapped_column(String(255))
+    rows_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    data_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    mapping_json: Mapped[dict | None] = mapped_column(JSONB)
+    imported_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    imported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "source", "period_start", "period_end", name="uq_audit_import"
+        ),
+    )
+
+
+class AuditDecision(Base, TenantScopedMixin):
+    """Решение по строке с расхождением Δ > 0.01₽ при 3-source аудите.
+
+    Альтернативный/dual журнал к общему `audit_log` — здесь storage'им именно
+    выборы между 3 источниками с привязкой к period+line_code. Используется
+    для генерации финального отчёта «принятая версия».
+    Миграция 0035.
+    """
+
+    __tablename__ = "audit_decisions"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    line_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    chosen_source: Mapped[str] = mapped_column(String(32), nullable=False)
+    delta_ours_wb: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    delta_ours_bk: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    comment: Mapped[str | None] = mapped_column(Text)
+    decided_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class TenantModule(Base, TenantScopedMixin):
     """Feature flag per-tenant.
 

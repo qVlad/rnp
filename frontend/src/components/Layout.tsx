@@ -31,6 +31,7 @@ const GROUPS: Group[] = [
       { to: "/", label: "Дашборд", end: true, icon: "layers" },
       { to: "/pnl", label: "P&L", icon: "list" },
       { to: "/pnl-reconciliation", label: "Сверка с WB", icon: "check" },
+      { to: "/audit", label: "Аудит-режим", icon: "check", directorOrHead: true },
     ],
   },
   {

@@ -114,14 +114,20 @@ Lead использует этот файл как master-view: сюда скл�
 - **Оценка:** 1ч на спеку, реализация ~2-3 недели
 - **Описание:** Source `agents/references/market/top-features-2026-05-17.md` Product #3. **Решено собственником: гибрид XLSX-import → API в v2**. В первой итерации юзер вручную грузит XLSX-выгрузку из WB-кабинета («Реализация») + XLSX от бухгалтера (через настраиваемый mapping колонок). API-parsing — отдельная задача v2.
 - **Критерии готовности:**
-  - [ ] Spec в `agents/references/spec-audit-mode.md`: формат WB XLSX (стандартный «Реализация»), как настраивать mapping бухгалтерского XLSX (UI), алгоритм сравнения 3 источников по строкам, статус-машина «принято»
-  - [ ] TASK-DES-NNN: 3-column side-by-side layout с подсветкой Δ > 0.01₽
-  - [ ] TASK-DEV-NNN backend: модель `audit_imports`, парсеры XLSX (через `openpyxl`), сервис `audit_compare`
-  - [ ] TASK-DEV-NNN frontend: страница `/audit` + import-форма + side-by-side таблица
-  - [ ] TASK-PA-NNN (persona-accountant): валидация спеки и flow
-  - [ ] TASK-QA-NNN: smoke на тестовых XLSX
-- **Зависимости:** нет (можно параллельно с LEAD-005)
-- **Статус:** Открыта
+  - [x] Spec в `agents/references/spec-audit-mode.md` — 4-этапная реализация, canonical lines, парсеры формат, UI wireframe
+  - [x] Backend: миграция `0035_audit_imports` (две таблицы — `audit_imports` + `audit_decisions`)
+  - [x] Backend: модели `AuditImport`, `AuditDecision` в `db/models.py`
+  - [x] Backend: `services/audit_compare.py` — `compare_three_sources()` + 15 canonical lines + `ComparisonRow` с `has_discrepancy`
+  - [x] Backend: `services/audit_parsers/wb_realizacia.py` — устойчивый парсер WB XLSX (header search + doc_type aggregation)
+  - [x] Backend: `services/audit_parsers/bookkeeper.py` — preview + parse с `wide` / `long` форматами и user-mapping
+  - [x] Backend: `api/audit_mode.py` (`/api/audit-mode/*`) — imports CRUD + compare + decisions, за `require_module("audit_mode")` + `require_director_or_head`
+  - [x] Frontend: страница `/audit` с upload-формами для WB+бух, mapping wizard, 3-column compare таблицей с inline-кнопками «принять источник»
+  - [x] Frontend: маршрут + меню (директор + head_of_sales)
+  - [ ] TASK-PA-NNN (persona-accountant): валидация спеки и flow (после деплоя)
+  - [ ] Включить модуль `audit_mode` для текущих tenants через `PUT /api/tenant-modules/audit_mode {enabled:true}` (после деплоя)
+  - [ ] TASK-QA-NNN: smoke на тестовых XLSX (после деплоя)
+- **Зависимости:** нет (выполнено параллельно с LEAD-005)
+- **Статус:** Выполнено (backend + frontend, требуется деплой + smoke + persona-validation) — 2026-05-18
 
 ---
 

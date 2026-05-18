@@ -146,6 +146,110 @@ export const api = {
       { method: "PUT", body: JSON.stringify({ enabled, notes }) },
     ),
 
+  // ── Audit mode (3-source compare) ──
+  auditListImports: (period_start: string, period_end: string) =>
+    request<{
+      wb_cabinet: null | {
+        id: number; file_name: string | null; rows_count: number;
+        imported_by: string; imported_at: string | null; has_mapping: boolean;
+      };
+      bookkeeper: null | {
+        id: number; file_name: string | null; rows_count: number;
+        imported_by: string; imported_at: string | null; has_mapping: boolean;
+      };
+    }>(`/api/audit-mode/imports?period_start=${period_start}&period_end=${period_end}`),
+  auditPreviewBookkeeper: async (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("source", "bookkeeper");
+    const resp = await fetch(`/api/audit-mode/imports/preview`, {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+    });
+    if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
+    return resp.json() as Promise<{
+      sheets: Array<{
+        name: string; suggested_header_row: number;
+        header: string[]; preview_rows: string[][];
+      }>;
+    }>;
+  },
+  auditCreateImport: async (
+    file: File,
+    source: "wb_cabinet" | "bookkeeper",
+    period_start: string,
+    period_end: string,
+    mapping?: Record<string, any>,
+  ) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("source", source);
+    fd.append("period_start", period_start);
+    fd.append("period_end", period_end);
+    if (mapping) fd.append("mapping_json", JSON.stringify(mapping));
+    const resp = await fetch(`/api/audit-mode/imports`, {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+    });
+    if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
+    return resp.json() as Promise<{
+      source: string; rows_count: number; lines_count: number;
+    }>;
+  },
+  auditDeleteImport: (id: number) =>
+    request<{ deleted: number }>(`/api/audit-mode/imports/${id}`, { method: "DELETE" }),
+  auditCompare: (period_start: string, period_end: string) =>
+    request<{
+      period_start: string;
+      period_end: string;
+      source_status: { wb_cabinet: boolean; bookkeeper: boolean };
+      discrepancy_count: number;
+      rows: Array<{
+        code: string;
+        label: string;
+        sign_class: "income" | "expense";
+        ours: number | null;
+        wb: number | null;
+        bk: number | null;
+        delta_ours_wb: number | null;
+        delta_ours_bk: number | null;
+        delta_wb_bk: number | null;
+        has_discrepancy: boolean;
+      }>;
+    }>(
+      `/api/audit-mode/compare?period_start=${period_start}&period_end=${period_end}`,
+    ),
+  auditCreateDecision: (body: {
+    period_start: string;
+    period_end: string;
+    line_code: string;
+    chosen_source: "ours" | "wb_cabinet" | "bookkeeper";
+    delta_ours_wb?: number | null;
+    delta_ours_bk?: number | null;
+    comment?: string;
+  }) =>
+    request<{ id: number; chosen_source: string }>(
+      `/api/audit-mode/decisions`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  auditListDecisions: (period_start: string, period_end: string) =>
+    request<{
+      items: Array<{
+        id: number;
+        line_code: string;
+        chosen_source: string;
+        delta_ours_wb: number | null;
+        delta_ours_bk: number | null;
+        comment: string | null;
+        decided_by: string;
+        decided_at: string | null;
+      }>;
+    }>(
+      `/api/audit-mode/decisions?period_start=${period_start}&period_end=${period_end}`,
+    ),
+
   health: () => request<{ status: string }>("/api/health"),
   whoami: () =>
     request<{ wb_token_configured: boolean; debug: boolean }>("/api/whoami"),
