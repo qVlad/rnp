@@ -31,49 +31,47 @@ async def fetch_nm_report_history(
     date_from: date,
     date_to: date,
     *,
-    aggregation_level: str = "day",
+    aggregation_level: str = "day",  # kept for API back-compat; not sent to WB
 ) -> list[dict[str, Any]]:
     """`POST /api/analytics/v3/sales-funnel/products/history` — per-day funnel.
 
-    Параметры:
-        nm_ids            — список артикулов (≤1000 за запрос)
-        date_from/date_to — включительные даты
-        aggregation_level — "day" | "week" | "month" (используем "day")
-
-    Возвращает список объектов формы:
+    Формат запроса v3 (2026):
         {
-          "nmID": int,
-          "vendorCode": str,
+          "selectedPeriod": {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"},
+          "nmIds": [12345],            // НЕ "nmIDs", НЕ "period" — отличие от v2
+          "timezone": "Europe/Moscow"
+        }
+        `aggregationLevel` исключён (WB вернёт 400 если есть).
+
+    Корень ответа — массив cards напрямую (без обёртки `{data: [...]}`).
+    Каждый card:
+        {
+          "product": {"nmId": int, "title": ..., "vendorCode": ...},
           "history": [
             {
-              "dt": "YYYY-MM-DD",
-              "openCardCount": int,        # показы карточки
-              "addToCartCount": int,
-              "ordersCount": int,
-              "buyoutsCount": int,
-              "buyoutPercent": float,
-              "addToCartConversion": float,
-              "cartToOrderConversion": float,
-              "ordersSumRub": int,
-              ...
+              "date": "YYYY-MM-DD",   // было "dt" в v2
+              "openCount": int,       // было "openCardCount" — показы
+              "cartCount": int,       // было "addToCartCount"
+              "orderCount": int,      // было "ordersCount"
+              "orderSum": int,        // было "ordersSumRub"
+              "buyoutCount"?: int, "buyoutPercent"?: float, ...
             }
           ]
         }
 
-    На ошибку возвращает пустой список, не падает — A/B sync должен
-    переживать одиночные glitches WB без cascade-fail (нужно знать в
-    `abtest_stats_snapshot`, что snapshot не получился, но не валить всю
-    Celery task).
+    На ошибку возвращает пустой список. Caller (`api/products.py
+    traffic_estimate`) различает «нет данных» vs «WB-ошибка» через try/
+    except + http_status — здесь же тихо логируем.
     """
     if not nm_ids:
         return []
     body = {
-        "nmIDs": nm_ids,
-        "period": {
-            "begin": date_from.isoformat(),
+        "selectedPeriod": {
+            "start": date_from.isoformat(),
             "end": date_to.isoformat(),
         },
-        "aggregationLevel": aggregation_level,
+        "nmIds": nm_ids,
+        "timezone": "Europe/Moscow",
     }
     try:
         data = await client.post(
@@ -86,10 +84,12 @@ async def fetch_nm_report_history(
             "fetch_nm_report_history(%d ids, %s..%s) failed: %s",
             len(nm_ids), date_from, date_to, type(e).__name__,
         )
-        return []
-    if not isinstance(data, dict):
-        return []
-    items = data.get("data") or data.get("items") or []
-    if isinstance(items, list):
-        return items
+        raise
+    # Root: list of cards (новая схема) либо {data: [...]} legacy. Покрываем оба.
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        items = data.get("data") or data.get("items") or []
+        if isinstance(items, list):
+            return items
     return []

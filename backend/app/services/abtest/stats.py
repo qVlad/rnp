@@ -303,13 +303,13 @@ async def _sync_nm_report_stats(
         if today_moscow < started_moscow:
             return  # запас на race condition
 
-    # nm-report-поля: openCardCount = открытия (impressions),
-    # addToCartCount = клики (~ интерес), orderCount = заказы,
-    # ordersSumRub = выручка. WB v3 имена могут варьироваться.
-    cum_imp = int(today_day.get("openCardCount") or today_day.get("openCount") or 0)
-    cum_clicks = int(today_day.get("addToCartCount") or today_day.get("cartCount") or 0)
-    cum_orders = int(today_day.get("ordersCount") or today_day.get("orderCount") or 0)
-    cum_revenue = float(today_day.get("ordersSumRub") or today_day.get("orderSum") or 0)
+    # nm-report v3 (2026): openCount/cartCount/orderCount/orderSum. Старые v2
+    # имена (openCardCount/addToCartCount/ordersCount/ordersSumRub) WB больше
+    # не возвращает, но оставляем fallback на случай переходного периода.
+    cum_imp = int(today_day.get("openCount") or today_day.get("openCardCount") or 0)
+    cum_clicks = int(today_day.get("cartCount") or today_day.get("addToCartCount") or 0)
+    cum_orders = int(today_day.get("orderCount") or today_day.get("ordersCount") or 0)
+    cum_revenue = float(today_day.get("orderSum") or today_day.get("ordersSumRub") or 0)
 
     await apply_snapshot(
         session,

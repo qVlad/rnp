@@ -211,8 +211,12 @@ async def traffic_estimate(
         return {"avg_daily_impressions": 0, "days_observed": 0, "source": "nm-report", "http_status": 200}
 
     history = card.get("history") or []
+    # WB v3 (2026): поле "openCount" (было "openCardCount" в v2).
     days = len(history)
-    total = sum(int(d.get("openCardCount") or d.get("openCount") or 0) for d in history)
+    total = sum(
+        int(d.get("openCount") or d.get("openCardCount") or 0)
+        for d in history
+    )
     avg = int(total / days) if days > 0 else None
     return {
         "avg_daily_impressions": avg,
