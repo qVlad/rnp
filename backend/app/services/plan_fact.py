@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -30,6 +30,7 @@ from app.db.models import (
     WbSale,
 )
 from app.services.pnl_builder import build_pnl
+from app.services.unit_economics import build_unit_economics
 
 
 def _f(v: Any) -> float:
@@ -222,9 +223,16 @@ async def build_plan_fact(
         ExternalAdCost.spend_date <= period_end,
     )
     if nm_filter is not None:
-        # Manager scope: drop brand-level external marketing (nm_id NULL).
+        # Manager scope: SKU-level (nm_id in scope) + brand-level (brand in
+        # manager's brand assignments). Company-wide rows (both NULL) — нет.
         ext_ads_total_stmt = ext_ads_total_stmt.where(
-            ExternalAdCost.nm_id.in_(nm_filter)
+            or_(
+                ExternalAdCost.nm_id.in_(nm_filter),
+                and_(
+                    ExternalAdCost.nm_id.is_(None),
+                    ExternalAdCost.brand.in_(brands or []),
+                ),
+            )
         )
     ext_ads_total = _f((await session.execute(ext_ads_total_stmt)).scalar_one())
 
@@ -256,6 +264,23 @@ async def build_plan_fact(
         brands=brands,
     )
     fact_profit_total = _f(pnl["totals"].get("profit", 0))
+
+    # Per-SKU чистая прибыль для nm- и group-scope строк план-факта.
+    # build_unit_economics возвращает items с полем net_profit (revenue −
+    # cogs − wb_fees − ad − tax). Используется как агрегируемая единица для
+    # group: profit = Σ net_profit по членам группы. OPEX/налоги
+    # компании в эту сумму НЕ входят (они per-period, не per-SKU) — поэтому
+    # group-profit чуть отличается от full-company profit как контрибуция.
+    ue = await build_unit_economics(
+        session,
+        start_date=period_start,
+        end_date=period_end,
+        include_archived=True,
+        brands=brands,
+    )
+    profit_by_nm: dict[int, float] = {
+        int(it["nm_id"]): _f(it.get("net_profit", 0)) for it in ue.get("items", [])
+    }
 
     # Product names for SKU-level plans
     product_ids = [p.scope_id for p in plans if p.scope_type == "nm" and p.scope_id]
@@ -314,8 +339,10 @@ async def build_plan_fact(
             f_sales_qty = sales_by_nm.get(nm, {}).get("qty", 0)
             f_sales_rev = sales_by_nm.get(nm, {}).get("revenue", 0.0)
             f_marketing = wb_ads_by_nm.get(nm, 0.0) + ext_ads_by_nm.get(nm, 0.0)
-            # Per-SKU profit not available without per-SKU P&L breakdown — show null.
-            f_profit = None
+            # Per-SKU net_profit берётся из build_unit_economics. Если SKU
+            # отсутствует в UE (нет ни заказов, ни продаж за период) —
+            # показываем 0, не None: «факта нет» = «прибыли нет».
+            f_profit = profit_by_nm.get(nm, 0.0)
             prod = product_map.get(nm)
             label = (
                 f"SKU {nm}" + (f" — {prod.vendor_code}" if prod and prod.vendor_code else "")
@@ -334,10 +361,11 @@ async def build_plan_fact(
             f_marketing = sum(
                 wb_ads_by_nm.get(n, 0.0) + ext_ads_by_nm.get(n, 0.0) for n in members
             )
-            # Per-group profit пока не считаем (требовало бы группу P&L по
-            # SKU, что отдельная задача). Маркетинг + оборот покрывают 80%
-            # сценариев план-факта по группе.
-            f_profit = None
+            # Per-group net_profit = Σ net_profit членов группы (из UE).
+            # Это контрибуционная маржа группы; OPEX/налоги компании
+            # сюда не входят (они per-period, не per-SKU), поэтому сумма
+            # group-profit по всем группам < company-profit на P&L.
+            f_profit = sum(profit_by_nm.get(n, 0.0) for n in members)
             gname = group_name_map.get(gid, f"#{gid}")
             label = f"Группа: {gname}" + (
                 f" ({len(members)} SKU)" if members else " (нет SKU)"

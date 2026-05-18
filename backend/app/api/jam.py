@@ -18,7 +18,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import JamQuery, Product
-from app.services.auth import current_brands_filter, get_db_tenant_scoped, require_director
+from app.services.audit import audit_log
+from app.services.auth import (
+    CurrentUser,
+    current_brands_filter,
+    get_current_user,
+    get_db_tenant_scoped,
+    require_director,
+)
 from app.services.jam import build_jam_clusters
 
 
@@ -135,6 +142,7 @@ async def jam_get_url(session: AsyncSession = Depends(get_db_tenant_scoped)) -> 
 @router.put("/url", dependencies=[Depends(require_director)])
 async def jam_put_url(
     payload: dict[str, str],
+    user: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     """Установить кастомный URL endpoint для WB Jam (если дефолтные не работают)."""
@@ -145,8 +153,19 @@ async def jam_put_url(
         await session.execute(select(AppSetting).where(AppSetting.key == "wb_jam_url"))
     ).scalar_one_or_none()
     if row:
+        before_url = row.value
         row.value = url
+        op = "update"
     else:
+        before_url = None
         session.add(AppSetting(key="wb_jam_url", value=url))
+        op = "create"
+    await audit_log(
+        session, "wb_jam_url", op,
+        entity_id="wb_jam_url",
+        before={"wb_jam_url": before_url} if op == "update" else None,
+        after={"wb_jam_url": url},
+        actor=user.username,
+    )
     await session.commit()
     return {"wb_jam_url": url}

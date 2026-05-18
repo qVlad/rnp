@@ -64,7 +64,7 @@ SCHEMAS: dict[str, list[str]] = {
         "id", "type", "order_dt", "completion_dt",
         "nm_id", "qty", "gross_amount", "contractor_fee", "comment",
     ],
-    "external_ad_costs": ["id", "spend_date", "end_date", "nm_id", "channel", "amount", "comment"],
+    "external_ad_costs": ["id", "spend_date", "end_date", "nm_id", "brand", "channel", "amount", "comment"],
     "sales_plans": [
         "period_year", "period_month", "scope_type", "scope_id",
         "planned_orders_qty", "planned_orders_revenue",
@@ -430,7 +430,7 @@ async def _export_ext_ad(session: AsyncSession) -> list[list[Any]]:
     rows = (await session.execute(
         select(ExternalAdCost).order_by(ExternalAdCost.spend_date, ExternalAdCost.id)
     )).scalars().all()
-    return [[r.id, r.spend_date, r.end_date, r.nm_id, r.channel, r.amount, r.comment] for r in rows]
+    return [[r.id, r.spend_date, r.end_date, r.nm_id, r.brand, r.channel, r.amount, r.comment] for r in rows]
 
 
 async def _import_ext_ad(
@@ -453,6 +453,7 @@ async def _import_ext_ad(
                 spend_date=spend_date,
                 end_date=_to_date(r.get("end_date")),
                 nm_id=_to_int(r.get("nm_id")),
+                brand=_to_str(r.get("brand")),
                 channel=channel,
                 amount=amount,
                 comment=_to_str(r.get("comment")),
