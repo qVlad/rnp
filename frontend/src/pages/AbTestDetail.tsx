@@ -26,11 +26,11 @@ import {
 } from "@/api/abtest";
 
 const STATUS_BADGE: Record<AbTestStatus | string, string> = {
-  draft: "bg-bg-2 text-muted",
+  draft: "bg-surface-2 text-muted",
   running: "bg-success-bg text-success",
   paused: "bg-warn-bg text-warn",
   completed: "bg-info-bg text-info",
-  cancelled: "bg-bg-2 text-muted",
+  cancelled: "bg-surface-2 text-muted",
 };
 
 function fmtDate(s: string | null): string {
@@ -118,9 +118,9 @@ function VariantCard({
               <img
                 src={abtestApi.photoUrl(abtestId, variant.id, p.id)}
                 alt={`#${p.photo_order}`}
-                className="w-24 h-24 object-cover rounded border border-border-1"
+                className="w-24 h-24 object-cover rounded border border-border"
               />
-              <div className="absolute bottom-0 left-0 text-xs bg-bg-1 px-1">
+              <div className="absolute bottom-0 left-0 text-xs bg-surface px-1">
                 #{p.photo_order}
               </div>
               {canEdit && (
@@ -138,7 +138,7 @@ function VariantCard({
       </div>
 
       {canEdit && (
-        <div className="border-t border-border-1 pt-3 space-y-2">
+        <div className="border-t border-border pt-3 space-y-2">
           <div className="flex items-center gap-2 text-sm">
             <label>Позиция фото:</label>
             <input
@@ -391,7 +391,7 @@ export default function AbTestDetail() {
 
           <div className="card overflow-x-auto p-0">
             <table className="min-w-full text-sm">
-              <thead className="bg-bg-2 text-muted text-xs uppercase">
+              <thead className="bg-surface-2 text-muted text-xs uppercase">
                 <tr>
                   <th className="text-left p-2">Вариант</th>
                   <th className="text-right p-2">Показы</th>
@@ -409,7 +409,7 @@ export default function AbTestDetail() {
                     (s) => s.variant_id === v.variant_id,
                   );
                   return (
-                    <tr key={v.variant_id} className="border-t border-border-1">
+                    <tr key={v.variant_id} className="border-t border-border">
                       <td className="p-2 font-medium">{v.label}</td>
                       <td className="p-2 text-right">{v.impressions}</td>
                       <td className="p-2 text-right">{v.clicks}</td>
@@ -490,7 +490,7 @@ export default function AbTestDetail() {
         ) : (
           <div className="card overflow-x-auto p-0">
             <table className="min-w-full text-sm">
-              <thead className="bg-bg-2 text-muted text-xs uppercase">
+              <thead className="bg-surface-2 text-muted text-xs uppercase">
                 <tr>
                   <th className="text-left p-2">Время</th>
                   <th className="text-left p-2">Вариант</th>
@@ -502,7 +502,7 @@ export default function AbTestDetail() {
                 {recent_rotations.map((r) => {
                   const v = variants.find((x) => x.id === r.variant_id);
                   return (
-                    <tr key={r.id} className="border-t border-border-1">
+                    <tr key={r.id} className="border-t border-border">
                       <td className="p-2 text-muted">{fmtDate(r.applied_at)}</td>
                       <td className="p-2">{v?.label || `#${r.variant_id}`}</td>
                       <td

@@ -92,7 +92,7 @@ export default function AbTestList() {
       ) : (
         <div className="card overflow-x-auto p-0">
           <table className="min-w-full text-sm">
-            <thead className="bg-bg-2 text-muted text-xs uppercase">
+            <thead className="bg-surface-2 text-muted text-xs uppercase">
               <tr>
                 <th className="text-left p-3">Название</th>
                 <th className="text-left p-3">SKU</th>
@@ -105,7 +105,7 @@ export default function AbTestList() {
             </thead>
             <tbody>
               {items.map((t) => (
-                <tr key={t.id} className="border-t border-border-1 hover:bg-bg-2">
+                <tr key={t.id} className="border-t border-border hover:bg-surface-2">
                   <td className="p-3">
                     <Link
                       to={`/abtest/${t.id}`}

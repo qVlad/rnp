@@ -125,7 +125,18 @@ function ProductPicker({
       )}
 
       {open && !value && (
-        <div className="absolute top-full left-0 right-0 mt-1 bg-bg-1 border border-border-1 rounded shadow-lg max-h-80 overflow-y-auto z-10">
+        <div
+          // z-50 чтобы перекрыть следующие элементы формы (grid соседи + строки ниже).
+          // bg-surface + border-border — стандартные токены rnp (а не bg-bg-1 как
+          // было — таких классов в Tailwind config нет → транспарентный фон).
+          className="absolute top-full left-0 right-0 mt-1 bg-surface border border-border rounded shadow-xl max-h-80 overflow-y-auto z-50"
+          // Останавливаем mousedown чтобы document-listener не закрыл dropdown
+          // ДО того как сработает onClick на кнопке (mousedown событие
+          // bubbles → document.addEventListener('mousedown') → setOpen(false)
+          // → React unmounts → click never fires). preventDefault также
+          // сохраняет фокус — input не теряет caret.
+          onMouseDown={(e) => e.preventDefault()}
+        >
           {searchQ.isLoading && (
             <div className="p-3 text-muted text-sm">Загрузка…</div>
           )}
@@ -145,7 +156,7 @@ function ProductPicker({
             <button
               key={p.nm_id}
               type="button"
-              className="flex items-center gap-2 w-full text-left p-2 hover:bg-bg-2 border-b border-border-1 last:border-b-0"
+              className="flex items-center gap-2 w-full text-left p-2 hover:bg-surface-2 border-b border-border last:border-b-0"
               onClick={() => {
                 onChange(p.nm_id);
                 setOpen(false);
@@ -349,7 +360,7 @@ export default function AbTestNew() {
         </div>
 
         {needsAdvert && (
-          <div className="grid grid-cols-2 gap-3 border-t border-border-1 pt-3">
+          <div className="grid grid-cols-2 gap-3 border-t border-border pt-3">
             <div>
               <label className="block text-sm text-muted mb-1">campaign_id WB</label>
               <input
