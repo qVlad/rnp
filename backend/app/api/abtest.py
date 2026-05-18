@@ -357,7 +357,16 @@ async def create_test(
     await session.commit()
     await session.refresh(test)
 
-    return {"id": test.id, "test": _serialize_test(test)}
+    return {
+        "id": test.id,
+        "test": _serialize_test(test),
+        # Возвращаем варианты с id чтобы frontend мог сразу batch-загрузить
+        # staged-файлы для B/C/D через `POST /abtest/{id}/variants/{vid}/photos`.
+        "variants": [
+            {"id": v.id, "label": v.label}
+            for v in variants_by_label.values()
+        ],
+    }
 
 
 @router.get("/{abtest_id}")

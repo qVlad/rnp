@@ -2,7 +2,7 @@
  * Детали одного A/B теста: метаданные, варианты с фото-uploader'ом,
  * последние ротации, alerts, результат (значимость + графики).
  */
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   useMutation,
@@ -24,6 +24,7 @@ import {
   AbTestStatus,
   AbTestVariant,
 } from "@/api/abtest";
+import { VariantPhotoGrid } from "@/components/abtest/VariantPhotoGrid";
 
 const STATUS_BADGE: Record<AbTestStatus | string, string> = {
   draft: "bg-surface-2 text-muted",
@@ -38,6 +39,7 @@ function fmtDate(s: string | null): string {
   return new Date(s).toLocaleString("ru-RU");
 }
 
+
 function VariantCard({
   abtestId,
   variant,
@@ -50,74 +52,19 @@ function VariantCard({
   onChange: () => void;
 }) {
   const qc = useQueryClient();
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [photoOrder, setPhotoOrder] = useState(1);
-  const [uploading, setUploading] = useState(false);
-  const [aspectWarning, setAspectWarning] = useState<string | null>(null);
-
   const canEdit = testStatus === "draft" || testStatus === "paused";
 
-  // Проверка 3:4 (WB-стандарт 900×1200). Не блокируем загрузку — WB сам
-  // обрежет — но предупреждаем (порт wbab `test-form.tsx:561-583`).
-  const checkAspectRatio = (file: File) =>
-    new Promise<void>((resolve) => {
-      if (!file.type.startsWith("image/")) {
-        setAspectWarning(null);
-        resolve();
-        return;
-      }
-      const url = URL.createObjectURL(file);
-      const img = new Image();
-      img.onload = () => {
-        const ratio = img.naturalWidth / img.naturalHeight;
-        const target = 3 / 4; // 0.75
-        const tolerance = 0.02;
-        if (Math.abs(ratio - target) > tolerance) {
-          const orientation =
-            ratio > 1.05 ? "горизонтальное" : ratio < 0.7 ? "вертикальное" : "квадратное";
-          setAspectWarning(
-            `${img.naturalWidth}×${img.naturalHeight} — это ${orientation} фото (${ratio.toFixed(2)}:1), WB ждёт 3:4 (≈900×1200). WB обрежет края при показе в листинге.`,
-          );
-        } else {
-          setAspectWarning(null);
-        }
-        URL.revokeObjectURL(url);
-        resolve();
-      };
-      img.onerror = () => {
-        URL.revokeObjectURL(url);
-        setAspectWarning(null);
-        resolve();
-      };
-      img.src = url;
-    });
+  const uploadOne = async (order: number, file: File) => {
+    await abtestApi.uploadPhoto(abtestId, variant.id, order, file);
+    onChange();
+    await qc.invalidateQueries({ queryKey: ["abtest", abtestId] });
+  };
 
-  const uploadMut = useMutation({
-    mutationFn: async (file: File) => {
-      setUploading(true);
-      try {
-        return await abtestApi.uploadPhoto(abtestId, variant.id, photoOrder, file);
-      } finally {
-        setUploading(false);
-      }
-    },
-    onSuccess: () => {
-      onChange();
-      qc.invalidateQueries({ queryKey: ["abtest", abtestId] });
-      if (fileRef.current) fileRef.current.value = "";
-      // Warning не сбрасываем — пусть пользователь видит что предыдущая
-      // загрузка была не 3:4 даже после success. Сбрасывается на next pick.
-    },
-  });
-
-  const deletePhotoMut = useMutation({
-    mutationFn: (photoId: number) =>
-      abtestApi.deletePhoto(abtestId, variant.id, photoId),
-    onSuccess: () => {
-      onChange();
-      qc.invalidateQueries({ queryKey: ["abtest", abtestId] });
-    },
-  });
+  const deleteOne = async (photoId: number) => {
+    await abtestApi.deletePhoto(abtestId, variant.id, photoId);
+    onChange();
+    await qc.invalidateQueries({ queryKey: ["abtest", abtestId] });
+  };
 
   const eliminateMut = useMutation({
     mutationFn: () =>
@@ -130,14 +77,13 @@ function VariantCard({
   return (
     <div className="card space-y-3">
       <div className="flex items-baseline justify-between">
-        <h3 className="text-lg font-medium">
-          Вариант {variant.label}
+        <div>
           {variant.eliminated_at && (
-            <span className="ml-2 text-warn text-sm">
-              (отсеян {fmtDate(variant.eliminated_at)})
+            <span className="text-warn text-xs">
+              отсеян {fmtDate(variant.eliminated_at)}
             </span>
           )}
-        </h3>
+        </div>
         <button
           className="btn-link text-xs"
           onClick={() => eliminateMut.mutate()}
@@ -147,112 +93,15 @@ function VariantCard({
         </button>
       </div>
 
-      {(() => {
-        const sorted = [...variant.photos].sort((a, b) => a.photo_order - b.photo_order);
-        const main = sorted.find((p) => p.photo_order === 1) ?? sorted[0];
-        const extras = sorted.filter((p) => p !== main);
-        // Главное фото: aspect-[3/4] (WB стандарт 900×1200) на всю ширину
-        // колонки. Доп. фото — сетка 3-в-ряд, aspect-[3/4] поменьше.
-        return (
-          <>
-            {/* Главное фото варианта (photo_order=1) */}
-            {main ? (
-              <div className="relative group">
-                <img
-                  src={abtestApi.photoUrl(abtestId, variant.id, main.id)}
-                  alt={`Вариант ${variant.label} — главное`}
-                  className="aspect-[3/4] w-full object-cover rounded-lg border border-border"
-                />
-                <div className="absolute bottom-1 left-1 text-xs bg-surface/90 backdrop-blur px-1.5 py-0.5 rounded">
-                  #{main.photo_order} главное
-                </div>
-                {canEdit && (
-                  <button
-                    className="absolute top-1 right-1 grid h-6 w-6 place-items-center rounded-full bg-fg/80 text-bg text-xs opacity-0 group-hover:opacity-100"
-                    onClick={() => deletePhotoMut.mutate(main.id)}
-                    title="Удалить главное"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="aspect-[3/4] w-full rounded-lg border-2 border-dashed border-border bg-surface-2 flex items-center justify-center text-muted text-sm">
-                Главное фото не загружено
-              </div>
-            )}
-            {/* Доп. фото — 3-в-ряд, aspect-3/4 */}
-            {extras.length > 0 && (
-              <div className="grid grid-cols-3 gap-2 mt-2">
-                {extras.map((p) => (
-                  <div key={p.id} className="relative group">
-                    <img
-                      src={abtestApi.photoUrl(abtestId, variant.id, p.id)}
-                      alt={`#${p.photo_order}`}
-                      className="aspect-[3/4] w-full object-cover rounded border border-border"
-                    />
-                    <div className="absolute bottom-0.5 left-0.5 text-[10px] bg-surface/90 backdrop-blur px-1 rounded">
-                      #{p.photo_order}
-                    </div>
-                    {canEdit && (
-                      <button
-                        className="absolute top-0.5 right-0.5 grid h-5 w-5 place-items-center rounded-full bg-fg/80 text-bg text-[10px] opacity-0 group-hover:opacity-100"
-                        onClick={() => deletePhotoMut.mutate(p.id)}
-                        title="Удалить"
-                      >
-                        ✕
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
-        );
-      })()}
-
-      {canEdit && (
-        <div className="border-t border-border pt-3 space-y-2">
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <label>Позиция:</label>
-            <input
-              type="number"
-              min={1}
-              max={20}
-              className="input w-14"
-              value={photoOrder}
-              onChange={(e) => setPhotoOrder(Number(e.target.value))}
-            />
-            <span className="text-xs text-muted">
-              (1 = главное, 2-10 = доп.)
-            </span>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp,video/mp4"
-              className="text-xs"
-              onChange={async (e) => {
-                const f = e.target.files?.[0];
-                if (!f) return;
-                await checkAspectRatio(f);
-                uploadMut.mutate(f);
-              }}
-              disabled={uploading}
-            />
-            {uploading && <span className="text-xs text-muted">загрузка…</span>}
-          </div>
-          {aspectWarning && (
-            <div className="text-warn text-xs border border-warn/30 bg-warn-bg/30 rounded px-2 py-1">
-              ⚠ {aspectWarning}
-            </div>
-          )}
-          {uploadMut.error && (
-            <div className="text-warn text-xs">
-              {(uploadMut.error as Error).message}
-            </div>
-          )}
-        </div>
-      )}
+      <VariantPhotoGrid
+        label={variant.label}
+        abtestId={abtestId}
+        variantId={variant.id}
+        canEdit={canEdit}
+        existingPhotos={variant.photos}
+        onUploadLive={uploadOne}
+        onDeleteLive={deleteOne}
+      />
     </div>
   );
 }

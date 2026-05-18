@@ -11,6 +11,7 @@ import {
   TestMode,
   TriggerMode,
 } from "@/api/abtest";
+import { StagedFile, VariantPhotoGrid } from "@/components/abtest/VariantPhotoGrid";
 
 interface ProductOption {
   nm_id: number;
@@ -333,8 +334,52 @@ export default function AbTestNew() {
   });
   const [preset, setPreset] = useState<PresetId>("standard");
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  // Текущие фото с WB для Варианта A (предпросмотр перед сабмитом).
+  // Текущие фото с WB для Варианта A (URL'ы, backend сам скачает при create).
   const [currentPhotosA, setCurrentPhotosA] = useState<{ order: number; url: string }[]>([]);
+  // Staged-файлы локально для каждого варианта. После create — параллельный
+  // batch-upload через `POST /abtest/{id}/variants/{vid}/photos`. Файлы для
+  // Варианта A игнорируются если есть currentPhotosA (тогда A заполняется
+  // на бэке скачиванием URL'ов).
+  const [stagedPhotos, setStagedPhotos] = useState<Record<string, StagedFile[]>>(
+    {},
+  );
+  const [uploadProgress, setUploadProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
+
+  const stageFile = (label: string, order: number, file: File) => {
+    setStagedPhotos((prev) => {
+      const existing = prev[label] || [];
+      // Replace at same order if any (URL revoke).
+      for (const s of existing) {
+        if (s.order === order) URL.revokeObjectURL(s.previewUrl);
+      }
+      const next = existing.filter((s) => s.order !== order);
+      next.push({ order, file, previewUrl: URL.createObjectURL(file) });
+      next.sort((a, b) => a.order - b.order);
+      return { ...prev, [label]: next };
+    });
+  };
+  const unstageFile = (label: string, order: number) => {
+    setStagedPhotos((prev) => {
+      const existing = prev[label] || [];
+      for (const s of existing) {
+        if (s.order === order) URL.revokeObjectURL(s.previewUrl);
+      }
+      return { ...prev, [label]: existing.filter((s) => s.order !== order) };
+    });
+  };
+  // Revoke all object URLs on unmount to avoid memory leak.
+  useEffect(
+    () => () => {
+      for (const list of Object.values(stagedPhotos)) {
+        for (const s of list) URL.revokeObjectURL(s.previewUrl);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
 
   const applyPreset = (id: PresetId) => {
     setPreset(id);
@@ -364,15 +409,13 @@ export default function AbTestNew() {
   });
 
   const createMut = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       if (form.nm_id == null) throw new Error("Выберите карточку");
-      return abtestApi.create({
+      const created = await abtestApi.create({
         name: form.name,
         nm_id: form.nm_id,
         trigger_mode: form.trigger_mode,
         trigger_value: Number(form.trigger_value),
-        // Сценарий ↔ (traffic_source, test_mode) — backend-схема осталась как
-        // в Phase 4. Маппинг 1:1 через объект SCENARIOS.
         traffic_source: currentScenario.trafficSource,
         test_mode: currentScenario.testMode,
         campaign_id: form.campaign_id ? Number(form.campaign_id) : null,
@@ -386,6 +429,44 @@ export default function AbTestNew() {
         variant_count: form.variant_count,
         current_photos_a: currentPhotosA.map((p) => p.url),
       });
+
+      // Batch upload staged-файлов: для каждого варианта в response — найти
+      // соответствующий staged-список и загрузить параллельно. Для Варианта A
+      // если currentPhotosA непуст — staging игнорируется (бэк уже скачал URL'ы).
+      const tasks: Array<{ vid: number; order: number; file: File }> = [];
+      for (const v of created.variants) {
+        const isA = v.label === "A";
+        if (isA && currentPhotosA.length > 0) continue;
+        const list = stagedPhotos[v.label] || [];
+        for (const s of list) {
+          tasks.push({ vid: v.id, order: s.order, file: s.file });
+        }
+      }
+      if (tasks.length > 0) {
+        setUploadProgress({ done: 0, total: tasks.length });
+        let done = 0;
+        // Параллелим, но не больше 4 одновременно — щадим nginx (3-MB файлы).
+        const POOL = 4;
+        const queue = [...tasks];
+        const worker = async () => {
+          while (queue.length > 0) {
+            const t = queue.shift();
+            if (!t) break;
+            try {
+              await abtestApi.uploadPhoto(created.id, t.vid, t.order, t.file);
+            } catch (e) {
+              console.warn("upload failed", t, e);
+            } finally {
+              done++;
+              setUploadProgress({ done, total: tasks.length });
+            }
+          }
+        };
+        await Promise.all(
+          Array.from({ length: Math.min(POOL, tasks.length) }, () => worker()),
+        );
+      }
+      return created;
     },
     onSuccess: (data) => nav(`/abtest/${data.id}`),
   });
@@ -645,10 +726,10 @@ export default function AbTestNew() {
         </details>
       </div>
 
-      {/* ---------- 4. Варианты ---------- */}
-      <div className="card space-y-3">
+      {/* ---------- 4. Варианты + inline фото ---------- */}
+      <div className="card space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="font-semibold">4. Варианты</h2>
+          <h2 className="font-semibold">4. Варианты и фото</h2>
           <div className="flex items-center gap-2 text-sm">
             <span className="text-muted">Количество:</span>
             <div className="flex items-center gap-1">
@@ -669,12 +750,8 @@ export default function AbTestNew() {
             </div>
           </div>
         </div>
-        <div className="text-sm text-muted">
-          Будут созданы: <strong className="font-mono">{variantLabels.join(", ")}</strong>.
-          Фото каждого варианта загрузите на странице теста после создания.
-        </div>
 
-        {/* «Подгрузить текущее с WB как Вариант A» */}
+        {/* «Подгрузить текущее с WB как Вариант A» — отдельный banner */}
         {form.nm_id != null && currentPhotosA.length === 0 && (
           <div className="border border-dashed border-border rounded p-3 flex items-start gap-3">
             <div className="flex-1">
@@ -686,9 +763,8 @@ export default function AbTestNew() {
                 {currentScenario.testMode === "PHOTO"
                   ? "главное фото"
                   : "всю воронку (до 10 фото)"}{" "}
-                карточки прямо с WB — оно станет базой для сравнения. Сравнивайте с новыми
-                версиями в B{form.variant_count >= 3 ? "/C" : ""}
-                {form.variant_count >= 4 ? "/D" : ""}.
+                карточки прямо с WB — оно станет базой для сравнения.
+                Альтернатива — загрузить файлы для A руками в сетке ниже.
               </div>
               {loadCurrentMut.error && (
                 <div className="text-warn text-xs mt-1">
@@ -707,61 +783,43 @@ export default function AbTestNew() {
           </div>
         )}
 
-        {currentPhotosA.length > 0 && (
-          <div className="border border-success rounded p-3 space-y-2 bg-success-bg/30">
-            <div className="flex items-center justify-between">
-              <div className="text-sm font-medium text-success">
-                ✓ Вариант A — {currentPhotosA.length === 1 ? "главное фото" : `${currentPhotosA.length} фото`} с WB
+        {/* Сетки вариантов A / B / [C] / [D] */}
+        <div
+          className={`grid gap-4 ${
+            form.variant_count <= 2
+              ? "grid-cols-1 md:grid-cols-2"
+              : form.variant_count === 3
+                ? "grid-cols-1 md:grid-cols-3"
+                : "grid-cols-1 md:grid-cols-2 lg:grid-cols-4"
+          }`}
+        >
+          {variantLabels.map((label) => {
+            const isA = label === "A";
+            const useRemote = isA && currentPhotosA.length > 0;
+            return (
+              <div key={label} className="card bg-surface-2/30">
+                <VariantPhotoGrid
+                  label={label}
+                  canEdit={true}
+                  remotePhotos={useRemote ? currentPhotosA : undefined}
+                  onRemoveRemote={
+                    useRemote
+                      ? (order) =>
+                          order === "all"
+                            ? setCurrentPhotosA([])
+                            : setCurrentPhotosA((prev) =>
+                                prev.filter((p) => p.order !== order),
+                              )
+                      : undefined
+                  }
+                  stagedFiles={useRemote ? [] : stagedPhotos[label] || []}
+                  onStageFile={(o, f) => stageFile(label, o, f)}
+                  onUnstageFile={(o) => unstageFile(label, o)}
+                />
               </div>
-              <button
-                type="button"
-                className="btn-link text-xs"
-                onClick={() => setCurrentPhotosA([])}
-              >
-                Очистить
-              </button>
-            </div>
-            {(() => {
-              const sorted = [...currentPhotosA].sort((a, b) => a.order - b.order);
-              const main = sorted[0];
-              const extras = sorted.slice(1);
-              return (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {/* Главное фото — большое, занимает 1/3 на широких экранах */}
-                  {main && (
-                    <div className="relative">
-                      <img
-                        src={main.url}
-                        alt="Главное"
-                        className="aspect-[3/4] w-full object-cover rounded-lg border border-border"
-                      />
-                      <div className="absolute bottom-1 left-1 text-xs bg-surface/90 backdrop-blur px-1.5 py-0.5 rounded">
-                        #{main.order} главное
-                      </div>
-                    </div>
-                  )}
-                  {/* Доп. фото — сетка 4-в-ряд в оставшихся 2/3 ширины */}
-                  {extras.length > 0 && (
-                    <div className="sm:col-span-2 grid grid-cols-4 gap-2 content-start">
-                      {extras.map((p) => (
-                        <div key={p.order} className="relative">
-                          <img
-                            src={p.url}
-                            alt={`photo ${p.order}`}
-                            className="aspect-[3/4] w-full object-cover rounded border border-border"
-                          />
-                          <div className="absolute bottom-0.5 left-0.5 text-[10px] bg-surface/90 backdrop-blur px-1 rounded">
-                            #{p.order}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-          </div>
-        )}
+            );
+          })}
+        </div>
 
         {form.variant_count > 2 && (
           <label className="flex items-start gap-2 text-sm cursor-pointer border border-border rounded p-2">
@@ -776,8 +834,8 @@ export default function AbTestNew() {
             <span>
               <span className="font-medium">Оставить топ-2 лидеров через 24 ч</span>
               <span className="block text-xs text-muted">
-                Через сутки после старта 2 варианта с самым высоким CTR останутся, остальные
-                отсеются.
+                Через сутки после старта 2 варианта с самым высоким CTR останутся,
+                остальные отсеются.
               </span>
             </span>
           </label>
@@ -790,7 +848,15 @@ export default function AbTestNew() {
         </div>
       )}
 
-      <div className="flex gap-2 justify-end sticky bottom-0 bg-bg-1 py-2 -mx-4 px-4 border-t border-border">
+      <div className="flex items-center gap-2 justify-end sticky bottom-0 bg-bg-1 py-2 -mx-4 px-4 border-t border-border">
+        {uploadProgress && createMut.isPending && (
+          <div className="text-xs text-muted mr-auto">
+            Загрузка фото: {uploadProgress.done}/{uploadProgress.total}
+          </div>
+        )}
+        {!uploadProgress && createMut.isPending && (
+          <div className="text-xs text-muted mr-auto">Создание теста…</div>
+        )}
         <button
           className="btn"
           onClick={() => history.back()}

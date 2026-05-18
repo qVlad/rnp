@@ -185,7 +185,11 @@ export const abtestApi = {
   },
   get: (id: number) => req<AbTestDetail>(`/api/abtest/${id}`),
   create: (payload: AbTestCreatePayload) =>
-    req<{ id: number; test: AbTest }>(`/api/abtest`, {
+    req<{
+      id: number;
+      test: AbTest;
+      variants: { id: number; label: string }[];
+    }>(`/api/abtest`, {
       method: "POST",
       body: JSON.stringify(payload),
     }),
