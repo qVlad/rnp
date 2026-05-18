@@ -567,8 +567,14 @@ class User(Base, TenantScopedMixin):
 class BrandAssignment(Base, TenantScopedMixin):
     """Maps a WB brand (text from products.brand) to a responsible user.
 
-    1:1 — UNIQUE(brand). user_id may be NULL when an assignment row exists
-    but the manager has been removed (ON DELETE SET NULL on users.id).
+    N:M — UNIQUE(tenant_id, brand, user_id). Both directions are many: one
+    brand may have several managers, and one manager may own several brands.
+    "No assignees for brand X" means no rows at all (instead of one row with
+    user_id IS NULL — was the 1:1 convention pre-migration 0031).
+
+    `user_id` is still nullable at the column level: `ON DELETE SET NULL`
+    fires when a user is deleted while assigned, and we clean those up in a
+    background sweep rather than blocking user deletion.
     """
 
     __tablename__ = "brand_assignments"

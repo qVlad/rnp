@@ -619,22 +619,29 @@ paymentOrderDelete: (payment_order_id: string) =>
   listMissingCogs: () =>
     request<{ items: any[] }>("/api/cost-history/missing"),
 
-  // ── Brands ──
+  // ── Brands (N:M brand ↔ manager) ──
   listBrands: () =>
     request<{
       items: {
         brand: string;
         nm_count: number;
-        user_id: number | null;
-        username: string | null;
-        user_full_name: string | null;
+        assignees: {
+          user_id: number;
+          username: string;
+          user_full_name: string | null;
+          assignment_id: number;
+        }[];
         updated_at: string | null;
       }[];
     }>("/api/brands"),
-  setBrandAssignee: (brand: string, user_id: number | null) =>
-    request(`/api/brands/${encodeURIComponent(brand)}/assignee`, {
-      method: "PUT",
+  addBrandAssignee: (brand: string, user_id: number) =>
+    request(`/api/brands/${encodeURIComponent(brand)}/assignees`, {
+      method: "POST",
       body: JSON.stringify({ user_id }),
+    }),
+  removeBrandAssignee: (brand: string, user_id: number) =>
+    request(`/api/brands/${encodeURIComponent(brand)}/assignees/${user_id}`, {
+      method: "DELETE",
     }),
   addCostHistory: (body: any) =>
     request("/api/cost-history", { method: "POST", body: JSON.stringify(body) }),
