@@ -1362,3 +1362,34 @@ class WbCampaignBudget(Base, TenantScopedMixin):
             "tenant_id", "campaign_id", name="uq_wb_campaign_budget"
         ),
     )
+
+
+class TenantModule(Base, TenantScopedMixin):
+    """Feature flag per-tenant.
+
+    Per-tenant включение/выключение product-модулей (chargebacks / audit_mode /
+    redistribution / bidder / reviews / …). API guard `require_module()` блокирует
+    доступ когда `enabled=false`. Базовый модуль `core` (дашборд / P&L / units /
+    supply / opex) включён всегда — он не блокируется.
+
+    См. STRATEGY_COCKPIT.md §7.1 — fundament для модульной разработки.
+    Миграция 0032.
+    """
+
+    __tablename__ = "tenant_modules"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    module_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    enabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "module_code", name="uq_tenant_module"),
+    )

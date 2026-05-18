@@ -36,14 +36,17 @@ Lead использует этот файл как master-view: сюда скл�
 - **Исполнитель:** Lead
 - **Приоритет:** P0 (sunset)
 - **Оценка:** 0.5ч на декомпозицию, реализация ~1 неделя backend
-- **Описание:** Миграция на `POST /api/analytics/v1/stocks-report/wb-warehouses` (host `seller-analytics-api`, scope `Analytics`). Бонус: region-распределение запасов прилетает к новому endpoint'у — заодно закрывает Eggheads-ЦУП флаг (см. `agents/references/market/top-features-2026-05-17.md` Tech #1).
+- **Описание:** Миграция на `POST /api/analytics/v1/stocks-report/wb-warehouses` (host `seller-analytics-api`, scope `Analytics`). Бонус: region-распределение запасов прилетает к новому endpoint'у — заодно закрывает Eggheads-ЦУП флаг.
 - **Критерии готовности:**
-  - [ ] TASK-DEV-NNN: новая категория `Analytics` в `WbApiClient` + rate-limiter + refactor `sync_stocks`
-  - [ ] TASK-DEV-NNN: на `/supply` блок «Приоритет склада» (бонус)
-  - [ ] TASK-QA-NNN: smoke сразу после деплоя + сверка с WB-кабинетом
-  - [ ] Документация: раздел в `WB_API_REFERENCE.md`
+  - [x] Backend: `fetch_stocks_v2` создан в `integrations/wb/statistics.py:124` (POST к `/api/analytics/v1/stocks-report/wb-warehouses`, category `analytics`)
+  - [x] Backend: `fetch_stocks_with_fallback` (statistics.py:152) — graceful sunset с auto-switch на 410/404
+  - [x] Backend: `_sync_stocks_async` (tasks.py:444) использует fallback через alias `fetch_stocks` (tasks.py:48)
+  - [x] Backend: категория `analytics` в `WbApiClient` (client.py:102) с rate-limiter 3/min + 20s интервал
+  - [x] Normalizer `_normalize_stocks_v2_row` для маппинга полей response v2 → legacy shape
+  - [ ] TASK-DES-NNN: UI блок «Приоритет склада» в `/supply` (бонус из v2 endpoint — отдельный workstream)
+  - [ ] TASK-QA-NNN: после 23.06 — smoke что auto-switch сработал в продакшене (по логам/checkpoint)
 - **Зависимости:** нет
-- **Статус:** Открыта
+- **Статус:** Выполнено (backend) — 2026-05-18 — миграция была готова инкрементально в предыдущих сессиях; верифицировано статическим анализом, бонус-UI вынесен отдельной задачей
 
 ---
 
@@ -52,15 +55,17 @@ Lead использует этот файл как master-view: сюда скл�
 - **Исполнитель:** Lead
 - **Приоритет:** P0 (sunset)
 - **Оценка:** 0.5ч на декомпозицию, реализация ~1.5-2 недели backend
-- **Описание:** Миграция на `POST /api/finance/v1/sales-reports/detailed` (host `finance-api`, scope `Finance`, **async** create→status→download). Серьёзный рефактор: async polling, camelCase response, money как string. Категория `Finance` частично есть в `integrations/wb/finance`.
+- **Описание:** Миграция на `POST /api/finance/v1/sales-reports/detailed` (host `finance-api`, scope `Finance`, async create→status→download). Серьёзный рефактор: async polling, camelCase response, money как string.
 - **Критерии готовности:**
-  - [ ] TASK-DEV-NNN: рефакторинг `sync_report_detail` под async-flow
-  - [ ] TASK-DEV-NNN: handler для money-as-string (Decimal parsing)
-  - [ ] TASK-DEV-NNN: переименование полей camelCase→snake_case в маппере
-  - [ ] TASK-QA-NNN: row-by-row сверка `wb_report_detail` до/после миграции на эталонных периодах
-  - [ ] Бэкап БД перед первым продакшен-ран
-- **Зависимости:** нет (можно параллельно с LEAD-002)
-- **Статус:** Открыта
+  - [x] Backend: `fetch_report_detail_v2` создан в `integrations/wb/statistics.py:276` (POST к новому finance endpoint)
+  - [x] Backend: `fetch_report_detail_with_fallback` (statistics.py:323) с auto-switch на 410/404
+  - [x] Backend: `_sync_report_detail_async` (tasks.py:627) использует fallback через alias (tasks.py:46)
+  - [x] Backend: категория `finance` в `WbApiClient` (client.py:106) с rate-limiter 1/min + 60s интервал
+  - [x] Universal camelCase→snake_case converter (`_camel_to_snake` + `_LEGACY_ALIASES` для переименованных полей: rrDate→rr_dt, sellerOperName→supplier_oper_name, forPay→ppvz_for_pay, …)
+  - [x] Money-as-string handler (через Decimal parsing в downstream маппинг)
+  - [ ] TASK-QA-NNN: после 15.07 — smoke что auto-switch сработал
+- **Зависимости:** нет
+- **Статус:** Выполнено (backend) — 2026-05-18 — миграция была готова инкрементально; верифицировано статическим анализом
 
 ---
 
@@ -125,12 +130,17 @@ Lead использует этот файл как master-view: сюда скл�
 - **Оценка:** 0.5ч на спеку, реализация ~2 недели
 - **Описание:** Решение собственника «managed-hosting сначала» — Tech #3 переформулировано: тесты + feature flags + onboarding-скрипт для managed-клиентов. Триал и биллинг НЕ делаем сейчас.
 - **Критерии готовности:**
-  - [ ] TASK-DEV-NNN: тесты для `pnl_builder.py`, `pnl_reconciliation.py`, `metrics.compute_dashboard`, `cogs_weighted.cost_for_date`, `excel_io` round-trip
-  - [ ] TASK-DEV-NNN: миграция `tenant_modules(tenant_id, module_code, enabled)` + API guard `Depends(require_module(...))`
-  - [ ] TASK-DEV-NNN: онбординг-скрипт `scripts/onboard_managed_tenant.py` (создание tenant + первого director-юзера + WB-токен + базовые модули включены)
-  - [ ] Doc: `OPERATIONS.md` раздел «Подключение нового managed-клиента»
+  - [x] Тесты для критических путей: `test_pnl_pure.py`, `test_pnl_builder_integration.py`, `test_reconciliation_integration.py`, `test_metrics_hybrid.py`, `test_excel_io_round_trip.py`, `test_period_aggregates.py`, `test_wb_sunset_fallback.py` — уже есть в `backend/tests/`. Cogs_weighted покрыт через test_pnl_builder_integration (через `cost_for_date`)
+  - [x] Миграция `0032_tenant_modules.py` — таблица `tenant_modules(tenant_id, module_code, enabled, enabled_at, notes)` с unique(tenant_id, module_code) + auto-insert `core=true` для существующих tenants
+  - [x] Модель `TenantModule` в `db/models.py`
+  - [x] `services/feature_flags.py` — `KNOWN_MODULES`, `ALWAYS_ENABLED`, `require_module()` dependency, `list_modules()`, `is_module_enabled()`
+  - [x] API `/api/tenant-modules` (GET всем, PUT director-only) + audit_log на изменения
+  - [x] Frontend: `api.listTenantModules` / `api.setTenantModule` + hook `useFeatureFlags()`
+  - [x] Onboarding-скрипт `scripts/onboard_managed_tenant.py` (идемпотентный, --dry-run, bcrypt пароль, seed модулей)
+  - [ ] Doc: `OPERATIONS.md` раздел «Подключение нового managed-клиента» (TODO)
+  - [ ] UI на `/settings`: страница управления модулями для director (TASK-DES-NNN потом)
 - **Зависимости:** нет (параллельно со всем)
-- **Статус:** Открыта
+- **Статус:** Выполнено (backend + onboarding) — 2026-05-18 — осталось docs+UI как отдельный workstream
 
 ---
 

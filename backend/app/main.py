@@ -33,6 +33,7 @@ from app.api import (
     supplies,
     sync_status,
     tax_report,
+    tenant_modules,
     tenant_settings,
     units,
     users,
@@ -183,6 +184,7 @@ app.include_router(auth_api.router)
 app.include_router(users.router)
 app.include_router(brands.router)
 app.include_router(tenant_settings.router)
+app.include_router(tenant_modules.router)
 app.include_router(tax_report.router)
 app.include_router(supplies.router)
 app.include_router(checklist.router)

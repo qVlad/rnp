@@ -135,6 +135,17 @@ export const api = {
   deleteUser: (id: number) =>
     request(`/api/users/${id}`, { method: "DELETE" }),
 
+  // ── Tenant modules (feature flags) ──
+  listTenantModules: () =>
+    request<{
+      items: Array<{ code: string; enabled: boolean; always_on: boolean }>;
+    }>("/api/tenant-modules"),
+  setTenantModule: (code: string, enabled: boolean, notes?: string) =>
+    request<{ module: string; enabled: boolean }>(
+      `/api/tenant-modules/${code}`,
+      { method: "PUT", body: JSON.stringify({ enabled, notes }) },
+    ),
+
   health: () => request<{ status: string }>("/api/health"),
   whoami: () =>
     request<{ wb_token_configured: boolean; debug: boolean }>("/api/whoami"),
@@ -1143,4 +1154,40 @@ paymentOrderDelete: (payment_order_id: string) =>
     if (params.initial_balance != null) qs.set("initial_balance", String(params.initial_balance));
     return request(`/api/cash-flow/calendar?${qs}`);
   },
+
+  // ── Sync status (для индикатора в шапке) ──
+  syncStatus: () => request<SyncStatusResponse>(`/api/sync/status`),
 };
+
+export interface SyncEntity {
+  entity: string;
+  label: string;
+  category: string;
+  last_synced_at: string | null;
+  age_s: number | null;
+  status: string | null;
+  rows_processed: number;
+  error: string | null;
+}
+
+export interface SyncCooldown {
+  category: string;
+  label: string;
+  remaining_s: number;
+}
+
+export interface SyncActiveTask {
+  name: string;
+  id: string;
+  worker: string;
+  started_ago_s: number | null;
+  args: any[];
+}
+
+export interface SyncStatusResponse {
+  entities: SyncEntity[];
+  cooldowns: SyncCooldown[];
+  active_tasks: SyncActiveTask[];
+  is_syncing: boolean;
+  server_time: string;
+}
