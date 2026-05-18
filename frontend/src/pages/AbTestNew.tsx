@@ -84,19 +84,28 @@ function ProductPicker({
 
   return (
     <div className="relative" ref={wrapRef}>
-      {value && selected ? (
+      {value ? (
+        // Чип показываем сразу как value != null. selectedQ подтянет детали
+        // (subject/brand) асинхронно; пока её нет, показываем хотя бы nm_id.
+        // Раньше чип появлялся ТОЛЬКО когда selectedQ.data резолвилась —
+        // если поиск не находил карточку (а он не находил по nm_id до
+        // backend-фикса), чип не появлялся вообще, и dropdown тоже не
+        // открывался (`!value` был false) → залипание.
         <div className="flex items-center gap-2 input">
           <img
-            src={`/api/products/${selected.nm_id}/photo`}
+            src={`/api/products/${value}/photo`}
             alt=""
             className="w-10 h-10 object-cover rounded"
             onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
           />
           <div className="flex-1 min-w-0">
-            <div className="font-mono text-sm">{selected.nm_id}</div>
+            <div className="font-mono text-sm">{value}</div>
             <div className="text-xs text-muted truncate">
-              {selected.subject || selected.vendor_code || "—"}
-              {selected.brand ? ` · ${selected.brand}` : ""}
+              {selected
+                ? `${selected.subject || selected.vendor_code || "—"}${selected.brand ? ` · ${selected.brand}` : ""}`
+                : selectedQ.isLoading
+                  ? "Загрузка деталей…"
+                  : "Карточка выбрана"}
             </div>
           </div>
           <button

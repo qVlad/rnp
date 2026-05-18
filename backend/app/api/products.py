@@ -92,11 +92,17 @@ async def list_products(
         stmt = stmt.where(Product.is_archived.is_(False))
     if search:
         like = f"%{search}%"
-        stmt = stmt.where(
-            (Product.vendor_code.ilike(like))
-            | (Product.subject.ilike(like))
-            | (Product.brand.ilike(like))
+        conditions = (
+            Product.vendor_code.ilike(like)
+            | Product.subject.ilike(like)
+            | Product.brand.ilike(like)
         )
+        # Числовой ввод → также матчим точное nm_id (ILIKE по integer не работает,
+        # поэтому отдельная ветка). Это нужно для ProductPicker, который после
+        # selection повторно ходит по `?search={nm_id}` чтобы подтянуть детали.
+        if search.isdigit():
+            conditions = conditions | (Product.nm_id == int(search))
+        stmt = stmt.where(conditions)
     if brands is not None:
         stmt = stmt.where(Product.brand.in_(list(brands)))
 
