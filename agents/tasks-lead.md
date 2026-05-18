@@ -74,15 +74,17 @@ Lead использует этот файл как master-view: сюда скл�
 - **Исполнитель:** Lead
 - **Приоритет:** P0 (фундамент для product-фичей)
 - **Оценка:** 1ч на спеку, реализация ~2-3 недели
-- **Описание:** Архитектурное решение принимать ДО второго нового модуля. Иначе через 3 модуля код «слипнется» — каждый poll'ит БД. Подробности — `agents/references/market/top-features-2026-05-17.md` Tech #2.
+- **Описание:** Архитектурное решение принимать ДО второго нового модуля. Иначе через 3 модуля код «слипнется» — каждый poll'ит БД.
 - **Критерии готовности:**
-  - [ ] Spec в `agents/references/spec-event-bus.md`: список событий (sale.new, stock.low, chargeback.detected, redistribution.window.open, tax.deadline.upcoming), consumer groups, retry/DLQ policy
-  - [ ] Spec в `agents/references/spec-celery-segregation.md`: новые worker'ы (`worker-bidder`, `worker-redistribution`, `worker-chargebacks`), их queues, concurrency
-  - [ ] Subagent `clean-architect` ревью спеки
-  - [ ] TASK-DEV-NNN: реализация шины + первый publisher (`sale.new` из `sync_report_detail`)
-  - [ ] TASK-DEV-NNN: сегрегация очередей
-- **Зависимости:** LEAD-002, LEAD-003 (sunset должен быть готов — иначе ломаем работающий sync)
-- **Статус:** Открыта
+  - [x] Spec в `agents/references/spec-event-bus.md`: 8 канонических событий с payload schema, consumer groups, retry+DLQ через XPENDING/XCLAIM, idempotency by event.id, 4-этапный план реализации
+  - [x] Celery segregation встроен в spec event-bus (раздел «Worker'ы» — текущие 3 + 4 новых под product-фичи)
+  - [ ] Subagent `clean-architect` ревью (рекомендовано перед стартом реализации)
+  - [ ] TASK-DEV-NNN: Этап 1 spec — skeleton publish/consume helpers
+  - [ ] TASK-DEV-NNN: Этап 2 spec — первый publisher `sale.new`
+  - [ ] TASK-DEV-NNN: Этап 3 spec — полное покрытие core-событий
+  - [ ] TASK-DEV-NNN: Этап 4 spec — worker-events service в docker-compose
+- **Зависимости:** LEAD-002, LEAD-003 (sunset уже готов)
+- **Статус:** Spec готов — 2026-05-18. Реализация в backlog (~2-3 нед)
 
 ---
 
