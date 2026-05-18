@@ -109,11 +109,18 @@ export function VariantPhotoGrid({
   onRemoveRemote,
   onAspectWarning,
 }: Props) {
-  const [extrasOpen, setExtrasOpen] = useState(() =>
+  const hasExtras =
     existingPhotos.some((p) => p.photo_order >= 2) ||
     stagedFiles.some((s) => s.order >= 2) ||
-    remotePhotos.some((r) => r.order >= 2),
-  );
+    remotePhotos.some((r) => r.order >= 2);
+  const [extrasOpen, setExtrasOpen] = useState(hasExtras);
+  // Авто-раскрываем когда appearing-фото становятся ≥ 2. useState только
+  // ставит initial value один раз — без useEffect клик «Подгрузить с WB»
+  // принесёт 10 фото в remotePhotos, но extras останутся свёрнутыми
+  // (баг, который ловит пользователь).
+  useEffect(() => {
+    if (hasExtras) setExtrasOpen(true);
+  }, [hasExtras]);
   const [aspectWarning, setAspectWarning] = useState<string | null>(null);
   const [uploadingOrder, setUploadingOrder] = useState<number | null>(null);
   const fileInputs = useRef<Record<number, HTMLInputElement | null>>({});

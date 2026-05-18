@@ -1027,25 +1027,36 @@ export default function AbTestNew() {
           })}
         </div>
 
-        {form.variant_count > 2 && (
-          <label className="flex items-start gap-2 text-sm cursor-pointer border border-border rounded p-2">
-            <input
-              type="checkbox"
-              checked={form.keep_leaders_after_24h}
-              onChange={(e) =>
-                setForm({ ...form, keep_leaders_after_24h: e.target.checked })
-              }
-              className="mt-0.5"
-            />
-            <span>
-              <span className="font-medium">Оставить топ-2 лидеров через 24 ч</span>
-              <span className="block text-xs text-muted">
-                Через сутки после старта 2 варианта с самым высоким CTR останутся,
-                остальные отсеются.
-              </span>
+        {/* Auto-elimination losers через 24 ч. Доступно только при 3+ вариантах
+            (с 2-мя выкидывать некого). Показываем всегда чтобы фича была
+            discoverable — при count=2 disabled + поясняем когда станет активно. */}
+        <label
+          className={`flex items-start gap-2 text-sm border rounded p-2 ${
+            form.variant_count > 2
+              ? "cursor-pointer border-border"
+              : "opacity-60 cursor-not-allowed border-border"
+          }`}
+        >
+          <input
+            type="checkbox"
+            checked={form.keep_leaders_after_24h && form.variant_count > 2}
+            disabled={form.variant_count <= 2}
+            onChange={(e) =>
+              setForm({ ...form, keep_leaders_after_24h: e.target.checked })
+            }
+            className="mt-0.5"
+          />
+          <span>
+            <span className="font-medium">
+              ⏱ Авто-отсев через 24 ч — оставить топ-2 лидеров по CTR
             </span>
-          </label>
-        )}
+            <span className="block text-xs text-muted mt-0.5">
+              {form.variant_count > 2
+                ? `Через сутки после старта оставим 2 варианта с самым высоким CTR из ${form.variant_count}, остальные пометим «отсеян» и в ротации участвовать не будут. Tie-break: больше показов → буква вперёд.`
+                : "Доступно при 3+ вариантах (нужно из чего отсевать). Увеличьте количество вариантов выше."}
+            </span>
+          </span>
+        </label>
       </div>
 
       {createMut.error && (
