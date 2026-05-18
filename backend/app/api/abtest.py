@@ -282,7 +282,8 @@ async def create_test(
 
     for label in labels:
         session.add(AbTestVariant(abtest_id=test.id, label=label))
-    await session.flush()
+    await session.commit()
+    await session.refresh(test)
 
     return {"id": test.id, "test": _serialize_test(test)}
 
@@ -354,7 +355,7 @@ async def update_test(
         )
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(test, field, value)
-    await session.flush()
+    await session.commit()
     return {"test": _serialize_test(test)}
 
 
@@ -370,6 +371,7 @@ async def delete_test(
     # Удаление файлов — best-effort. CASCADE на БД делает остальное.
     await photo_storage.delete_abtest_photos(abtest_id)
     await session.delete(test)
+    await session.commit()
     return {"status": "deleted"}
 
 
@@ -408,12 +410,14 @@ async def start_test(
     test.status = "running"
     if test.started_at is None:
         test.started_at = datetime.now(timezone.utc)
-    await session.flush()
+    await session.commit()
+    await session.refresh(test)
 
     # При первом старте — загружаем вариант A на WB (initial rotation).
     if was_draft:
         try:
             await abtest_rotation.apply_initial_variant(session, abtest_id)
+            await session.commit()
         except Exception as e:
             log.warning("[abtest] initial rotation failed for %d: %s", abtest_id, e)
 
@@ -430,6 +434,7 @@ async def pause_test(
     if test.status != "running":
         raise HTTPException(400, f"cannot pause from status {test.status}")
     test.status = "paused"
+    await session.commit()
     return {"test": _serialize_test(test)}
 
 
@@ -443,6 +448,7 @@ async def resume_test(
     if test.status != "paused":
         raise HTTPException(400, f"cannot resume from status {test.status}")
     test.status = "running"
+    await session.commit()
     return {"test": _serialize_test(test)}
 
 
@@ -460,6 +466,7 @@ async def stop_test(
     # TODO Phase 6: восстановление исходных фото через
     # `content_media.save_media_by_url(original_photos)`. Сейчас просто помечаем
     # cancelled — фото на WB остаются последнего применённого варианта.
+    await session.commit()
     return {"test": _serialize_test(test)}
 
 
@@ -473,6 +480,7 @@ async def archive_test(
     if test.status == "running":
         raise HTTPException(400, "pause or stop the test before archiving")
     test.archived_at = datetime.now(timezone.utc)
+    await session.commit()
     return {"test": _serialize_test(test)}
 
 
@@ -484,6 +492,7 @@ async def unarchive_test(
 ) -> dict[str, Any]:
     test = await _check_test_access(session, abtest_id, brands)
     test.archived_at = None
+    await session.commit()
     return {"test": _serialize_test(test)}
 
 
@@ -501,6 +510,7 @@ async def apply_winner(
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
+    await session.commit()
     if not ok:
         raise HTTPException(502, "WB upload failed — check alerts")
     return {"status": "applied"}
@@ -530,7 +540,8 @@ async def add_variant(
         raise HTTPException(400, "label already exists in this test")
     v = AbTestVariant(abtest_id=abtest_id, label=payload.label)
     session.add(v)
-    await session.flush()
+    await session.commit()
+    await session.refresh(v)
     return {"variant": _serialize_variant(v, [])}
 
 
@@ -556,6 +567,7 @@ async def delete_variant(
     for p in photos:
         await photo_storage.delete_photo_file(p.photo_path)
     await session.delete(v)
+    await session.commit()
     return {"status": "deleted"}
 
 
@@ -573,6 +585,7 @@ async def eliminate_variant(
     if v.eliminated_at is not None:
         return {"variant_id": variant_id, "eliminated_at": v.eliminated_at.isoformat()}
     v.eliminated_at = datetime.now(timezone.utc)
+    await session.commit()
     return {"variant_id": variant_id, "eliminated_at": v.eliminated_at.isoformat()}
 
 
@@ -588,6 +601,7 @@ async def un_eliminate_variant(
     if v is None or v.abtest_id != abtest_id:
         raise HTTPException(404, "variant not found")
     v.eliminated_at = None
+    await session.commit()
     return {"variant_id": variant_id, "eliminated_at": None}
 
 
@@ -780,6 +794,7 @@ async def resolve_alert(
         raise HTTPException(404, "alert not found")
     await _check_test_access(session, a.abtest_id, brands)
     a.resolved = True
+    await session.commit()
     return {"status": "resolved"}
 
 

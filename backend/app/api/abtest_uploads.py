@@ -127,7 +127,7 @@ async def upload_photo(
                 content_type=file.content_type,
             )
         )
-    await session.flush()
+    await session.commit()
     return {
         "photo_order": photo_order,
         "content_type": file.content_type,
@@ -151,6 +151,7 @@ async def delete_photo(
         raise HTTPException(404, "photo not found")
     await photo_storage.delete_photo_file(p.photo_path)
     await session.delete(p)
+    await session.commit()
     return {"status": "deleted"}
 
 
