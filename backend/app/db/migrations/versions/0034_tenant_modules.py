@@ -34,6 +34,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # Idempotent: при post-merge recovery (stamp 0030 → upgrade head)
+    # таблица уже существует с прошлого деплоя через старую "0032" линию.
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if "tenant_modules" in inspector.get_table_names():
+        return
+
     op.create_table(
         "tenant_modules",
         sa.Column("id", sa.BigInteger(), autoincrement=True, primary_key=True),
