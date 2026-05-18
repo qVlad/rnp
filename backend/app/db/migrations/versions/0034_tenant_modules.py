@@ -9,9 +9,17 @@ reviews / …) включается/выключается per-tenant незав
 signup и биллинга), поэтому НЕ добавляем `expires_at` / `subscription_status`
 — это будет в v2 при переходе на SaaS.
 
-Revision ID: 0032
-Revises: 0031
+Revision ID: 0034
+Revises: 0033
 Create Date: 2026-05-18 00:00:00
+
+NOTE: исходно был 0032, переименован в 0034 при merge product-v2 → main:
+origin/main принёс 0032_external_ad_brand с тем же номером. Цепочка стала:
+    0030 → 0031_brand_assignments_nm → 0032_external_ad_brand
+        → 0033_abtest_tables → 0034_tenant_modules (этот файл)
+На проде таблица tenant_modules уже существует (применена через старую
+"0032" линию); после deploy:
+    alembic stamp 0034
 """
 from typing import Sequence, Union
 
@@ -19,8 +27,8 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision: str = "0032"
-down_revision: Union[str, None] = "0031"
+revision: str = "0034"
+down_revision: Union[str, None] = "0033"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
