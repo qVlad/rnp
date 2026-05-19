@@ -416,9 +416,24 @@ function DashboardKpiGrid({
       const logistics = v("logistics_wb");
       const storage = v("storage_wb");
       if (gross <= 0) return undefined;
-      // В preliminary режиме commission_wb/logistics/storage = 0 (нет данных),
-      // и composition схлопывается в «5% / 95% Прочее» — бесполезно. Скрываем.
-      if (commission + logistics + storage === 0) return undefined;
+      // BUG-DES-005: в Preliminary commission_wb/logistics/storage = 0.
+      // Раньше скрывали бар, теперь показываем упрощённую разбивку:
+      // зелёное «Поступило» + красное «Удержания WB» (агрегированно).
+      const hasWbBreakdown = commission + logistics + storage > 0;
+      if (!hasWbBreakdown) {
+        return {
+          total: gross,
+          segments: [
+            { key: "net", label: "Поступило", value: net, color: "#34d399" },
+            {
+              key: "wb_total",
+              label: "Удержания WB",
+              value: Math.max(0, gross - net),
+              color: "#f87171",
+            },
+          ],
+        };
+      }
       return {
         total: gross,
         segments: [

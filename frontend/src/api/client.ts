@@ -274,6 +274,27 @@ export const api = {
     }>(
       `/api/audit-mode/decisions?period_start=${period_start}&period_end=${period_end}`,
     ),
+  // LEAD-015: bookkeeper templates (сохраняемые маппинги)
+  auditListTemplates: () =>
+    request<{
+      items: Array<{
+        id: number;
+        name: string;
+        mapping_json: Record<string, any>;
+        created_by: string;
+        created_at: string | null;
+      }>;
+    }>("/api/audit-mode/templates"),
+  auditSaveTemplate: (name: string, mapping_json: Record<string, any>) =>
+    request<{ name: string }>("/api/audit-mode/templates", {
+      method: "POST",
+      body: JSON.stringify({ name, mapping_json }),
+    }),
+  auditDeleteTemplate: (id: number) =>
+    request<{ deleted: number; name: string }>(
+      `/api/audit-mode/templates/${id}`,
+      { method: "DELETE" },
+    ),
 
   // ── Chargebacks (штрафы / коррекции WB) ──
   chargebacksList: (params: {
@@ -351,6 +372,45 @@ export const api = {
       categories: Array<{ code: string; label: string; is_income: boolean }>;
       statuses: Array<{ code: string; label: string }>;
     }>("/api/chargebacks/meta/categories"),
+  // LEAD-014: claim templates
+  chargebacksListTemplates: (category?: string) =>
+    request<{
+      items: Array<{
+        id: number;
+        category: string;
+        category_label: string;
+        name: string;
+        template_text: string;
+        is_default: boolean;
+        created_by: string;
+      }>;
+    }>(`/api/chargebacks/templates${category ? `?category=${category}` : ""}`),
+  chargebacksSaveTemplate: (body: {
+    category: string;
+    name: string;
+    template_text: string;
+    is_default?: boolean;
+  }) =>
+    request<{ category: string; name: string }>(
+      "/api/chargebacks/templates",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  chargebacksDeleteTemplate: (id: number) =>
+    request<{ deleted: number }>(`/api/chargebacks/templates/${id}`, {
+      method: "DELETE",
+    }),
+  chargebacksExportXlsxUrl: (params: {
+    status?: string;
+    category?: string;
+    date_from?: string;
+    date_to?: string;
+  } = {}) => {
+    const qs = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v) qs.set(k, String(v));
+    });
+    return `/api/chargebacks/export.xlsx${qs.toString() ? `?${qs}` : ""}`;
+  },
 
   // ── Redistribution (LEAD-008) ──
   redistributionStatus: () =>

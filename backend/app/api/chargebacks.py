@@ -8,7 +8,7 @@
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -16,7 +16,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Chargeback, ChargebackHistory, Product
+from app.db.models import Chargeback, ChargebackHistory, ClaimTemplate, Product
 from app.services.audit import audit_log
 from app.services.auth import (
     CurrentUser,
@@ -320,3 +320,167 @@ async def list_categories() -> dict[str, Any]:
         ],
         "statuses": [{"code": code, "label": label} for code, label in STATUS_LABELS.items()],
     }
+
+
+# ─── LEAD-014: claim_templates + XLSX-экспорт реестра ────────────────
+
+
+@router.get("/templates")
+async def list_claim_templates(
+    category: str | None = Query(default=None),
+    _user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Список шаблонов претензий. Опционально по категории."""
+    stmt = select(ClaimTemplate)
+    if category:
+        stmt = stmt.where(ClaimTemplate.category == category)
+    stmt = stmt.order_by(
+        ClaimTemplate.category, ClaimTemplate.is_default.desc(), ClaimTemplate.name
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return {
+        "items": [
+            {
+                "id": t.id,
+                "category": t.category,
+                "category_label": CATEGORY_LABELS.get(t.category, t.category),
+                "name": t.name,
+                "template_text": t.template_text,
+                "is_default": t.is_default,
+                "created_by": t.created_by,
+            }
+            for t in rows
+        ]
+    }
+
+
+@router.post("/templates", dependencies=[Depends(require_director_or_head)])
+async def create_claim_template(
+    category: str = Body(..., embed=True),
+    name: str = Body(..., embed=True),
+    template_text: str = Body(..., embed=True),
+    is_default: bool = Body(default=False, embed=True),
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Создать/обновить шаблон. UPSERT по (tenant, category, name)."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    if category not in CATEGORY_LABELS:
+        raise HTTPException(400, f"unknown category: {category}")
+
+    # Если is_default=true — снимаем дефолт со всех остальных в этой категории
+    if is_default:
+        from sqlalchemy import update
+        await session.execute(
+            update(ClaimTemplate)
+            .where(
+                ClaimTemplate.category == category,
+                ClaimTemplate.is_default.is_(True),
+            )
+            .values(is_default=False)
+        )
+
+    stmt = pg_insert(ClaimTemplate).values(
+        tenant_id=user.tenant_id,
+        category=category,
+        name=name,
+        template_text=template_text,
+        is_default=is_default,
+        created_by=user.username,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["tenant_id", "category", "name"],
+        set_={
+            "template_text": stmt.excluded.template_text,
+            "is_default": stmt.excluded.is_default,
+            "updated_at": func.now(),
+        },
+    )
+    await session.execute(stmt)
+    await audit_log(
+        session,
+        "claim_templates",
+        "create",
+        entity_id=f"{category}:{name}",
+        after={"is_default": is_default},
+        actor=user.username,
+    )
+    await session.commit()
+    return {"category": category, "name": name}
+
+
+@router.delete("/templates/{tid}", dependencies=[Depends(require_director_or_head)])
+async def delete_claim_template(
+    tid: int,
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    t = (
+        await session.execute(
+            select(ClaimTemplate).where(ClaimTemplate.id == tid)
+        )
+    ).scalar_one_or_none()
+    if t is None:
+        raise HTTPException(404, "template not found")
+    await audit_log(
+        session,
+        "claim_templates",
+        "delete",
+        entity_id=f"{t.category}:{t.name}",
+        actor=user.username,
+    )
+    await session.delete(t)
+    await session.commit()
+    return {"deleted": tid}
+
+
+@router.get("/export.xlsx")
+async def export_chargebacks_xlsx(
+    status: str | None = Query(default=None),
+    category: str | None = Query(default=None),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
+):
+    """XLSX-экспорт реестра претензий с теми же фильтрами что и list endpoint.
+
+    Бухгалтер забирает файл и подаёт в WB-поддержку через ЛК. Brand-filter
+    применяется автоматически — manager получит только свои бренды.
+    """
+    from fastapi.responses import Response
+
+    from app.services.chargebacks_export import build_chargebacks_xlsx
+
+    stmt = _apply_brand_filter(select(Chargeback), brands)
+    if status:
+        stmt = stmt.where(Chargeback.status == status)
+    if category:
+        stmt = stmt.where(Chargeback.category == category)
+    if date_from:
+        stmt = stmt.where(Chargeback.operation_dt >= date_from)
+    if date_to:
+        stmt = stmt.where(Chargeback.operation_dt <= date_to)
+    stmt = stmt.order_by(Chargeback.operation_dt.desc().nullslast()).limit(5000)
+    rows = (await session.execute(stmt)).scalars().all()
+
+    period_parts: list[str] = []
+    if date_from:
+        period_parts.append(f"с {date_from.isoformat()}")
+    if date_to:
+        period_parts.append(f"по {date_to.isoformat()}")
+    period_label = " ".join(period_parts) if period_parts else "все даты"
+
+    data = build_chargebacks_xlsx(rows, period_label=period_label)
+    filename_dt = datetime.now().strftime("%Y%m%d")
+    return Response(
+        content=data,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={
+            "Content-Disposition": f'attachment; filename="chargebacks_{filename_dt}.xlsx"',
+        },
+    )

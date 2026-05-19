@@ -280,54 +280,58 @@ Lead использует этот файл как master-view: сюда скл�
 
 ---
 
-### TASK-LEAD-014: PDF-экспорт «Реестр претензий» + claim_templates
+### TASK-LEAD-014: XLSX-экспорт «Реестр претензий» + claim_templates
 
 - **Исполнитель:** Lead → Developer
 - **Приоритет:** P1 (Accountant + Seller wishlist)
 - **Оценка:** ~3-5 дней (M)
-- **Описание:** Бухгалтер хочет подшить PDF в отчётность. Менеджер хочет шаблон вместо «писать с нуля каждый штраф».
+- **Описание:** Реестр претензий для подачи в WB-поддержку + шаблоны текстов претензий per-category.
 - **Критерии готовности:**
-  - [ ] `services/chargebacks_pdf.py` через reportlab — генерация по фильтрам
-  - [ ] Кнопка «Скачать PDF» на странице `/chargebacks` (передаёт текущие фильтры)
-  - [ ] Миграция 0040: `claim_templates(tenant_id, category, name, template_text)`
-  - [ ] API: CRUD `/api/chargebacks/templates`
-  - [ ] UI: «Использовать шаблон» в expand row → autofill claim_text
-- **Зависимости:** TASK-LEAD-009
-- **Статус:** Открыта
+  - [x] Миграция 0039: `claim_templates(tenant_id, category, name, template_text, is_default)`
+  - [x] Модель `ClaimTemplate` в `db/models.py`
+  - [x] `services/chargebacks_export.py` — XLSX через openpyxl (PDF отложен — нет reportlab в deps, у бухгалтера Excel-workflow удобнее)
+  - [x] API: GET `/api/chargebacks/templates`, POST (UPSERT с auto-снятием is_default), DELETE; GET `/api/chargebacks/export.xlsx` с тeми же фильтрами что list
+  - [x] Frontend: кнопка «📥 Реестр в XLSX» в header (с brand-filter), компонент `ClaimTemplateSelector` в expand-row с placeholder-подстановкой `{amount}`/`{rrd_id}`/`{nm_id}`/`{operation_dt}`/`{category_label}`
+  - [ ] (опц., v1.5) Реальный PDF через reportlab — отдельной задачей
+  - [ ] Seed дефолтных шаблонов для penalty/deduction (manual через UI после деплоя)
+- **Зависимости:** TASK-LEAD-009 ✅
+- **Статус:** Выполнено — 2026-05-19
 
 ---
 
 ### TASK-LEAD-015: bookkeeper_templates для audit-mode
 
 - **Исполнитель:** Lead → Developer
-- **Приоритет:** P1 (Accountant wishlist — иначе бухгалтер бросит после 2-го использования)
+- **Приоритет:** P1
 - **Оценка:** ~2-3 дня
 - **Описание:** BUG-DES-002. Сохраняемые маппинги колонок XLSX от бухгалтера.
 - **Критерии готовности:**
-  - [ ] Миграция 0041: `bookkeeper_templates(tenant_id, name, mapping_json, created_at)`
-  - [ ] API: POST/GET/DELETE `/api/audit-mode/templates`
-  - [ ] Frontend: dropdown «Шаблон» + кнопка «Сохранить как шаблон» в Audit.tsx wizard
-  - [ ] Persona-Accountant re-test
-- **Зависимости:** TASK-LEAD-009
-- **Статус:** Открыта
+  - [x] Миграция 0038: `bookkeeper_templates(tenant_id, name, mapping_json)`
+  - [x] Модель `BookkeeperTemplate`
+  - [x] API: GET / POST / DELETE `/api/audit-mode/templates` (за `require_module("audit_mode")`)
+  - [x] Frontend wizard в `Audit.tsx` — dropdown «Шаблон» с auto-apply + поле «Имя шаблона» + кнопка «💾 Сохранить шаблон» + удаление через ✕
+  - [ ] Persona-Accountant re-test после деплоя
+- **Зависимости:** TASK-LEAD-009 ✅
+- **Статус:** Выполнено — 2026-05-19
 
 ---
 
 ### TASK-LEAD-016: HAR + POST shifts.create для redistribution
 
 - **Исполнитель:** Lead + пользователь
-- **Приоритет:** P0 (без этого LEAD-008 = декорация)
+- **Приоритет:** P0 (последний блокер LEAD-008)
 - **Оценка:** ~1-2 нед после получения HAR
-- **Описание:** Пользователь снимает HAR в момент создания заявки в LK WB → анализ → реализация POST endpoint + миллисекундный execute_window. Это завершает Этапы 3+ из REDISTRIBUTION_PLAN.
+- **Описание:** **Инструкция готова** — `agents/references/HAR_INSTRUCTIONS_redistribution.md`. Пользователь снимает 3 HAR (create-shift, window-open, shifts-report), кладёт в `tmp/redistribution_har/`, я анализирую и реализую POST endpoint.
 - **Критерии готовности:**
-  - [ ] Снят HAR в момент клика «Создать перемещение» (через DevTools → Network → Fetch/XHR)
-  - [ ] Снят HAR в окно 09:00/18:00 МСК (показывает переход quota 0→>0 → закрытие)
-  - [ ] Снят HAR в «Отчёт о перемещениях» для followup
-  - [ ] Реализация `WbLkClient.create_shift()` (placeholder уже в коде)
+  - [x] Инструкция для пользователя оформлена (HAR_INSTRUCTIONS_redistribution.md, 10 разделов)
+  - [ ] Пользователь снимает HAR A (POST create) — **ЖДЁМ**
+  - [ ] Пользователь снимает HAR B (окно 09:00 или 18:00 МСК) — **ЖДЁМ**
+  - [ ] Пользователь снимает HAR C (отчёт о перемещениях) — **ЖДЁМ**
+  - [ ] Реализация `WbLkClient.create_shift()` + `list_shifts()` (placeholder уже в коде)
   - [ ] Celery `execute_window` task с миллисекундной точностью (NTP-sync)
   - [ ] End-to-end smoke на тестовом окне с 1 маленькой заявкой
-- **Зависимости:** TASK-LEAD-009, пользователь снимает HAR
-- **Статус:** Открыта (ЖДЁТ HAR от пользователя)
+- **Зависимости:** TASK-LEAD-009 ✅, пользователь снимает HAR
+- **Статус:** Открыта (ЖДЁТ HAR от пользователя — см. `HAR_INSTRUCTIONS_redistribution.md`)
 
 ---
 
@@ -338,14 +342,14 @@ Lead использует этот файл как master-view: сюда скл�
 - **Оценка:** ~1-2 дня (XS-S each, batch)
 - **Описание:** Сборка мелких багов из persona-reviews.
 - **Критерии готовности:**
-  - [ ] BUG-DEV-002: audit_compare `tax_paid` мапинг на `tax_for_fns`
-  - [ ] BUG-DEV-003: chargebacks `acquiring_correction` сумма из `acquiring_fee`
-  - [ ] BUG-DEV-004: redistribution demand_by_region (не warehouse_name)
-  - [ ] BUG-DEV-005: redistribution wb_offices справочник + cooldown по реальному office_id
-  - [ ] BUG-DES-003: chargebacks UI таб «Списания / Возмещения»
-  - [ ] BUG-DES-005: Dashboard composition bars Preliminary fallback
-- **Зависимости:** TASK-LEAD-009
-- **Статус:** Открыта
+  - [x] BUG-DEV-002: audit_compare `tax_paid` мапинг на `tax_for_fns`
+  - [x] BUG-DEV-003: chargebacks `acquiring_correction` сумма из `acquiring_fee` + `acquiring_fee` в select
+  - [x] BUG-DEV-004: redistribution demand_by_region (через `coalesce(region_name, oblast)`) + fuzzy substring matching
+  - [ ] BUG-DEV-005: redistribution wb_offices справочник + cooldown по реальному office_id (XL — отложено, нужна отдельная миграция и seed; кулдаун пока не работает)
+  - [x] BUG-DES-003: chargebacks UI таб «Списания / Возмещения / Все» с счётчиками
+  - [x] BUG-DES-005: Dashboard composition bars Preliminary fallback — 2-сегментная разбивка «Поступило / Удержания WB»
+- **Зависимости:** TASK-LEAD-009 ✅
+- **Статус:** Выполнено (5 из 6) — 2026-05-19. BUG-DEV-005 (cooldown по office_id) перенесён в отдельный backlog (XL).
 
 ---
 

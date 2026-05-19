@@ -1576,6 +1576,40 @@ class Chargeback(Base, TenantScopedMixin):
     )
 
 
+class ClaimTemplate(Base, TenantScopedMixin):
+    """Шаблон текста претензии WB-поддержке (LEAD-014).
+
+    Один шаблон на (tenant, category, name). is_default=true для одного
+    шаблона на категорию означает что при создании новой претензии
+    предложится этот текст.
+
+    Placeholder'ы в template_text (опционально): {amount}, {rrd_id},
+    {nm_id}, {category_label}, {operation_dt}. Подстановка делается
+    на фронте при показе.
+
+    Миграция 0039.
+    """
+
+    __tablename__ = "claim_templates"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    template_text: Mapped[str] = mapped_column(Text, nullable=False)
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "category", "name", name="uq_claim_template_name"),
+    )
+
+
 class ChargebackHistory(Base, TenantScopedMixin):
     """Журнал переходов статусов chargeback — audit trail для прозрачности.
 
@@ -1597,6 +1631,32 @@ class ChargebackHistory(Base, TenantScopedMixin):
     actor: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class BookkeeperTemplate(Base, TenantScopedMixin):
+    """Сохраняемый шаблон маппинга колонок XLSX от бухгалтера.
+
+    Persona-Accountant попросил: каждую загрузку настраивать маппинг = 10 мин,
+    после первого раза должен быть «выбрать шаблон». UNIQUE(tenant_id, name)
+    — один шаблон на бух-сервис. Миграция 0038.
+    """
+
+    __tablename__ = "bookkeeper_templates"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    mapping_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_bookkeeper_template_name"),
     )
 
 

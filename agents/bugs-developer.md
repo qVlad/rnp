@@ -41,41 +41,36 @@
 
 ## BUG-DEV-002: audit_compare `tax_paid` мапится на управленческий `tax`, должен на `tax_for_fns`
 
-- **Приоритет:** P0 (искажает «принятая бухгалтером цифра»)
+- **Приоритет:** P0
 - **Обнаружено:** 2026-05-19 (Persona-Accountant review)
-- **Среда:** code review
-- **Причина:** `services/audit_compare.py:CANONICAL_LINES` строка `("tax_paid", "Налог (УСН/АУСН)", "expense", "tax")`. Поле `tax` — управленческий налог (retail_amt × ставка). Бухгалтерский метод — `tax_for_fns` (retail_amt − УПД − COGS). Audit-mode сравнивает наш P&L с бух-XLSX → должен брать **бух-метод**, иначе всегда будет расхождение.
 - **Затронутые файлы:** `backend/app/services/audit_compare.py`
 - **Критерии исправления:**
-  - [ ] CANONICAL_LINES → `("tax_paid", "Налог (УСН/АУСН)", "expense", "tax_for_fns")`
-  - [ ] Smoke: audit-mode сравнение прошлого закрытого месяца → Δ tax = 0 (когда XLSX бухгалтера загружен с реальными цифрами)
-- **Статус:** Открыт
+  - [x] CANONICAL_LINES → `("tax_paid", "Налог (УСН/АУСН)", "expense", "tax_for_fns")`
+- **Статус:** Исправлено — 2026-05-19 (требуется деплой для smoke)
 
 ---
 
 ## BUG-DEV-003: chargebacks._extract_amount для `acquiring_correction` берёт `ppvz_for_pay`, должен `acquiring_fee`
 
-- **Приоритет:** P1 (мелкая категория — 6 строк за 60 дней, но сумма искажена)
+- **Приоритет:** P1
 - **Обнаружено:** 2026-05-19 (Persona-Accountant review)
-- **Среда:** code review
-- **Причина:** `services/chargebacks.py:_extract_amount` для не-penalty/deduction категорий возвращает `ppvz_for_pay`. Для `acquiring_correction` (Корректировка эквайринга) реальная сумма лежит в `r.acquiring_fee`.
+- **Затронутые файлы:** `backend/app/services/chargebacks.py`
 - **Критерии исправления:**
-  - [ ] В `_extract_amount` добавить case `category == "acquiring_correction" → r.acquiring_fee` (с fallback на `ppvz_for_pay` если None)
-- **Статус:** Открыт
+  - [x] `_extract_amount` для `acquiring_correction` → `r.acquiring_fee` (с fallback на `ppvz_for_pay`)
+  - [x] Добавлен `acquiring_fee` в select
+- **Статус:** Исправлено — 2026-05-19
 
 ---
 
-## BUG-DEV-004: redistribution `_demand_by_target_office` использует `WbOrder.warehouse_name` (склад отгрузки), нужен `region_name` (регион покупателя)
+## BUG-DEV-004: redistribution `_demand_by_target_office` использует `WbOrder.warehouse_name`, нужен `region_name`
 
-- **Приоритет:** P1 (рекомендации могут быть неточными)
+- **Приоритет:** P1
 - **Обнаружено:** 2026-05-19 (Persona-Seller review)
-- **Среда:** code review
-- **Причина:** `services/redistribution/recommender.py:_demand_by_target_office` группирует по `WbOrder.warehouse_name` — это **склад с которого WB отгружает заказ**. А спрос на склад-приёмник определяется **географией покупателя** (где у него высокий запрос). Нужно `region_name` или `oblast_okrug_name`.
-- **Затронутые файлы:** `backend/app/services/redistribution/recommender.py` функция `_demand_by_target_office`
+- **Затронутые файлы:** `backend/app/services/redistribution/recommender.py`
 - **Критерии исправления:**
-  - [ ] Сменить group_by на `WbOrder.region_name` (или `oblast_okrug_name`)
-  - [ ] Маппить region → office через `DEFAULT_REGION_TO_OFFICE` (carry over существующей карты)
-- **Статус:** Открыт
+  - [x] group_by на `coalesce(region_name, oblast)` покупателя
+  - [x] Маппинг region → office через `DEFAULT_REGION_TO_OFFICE` + fuzzy substring match для несовпадающих имён («Краснодарский край» → "Краснодар")
+- **Статус:** Исправлено — 2026-05-19. BUG-DEV-005 (cooldown по office_id) пока остаётся открытым.
 
 ---
 

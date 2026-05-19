@@ -105,8 +105,9 @@ def _extract_amount(rd_row, category: str) -> Decimal:
 
     Для разных категорий «штрафная сумма» лежит в разных полях. По prod-данным:
     - penalty / deduction → колонка `penalty` или `deduction` соответственно
-    - Коррекции (delivery/sale/acquiring/loyalty) → ppvz_for_pay (со знаком,
-      берём abs)
+    - **acquiring_correction → `acquiring_fee`** (BUG-DEV-003 fix —
+      Корректировка эквайринга идёт отдельным полем)
+    - Коррекции (delivery/sale/loyalty) → ppvz_for_pay
     - paid_acceptance, low_il_storage_fee → ppvz_for_pay (отрицательное)
     - damage_compensation → ppvz_for_pay (положительное)
     Если основное поле = 0 — fallback на ppvz_for_pay.
@@ -115,6 +116,9 @@ def _extract_amount(rd_row, category: str) -> Decimal:
         val = rd_row.penalty
     elif category == "deduction":
         val = rd_row.deduction
+    elif category == "acquiring_correction":
+        # Корректировка эквайринга — отдельное поле, не ppvz
+        val = getattr(rd_row, "acquiring_fee", None)
     else:
         val = rd_row.ppvz_for_pay
     if val is None:
@@ -149,6 +153,7 @@ async def sync_chargebacks(
                 WbReportDetail.ppvz_for_pay,
                 WbReportDetail.penalty,
                 WbReportDetail.deduction,
+                WbReportDetail.acquiring_fee,
                 WbReportDetail.sale_dt,
                 WbReportDetail.rr_dt,
                 WbReportDetail.nm_id,

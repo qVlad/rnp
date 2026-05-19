@@ -31,6 +31,9 @@ const daysAgo = (n: number) => {
 
 export default function Chargebacks() {
   const qc = useQueryClient();
+  // BUG-DES-003: разделение «Списания» (expense) vs «Возмещения» (income)
+  // через явную вкладку. Default: списания — это основной кейс.
+  const [tab, setTab] = useState<"expenses" | "incomes" | "all">("expenses");
   const [filters, setFilters] = useState({
     status: "",
     category: "",
@@ -74,9 +77,20 @@ export default function Chargebacks() {
     onError: (e: any) => alert(`Ошибка: ${e.message}`),
   });
 
-  const items = listQ.data?.items || [];
+  const allItems = listQ.data?.items || [];
+  // BUG-DES-003: фильтрация по вкладкам income / expense (через is_income из API)
+  const items =
+    tab === "all"
+      ? allItems
+      : tab === "incomes"
+      ? allItems.filter((c: any) => c.is_income)
+      : allItems.filter((c: any) => !c.is_income);
   const cats = metaQ.data?.categories || [];
   const stats = statsQ.data?.by_category || [];
+
+  // Подсчёт для tab-badges (сколько в каждой вкладке)
+  const expenseCount = allItems.filter((c: any) => !c.is_income).length;
+  const incomeCount = allItems.filter((c: any) => c.is_income).length;
 
   // Aggregate: по статусам — на верхних карточках
   const statusTotals = useMemo(() => {
@@ -98,6 +112,19 @@ export default function Chargebacks() {
           Чарджбэки / штрафы WB
         </h1>
         <div className="flex items-center gap-2">
+          <a
+            className="btn text-xs"
+            href={api.chargebacksExportXlsxUrl({
+              status: filters.status || undefined,
+              category: filters.category || undefined,
+              date_from: filters.date_from || undefined,
+              date_to: filters.date_to || undefined,
+            })}
+            download
+            title="Скачать XLSX-реестр претензий с текущими фильтрами — для подачи в WB-поддержку"
+          >
+            📥 Реестр в XLSX
+          </a>
           <button
             className="btn text-xs"
             onClick={() => syncMut.mutate()}
@@ -107,6 +134,29 @@ export default function Chargebacks() {
             {syncMut.isPending ? "Синк…" : "↻ Sync (60 дн.)"}
           </button>
         </div>
+      </div>
+
+      <div className="flex gap-2">
+        <button
+          className={`btn text-sm ${tab === "expenses" ? "border-accent text-accent" : ""}`}
+          onClick={() => setTab("expenses")}
+        >
+          🔻 Списания{" "}
+          <span className="text-muted">({expenseCount})</span>
+        </button>
+        <button
+          className={`btn text-sm ${tab === "incomes" ? "border-accent text-accent" : ""}`}
+          onClick={() => setTab("incomes")}
+        >
+          🔺 Возмещения{" "}
+          <span className="text-muted">({incomeCount})</span>
+        </button>
+        <button
+          className={`btn text-sm ${tab === "all" ? "border-accent text-accent" : ""}`}
+          onClick={() => setTab("all")}
+        >
+          Все
+        </button>
       </div>
 
       <div className="card text-xs text-muted leading-relaxed">
@@ -361,8 +411,14 @@ function ChargebackRow({
                   onChange={(e) => setComment(e.target.value)}
                   placeholder="Заметка для коллег"
                 />
-                <label className="block text-xs text-muted mb-1 mt-2">
-                  Текст претензии
+                <label className="block text-xs text-muted mb-1 mt-2 flex items-center justify-between">
+                  <span>Текст претензии</span>
+                  {/* LEAD-014: Применить шаблон из claim_templates */}
+                  <ClaimTemplateSelector
+                    category={c.category}
+                    chargeback={c}
+                    onApply={(text) => setClaimText(text)}
+                  />
                 </label>
                 <textarea
                   className="input w-full text-xs"
@@ -452,3 +508,67 @@ const STATUS_LABELS: Record<string, string> = {
   cancelled: "Отозвано",
   auto_closed: "Авто-закрыто",
 };
+
+
+/** LEAD-014: Selector шаблонов претензий с placeholder-подстановкой.
+ *
+ * Шаблон может содержать {amount}, {rrd_id}, {nm_id}, {operation_dt}.
+ * На выборе подставляем реальные значения из chargeback и вызываем onApply.
+ */
+function ClaimTemplateSelector({
+  category,
+  chargeback,
+  onApply,
+}: {
+  category: string;
+  chargeback: Chargeback;
+  onApply: (text: string) => void;
+}) {
+  const tplQ = useQuery({
+    queryKey: ["chargeback-templates", category],
+    queryFn: () => api.chargebacksListTemplates(category),
+    staleTime: 60_000,
+  });
+  const items = tplQ.data?.items || [];
+  if (items.length === 0) {
+    return (
+      <span className="text-[10px] text-muted/60" title="Шаблоны не настроены">
+        нет шаблонов
+      </span>
+    );
+  }
+
+  const applyTemplate = (raw: string) => {
+    const text = raw
+      .replace(/\{amount\}/g, String(chargeback.amount_rub))
+      .replace(/\{rrd_id\}/g, String(chargeback.rrd_id))
+      .replace(/\{nm_id\}/g, chargeback.nm_id ? String(chargeback.nm_id) : "—")
+      .replace(/\{operation_dt\}/g, chargeback.operation_dt || "")
+      .replace(/\{category_label\}/g, chargeback.category_label);
+    onApply(text);
+  };
+
+  return (
+    <select
+      className="input text-[10px] py-0.5"
+      onChange={(e) => {
+        const id = e.target.value;
+        if (!id) return;
+        const tpl = items.find((t) => String(t.id) === id);
+        if (tpl) applyTemplate(tpl.template_text);
+        e.target.value = ""; // reset
+      }}
+      defaultValue=""
+      title="Использовать шаблон претензии"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <option value="">📝 Шаблон…</option>
+      {items.map((t) => (
+        <option key={t.id} value={t.id}>
+          {t.name}
+          {t.is_default ? " (по умолч.)" : ""}
+        </option>
+      ))}
+    </select>
+  );
+}

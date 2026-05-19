@@ -40,7 +40,10 @@ CANONICAL_LINES: list[tuple[str, str, str, str | None]] = [
     ("ad_cost",         "Реклама",                        "expense", "ad_cost"),
     ("cogs",            "Себестоимость",                  "expense", "cogs"),
     ("vat_paid",        "НДС к уплате",                   "expense", "vat"),
-    ("tax_paid",        "Налог (УСН/АУСН)",               "expense", "tax"),
+    # BUG-DEV-002: для аудит-режима используем БУХГАЛТЕРСКИЙ метод налога
+    # (`tax_for_fns` — retail_amt − УПД − COGS), не управленческий `tax`.
+    # Иначе сверка с XLSX от бухгалтера всегда будет показывать расхождение.
+    ("tax_paid",        "Налог (УСН/АУСН)",               "expense", "tax_for_fns"),
     ("net_profit",      "Чистая прибыль",                 "income",  "profit"),
 ]
 

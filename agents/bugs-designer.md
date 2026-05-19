@@ -47,32 +47,24 @@
 
 ## BUG-DES-002: Audit-mode XLSX wizard — нет сохраняемых шаблонов для bookkeeper
 
-- **Приоритет:** P1 (бухгалтер бросит после 2-го использования)
+- **Приоритет:** P1
 - **Обнаружено:** 2026-05-19 (Persona-Accountant review)
-- **Среда:** code review
-- **Роль теста:** director (тот кто грузит XLSX от бухгалтера)
-- **Причина:** При загрузке bookkeeper XLSX wizard требует настройки маппинга колонок каждый месяц. У бухгалтеров формат не меняется — должен быть «выбрать шаблон» из ранее настроенных.
-- **Затронутые файлы:** `frontend/src/pages/Audit.tsx` (mapping wizard), backend нужна таблица `bookkeeper_templates`
 - **Критерии исправления:**
-  - [ ] Миграция 0038 (или следующий номер): `bookkeeper_templates(id, tenant_id, name, mapping_json, created_at)`
-  - [ ] API: POST `/api/audit-mode/templates` save / GET list / DELETE
-  - [ ] UI: при загрузке bookkeeper file — dropdown «Шаблон» с ранее сохранёнными + кнопка «Сохранить как шаблон» после успешной настройки
-- **Статус:** Открыт
+  - [x] Миграция 0038: `bookkeeper_templates(id, tenant_id, name, mapping_json)`
+  - [x] API: GET list / POST save (UPSERT по `(tenant, name)`) / DELETE — все за `require_module("audit_mode")` + tenant-scoped
+  - [x] UI: dropdown «Шаблон» наверху wizard'а + кнопка «💾 Сохранить шаблон» в нижней панели submit
+- **Статус:** Исправлено — 2026-05-19 (LEAD-015)
 
 ---
 
 ## BUG-DES-003: Chargebacks UI — `damage_compensation` (доходы) в одной таблице с расходами
 
-- **Приоритет:** P2 (UX-несоответствие mental-model бухгалтера)
+- **Приоритет:** P2
 - **Обнаружено:** 2026-05-19 (Persona-Accountant review)
-- **Среда:** code review
-- **Причина:** На странице `/chargebacks` все категории смешаны. Для бухгалтера «Компенсация ущерба» (positive amount, доход по УСН-Доходы) — отдельная сущность, не «штраф».
-- **Затронутые файлы:** `frontend/src/pages/Chargebacks.tsx`
 - **Критерии исправления:**
-  - [ ] Добавить таб-переключатель сверху: «Списания» (is_income=false) | «Возмещения» (is_income=true) | «Все»
-  - [ ] По умолчанию «Списания»
-  - [ ] Цветовая семантика: красное для расходов, зелёное для доходов
-- **Статус:** Открыт
+  - [x] Tab-переключатель сверху: «🔻 Списания» (default) / «🔺 Возмещения» / «Все» с счётчиками
+  - [x] Цветовая семантика уже была — `is_income` ? success : danger
+- **Статус:** Исправлено — 2026-05-19 (LEAD-017)
 
 ---
 
@@ -91,17 +83,14 @@
 
 ---
 
-## BUG-DES-005: Drill-down dashboard в Preliminary — composition bars скрыты, но нужна хоть какая-то разбивка
+## BUG-DES-005: Drill-down dashboard в Preliminary — composition bars скрыты
 
-- **Приоритет:** P2 (UX-improvement)
+- **Приоритет:** P2
 - **Обнаружено:** 2026-05-19 (Persona-Seller review)
-- **Среда:** prod (наблюдалось ранее, фиксировалось в `pages/Dashboard.tsx`)
-- **Роль теста:** director
-- **Причина:** В Preliminary режиме WB-метрики (commission_wb, logistics_wb, storage_wb) = null, composition bars скрываются. Юзер хочет видеть **хоть что-то** (revenue split по DBS / Returns / Selfbuy).
 - **Критерии исправления:**
-  - [ ] Показать упрощённую разбивку: revenue_gross = revenue_net + revenue_returns + dbs + selfbuy (всё что есть в orders)
-  - [ ] Подпись «Preliminary mode — для точной разбивки WB-удержаний переключите в Final»
-- **Статус:** Открыт
+  - [x] В Preliminary показываем упрощённую 2-сегментную разбивку: «Поступило» (revenue_net, зелёное) + «Удержания WB» (revenue_gross − revenue_net, красное)
+  - [ ] (опц.) tooltip «для точной разбивки переключи в Final»
+- **Статус:** Исправлено (основной случай) — 2026-05-19 (LEAD-017)
 
 ---
 

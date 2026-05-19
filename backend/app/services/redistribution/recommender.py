@@ -101,31 +101,45 @@ async def _avg_price_for_nm(
 async def _demand_by_target_office(
     session: AsyncSession, *, nm_id: int, days_back: int = 14
 ) -> dict[str, int]:
-    """Демэнд на следующие 14 дней по складу-приёмнику (proxy через
-    предыдущие заказы по region → office).
+    """Демэнд на следующие 14 дней по складу-приёмнику.
 
-    Стартовая эвристика: count(orders) сгруппированный по region и
-    переведённый в office через DEFAULT_REGION_TO_OFFICE. Это очень
-    приблизительно, но для MVP достаточно.
+    BUG-DEV-004 fix: группируем по **region_name покупателя**, не по
+    `warehouse_name` (это склад отгрузки). Спрос определяется географией
+    покупателя. Затем маппим region → office через DEFAULT_REGION_TO_OFFICE.
+
+    Заказы где region_name пустой — fallback на oblast или skip.
     """
     since = datetime.now(timezone.utc) - timedelta(days=days_back)
+    # Группируем по coalesce(region_name, oblast) → office.
+    region_col = func.coalesce(WbOrder.region_name, WbOrder.oblast)
     rows = (
         await session.execute(
-            select(WbOrder.warehouse_name, func.count())
+            select(region_col.label("region"), func.count())
             .where(
                 WbOrder.nm_id == nm_id,
                 WbOrder.order_dt >= since,
                 WbOrder.is_cancel.is_(False),
             )
-            .group_by(WbOrder.warehouse_name)
+            .group_by(region_col)
         )
     ).all()
-    out: dict[str, int] = {}
-    for warehouse_name, n in rows:
-        if not warehouse_name:
+    # Аггрегация region → office через DEFAULT_REGION_TO_OFFICE.
+    # Регионы без матчинга копятся в "_unmapped" (для отладки).
+    by_office: dict[str, int] = {}
+    for region, n in rows:
+        if not region:
             continue
-        out[warehouse_name] = int(n or 0)
-    return out
+        office_name = DEFAULT_REGION_TO_OFFICE.get(region)
+        if not office_name:
+            # Fuzzy: ищем подстроку (например "Краснодар" matches "Краснодарский край")
+            for r_key, off in DEFAULT_REGION_TO_OFFICE.items():
+                if r_key.lower() in region.lower() or region.lower() in r_key.lower():
+                    office_name = off
+                    break
+        if not office_name:
+            continue
+        by_office[office_name] = by_office.get(office_name, 0) + int(n or 0)
+    return by_office
 
 
 async def _is_in_cooldown(

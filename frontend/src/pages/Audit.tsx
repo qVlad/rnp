@@ -368,11 +368,51 @@ function BookkeeperMappingWizard({
   onCancel: () => void;
   onSubmit: (mapping: Record<string, any>) => Promise<any>;
 }) {
+  const qc = useQueryClient();
   const [sheetIdx, setSheetIdx] = useState(0);
   const sheet = preview.sheets[sheetIdx];
   const [headerRow, setHeaderRow] = useState(sheet.suggested_header_row);
   // map: columnName -> canonical code
   const [colMap, setColMap] = useState<Record<string, string>>({});
+
+  // LEAD-015: загружаемые / сохраняемые шаблоны
+  const templatesQ = useQuery({
+    queryKey: ["audit-templates"],
+    queryFn: () => api.auditListTemplates(),
+  });
+  const [selectedTemplateId, setSelectedTemplateId] = useState<number | "">("");
+  const [saveAsName, setSaveAsName] = useState("");
+
+  const saveTemplateMut = useMutation({
+    mutationFn: (mapping: Record<string, any>) =>
+      api.auditSaveTemplate(saveAsName.trim(), mapping),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["audit-templates"] });
+      alert("Шаблон сохранён.");
+      setSaveAsName("");
+    },
+    onError: (e: any) => alert(`Ошибка: ${e.message}`),
+  });
+
+  const deleteTemplateMut = useMutation({
+    mutationFn: (id: number) => api.auditDeleteTemplate(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["audit-templates"] }),
+  });
+
+  const applyTemplate = (id: number | "") => {
+    setSelectedTemplateId(id);
+    if (!id) return;
+    const tpl = templatesQ.data?.items.find((t) => t.id === id);
+    if (!tpl) return;
+    const m = tpl.mapping_json || {};
+    // Найдём соответствующий sheet (по имени) если есть
+    if (m.sheet_name) {
+      const idx = preview.sheets.findIndex((s) => s.name === m.sheet_name);
+      if (idx >= 0) setSheetIdx(idx);
+    }
+    if (m.header_row) setHeaderRow(Number(m.header_row));
+    setColMap((m.column_to_code as Record<string, string>) || {});
+  };
 
   const CANONICAL_CODES = [
     { code: "revenue_gross", label: "Выручка (gross)" },
@@ -416,6 +456,36 @@ function BookkeeperMappingWizard({
           Отмена
         </button>
       </div>
+
+      {/* LEAD-015: Templates — load existing or save current as new */}
+      {(templatesQ.data?.items?.length ?? 0) > 0 && (
+        <div className="text-xs mb-2 flex items-center gap-2">
+          <span className="text-muted">Шаблон:</span>
+          <select
+            className="input text-xs"
+            value={selectedTemplateId}
+            onChange={(e: any) =>
+              applyTemplate(e.target.value ? Number(e.target.value) : "")
+            }
+          >
+            <option value="">— настроить вручную —</option>
+            {templatesQ.data!.items.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+          {selectedTemplateId !== "" && (
+            <button
+              className="btn text-xs text-red-400"
+              onClick={() => deleteTemplateMut.mutate(Number(selectedTemplateId))}
+              title="Удалить выбранный шаблон"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      )}
 
       {preview.sheets.length > 1 && (
         <div className="text-xs mb-2">
@@ -499,9 +569,45 @@ function BookkeeperMappingWizard({
         ))}
       </div>
 
-      <button className="btn border-accent text-accent" onClick={submit}>
-        Загрузить с этим маппингом
-      </button>
+      <div className="flex flex-wrap items-center gap-2">
+        <button className="btn border-accent text-accent" onClick={submit}>
+          Загрузить с этим маппингом
+        </button>
+        {/* LEAD-015: сохранить текущий маппинг как шаблон */}
+        <input
+          type="text"
+          className="input text-xs"
+          placeholder="Имя шаблона (для сохранения)"
+          value={saveAsName}
+          onChange={(e: any) => setSaveAsName(e.target.value)}
+        />
+        <button
+          className="btn text-xs"
+          onClick={() => {
+            const column_to_code = Object.fromEntries(
+              Object.entries(colMap).filter(([, code]) => code),
+            );
+            if (!saveAsName.trim()) {
+              alert("Введи имя шаблона");
+              return;
+            }
+            if (Object.keys(column_to_code).length === 0) {
+              alert("Сначала сопоставь хотя бы одну колонку");
+              return;
+            }
+            saveTemplateMut.mutate({
+              format: "wide",
+              sheet_name: sheet.name,
+              header_row: headerRow,
+              column_to_code,
+            });
+          }}
+          disabled={!saveAsName.trim() || saveTemplateMut.isPending}
+          title="Сохранить текущий маппинг чтобы переиспользовать на следующих файлах"
+        >
+          💾 Сохранить шаблон
+        </button>
+      </div>
     </div>
   );
 }

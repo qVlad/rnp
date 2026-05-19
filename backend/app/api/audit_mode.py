@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AuditDecision, AuditImport
+from app.db.models import AuditDecision, AuditImport, BookkeeperTemplate
 from app.services.audit import audit_log
 from app.services.audit_compare import compare_three_sources
 from app.services.audit_parsers.bookkeeper import (
@@ -294,3 +294,91 @@ async def list_decisions(
             for r in rows
         ]
     }
+
+
+# ─── LEAD-015: bookkeeper templates (сохраняемые маппинги) ──────────
+
+
+@router.get("/templates")
+async def list_templates(
+    _user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Список сохранённых bookkeeper-шаблонов tenant'а. Order by name."""
+    rows = (
+        await session.execute(
+            select(BookkeeperTemplate).order_by(BookkeeperTemplate.name)
+        )
+    ).scalars().all()
+    return {
+        "items": [
+            {
+                "id": t.id,
+                "name": t.name,
+                "mapping_json": t.mapping_json,
+                "created_by": t.created_by,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+            }
+            for t in rows
+        ]
+    }
+
+
+@router.post("/templates")
+async def create_template(
+    name: str = Body(..., embed=True),
+    mapping_json: dict = Body(..., embed=True),
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Сохранить шаблон. UPSERT по (tenant, name)."""
+    stmt = pg_insert(BookkeeperTemplate).values(
+        tenant_id=user.tenant_id,
+        name=name,
+        mapping_json=mapping_json,
+        created_by=user.username,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["tenant_id", "name"],
+        set_={
+            "mapping_json": stmt.excluded.mapping_json,
+            "updated_at": func.now(),
+        },
+    )
+    await session.execute(stmt)
+    await audit_log(
+        session,
+        "bookkeeper_templates",
+        "create",
+        entity_id=name,
+        after={"mapping_format": mapping_json.get("format")},
+        actor=user.username,
+    )
+    await session.commit()
+    return {"name": name}
+
+
+@router.delete("/templates/{tid}")
+async def delete_template(
+    tid: int,
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    t = (
+        await session.execute(
+            select(BookkeeperTemplate).where(BookkeeperTemplate.id == tid)
+        )
+    ).scalar_one_or_none()
+    if t is None:
+        raise HTTPException(404, "template not found")
+    name = t.name
+    await audit_log(
+        session,
+        "bookkeeper_templates",
+        "delete",
+        entity_id=name,
+        actor=user.username,
+    )
+    await session.delete(t)
+    await session.commit()
+    return {"deleted": tid, "name": name}
