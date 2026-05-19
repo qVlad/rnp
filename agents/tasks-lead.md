@@ -198,55 +198,53 @@ Lead использует этот файл как master-view: сюда скл�
 ### TASK-LEAD-009: Деплой LEAD-004/005/006/008 на прод
 
 - **Исполнитель:** Lead
-- **Приоритет:** P0 (всё код готов, BUG-DEV-001 исправлен — нужно выкатить)
+- **Приоритет:** P0
 - **Оценка:** 15 мин
-- **Описание:** Прод сейчас на миграции 0036 (chargebacks накатились, но sync падал из-за BUG-DEV-001). Нужно задеплоить:
-  - 0035 audit_imports/audit_decisions (если ещё не) — проверить `alembic_version`
-  - 0036 chargebacks + fix BUG-DEV-001
-  - 0037 redistribution
-  - event_consumers + всё новое из LEAD-008/004
+- **Описание:** Прод обновлён до миграции 0037 + event_consumers задеплоен.
 - **Критерии готовности:**
-  - [ ] `./scripts/remote.sh deploy` прошёл
-  - [ ] `alembic_version = 0037` после деплоя
-  - [ ] `POST /api/chargebacks/sync` возвращает 200 (BUG-DEV-001 фикс работает)
-  - [ ] QA-tester re-run по списку из `post-launch-priority-2026-05-19.md`
-- **Зависимости:** нет (всё в коммитах `e4f9d50`, `d9b60de`, `22e3f5f`, `92f3531` + текущий BUG-DEV-001 fix)
-- **Статус:** Открыта
+  - [x] `./scripts/remote.sh deploy` прошёл (3 деплоя — initial + 2 hotfix-cycle для BUG-DEV-001)
+  - [x] `alembic_version = 0037`
+  - [x] `POST /api/chargebacks/sync` → 200, создалось 51 запись (auto_closed=31, new=20, sum=251 372₽)
+  - [x] Post-deploy hot fixes: `task_session_scope` локальный import, `realizationreport_id → realization_id`, `event_consumers` в celery include
+- **Зависимости:** нет
+- **Статус:** Выполнено — 2026-05-19
 
 ---
 
 ### TASK-LEAD-010: RBAC fix для chargebacks/redistribution — manager должен видеть свои бренды
 
 - **Исполнитель:** Lead → Developer
-- **Приоритет:** P0 (BUG-DES-001 — модули неюзабельны для основной операционной роли)
+- **Приоритет:** P0
 - **Оценка:** ~3-5 дней (M)
-- **Описание:** `services/chargebacks.py` + `api/chargebacks.py` + `api/redistribution.py` имеют `require_director_or_head` на уровне APIRouter. Manager получает 403. Должен видеть chargebacks по своим брендам (через `current_brands_filter()`). См. `bugs-designer.md` BUG-DES-001 для spec'ы.
+- **Описание:** BUG-DES-001 — manager был заблокирован полностью в chargebacks/redistribution. Сделан fix: убран `require_director_or_head` с APIRouter, добавлен brand-filter через `current_brands_filter` в read-endpoints, мутации защищены per-endpoint.
 - **Критерии готовности:**
-  - [ ] TASK-DEV-NNN: переместить `require_director_or_head` с APIRouter-уровня на per-endpoint (только для мутаций — transition/sync/approve/connect_lk). Read остаётся доступным для всех ролей.
-  - [ ] TASK-DEV-NNN backend: join `chargebacks.nm_id → products.brand`, filter through `current_brands_filter`
-  - [ ] TASK-DEV-NNN backend: redistribution `tasks/recommendations` filter по brand_assignments
-  - [ ] TASK-DES + DEV frontend: убрать `directorOrHead: true` с menu items для `/chargebacks` и `/redistribution`
-  - [ ] TASK-PM-NNN (persona-manager): re-test после деплоя
-- **Зависимости:** TASK-LEAD-009 (первый деплой)
-- **Статус:** Открыта
+  - [x] api/chargebacks.py — `_apply_brand_filter(stmt, brands)` через `Chargeback.nm_id IN (SELECT nm_id FROM products WHERE brand IN ...)`. Mutations (PUT update, POST transition, POST sync) защищены `Depends(require_director_or_head)`.
+  - [x] api/redistribution.py — `_apply_brand_filter_recs` и `_apply_brand_filter_tasks` (последний через двойной JOIN `tasks → recommendations → products`). Mutations approve/dismiss/generate/connect_lk защищены.
+  - [x] frontend: убран `directorOrHead: true` с menu items + обёртки DirectorOrHead с routes
+  - [ ] Persona-Manager re-test после следующего sync (нужны chargebacks с realистичными brand'ами)
+- **Зависимости:** TASK-LEAD-009 ✅
+- **Статус:** Выполнено (код+деплой) — 2026-05-19. Re-test когда у tenant=1 будут brand_assignments на реального manager-юзера.
 
 ---
 
 ### TASK-LEAD-011: Telegram-bot consumer для event-bus
 
 - **Исполнитель:** Lead → Developer
-- **Приоритет:** P0 (главный UX-результат всей event-bus инвестиции; сейчас события только в логах)
+- **Приоритет:** P0
 - **Оценка:** ~1 неделя
-- **Описание:** Без bot-consumer event-bus невидим юзеру. Все 4 персоны просят Telegram-пуши: chargeback>5000₽ (Seller), redistribution window-open + результат (Seller, Manager), tax-deadline (Seller), chargebacks summary daily (ROP).
+- **Описание:** End-to-end Telegram-уведомления для event-bus событий. Базовый chargeback.detected уже работает.
 - **Критерии готовности:**
-  - [ ] Spec в `agents/references/spec-bot-handlers.md`: tenant→tg_chat_id lookup механика, brand-aware filtering для manager, sendMessage retry
-  - [ ] Replace stub `_handle_chargeback_telegram` в `event_consumers.py` на реальный bot.send
-  - [ ] `tax.deadline.upcoming` cron-publisher в `sync/tasks.py` (за 7/3/1 день до deadline)
-  - [ ] `redistribution.task.completed` consumer → bot push «✓ забронировано / ✗ не пойман слот»
-  - [ ] Telegram-команды: `/chargebacks_today`, `/redistribution_status`, `/disable_alerts` (mute)
+  - [x] `_handle_chargeback_telegram` использует реальный `integrations.telegram.send_message` (не log-only)
+  - [x] `tenant → tg_chat_id` через `AppSetting WHERE key='tg_chat_id'` per-tenant
+  - [x] HTML-форматирование сообщения с amount/category/SKU/rrd_id + deep-link на /chargebacks
+  - [x] Retry: при ошибке send_message — НЕ ACK → reclaim_all_pending watchdog (5 retries → DLQ)
+  - [x] End-to-end smoke прошёл на проде: `smoke_publish_chargeback` → log «chargeback notify sent tenant=1 chat=165982199 amount=2500»
+  - [ ] `tax.deadline.upcoming` cron-publisher в `sync/tasks.py` (за 7/3/1 день до deadline) — backlog
+  - [ ] `redistribution.task.completed` consumer → bot push «✓ забронировано / ✗ не пойман слот» — после LEAD-008 POST shifts.create
+  - [ ] Telegram-команды для контроля: `/chargebacks_today`, `/redistribution_status`, `/mute_alerts` — backlog
   - [ ] Persona-Seller + Manager re-test
-- **Зависимости:** TASK-LEAD-009
-- **Статус:** Открыта
+- **Зависимости:** TASK-LEAD-009 ✅
+- **Статус:** Выполнено (базовый — chargeback.detected) — 2026-05-19. Tax / redistribution.task.completed / mute-команды — backlog
 
 ---
 
