@@ -1374,6 +1374,159 @@ class WbCampaignBudget(Base, TenantScopedMixin):
     )
 
 
+class WbLkSession(Base, TenantScopedMixin):
+    """Сохранённая сессия LK seller.wildberries.ru после SMS-логина.
+
+    Auth-схема (HAR 2026-05-18, см. WB_API_REFERENCE §13):
+      - AuthorizeV3 — RS256 JWT, долгоживущий (часы/дни). Получается через
+        SMS-логин на seller.wildberries.ru.
+      - Wb-Seller-Lk — EdDSA JWT, TTL ровно 5 минут. Refresh через
+        `POST /ns/suppliers-auth/.../auth/token` JSON-RPC.
+
+    Оба токена хранятся зашифрованными AES-256-GCM через `secrets_crypto`.
+    Один tenant = одна сессия (UNIQUE). Миграция 0037.
+    """
+
+    __tablename__ = "wb_lk_sessions"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="SET NULL")
+    )
+    phone_last4: Mapped[str | None] = mapped_column(String(4))
+    authorize_v3_encrypted: Mapped[str | None] = mapped_column(Text)
+    authorize_v3_exp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    wb_seller_lk_encrypted: Mapped[str | None] = mapped_column(Text)
+    wb_seller_lk_exp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    supplier_fid: Mapped[str | None] = mapped_column(String(64))
+    supplier_oid: Mapped[str | None] = mapped_column(String(64))
+    z_sid: Mapped[str | None] = mapped_column(String(64))
+    user_agent: Mapped[str | None] = mapped_column(Text)
+    root_version: Mapped[str | None] = mapped_column(String(32))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    needs_relogin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", name="uq_wb_lk_session_per_tenant"),
+    )
+
+
+class RedistributionRecommendation(Base, TenantScopedMixin):
+    """Рекомендация перераспределения: что куда везти. Обновляется daily
+    через `daily_recommendations` Celery task. Миграция 0037.
+    """
+
+    __tablename__ = "redistribution_recommendations"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    nm_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    chrt_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    from_office_id: Mapped[int | None] = mapped_column(BigInteger)
+    from_office_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    to_office_id: Mapped[int | None] = mapped_column(BigInteger)
+    to_office_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    qty: Mapped[int] = mapped_column(Integer, nullable=False)
+    expected_logistics_saving_rub: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    expected_il_uplift_pct: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    expected_revenue_uplift_rub: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    cost_share_rub: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    net_benefit_rub: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    payback_days: Mapped[Decimal | None] = mapped_column(Numeric(6, 1))
+    demand_14d_at_target: Mapped[int | None] = mapped_column(Integer)
+    current_stock_at_target: Mapped[int | None] = mapped_column(Integer)
+    current_stock_at_source: Mapped[int | None] = mapped_column(Integer)
+    transit_days_estimated: Mapped[int | None] = mapped_column(Integer)
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+
+
+class RedistributionTask(Base, TenantScopedMixin):
+    """Задача исполнения: то что бот пошлёт в окне 09:00/18:00. Миграция 0037."""
+
+    __tablename__ = "redistribution_tasks"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    recommendation_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("redistribution_recommendations.id", ondelete="SET NULL"),
+    )
+    target_window_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    chrt_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    from_office_id: Mapped[int | None] = mapped_column(BigInteger)
+    from_office_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    to_office_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    to_office_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    qty: Mapped[int] = mapped_column(Integer, nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_status_code: Mapped[int | None] = mapped_column(Integer)
+    last_response: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    transit_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    arrived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class RedistributionCooldown(Base, TenantScopedMixin):
+    """72-часовой кулдаун на пару (chrt_id × to_office_id). Миграция 0037.
+
+    Composite PK (tenant_id, chrt_id, to_office_id) — без autoincrement id.
+    """
+
+    __tablename__ = "redistribution_cooldowns"
+
+    chrt_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    to_office_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    cooldown_until: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    last_task_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("redistribution_tasks.id", ondelete="SET NULL")
+    )
+
+
+class RedistributionRoiSnapshot(Base, TenantScopedMixin):
+    """Дневной снапшот ROI для еженедельного дайджеста. Миграция 0037."""
+
+    __tablename__ = "redistribution_roi_snapshots"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    revenue_total_rub: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2), nullable=False, default=0
+    )
+    redistribution_fee_rub: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2), nullable=False, default=0
+    )
+    logistics_saving_rub: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2), nullable=False, default=0
+    )
+    il_avg_pct: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    il_delta_30d_pct: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    successful_tasks_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_tasks_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    estimated_revenue_uplift_rub: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "snapshot_date", name="uq_roi_snapshot_day"),
+    )
+
+
 class Chargeback(Base, TenantScopedMixin):
     """Чарджбэк / штраф / коррекция WB — лента с workflow оспаривания.
 

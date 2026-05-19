@@ -32,6 +32,7 @@ from app.api import (
     pnl,
     product_groups,
     products,
+    redistribution,
     season_plan,
     settings,
     supplies,
@@ -207,6 +208,7 @@ app.include_router(tenant_settings.router)
 app.include_router(tenant_modules.router)
 app.include_router(audit_mode.router)
 app.include_router(chargebacks.router)
+app.include_router(redistribution.router)
 app.include_router(tax_report.router)
 app.include_router(supplies.router)
 app.include_router(checklist.router)

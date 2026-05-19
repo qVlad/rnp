@@ -1,0 +1,392 @@
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api } from "@/api/client";
+import { fmtRub } from "@/lib/format";
+
+export default function Redistribution() {
+  const qc = useQueryClient();
+  const [recsTab, setRecsTab] = useState<"pending" | "queued" | "executed">("pending");
+
+  const statusQ = useQuery({
+    queryKey: ["redistribution-status"],
+    queryFn: () => api.redistributionStatus(),
+    refetchInterval: 30_000,
+  });
+  const recsQ = useQuery({
+    queryKey: ["redistribution-recs", recsTab],
+    queryFn: () => api.redistributionRecs(recsTab),
+  });
+  const tasksQ = useQuery({
+    queryKey: ["redistribution-tasks"],
+    queryFn: () => api.redistributionTasks(),
+    refetchInterval: 60_000,
+  });
+  const roiQ = useQuery({
+    queryKey: ["redistribution-roi"],
+    queryFn: () => api.redistributionRoi(),
+  });
+
+  const generateMut = useMutation({
+    mutationFn: () => api.redistributionGenerate(),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["redistribution-recs"] });
+      alert(`Создано рекомендаций: ${data.created}${data.message ? ` (${data.message})` : ""}`);
+    },
+    onError: (e: any) => alert(`Ошибка: ${e.message}`),
+  });
+  const approveMut = useMutation({
+    mutationFn: (id: number) => api.redistributionApprove(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["redistribution-recs"] });
+      qc.invalidateQueries({ queryKey: ["redistribution-tasks"] });
+    },
+  });
+  const dismissMut = useMutation({
+    mutationFn: (id: number) => api.redistributionDismiss(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["redistribution-recs"] }),
+  });
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-baseline justify-between flex-wrap gap-3">
+        <h1 className="text-xl font-semibold">
+          Перераспределение остатков WB
+        </h1>
+        <button
+          className="btn text-xs"
+          onClick={() => generateMut.mutate()}
+          disabled={generateMut.isPending || !statusQ.data?.lk_connected}
+          title={!statusQ.data?.lk_connected ? "Сначала подключите LK" : ""}
+        >
+          {generateMut.isPending ? "Считаю…" : "↻ Пересчитать рекомендации"}
+        </button>
+      </div>
+
+      <div className="card text-xs text-muted leading-relaxed">
+        Связка прогноз → план → автобронь для услуги WB «Перераспределение
+        остатков» (+0.5% от оборота за услугу). Окна бронирования:
+        <strong> 09:00 и 18:00 МСК</strong>. Заявка идёт по chrt_id
+        (характеристика, не nm_id). Кулдаун 72 часа на пару (chrt_id ×
+        склад-приёмник).
+      </div>
+
+      {/* Status + LK connect */}
+      <LkStatusCard
+        status={statusQ.data}
+        onConnect={(token) =>
+          api
+            .redistributionConnectLk({ authorize_v3: token })
+            .then(() => qc.invalidateQueries({ queryKey: ["redistribution-status"] }))
+        }
+        onDisconnect={() =>
+          api
+            .redistributionDisconnectLk()
+            .then(() => qc.invalidateQueries({ queryKey: ["redistribution-status"] }))
+        }
+      />
+
+      {/* ROI */}
+      <RoiCard
+        roi={roiQ.data}
+        loading={roiQ.isLoading}
+      />
+
+      {/* Recommendations */}
+      <div className="card">
+        <div className="flex items-baseline justify-between mb-3">
+          <h2 className="font-medium">Рекомендации</h2>
+          <div className="flex gap-1">
+            {(["pending", "queued", "executed"] as const).map((t) => (
+              <button
+                key={t}
+                className={`btn text-xs ${recsTab === t ? "border-accent text-accent" : ""}`}
+                onClick={() => setRecsTab(t)}
+              >
+                {t === "pending" ? "Pending" : t === "queued" ? "В очереди" : "Выполнено"}
+              </button>
+            ))}
+          </div>
+        </div>
+        {recsQ.isLoading && <div className="text-muted">Загрузка…</div>}
+        {recsQ.data && recsQ.data.items.length === 0 && (
+          <div className="text-muted text-sm">
+            Нет рекомендаций. Нажмите «Пересчитать» (нужна подключённая LK-сессия).
+          </div>
+        )}
+        {recsQ.data && recsQ.data.items.length > 0 && (
+          <table className="w-full text-sm">
+            <thead className="text-muted text-xs uppercase">
+              <tr className="border-b border-border">
+                <th className="text-left p-2">nm_id / chrt</th>
+                <th className="text-left p-2">Откуда</th>
+                <th className="text-left p-2">Куда</th>
+                <th className="text-right p-2">Qty</th>
+                <th className="text-right p-2">Net benefit</th>
+                <th className="text-right p-2">Demand 14d</th>
+                <th className="text-right p-2">Stock тут/там</th>
+                <th className="p-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {recsQ.data.items.map((r) => (
+                <tr key={r.id} className="border-t border-border hover:bg-bg/40">
+                  <td className="p-2 font-mono text-xs">
+                    {r.nm_id}
+                    <br />
+                    <span className="text-muted">{r.chrt_id}</span>
+                  </td>
+                  <td className="p-2">{r.from_office_name}</td>
+                  <td className="p-2">{r.to_office_name}</td>
+                  <td className="p-2 text-right font-mono">{r.qty}</td>
+                  <td className="p-2 text-right font-mono">
+                    <span className={r.net_benefit_rub > 0 ? "text-success" : "text-red-400"}>
+                      {fmtRub(r.net_benefit_rub)}
+                    </span>
+                    {r.payback_days && (
+                      <div className="text-[10px] text-muted">
+                        ~{r.payback_days.toFixed(1)} дн.
+                      </div>
+                    )}
+                  </td>
+                  <td className="p-2 text-right font-mono text-xs">
+                    {r.demand_14d_at_target}
+                  </td>
+                  <td className="p-2 text-right font-mono text-xs text-muted">
+                    {r.current_stock_at_source} → {r.current_stock_at_target}
+                  </td>
+                  <td className="p-2 text-right">
+                    {r.status === "pending" && (
+                      <div className="flex gap-1 justify-end">
+                        <button
+                          className="btn text-xs"
+                          onClick={() => approveMut.mutate(r.id)}
+                          disabled={approveMut.isPending}
+                        >
+                          ✓ В очередь
+                        </button>
+                        <button
+                          className="btn text-xs text-muted"
+                          onClick={() => dismissMut.mutate(r.id)}
+                          disabled={dismissMut.isPending}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    )}
+                    {r.status !== "pending" && (
+                      <span className="text-xs text-muted">{r.status}</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Tasks */}
+      <div className="card">
+        <h2 className="font-medium mb-3">Очередь и история бронирований</h2>
+        {tasksQ.isLoading && <div className="text-muted">Загрузка…</div>}
+        {tasksQ.data && tasksQ.data.items.length === 0 && (
+          <div className="text-muted text-sm">Задач в очереди нет.</div>
+        )}
+        {tasksQ.data && tasksQ.data.items.length > 0 && (
+          <table className="w-full text-sm">
+            <thead className="text-muted text-xs uppercase">
+              <tr className="border-b border-border">
+                <th className="text-left p-2">Окно</th>
+                <th className="text-left p-2">chrt</th>
+                <th className="text-left p-2">Откуда → Куда</th>
+                <th className="text-right p-2">Qty</th>
+                <th className="text-left p-2">Статус</th>
+                <th className="text-right p-2">Попыток</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tasksQ.data.items.map((t) => (
+                <tr key={t.id} className="border-t border-border">
+                  <td className="p-2 font-mono text-xs">
+                    {t.target_window_at?.slice(0, 16) || "—"}
+                  </td>
+                  <td className="p-2 font-mono text-xs">{t.chrt_id}</td>
+                  <td className="p-2 text-xs">
+                    {t.from_office_name} → {t.to_office_name}
+                  </td>
+                  <td className="p-2 text-right font-mono">{t.qty}</td>
+                  <td className="p-2">{t.status}</td>
+                  <td className="p-2 text-right font-mono">{t.attempt_count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div className="card text-xs text-muted leading-relaxed">
+        <strong>⚠ v1 limitations:</strong> POST shifts.create (фактическое
+        бронирование в окне) — ещё не реализован, нужен HAR из LK в момент
+        нажатия «Создать перемещение». На текущем этапе сервис генерирует
+        рекомендации и складывает их в очередь — отправка делается вручную
+        через интерфейс LK WB. Точная миллисекундная синхронизация и
+        TLS-fingerprint impersonation — задачи на следующей итерации.
+      </div>
+    </div>
+  );
+}
+
+function LkStatusCard({
+  status,
+  onConnect,
+  onDisconnect,
+}: {
+  status: any;
+  onConnect: (token: string) => Promise<any>;
+  onDisconnect: () => Promise<any>;
+}) {
+  const [showConnect, setShowConnect] = useState(false);
+  const [token, setToken] = useState("");
+
+  if (!status) return <div className="card text-muted">Загрузка…</div>;
+
+  return (
+    <div className="card">
+      <div className="flex items-baseline justify-between mb-2">
+        <h2 className="font-medium">Подключение к LK WB</h2>
+        <div className="text-xs">
+          {status.lk_connected ? (
+            <span className="text-success">✓ Подключено</span>
+          ) : status.lk_needs_relogin ? (
+            <span className="text-warn">⚠ Нужен перелогин</span>
+          ) : (
+            <span className="text-muted">Не подключено</span>
+          )}
+        </div>
+      </div>
+      {status.lk_connected && (
+        <div className="text-xs text-muted">
+          Supplier {status.supplier_fid} · Phone ***{status.phone_last4 || "??"} ·
+          AuthorizeV3 истекает: {status.authorize_v3_expires_at?.slice(0, 16) || "—"} ·
+          Last success: {status.last_success_at?.slice(0, 16) || "—"}
+        </div>
+      )}
+      <div className="text-xs text-muted mt-2">
+        Ближайшее окно бронирования: <strong>{status.next_window_at?.slice(0, 16)}</strong> UTC
+      </div>
+      <div className="flex gap-2 mt-3">
+        {!status.lk_connected && (
+          <button className="btn text-xs" onClick={() => setShowConnect(true)}>
+            + Подключить LK
+          </button>
+        )}
+        {status.lk_connected && (
+          <button
+            className="btn text-xs text-red-400"
+            onClick={() =>
+              window.confirm("Отвязать LK-сессию? Бронирования остановятся.") &&
+              onDisconnect()
+            }
+          >
+            Отвязать
+          </button>
+        )}
+      </div>
+
+      {showConnect && (
+        <div className="mt-4 border-t border-border pt-3">
+          <div className="text-xs text-muted mb-2 leading-relaxed">
+            Откройте <code>seller.wildberries.ru</code>, залогиньтесь, в DevTools
+            → Network найдите любой запрос к{" "}
+            <code>seller-weekly-report.wildberries.ru</code> → скопируйте
+            заголовок <code>AuthorizeV3</code> (длинный RS256 JWT) и вставьте
+            сюда:
+          </div>
+          <textarea
+            className="input w-full text-xs font-mono"
+            rows={4}
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="eyJhbGciOiJSUzI1NiIs..."
+          />
+          <div className="flex gap-2 mt-2">
+            <button
+              className="btn text-xs border-accent text-accent"
+              onClick={async () => {
+                try {
+                  await onConnect(token.trim());
+                  setShowConnect(false);
+                  setToken("");
+                } catch (e: any) {
+                  alert(`Ошибка: ${e.message}`);
+                }
+              }}
+              disabled={!token.trim()}
+            >
+              Сохранить
+            </button>
+            <button
+              className="btn text-xs"
+              onClick={() => {
+                setShowConnect(false);
+                setToken("");
+              }}
+            >
+              Отмена
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RoiCard({ roi, loading }: { roi: any; loading: boolean }) {
+  if (loading) return <div className="card text-muted">Загрузка ROI…</div>;
+  if (!roi) return null;
+  const hasData = roi.revenue_rub > 0 || roi.successful_tasks_count > 0;
+  return (
+    <div className="card">
+      <h2 className="font-medium mb-3">ROI-дашборд</h2>
+      {!hasData && (
+        <div className="text-xs text-muted mb-3">
+          Данных ещё нет. Снапшоты ROI накапливаются после первых успешных
+          бронирований.
+        </div>
+      )}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Stat label="Комиссия +0.5%" value={fmtRub(roi.redistribution_fee_rub)} tone="red" />
+        <Stat label="Экономия на логистике" value={fmtRub(roi.logistics_saving_rub)} tone="success" />
+        <Stat
+          label="ROI"
+          value={roi.roi_pct !== null ? `+${roi.roi_pct.toFixed(0)}%` : "—"}
+          tone="success"
+        />
+        <Stat
+          label="Успешных / неудачных"
+          value={`${roi.successful_tasks_count} / ${roi.failed_tasks_count}`}
+        />
+      </div>
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "success" | "red" | "muted";
+}) {
+  const cls =
+    tone === "success" ? "text-success" :
+    tone === "red" ? "text-red-400" :
+    tone === "muted" ? "text-muted" : "text-fg";
+  return (
+    <div>
+      <div className="text-xs text-muted uppercase tracking-wide">{label}</div>
+      <div className={`text-lg font-mono tabular-nums mt-1 ${cls}`}>{value}</div>
+    </div>
+  );
+}

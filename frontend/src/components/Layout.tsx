@@ -55,6 +55,7 @@ const GROUPS: Group[] = [
       { to: "/plans", label: "План-Факт" },
       { to: "/season-plan", label: "План сезона", directorOrHead: true },
       { to: "/supply", label: "Поставки" },
+      { to: "/redistribution", label: "Перераспределение", directorOrHead: true },
       { to: "/supplies", label: "Закупки", directorOrHead: true },
       { to: "/product-groups", label: "Группы" },
       { to: "/cost-history", label: "Себестоимость" },

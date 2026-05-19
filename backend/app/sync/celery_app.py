@@ -53,6 +53,12 @@ celery_app.conf.update(
         "app.sync.tasks.evaluate_notifications": {"queue": "default"},
         "app.sync.tasks.sync_chargebacks": {"queue": "default"},
         "app.sync.tasks.sync_chargebacks_for_tenant": {"queue": "default"},
+        # Redistribution (LEAD-008). Все task'и на default queue в v1 —
+        # отдельный worker-redistribution с миллисекундной точностью
+        # реализуется когда будет POST shifts.create endpoint.
+        "app.sync.tasks.generate_redistribution_recs": {"queue": "default"},
+        "app.sync.tasks.generate_redistribution_recs_for_tenant": {"queue": "default"},
+        "app.sync.tasks.publish_redistribution_windows": {"queue": "default"},
         # Event-bus consumers (LEAD-004). Используют существующий
         # worker-default — добавление отдельного worker-events service
         # отложено в Этап 4 (требует ребилда docker-compose).
@@ -148,6 +154,19 @@ celery_app.conf.update(
         "event-bus-reclaim-5min": {
             "task": "app.sync.event_consumers.reclaim_all_pending",
             "schedule": 300.0,
+        },
+        # Redistribution (LEAD-008): daily генерация рекомендаций в 06:00 МСК
+        # (03:00 UTC) — после report_detail-sync, до окон 09:00 МСК.
+        "generate-redistribution-recs-daily": {
+            "task": "app.sync.tasks.generate_redistribution_recs",
+            "schedule": crontab(hour=3, minute=0),
+        },
+        # Каждую минуту проверяем окно 09:00/18:00 МСК; в окне публикуем
+        # событие redistribution.window.open. is_window_now() сам отсекает
+        # «не окно».
+        "publish-redistribution-windows-1m": {
+            "task": "app.sync.tasks.publish_redistribution_windows",
+            "schedule": 60.0,
         },
         # Advert queue — production observation: WB penalises >=2 advert calls
         # within ~60 min with 50-60 min cooldown. Schedule must keep ≥1h gap

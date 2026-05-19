@@ -165,21 +165,27 @@ Lead использует этот файл как master-view: сюда скл�
 - **Исполнитель:** Lead
 - **Приоритет:** P0 (главная product-фича)
 - **Оценка:** 2ч на спеку (расширить `REDISTRIBUTION_PLAN.md`), реализация ~4-6 недель
-- **Описание:** Source `agents/references/market/top-features-2026-05-17.md` Product #1 + существующий `REDISTRIBUTION_PLAN.md`. Связка прогноз → план → автобронь (окна 09:00/18:00 МСК) → ROI-дашборд. **Требует готовый event-bus** (LEAD-004) для реакции на «окно открылось».
+- **Описание:** Source `top-features-2026-05-17.md` Product #1 + `REDISTRIBUTION_PLAN.md` + endpoints из HAR (WB_API_REFERENCE §13). Связка прогноз → план → автобронь (окна 09:00/18:00 МСК) → ROI-дашборд.
 - **Критерии готовности:**
-  - [ ] Расширение `REDISTRIBUTION_PLAN.md` с привязкой к event-bus (событие `redistribution.window.open`)
-  - [ ] Subagent `wb-api-specialist` ревью session-capture стратегии (риск бана WB)
-  - [ ] TASK-DES-NNN: UX перераспределения + ROI-дашборд + история окон (успехи/отказы/median latency/p95)
-  - [ ] TASK-DEV-NNN backend: модели `redistribution_tasks`/`redistribution_windows`/`roi_ledger`, миграция
-  - [ ] TASK-DEV-NNN: WB session-capture интеграция (отдельный субагент-проверка)
-  - [ ] TASK-DEV-NNN: worker-redistribution (отдельная Celery очередь, см. LEAD-004)
-  - [ ] TASK-DEV-NNN: алгоритм рекомендаций перемещений (прогноз спроса + lookup tariffs + cooldown 72ч на пару товар×склад)
-  - [ ] TASK-DEV-NNN frontend: страница `/redistribution` + ROI-дашборд
-  - [ ] TASK-PS-NNN (persona-seller): валидация ROI-дашборда
-  - [ ] TASK-PM-NNN (persona-manager): валидация workflow окон 09:00/18:00
-  - [ ] TASK-QA-NNN: end-to-end test на тестовых окнах
-- **Зависимости:** **LEAD-002** (stocks-warehouses данные нужны), **LEAD-004** (event-bus критично)
-- **Статус:** Открыта (БЛОКЕР до LEAD-002 + LEAD-004)
+  - [x] Расширенный план — `REDISTRIBUTION_PLAN.md` с §6.1.1 (реальные endpoints из HAR 2026-05-18)
+  - [x] Миграция `0037_redistribution` — 5 таблиц: `wb_lk_sessions`, `redistribution_recommendations`, `redistribution_tasks`, `redistribution_cooldowns`, `redistribution_roi_snapshots`
+  - [x] Модели в `db/models.py`
+  - [x] **wb_lk клиент** (`integrations/wb_lk/`): auth (два JWT, UUIDv7-валидация, auto-refresh Wb-Seller-Lk EdDSA через JSON-RPC), client с HTTP/2 persistent connection + endpoints `/nms`, `/stocks`, `/quota` из §6.1.1
+  - [x] **services/redistribution/**: session_store (CRUD с encrypt/decrypt токенов), economics (compute_economics с net_benefit + payback_days), recommender (rule-based MVP с regions→office mapping), scheduler (publish_window_event 09:00/18:00 МСК)
+  - [x] Event-bus integration — публикация `redistribution.window.open` через `publish_redistribution_windows` beat-task (раз в минуту, is_window_now фильтрует не-окна)
+  - [x] Celery tasks: `generate_redistribution_recs` daily в 06:00 МСК (с fanout по tenants), `publish_redistribution_windows` каждую минуту
+  - [x] API `/api/redistribution/*` — status, lk/connect, recommendations, approve/dismiss, tasks, roi, generate. Guard `require_module("redistribution")` + `require_director_or_head`
+  - [x] Frontend: `pages/Redistribution.tsx` — LK-статус + connect-форма (юзер вставляет AuthorizeV3 из DevTools), список рекомендаций с approve/dismiss, очередь tasks, ROI-дашборд. Маршрут + пункт меню (DirectorOrHead).
+  - [x] Типизированный API client (10 функций)
+  - [ ] **POST shifts.create** (фактическое бронирование) — отложено, нужен HAR в момент создания заявки в LK
+  - [ ] **SMS+captcha automation** — отложено (нужен RuCaptcha API или Telegram-interactive flow); в v1 юзер вручную копирует AuthorizeV3 из DevTools
+  - [ ] **TLS-fingerprint impersonation** (curl-impersonate) — отложено до первых 401/403 от WB
+  - [ ] **NTP-точная синхронизация + миллисекундный execute_window** — отложено до POST endpoint
+  - [ ] **Followup task для transit-status** — отложено
+  - [ ] TASK-PS-NNN (persona-seller): валидация ROI-дашборда после деплоя
+  - [ ] TASK-QA-NNN: smoke + RBAC после деплоя
+- **Зависимости:** LEAD-002 ✅, LEAD-004 ✅ (event-bus готов)
+- **Статус:** Этапы 1-2 выполнены (skeleton + recommender + UI + LK GET endpoints + event-bus integration) — 2026-05-19. Этапы 3-6 (SMS automation, POST create, миллисекундная точность) — backlog
 
 ---
 

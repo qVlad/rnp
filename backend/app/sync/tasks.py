@@ -1051,6 +1051,133 @@ def sync_chargebacks_dispatch() -> dict[str, Any]:
     return _fanout(sync_chargebacks_for_tenant)
 
 
+# ─── Перераспределение остатков (LEAD-008) ──────────────────────────────
+
+
+async def _generate_redistribution_recs_async(tenant_id: int) -> int:
+    """Daily генерация рекомендаций перераспределения.
+
+    Грузит список активных nm_id из products (с продажами в последние 30 дней),
+    через WB LK shifts API запрашивает остатки → собирает рекомендации →
+    upsert в `redistribution_recommendations` со status='pending'.
+
+    Если у tenant'а нет WbLkSession (или needs_relogin) — возвращает 0 и
+    пропускает; никаких ошибок.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import select
+
+    from app.db.models import (
+        Product,
+        RedistributionRecommendation,
+        WbSale,
+    )
+    from app.services.redistribution.recommender import build_recommendations
+    from app.services.tenant_context import set_tenant
+
+    async with task_session_scope() as session:
+        set_tenant(session, tenant_id)
+
+        # Активные SKU за 30 дней — только те у кого был хоть один Sale
+        since = datetime.now(timezone.utc) - timedelta(days=30)
+        rows = (
+            await session.execute(
+                select(Product.nm_id)
+                .join(WbSale, WbSale.nm_id == Product.nm_id)
+                .where(WbSale.sale_dt >= since)
+                .where(WbSale.is_return.is_(False))
+                .where(Product.is_archived.is_(False))
+                .group_by(Product.nm_id)
+                .limit(200)  # safety cap
+            )
+        ).all()
+        nm_ids = [int(r[0]) for r in rows]
+        if not nm_ids:
+            await update_checkpoint(
+                session, "redistribution_recs", rows_processed=0, status="ok"
+            )
+            return 0
+
+        recs = await build_recommendations(
+            session, tenant_id=tenant_id, nm_ids=nm_ids
+        )
+        if not recs:
+            await update_checkpoint(
+                session, "redistribution_recs", rows_processed=0, status="ok"
+            )
+            return 0
+
+        # Прежние pending — пометить obsolete (status='dismissed'), новые insert.
+        # Approved / queued / executed — не трогаем (это уже в работе).
+        from sqlalchemy import update
+
+        await session.execute(
+            update(RedistributionRecommendation)
+            .where(
+                RedistributionRecommendation.tenant_id == tenant_id,
+                RedistributionRecommendation.status == "pending",
+            )
+            .values(status="dismissed")
+        )
+
+        for r in recs:
+            session.add(
+                RedistributionRecommendation(
+                    tenant_id=tenant_id,
+                    nm_id=r.nm_id,
+                    chrt_id=r.chrt_id,
+                    from_office_id=r.from_office_id or None,
+                    from_office_name=r.from_office_name,
+                    to_office_id=r.to_office_id or None,
+                    to_office_name=r.to_office_name,
+                    qty=r.qty,
+                    expected_logistics_saving_rub=r.econ.expected_logistics_saving_rub,
+                    expected_revenue_uplift_rub=r.econ.expected_revenue_uplift_rub,
+                    cost_share_rub=r.econ.cost_share_rub,
+                    net_benefit_rub=r.econ.net_benefit_rub,
+                    payback_days=r.econ.payback_days,
+                    demand_14d_at_target=r.demand_14d_at_target,
+                    current_stock_at_target=r.current_stock_at_target,
+                    current_stock_at_source=r.current_stock_at_source,
+                    transit_days_estimated=r.transit_days_estimated,
+                    status="pending",
+                )
+            )
+
+        await update_checkpoint(
+            session, "redistribution_recs", rows_processed=len(recs), status="ok"
+        )
+        return len(recs)
+
+
+@celery_app.task(name="app.sync.tasks.generate_redistribution_recs_for_tenant")
+def generate_redistribution_recs_for_tenant(tenant_id: int) -> int:
+    return asyncio.run(_generate_redistribution_recs_async(tenant_id))
+
+
+@celery_app.task(name="app.sync.tasks.generate_redistribution_recs")
+def generate_redistribution_recs_dispatch() -> dict[str, Any]:
+    """Beat dispatcher: daily в 06:00 МСК — fanout по tenants."""
+    return _fanout(generate_redistribution_recs_for_tenant)
+
+
+async def _publish_redistribution_windows_async() -> int:
+    """Beat task — раз в минуту проверяет окно 09:00/18:00 МСК и публикует
+    `redistribution.window.open` для активных tenants. Идемпотентно через
+    consumer-side dedup (event_id с timestamp).
+    """
+    from app.services.redistribution.scheduler import publish_window_event
+
+    async with task_session_scope() as session:
+        return await publish_window_event(session)
+
+
+@celery_app.task(name="app.sync.tasks.publish_redistribution_windows")
+def publish_redistribution_windows() -> int:
+    return asyncio.run(_publish_redistribution_windows_async())
+
+
 # ---------------------------------------------------------------------------
 # Advertising
 # ---------------------------------------------------------------------------

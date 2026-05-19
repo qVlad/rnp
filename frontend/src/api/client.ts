@@ -352,6 +352,100 @@ export const api = {
       statuses: Array<{ code: string; label: string }>;
     }>("/api/chargebacks/meta/categories"),
 
+  // ── Redistribution (LEAD-008) ──
+  redistributionStatus: () =>
+    request<{
+      lk_connected: boolean;
+      lk_needs_relogin: boolean;
+      authorize_v3_expires_at?: string | null;
+      phone_last4?: string | null;
+      supplier_fid?: string | null;
+      last_success_at?: string | null;
+      root_version?: string | null;
+      next_window_at: string;
+    }>("/api/redistribution/status"),
+  redistributionConnectLk: (body: {
+    authorize_v3: string;
+    user_agent?: string;
+    root_version?: string;
+    phone_last4?: string;
+  }) =>
+    request<{ lk_connected: boolean; authorize_v3_expires_at: string | null }>(
+      "/api/redistribution/lk/connect",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  redistributionDisconnectLk: () =>
+    request<{ deleted: boolean }>("/api/redistribution/lk", { method: "DELETE" }),
+  redistributionRecs: (status?: string) =>
+    request<{
+      items: Array<{
+        id: number;
+        nm_id: number;
+        chrt_id: number;
+        from_office_name: string;
+        to_office_name: string;
+        qty: number;
+        expected_logistics_saving_rub: number;
+        expected_revenue_uplift_rub: number;
+        cost_share_rub: number;
+        net_benefit_rub: number;
+        payback_days: number | null;
+        demand_14d_at_target: number;
+        current_stock_at_target: number;
+        current_stock_at_source: number;
+        status: string;
+        generated_at: string | null;
+      }>;
+    }>(`/api/redistribution/recommendations${status ? `?status=${status}` : ""}`),
+  redistributionApprove: (id: number) =>
+    request<{ task_window_at: string; task_id: number }>(
+      `/api/redistribution/recommendations/${id}/approve`,
+      { method: "POST" },
+    ),
+  redistributionDismiss: (id: number) =>
+    request<{ id: number; status: string }>(
+      `/api/redistribution/recommendations/${id}/dismiss`,
+      { method: "POST" },
+    ),
+  redistributionTasks: (status?: string) =>
+    request<{
+      items: Array<{
+        id: number;
+        target_window_at: string | null;
+        chrt_id: number;
+        from_office_name: string;
+        to_office_name: string;
+        qty: number;
+        status: string;
+        attempt_count: number;
+        last_attempt_at: string | null;
+        last_status_code: number | null;
+        last_response: string | null;
+        accepted_at: string | null;
+        created_at: string | null;
+      }>;
+    }>(`/api/redistribution/tasks${status ? `?status=${status}` : ""}`),
+  redistributionRoi: (date_from?: string, date_to?: string) => {
+    const qs = new URLSearchParams();
+    if (date_from) qs.set("date_from", date_from);
+    if (date_to) qs.set("date_to", date_to);
+    return request<{
+      period: { from: string | null; to: string | null };
+      revenue_rub: number;
+      redistribution_fee_rub: number;
+      logistics_saving_rub: number;
+      roi_pct: number | null;
+      il_avg_pct: number;
+      successful_tasks_count: number;
+      failed_tasks_count: number;
+    }>(`/api/redistribution/roi?${qs}`);
+  },
+  redistributionGenerate: () =>
+    request<{ created: number; message?: string }>(
+      "/api/redistribution/generate",
+      { method: "POST" },
+    ),
+
   health: () => request<{ status: string }>("/api/health"),
   whoami: () =>
     request<{ wb_token_configured: boolean; debug: boolean }>("/api/whoami"),

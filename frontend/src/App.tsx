@@ -6,6 +6,7 @@ import Dashboard from "./pages/Dashboard";
 import Audit from "./pages/Audit";
 import Chargebacks from "./pages/Chargebacks";
 import PnL from "./pages/PnL";
+import Redistribution from "./pages/Redistribution";
 import PnLReconciliation from "./pages/PnLReconciliation";
 import TaxReport from "./pages/TaxReport";
 import TaxReportAusn from "./pages/TaxReportAusn";
@@ -122,6 +123,14 @@ export default function App() {
             element={
               <DirectorOrHead>
                 <Chargebacks />
+              </DirectorOrHead>
+            }
+          />
+          <Route
+            path="redistribution"
+            element={
+              <DirectorOrHead>
+                <Redistribution />
               </DirectorOrHead>
             }
           />
