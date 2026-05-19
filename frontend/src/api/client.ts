@@ -362,6 +362,40 @@ export const api = {
       }>;
     }>(`/api/chargebacks/stats?${qs}`);
   },
+  // LEAD-013: per-manager analytics
+  chargebacksStatsByManager: (date_from?: string, date_to?: string) => {
+    const qs = new URLSearchParams({ group_by: "manager" });
+    if (date_from) qs.set("date_from", date_from);
+    if (date_to) qs.set("date_to", date_to);
+    return request<{
+      group_by: "manager";
+      by_user: Array<{
+        user_id: number | null;
+        username: string;
+        full_name: string;
+        by_status: Record<string, { count: number; amount: number }>;
+        total_count: number;
+        total_amount: number;
+        recovered_amount: number;
+      }>;
+    }>(`/api/chargebacks/stats?${qs}`);
+  },
+  redistributionByManager: (date_from?: string, date_to?: string) => {
+    const qs = new URLSearchParams();
+    if (date_from) qs.set("date_from", date_from);
+    if (date_to) qs.set("date_to", date_to);
+    return request<{
+      by_user: Array<{
+        user_id: number | null;
+        username: string;
+        full_name: string;
+        by_status: Record<string, { count: number; net_benefit: number }>;
+        total_count: number;
+        total_net_benefit: number;
+        total_saving: number;
+      }>;
+    }>(`/api/redistribution/by-manager?${qs}`);
+  },
   chargebacksSync: (lookback_days: number = 60) =>
     request<{ created: number; auto_closed: number; skipped: number }>(
       `/api/chargebacks/sync`,

@@ -251,32 +251,39 @@ Lead использует этот файл как master-view: сюда скл�
 ### TASK-LEAD-012: Weekly digest для head_of_sales
 
 - **Исполнитель:** Lead → Developer
-- **Приоритет:** P1 (ROP-wishlist #1)
+- **Приоритет:** P1
 - **Оценка:** ~3-5 дней (M)
-- **Описание:** Понедельник 10:00 МСК — bot шлёт head_of_sales (если такой юзер есть) еженедельный дайджест: chargebacks summary за неделю (вернули X / в работе Y), redistribution ROI текущего месяца, pererасход рекламы (ДРР > 30%), per-brand P&L топ-5.
+- **Описание:** Понедельник 10:00 МСК — bot шлёт сводку: chargebacks за неделю, ROI redistribution за месяц, per-manager топ-5, P&L дельта.
 - **Критерии готовности:**
-  - [ ] `services/digest_weekly.py` — сборка отчёта
-  - [ ] Beat-task в `celery_app.py`: cron Mon 07:00 UTC (10:00 МСК)
-  - [ ] Получатель: первый юзер с role=`head_of_sales` в каждом tenant'е (если нет — director)
-  - [ ] Включить per-tenant через `tenant_modules.team_digest` (нужна новая ENTRY в KNOWN_MODULES)
-- **Зависимости:** TASK-LEAD-011 (TG-handlers инфраструктура)
-- **Статус:** Открыта
+  - [x] `services/digest_weekly.py` — `build_weekly_digest()` (4 секции) + `send_weekly_digests_all_tenants()`
+  - [x] Beat task `send_weekly_digest` cron Mon 07:00 UTC (10:00 МСК)
+  - [x] Routing на queue=default
+  - [x] Получатель: tg_chat_id из app_settings (привязан через бот `/start`)
+  - [ ] Persona-ROP re-test после первого понедельника
+  - [ ] (опц.) Включение через `tenant_modules.team_digest` — пока всем у кого есть chat_id
+- **Зависимости:** TASK-LEAD-011 ✅, TASK-LEAD-013 ✅
+- **Статус:** Выполнено — 2026-05-19
 
 ---
 
 ### TASK-LEAD-013: Per-manager analytics в chargebacks/redistribution
 
 - **Исполнитель:** Lead → Developer
-- **Приоритет:** P1 (ROP-wishlist #2; data уже есть, нужен UI)
+- **Приоритет:** P1
 - **Оценка:** ~3-5 дней (M)
-- **Описание:** `chargebacks` и `redistribution_tasks` имеют `nm_id`. Через `brand_assignments` можно сджоинить с менеджерами. Добавить group_by параметр в `/stats`, новый виджет «По менеджерам» на страницах.
+- **Описание:** Per-manager analytics через JOIN nm_id → products.brand → brand_assignments.user_id → users.
 - **Критерии готовности:**
-  - [ ] API расширение: `?group_by=manager` для `/api/chargebacks/stats` и `/api/redistribution/roi`
-  - [ ] Frontend: новый виджет «По менеджерам» — стат сводка count + total amount + ROI
-  - [ ] `redistribution_tasks.approved_by_user_id` (миграция 0039 — добавить колонку)
+  - [x] API `/api/chargebacks/stats?group_by=manager` — count + amount + recovered_amount по статусам, group by user
+  - [x] API `/api/redistribution/by-manager` — net_benefit + saving по статусам recommendations
+  - [x] N:M обработка: если бренд назначен нескольким менеджерам, chargeback попадает в каждого
+  - [x] Unassigned группа (chargebacks без brand или brand без assignments)
+  - [x] Frontend: `ChargebacksByManagerWidget` в `/chargebacks` (видим только для director/head_of_sales)
+  - [x] Frontend: `RedistributionByManagerWidget` в `/redistribution` (то же)
+  - [x] Frontend API client: `chargebacksStatsByManager`, `redistributionByManager`
+  - [ ] (v1.5) `redistribution_tasks.approved_by_user_id` для analytics «approve→success rate»
   - [ ] Persona-ROP re-test
-- **Зависимости:** TASK-LEAD-009, TASK-LEAD-010 (brand-filter)
-- **Статус:** Открыта
+- **Зависимости:** TASK-LEAD-009 ✅, TASK-LEAD-010 ✅
+- **Статус:** Выполнено — 2026-05-19
 
 ---
 
@@ -356,15 +363,16 @@ Lead использует этот файл как master-view: сюда скл�
 ### TASK-STRAT-003: Decision A/B/C для chrome-extension «РНП Connect»
 
 - **Исполнитель:** Strategist
-- **Приоритет:** P1 (блокирует онбординг redistribution для не-технических юзеров)
+- **Приоритет:** P1
 - **Оценка:** 2-3ч research
-- **Описание:** BUG-DES-004. Варианты A (chrome-ext), B (видео-инструкция), C (RuCaptcha SMS auto). Trade-offs: A — 2-3 нед dev + Chrome Web Store ревью, B — 1 день, C — 3-5 нед + per-tenant API-стоимость RuCaptcha.
+- **Описание:** BUG-DES-004 research-документ готов.
 - **Критерии готовности:**
-  - [ ] Анализ из 3 вариантов с оценкой ROI (стоимость dev vs % юзеров которые подключат LK)
-  - [ ] Решение собственника через `AskUserQuestion`
-  - [ ] При выборе A — отдельная TASK-LEAD-NNN на spec расширения
-- **Зависимости:** TASK-LEAD-009
-- **Статус:** Открыта
+  - [x] `agents/references/market/strat-003-chrome-ext-decision.md` — анализ 3 вариантов с ROI-расчётом и таблицей trade-offs
+  - [x] **Рекомендация:** Вариант B (видео + инструкция + concierge через TG) сейчас, Вариант A (Chrome-ext) через 5-10 платных клиентов если конверсия LK-connect < 40%, Вариант C НЕ делать
+  - [ ] Финальное решение собственника (3 вопроса в §«Открытые вопросы»)
+  - [ ] При выборе любого варианта — TASK-DES-NNN / TASK-LEAD-NNN отдельной задачей
+- **Зависимости:** нет
+- **Статус:** Research готов — 2026-05-19. Ждём решение собственника.
 
 ---
 

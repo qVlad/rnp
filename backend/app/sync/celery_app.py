@@ -59,6 +59,7 @@ celery_app.conf.update(
         "app.sync.tasks.generate_redistribution_recs": {"queue": "default"},
         "app.sync.tasks.generate_redistribution_recs_for_tenant": {"queue": "default"},
         "app.sync.tasks.publish_redistribution_windows": {"queue": "default"},
+        "app.sync.tasks.send_weekly_digest": {"queue": "default"},
         # Event-bus consumers (LEAD-004). Используют существующий
         # worker-default — добавление отдельного worker-events service
         # отложено в Этап 4 (требует ребилда docker-compose).
@@ -167,6 +168,11 @@ celery_app.conf.update(
         "publish-redistribution-windows-1m": {
             "task": "app.sync.tasks.publish_redistribution_windows",
             "schedule": 60.0,
+        },
+        # Weekly digest (LEAD-012) — понедельник 10:00 МСК (07:00 UTC)
+        "weekly-digest-monday": {
+            "task": "app.sync.tasks.send_weekly_digest",
+            "schedule": crontab(hour=7, minute=0, day_of_week="mon"),
         },
         # Advert queue — production observation: WB penalises >=2 advert calls
         # within ~60 min with 50-60 min cooldown. Schedule must keep ≥1h gap

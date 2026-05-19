@@ -29,10 +29,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
+    BrandAssignment,
     Product,
     RedistributionRecommendation,
     RedistributionRoiSnapshot,
     RedistributionTask,
+    User,
     WbLkSession,
 )
 from app.services.audit import audit_log
@@ -337,6 +339,95 @@ async def list_tasks(
     stmt = stmt.order_by(RedistributionTask.created_at.desc()).limit(limit)
     rows = (await session.execute(stmt)).scalars().all()
     return {"items": [_serialize_task(t) for t in rows]}
+
+
+@router.get("/by-manager")
+async def get_by_manager(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
+) -> dict[str, Any]:
+    """LEAD-013: redistribution analytics per-manager — для ROP-view.
+
+    Считаем по `redistribution_recommendations` (там есть nm_id):
+      - count(*) + sum(net_benefit) по `recommendations.status` (pending /
+        approved / queued / executed / failed)
+    Группируем по user через JOIN nm_id → products.brand → brand_assignments.
+    """
+    base = (
+        select(
+            User.id.label("user_id"),
+            User.username,
+            User.full_name,
+            RedistributionRecommendation.status,
+            func.count(RedistributionRecommendation.id).label("cnt"),
+            func.coalesce(
+                func.sum(RedistributionRecommendation.net_benefit_rub), 0
+            ).label("net_benefit"),
+            func.coalesce(
+                func.sum(RedistributionRecommendation.expected_logistics_saving_rub),
+                0,
+            ).label("saving"),
+        )
+        .join(
+            Product,
+            Product.nm_id == RedistributionRecommendation.nm_id,
+            isouter=True,
+        )
+        .join(
+            BrandAssignment,
+            BrandAssignment.brand == Product.brand,
+            isouter=True,
+        )
+        .join(User, User.id == BrandAssignment.user_id, isouter=True)
+        .group_by(
+            User.id,
+            User.username,
+            User.full_name,
+            RedistributionRecommendation.status,
+        )
+    )
+    if brands is None:
+        stmt = base
+    elif not brands:
+        stmt = base.where(RedistributionRecommendation.id < 0)
+    else:
+        nm_filter = select(Product.nm_id).where(Product.brand.in_(list(brands)))
+        stmt = base.where(RedistributionRecommendation.nm_id.in_(nm_filter))
+    if date_from:
+        stmt = stmt.where(
+            func.date(RedistributionRecommendation.generated_at) >= date_from
+        )
+    if date_to:
+        stmt = stmt.where(
+            func.date(RedistributionRecommendation.generated_at) <= date_to
+        )
+
+    rows = (await session.execute(stmt)).all()
+    by_user: dict[int | None, dict[str, Any]] = {}
+    for r in rows:
+        uid = r.user_id
+        u = by_user.setdefault(
+            uid,
+            {
+                "user_id": uid,
+                "username": r.username or "—",
+                "full_name": r.full_name or ("Не назначен" if uid is None else r.username),
+                "by_status": {},
+                "total_count": 0,
+                "total_net_benefit": 0.0,
+                "total_saving": 0.0,
+            },
+        )
+        u["by_status"][r.status] = {
+            "count": int(r.cnt or 0),
+            "net_benefit": float(r.net_benefit or 0),
+        }
+        u["total_count"] += int(r.cnt or 0)
+        u["total_net_benefit"] += float(r.net_benefit or 0)
+        u["total_saving"] += float(r.saving or 0)
+    return {"by_user": list(by_user.values())}
 
 
 @router.get("/roi")

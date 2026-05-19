@@ -1,10 +1,13 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { useAuth } from "@/contexts/AuthContext";
 import { fmtRub } from "@/lib/format";
 
 export default function Redistribution() {
   const qc = useQueryClient();
+  const { user } = useAuth();
+  const seesAllBrands = user?.role === "director" || user?.role === "head_of_sales";
   const [recsTab, setRecsTab] = useState<"pending" | "queued" | "executed">("pending");
 
   const statusQ = useQuery({
@@ -90,6 +93,9 @@ export default function Redistribution() {
         roi={roiQ.data}
         loading={roiQ.isLoading}
       />
+
+      {/* LEAD-013: per-manager redistribution analytics (ROP/director view) */}
+      {seesAllBrands && <RedistributionByManagerWidget />}
 
       {/* Recommendations */}
       <div className="card">
@@ -387,6 +393,69 @@ function Stat({
     <div>
       <div className="text-xs text-muted uppercase tracking-wide">{label}</div>
       <div className={`text-lg font-mono tabular-nums mt-1 ${cls}`}>{value}</div>
+    </div>
+  );
+}
+
+
+/** LEAD-013: per-manager аналитика redistribution. Видна только для
+ * director / head_of_sales. Сортирует по net_benefit DESC — кто принёс
+ * больше потенциальной экономии.
+ */
+function RedistributionByManagerWidget() {
+  const q = useQuery({
+    queryKey: ["redistribution-by-manager"],
+    queryFn: () => api.redistributionByManager(),
+    refetchInterval: 5 * 60_000,
+  });
+  if (q.isLoading) return null;
+  const users = q.data?.by_user || [];
+  if (users.length === 0) return null;
+  const sorted = [...users].sort((a, b) => b.total_net_benefit - a.total_net_benefit);
+
+  return (
+    <div className="card">
+      <h2 className="font-medium mb-3">Перераспределение по менеджерам</h2>
+      <table className="w-full text-sm">
+        <thead className="text-muted text-xs uppercase">
+          <tr className="border-b border-border">
+            <th className="text-left p-2">Менеджер</th>
+            <th className="text-right p-2">Всего рек.</th>
+            <th className="text-right p-2">Net benefit</th>
+            <th className="text-right p-2">Saving</th>
+            <th className="text-right p-2">Pending</th>
+            <th className="text-right p-2">Approved</th>
+            <th className="text-right p-2">Executed</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((u) => (
+            <tr key={u.user_id ?? "unassigned"} className="border-t border-border">
+              <td className="p-2">
+                {u.full_name}
+                <div className="text-xs text-muted">@{u.username}</div>
+              </td>
+              <td className="p-2 text-right font-mono">{u.total_count}</td>
+              <td className="p-2 text-right font-mono text-success">
+                {fmtRub(u.total_net_benefit)}
+              </td>
+              <td className="p-2 text-right font-mono text-muted">
+                {fmtRub(u.total_saving)}
+              </td>
+              <td className="p-2 text-right font-mono">
+                {u.by_status.pending?.count ?? 0}
+              </td>
+              <td className="p-2 text-right font-mono text-accent">
+                {(u.by_status.approved?.count ?? 0) +
+                  (u.by_status.queued?.count ?? 0)}
+              </td>
+              <td className="p-2 text-right font-mono text-success">
+                {u.by_status.executed?.count ?? 0}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

@@ -1181,6 +1181,19 @@ def publish_redistribution_windows() -> int:
     return asyncio.run(_publish_redistribution_windows_async())
 
 
+# ─── Weekly digest для head_of_sales (LEAD-012) ─────────────────────────
+
+
+@celery_app.task(name="app.sync.tasks.send_weekly_digest")
+def send_weekly_digest() -> dict[str, Any]:
+    """Beat-task: понедельник 10:00 МСК (07:00 UTC). Дайджест по всем
+    активным tenant'ам у которых привязан tg_chat_id.
+    """
+    from app.services.digest_weekly import send_weekly_digests_all_tenants
+
+    return asyncio.run(send_weekly_digests_all_tenants())
+
+
 # ---------------------------------------------------------------------------
 # Advertising
 # ---------------------------------------------------------------------------

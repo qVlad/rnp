@@ -13,10 +13,17 @@ from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Chargeback, ChargebackHistory, ClaimTemplate, Product
+from app.db.models import (
+    BrandAssignment,
+    Chargeback,
+    ChargebackHistory,
+    ClaimTemplate,
+    Product,
+    User,
+)
 from app.services.audit import audit_log
 from app.services.auth import (
     CurrentUser,
@@ -126,17 +133,103 @@ async def list_chargebacks(
     return {"items": [_serialize_chargeback(c) for c in rows], "limit": limit, "offset": offset}
 
 
+async def _stats_by_manager(
+    session: AsyncSession,
+    date_from: date | None,
+    date_to: date | None,
+    brands: set[str] | None,
+) -> dict[str, Any]:
+    """LEAD-013: stats по менеджерам через JOIN chargebacks → products →
+    brand_assignments → users. Если бренду назначены N менеджеров —
+    chargeback попадает в N строк (это аналитика «у кого активность»).
+
+    Чарджбэки nm_id IS NULL или brand без assignments → группа "unassigned".
+    """
+    # JOIN: c.nm_id → p.brand → ba.user_id → u.username
+    base = (
+        select(
+            User.id.label("user_id"),
+            User.username,
+            User.full_name,
+            Chargeback.status,
+            func.count(Chargeback.id).label("cnt"),
+            func.coalesce(func.sum(Chargeback.amount_rub), 0).label("total"),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            Chargeback.status == "resolved_recovered",
+                            Chargeback.recovered_amount,
+                        ),
+                        else_=0,
+                    )
+                ),
+                0,
+            ).label("recovered"),
+        )
+        .join(Product, Product.nm_id == Chargeback.nm_id, isouter=True)
+        .join(
+            BrandAssignment,
+            BrandAssignment.brand == Product.brand,
+            isouter=True,
+        )
+        .join(User, User.id == BrandAssignment.user_id, isouter=True)
+        .group_by(User.id, User.username, User.full_name, Chargeback.status)
+    )
+    if brands is None:
+        stmt = base
+    elif not brands:
+        stmt = base.where(Chargeback.id < 0)
+    else:
+        nm_filter = select(Product.nm_id).where(Product.brand.in_(list(brands)))
+        stmt = base.where(Chargeback.nm_id.in_(nm_filter))
+    if date_from:
+        stmt = stmt.where(Chargeback.operation_dt >= date_from)
+    if date_to:
+        stmt = stmt.where(Chargeback.operation_dt <= date_to)
+    rows = (await session.execute(stmt)).all()
+
+    by_user: dict[int | None, dict[str, Any]] = {}
+    for r in rows:
+        uid = r.user_id  # может быть None — unassigned
+        u = by_user.setdefault(
+            uid,
+            {
+                "user_id": uid,
+                "username": r.username or "—",
+                "full_name": r.full_name or ("Не назначен" if uid is None else r.username),
+                "by_status": {},
+                "total_count": 0,
+                "total_amount": 0.0,
+                "recovered_amount": 0.0,
+            },
+        )
+        u["by_status"][r.status] = {
+            "count": int(r.cnt or 0),
+            "amount": float(r.total or 0),
+        }
+        u["total_count"] += int(r.cnt or 0)
+        u["total_amount"] += float(r.total or 0)
+        u["recovered_amount"] += float(r.recovered or 0)
+
+    return {"group_by": "manager", "by_user": list(by_user.values())}
+
+
 @router.get("/stats")
 async def get_stats(
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
+    group_by: str = Query(default="category"),
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict[str, Any]:
-    """Сводка по категориям × статусам за период.
+    """Сводка чарджбэков. `group_by=category` (default) | `manager`.
 
     Manager видит свои бренды; director / head_of_sales — все.
     """
+    if group_by == "manager":
+        return await _stats_by_manager(session, date_from, date_to, brands)
+
     stmt = _apply_brand_filter(select(
         Chargeback.category,
         Chargeback.status,
