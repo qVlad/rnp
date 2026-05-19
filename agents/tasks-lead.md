@@ -95,15 +95,21 @@ Lead использует этот файл как master-view: сюда скл�
 - **Оценка:** 1ч на спеку, реализация ~3-4 недели
 - **Описание:** Source `agents/references/market/top-features-2026-05-17.md` Product #2. ICP: 20-200М/год, FBO, 50-500 SKU. Pricing add-on +3-5k₽/мес. Без новых интеграций — только парсинг существующего `wb_report_detail.supplier_oper_name`.
 - **Критерии готовности:**
-  - [ ] Spec в `agents/references/spec-chargebacks.md`: словарь проблемных операций, statemachine workflow (новое → подана → ответ WB → решено), мапинг ролей (Manager создаёт претензию, Selller подтверждает, Audit log пишется)
-  - [ ] TASK-DES-NNN: лейаут страницы `/chargebacks` (лента с фильтрами, форма претензии, PDF-кнопка)
-  - [ ] TASK-DEV-NNN backend: модели `chargebacks` + `chargeback_history`, миграция, API CRUD
-  - [ ] TASK-DEV-NNN frontend: страница + интеграция
-  - [ ] TASK-DEV-NNN: PDF-экспорт «Реестр претензий за период»
-  - [ ] TASK-DEV-NNN: Telegram-алерт при списании > N₽ (через event-bus после LEAD-004!)
-  - [ ] TASK-QA-NNN: smoke + RBAC
-- **Зависимости:** LEAD-004 (event-bus нужен для Telegram-алертов)
-- **Статус:** Открыта
+  - [x] Spec в `agents/references/spec-chargebacks.md` — 10 категорий из реальных prod-данных, statemachine (new→disputing→resolved_*/cancelled/auto_closed), UI wireframe
+  - [x] Backend: миграция `0036_chargebacks` (chargebacks + chargeback_history)
+  - [x] Backend: модели `Chargeback`, `ChargebackHistory` в `db/models.py`
+  - [x] Backend: `services/chargebacks.py` — словарь `OPER_NAME_TO_CATEGORY` (10 категорий), парсер `sync_chargebacks()` с auto-close < 100₽, statemachine `transition()` с историей
+  - [x] Backend: `api/chargebacks.py` (`/api/chargebacks/*`) — list / get (с history) / update / transition / sync / stats / meta. Guard `require_module("chargebacks")` + `require_director_or_head`. Audit_log на все мутации
+  - [x] Celery beat: `sync-chargebacks-daily` в 04:45 МСК + routing `queue=default`
+  - [x] Frontend: страница `/chargebacks` с фильтрами (статус/категория/период/мин.сумма) + сводка по статусам + расширяющиеся строки с workflow-кнопками
+  - [x] Frontend: пункт меню «Чарджбэки WB» (DirectorOrHead), маршрут
+  - [x] Типизированный API client + интерфейс `Chargeback`
+  - [ ] PDF-экспорт «Реестр претензий» (v1.5, опц.)
+  - [ ] Telegram-алерт при списании > N₽ (после LEAD-004 реализации)
+  - [ ] TASK-QA-NNN: smoke + RBAC после деплоя
+  - [ ] Включить модуль через `PUT /api/tenant-modules/chargebacks {enabled:true}` после деплоя
+- **Зависимости:** LEAD-004 (event-bus) — только для Telegram-алертов; v1 работает без
+- **Статус:** Выполнено (backend + frontend) — 2026-05-19. Деплой + smoke + persona-валидация в backlog
 
 ---
 

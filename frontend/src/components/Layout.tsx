@@ -76,6 +76,7 @@ const GROUPS: Group[] = [
     items: [
       { to: "/opex", label: "OPEX", directorOrHead: true },
       { to: "/revenue-corrections", label: "Корректировки", directorOrHead: true },
+      { to: "/chargebacks", label: "Чарджбэки WB", directorOrHead: true },
       { to: "/brands", label: "Бренды", directorOrHead: true },
     ],
   },
@@ -89,8 +90,9 @@ const GROUPS: Group[] = [
   {
     label: "Справка",
     items: [
-      { to: "/glossary", label: "Глоссарий" },
-      { to: "/docs", label: "Помощь" },
+      { to: "/glossary", label: "Глоссарий", icon: "list" },
+      { to: "/docs", label: "Помощь", icon: "help" },
+      { to: "/features", label: "Каталог функций", icon: "layers" },
     ],
   },
   {

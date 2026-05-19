@@ -1374,6 +1374,79 @@ class WbCampaignBudget(Base, TenantScopedMixin):
     )
 
 
+class Chargeback(Base, TenantScopedMixin):
+    """Чарджбэк / штраф / коррекция WB — лента с workflow оспаривания.
+
+    Создаётся парсером `services/chargebacks.sync_chargebacks()` из строк
+    `wb_report_detail` по словарю «оспоримых» `supplier_oper_name` (Штраф,
+    Удержание, Коррекция логистики/продаж/эквайринга, Платная приёмка,
+    Хранение с низким ИЛ, Компенсация ущерба).
+
+    `amount_rub` — абсолютная величина суммы. Знак подразумевается категорией
+    (damage_compensation = в плюс, остальные = в минус).
+
+    UNIQUE(tenant_id, rrd_id, category) обеспечивает дедупликацию: повторный
+    запуск парсера не создаёт дубликаты на тех же строках wb_report_detail.
+
+    Миграция 0036.
+    """
+
+    __tablename__ = "chargebacks"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    rrd_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    realizationreport_id: Mapped[int | None] = mapped_column(BigInteger)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    supplier_oper_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    amount_rub: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    nm_id: Mapped[int | None] = mapped_column(BigInteger)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="new")
+    operation_dt: Mapped[date | None] = mapped_column(Date)
+    rr_dt: Mapped[date | None] = mapped_column(Date)
+    comment: Mapped[str | None] = mapped_column(Text)
+    claim_text: Mapped[str | None] = mapped_column(Text)
+    claim_filed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    wb_response: Mapped[str | None] = mapped_column(Text)
+    wb_responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    recovered_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False, default="system")
+    updated_by: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "rrd_id", "category", name="uq_chargeback_dedup"),
+    )
+
+
+class ChargebackHistory(Base, TenantScopedMixin):
+    """Журнал переходов статусов chargeback — audit trail для прозрачности.
+
+    Заполняется при каждом успешном `chargebacks.transition()`. Содержит
+    from→to + актора + опц. комментарий. Не зависит от общего `audit_log`
+    (тот пишется на любые мутации сущностей; здесь — узкий статус-flow).
+    Миграция 0036.
+    """
+
+    __tablename__ = "chargeback_history"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    chargeback_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("chargebacks.id", ondelete="CASCADE"), nullable=False
+    )
+    from_status: Mapped[str | None] = mapped_column(String(32))
+    to_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    comment: Mapped[str | None] = mapped_column(Text)
+    actor: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class AuditImport(Base, TenantScopedMixin):
     """Импортированный XLSX из WB-кабинета или от бухгалтера для 3-source аудита.
 

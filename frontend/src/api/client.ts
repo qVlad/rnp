@@ -49,6 +49,31 @@ export type Me = {
   full_name: string | null;
 };
 
+export interface Chargeback {
+  id: number;
+  rrd_id: number;
+  category: string;
+  category_label: string;
+  is_income: boolean;
+  supplier_oper_name: string;
+  amount_rub: number;
+  nm_id: number | null;
+  status: string;
+  status_label: string;
+  operation_dt: string | null;
+  rr_dt: string | null;
+  comment: string | null;
+  claim_text: string | null;
+  claim_filed_at: string | null;
+  wb_response: string | null;
+  wb_responded_at: string | null;
+  recovered_amount: number | null;
+  created_at: string | null;
+  updated_at: string | null;
+  created_by: string;
+  updated_by: string | null;
+}
+
 export const api = {
   // ── Auth ──
   authMe: () => request<Me>("/api/auth/me"),
@@ -249,6 +274,83 @@ export const api = {
     }>(
       `/api/audit-mode/decisions?period_start=${period_start}&period_end=${period_end}`,
     ),
+
+  // ── Chargebacks (штрафы / коррекции WB) ──
+  chargebacksList: (params: {
+    status?: string;
+    category?: string;
+    date_from?: string;
+    date_to?: string;
+    min_amount?: number;
+    limit?: number;
+    offset?: number;
+  } = {}) => {
+    const qs = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+    });
+    return request<{
+      items: Array<Chargeback>;
+      limit: number;
+      offset: number;
+    }>(`/api/chargebacks?${qs}`);
+  },
+  chargebacksGet: (id: number) =>
+    request<Chargeback & {
+      history: Array<{
+        from_status: string | null;
+        to_status: string;
+        comment: string | null;
+        actor: string;
+        created_at: string | null;
+      }>;
+    }>(`/api/chargebacks/${id}`),
+  chargebacksUpdate: (
+    id: number,
+    body: { comment?: string; claim_text?: string },
+  ) =>
+    request<Chargeback>(`/api/chargebacks/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  chargebacksTransition: (
+    id: number,
+    body: {
+      to_status: string;
+      comment?: string;
+      wb_response?: string;
+      recovered_amount?: number | null;
+    },
+  ) =>
+    request<Chargeback>(`/api/chargebacks/${id}/transition`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  chargebacksStats: (date_from?: string, date_to?: string) => {
+    const qs = new URLSearchParams();
+    if (date_from) qs.set("date_from", date_from);
+    if (date_to) qs.set("date_to", date_to);
+    return request<{
+      by_category: Array<{
+        category: string;
+        category_label: string;
+        is_income: boolean;
+        by_status: Record<string, { count: number; amount: number }>;
+        total_count: number;
+        total_amount: number;
+      }>;
+    }>(`/api/chargebacks/stats?${qs}`);
+  },
+  chargebacksSync: (lookback_days: number = 60) =>
+    request<{ created: number; auto_closed: number; skipped: number }>(
+      `/api/chargebacks/sync`,
+      { method: "POST", body: JSON.stringify({ lookback_days }) },
+    ),
+  chargebacksMeta: () =>
+    request<{
+      categories: Array<{ code: string; label: string; is_income: boolean }>;
+      statuses: Array<{ code: string; label: string }>;
+    }>("/api/chargebacks/meta/categories"),
 
   health: () => request<{ status: string }>("/api/health"),
   whoami: () =>
@@ -1271,6 +1373,13 @@ paymentOrderDelete: (payment_order_id: string) =>
 
   // ── Sync status (для индикатора в шапке) ──
   syncStatus: () => request<SyncStatusResponse>(`/api/sync/status`),
+
+  // ── Features doc (FEATURES.md as plain text для страницы /features) ──
+  featuresDoc: async (): Promise<string> => {
+    const r = await fetch("/api/features-doc", { credentials: "include" });
+    if (!r.ok) throw new Error(`Failed to load FEATURES.md: ${r.status}`);
+    return r.text();
+  },
 };
 
 export interface SyncEntity {

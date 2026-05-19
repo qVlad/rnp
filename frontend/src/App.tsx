@@ -4,6 +4,7 @@ import { PeriodProvider } from "@/contexts/PeriodContext";
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import Audit from "./pages/Audit";
+import Chargebacks from "./pages/Chargebacks";
 import PnL from "./pages/PnL";
 import PnLReconciliation from "./pages/PnLReconciliation";
 import TaxReport from "./pages/TaxReport";
@@ -34,6 +35,7 @@ import Users from "./pages/Users";
 import Brands from "./pages/Brands";
 import Glossary from "./pages/Glossary";
 import Docs from "./pages/Docs";
+import Features from "./pages/Features";
 import Checklist from "./pages/Checklist";
 import SeasonPlan from "./pages/SeasonPlan";
 import Jam from "./pages/Jam";
@@ -112,6 +114,14 @@ export default function App() {
             element={
               <DirectorOrHead>
                 <Audit />
+              </DirectorOrHead>
+            }
+          />
+          <Route
+            path="chargebacks"
+            element={
+              <DirectorOrHead>
+                <Chargebacks />
               </DirectorOrHead>
             }
           />
@@ -253,6 +263,7 @@ export default function App() {
           />
           <Route path="glossary" element={<Glossary />} />
           <Route path="docs" element={<Docs />} />
+          <Route path="features" element={<Features />} />
           <Route path="checklist" element={<Checklist />} />
           <Route
             path="season-plan"

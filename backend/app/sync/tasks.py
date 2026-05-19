@@ -1015,6 +1015,40 @@ def sync_offset_acts_dispatch() -> dict[str, Any]:
     return _fanout(sync_offset_acts_for_tenant)
 
 
+# ─── Чарджбэки / штрафы (LEAD-005) ──────────────────────────────────────
+
+
+async def _sync_chargebacks_async(tenant_id: int, lookback_days: int = 60) -> int:
+    """Сканирует wb_report_detail за последние N дней и создаёт chargebacks
+    для проблемных supplier_oper_name. Без вызовов WB API — чистый SQL UPSERT.
+    Идемпотентен по UNIQUE(rrd_id, category).
+    """
+    from app.services.chargebacks import sync_chargebacks as _do  # noqa: WPS433
+    from app.services.tenant_context import set_tenant  # noqa: WPS433
+
+    async with task_session_scope() as session:
+        set_tenant(session, tenant_id)
+        result = await _do(
+            session, tenant_id=tenant_id, lookback_days=lookback_days
+        )
+        await update_checkpoint(
+            session,
+            "chargebacks",
+            rows_processed=result["created"] + result["auto_closed"],
+            status="ok",
+        )
+        return result["created"] + result["auto_closed"]
+
+
+@celery_app.task(name="app.sync.tasks.sync_chargebacks_for_tenant")
+def sync_chargebacks_for_tenant(tenant_id: int, lookback_days: int = 60) -> int:
+    return asyncio.run(_sync_chargebacks_async(tenant_id, lookback_days))
+
+
+@celery_app.task(name="app.sync.tasks.sync_chargebacks")
+def sync_chargebacks_dispatch() -> dict[str, Any]:
+    """Beat dispatcher: fanout по активным tenants (раз в день в 04:45 МСК)."""
+    return _fanout(sync_chargebacks_for_tenant)
 
 
 # ---------------------------------------------------------------------------

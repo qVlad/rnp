@@ -51,6 +51,8 @@ celery_app.conf.update(
         "app.sync.tasks.sync_ad_stats": {"queue": "advert"},
         "app.sync.tasks.send_daily_digest": {"queue": "default"},
         "app.sync.tasks.evaluate_notifications": {"queue": "default"},
+        "app.sync.tasks.sync_chargebacks": {"queue": "default"},
+        "app.sync.tasks.sync_chargebacks_for_tenant": {"queue": "default"},
         # A/B test tasks — rotation reads photo files from abtest_photos
         # volume mounted only on worker-default, so routing matters.
         "app.sync.tasks_abtest.rotate_running_tests": {"queue": "default"},
@@ -122,6 +124,12 @@ celery_app.conf.update(
         "sync-offset-acts-daily": {
             "task": "app.sync.tasks.sync_offset_acts",
             "schedule": crontab(hour=7, minute=15),
+        },
+        # Чарджбэки/штрафы: сканируем wb_report_detail после report_detail-sync
+        # за последние 60 дней. Без новых WB-вызовов — чистый SQL UPSERT, дешёво.
+        "sync-chargebacks-daily": {
+            "task": "app.sync.tasks.sync_chargebacks",
+            "schedule": crontab(hour=4, minute=45),
         },
         # Advert queue — production observation: WB penalises >=2 advert calls
         # within ~60 min with 50-60 min cooldown. Schedule must keep ≥1h gap

@@ -16,11 +16,14 @@ from app.api import (
     brands,
     calc,
     cash_flow,
+    chargebacks,
     checklist,
     cost_history,
     dashboard,
     excel,
+    extension,
     external_ad_costs,
+    features_doc,
     jam,
     notifications,
     off_platform,
@@ -120,8 +123,24 @@ async def auth_gate(request: Request, call_next):
         or (path.startswith("/api/products/") and path.endswith("/photo"))
     ):
         return await call_next(request)
+    # /api/extension/* — companion Chrome-расширение шлёт `Authorization: Bearer
+    # <jwt>` (cookie не доступна в MV3 service worker). Контракт строго Bearer-
+    # only — endpoint'ы внутри сами валидируют через get_extension_user. Здесь
+    # просто пропускаем middleware-проверку cookie, чтобы не возвращать 401
+    # ещё до handler'а.
+    if path.startswith("/api/extension/"):
+        return await call_next(request)
     token = request.cookies.get(cfg.auth_cookie_name)
+    # Универсальный fallback: Authorization: Bearer <jwt>. Удобно для CLI и
+    # внешних интеграций. Сам по себе не предоставляет привилегий — handler
+    # потом ещё раз проверит токен через get_current_user (cookie-only).
+    # Поэтому реальный путь для не-cookie клиентов — через /api/extension/*.
     if not token or not decode_session_token(token):
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            bearer = auth_header[7:].strip()
+            if decode_session_token(bearer):
+                return await call_next(request)
         return JSONResponse(
             {"detail": "not authenticated"},
             status_code=401,
@@ -187,11 +206,14 @@ app.include_router(brands.router)
 app.include_router(tenant_settings.router)
 app.include_router(tenant_modules.router)
 app.include_router(audit_mode.router)
+app.include_router(chargebacks.router)
 app.include_router(tax_report.router)
 app.include_router(supplies.router)
 app.include_router(checklist.router)
 app.include_router(season_plan.router)
 app.include_router(jam.router)
 app.include_router(sync_status.router)
+app.include_router(features_doc.router)
 app.include_router(abtest.router)
 app.include_router(abtest_uploads.router)
+app.include_router(extension.router)
