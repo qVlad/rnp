@@ -18,6 +18,10 @@ import logging
 import socket
 from typing import Any
 
+from sqlalchemy import select
+
+from app.db.models import AppSetting
+from app.integrations.telegram import send_message
 from app.services.event_bus import (
     EventType,
     consume_batch,
@@ -36,32 +40,77 @@ def _consumer_name(suffix: str = "") -> str:
     return f"{host}-{suffix}" if suffix else host
 
 
+async def _get_tg_chat_id(tenant_id: int) -> str | None:
+    """Достаёт привязанный Telegram chat_id для tenant'а из AppSetting.
+
+    Каждый tenant имеет свой chat_id (или None если бот ещё не подключён).
+    Возвращается строкой — Telegram API принимает и int, и string.
+    """
+    from app.db.session import task_session_scope
+    from app.services.tenant_context import set_tenant
+
+    async with task_session_scope() as session:
+        set_tenant(session, tenant_id)
+        row = (
+            await session.execute(
+                select(AppSetting).where(
+                    AppSetting.tenant_id == tenant_id,
+                    AppSetting.key == "tg_chat_id",
+                )
+            )
+        ).scalar_one_or_none()
+        return row.value if row else None
+
+
 # ─── Handlers ──────────────────────────────────────────────────────────
 
 
 async def _handle_chargeback_telegram(event: dict[str, Any]) -> None:
     """Уведомить через Telegram о крупном списании WB.
 
-    В v1 просто log.info с emoji — реальный bot-handler подключим когда
-    разрулим contracts с bot/main.py (там tenant-aware Telegram chat lookup).
+    Берёт `tg_chat_id` из `app_settings` per-tenant (привязывается через
+    `/start` в bot/main.py). Если для tenant'а нет chat_id — silent skip.
     """
+    tenant_id = int(event.get("tenant_id", 0))
+    chat_id = await _get_tg_chat_id(tenant_id)
+    if not chat_id:
+        log.debug(
+            "chargeback event tenant=%d skipped — no tg_chat_id bound",
+            tenant_id,
+        )
+        return
+
     data = event.get("data") or {}
     amount = data.get("amount_rub", 0)
-    cat = data.get("supplier_oper_name", data.get("category", "?"))
+    cat_name = data.get("supplier_oper_name", data.get("category", "?"))
     nm = data.get("nm_id")
-    sku_part = f" · nm {nm}" if nm else ""
-    log.info(
-        "📨 [chargeback_detected] tenant=%d %s%s · %.0f₽ · rrd %s",
-        event.get("tenant_id", 0),
-        cat,
-        sku_part,
-        amount,
-        data.get("rrd_id"),
+    rrd_id = data.get("rrd_id")
+    op_dt = data.get("operation_dt", "")[:10] if data.get("operation_dt") else ""
+
+    sku_line = f"\nSKU: <code>{nm}</code>" if nm else ""
+    date_line = f"\nДата операции: {op_dt}" if op_dt else ""
+
+    text = (
+        f"⚠ <b>WB списал {amount:,.0f}₽</b>\n"
+        f"{cat_name}{sku_line}{date_line}\n"
+        f"rrd_id: <code>{rrd_id}</code>\n\n"
+        f"Подробнее → /chargebacks"
     )
-    # TODO: интегрировать с bot/main.py — найти tg_chat_id для tenant и
-    # послать sendMessage. Сейчас telegram bot долгопул в отдельном сервисе
-    # и не имеет публичного "send arbitrary message" API. Делаем отдельной
-    # задачей.
+    try:
+        await send_message(int(chat_id), text)
+        log.info(
+            "chargeback notify sent tenant=%d chat=%s amount=%.0f",
+            tenant_id,
+            chat_id,
+            amount,
+        )
+    except Exception:
+        log.exception(
+            "chargeback notify failed tenant=%d chat=%s — will retry via XPENDING",
+            tenant_id,
+            chat_id,
+        )
+        raise  # триггерит retry watchdog (не ACK'ается)
 
 
 # ─── Celery beat tasks ─────────────────────────────────────────────────
