@@ -53,6 +53,12 @@ celery_app.conf.update(
         "app.sync.tasks.evaluate_notifications": {"queue": "default"},
         "app.sync.tasks.sync_chargebacks": {"queue": "default"},
         "app.sync.tasks.sync_chargebacks_for_tenant": {"queue": "default"},
+        # Event-bus consumers (LEAD-004). Используют существующий
+        # worker-default — добавление отдельного worker-events service
+        # отложено в Этап 4 (требует ребилда docker-compose).
+        "app.sync.event_consumers.consume_chargeback_telegram": {"queue": "default"},
+        "app.sync.event_consumers.reclaim_all_pending": {"queue": "default"},
+        "app.sync.event_consumers.smoke_publish_chargeback": {"queue": "default"},
         # A/B test tasks — rotation reads photo files from abtest_photos
         # volume mounted only on worker-default, so routing matters.
         "app.sync.tasks_abtest.rotate_running_tests": {"queue": "default"},
@@ -130,6 +136,18 @@ celery_app.conf.update(
         "sync-chargebacks-daily": {
             "task": "app.sync.tasks.sync_chargebacks",
             "schedule": crontab(hour=4, minute=45),
+        },
+        # Event-bus consumer (LEAD-004) — tick каждые 30 сек, read with
+        # 5-second block. Если событий нет — задача быстро завершится.
+        "consume-chargeback-telegram-30s": {
+            "task": "app.sync.event_consumers.consume_chargeback_telegram",
+            "schedule": 30.0,
+        },
+        # DLQ watchdog — раз в 5 мин проверяет pending list и перевыдаёт
+        # застрявшие сообщения (idle > 10 мин). После 5 retries → DLQ.
+        "event-bus-reclaim-5min": {
+            "task": "app.sync.event_consumers.reclaim_all_pending",
+            "schedule": 300.0,
         },
         # Advert queue — production observation: WB penalises >=2 advert calls
         # within ~60 min with 50-60 min cooldown. Schedule must keep ≥1h gap

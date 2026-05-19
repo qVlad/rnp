@@ -77,14 +77,16 @@ Lead использует этот файл как master-view: сюда скл�
 - **Описание:** Архитектурное решение принимать ДО второго нового модуля. Иначе через 3 модуля код «слипнется» — каждый poll'ит БД.
 - **Критерии готовности:**
   - [x] Spec в `agents/references/spec-event-bus.md`: 8 канонических событий с payload schema, consumer groups, retry+DLQ через XPENDING/XCLAIM, idempotency by event.id, 4-этапный план реализации
-  - [x] Celery segregation встроен в spec event-bus (раздел «Worker'ы» — текущие 3 + 4 новых под product-фичи)
-  - [ ] Subagent `clean-architect` ревью (рекомендовано перед стартом реализации)
-  - [ ] TASK-DEV-NNN: Этап 1 spec — skeleton publish/consume helpers
-  - [ ] TASK-DEV-NNN: Этап 2 spec — первый publisher `sale.new`
-  - [ ] TASK-DEV-NNN: Этап 3 spec — полное покрытие core-событий
-  - [ ] TASK-DEV-NNN: Этап 4 spec — worker-events service в docker-compose
+  - [x] **Этап 1 — Skeleton:** `app/services/event_bus.py` — singleton aioredis client, `EventType` enum (8 типов), `publish()` с UUIDv7-like ID, `consume_batch()` с idempotency через `SET NX` (TTL 24h), `reclaim_pending()` watchdog с DLQ переездом после 5 retries
+  - [x] **Этап 2 — Первый publisher:** `chargeback.detected` из `services/chargebacks.sync_chargebacks()` для сумм > 500₽ (защита от Telegram-spam)
+  - [x] **Этап 3 (частично) — Первый consumer + watchdog:** `app/sync/event_consumers.py` — `consume_chargeback_telegram` (beat tick раз в 30 сек, currently log-only) + `reclaim_all_pending` (beat раз в 5 мин, DLQ после 5 retries) + `smoke_publish_chargeback` для prod-теста
+  - [x] Beat schedule + task routing для consumer'ов в `celery_app.py`
+  - [ ] Telegram-bot integration (нужен tenant→chat_id lookup, отдельная задача)
+  - [ ] stock.low + sale.new + tax.deadline.upcoming publishers (добавляются по мере необходимости)
+  - [ ] Subagent `clean-architect` ревью реализации (рекомендовано)
+  - [ ] Этап 4 — worker-events service в docker-compose (отложено, сейчас работает на worker-default)
 - **Зависимости:** LEAD-002, LEAD-003 (sunset уже готов)
-- **Статус:** Spec готов — 2026-05-18. Реализация в backlog (~2-3 нед)
+- **Статус:** Этапы 1-3 выполнены — 2026-05-19. Event-bus работает. Этап 4 + Telegram-handler + остальные publisher'ы — backlog
 
 ---
 

@@ -18,8 +18,15 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Chargeback, ChargebackHistory, WbReportDetail
+from app.services.event_bus import EventType, publish
 
 log = logging.getLogger(__name__)
+
+
+# Порог в ₽ — события CHARGEBACK_DETECTED публикуются только для сумм
+# выше этого порога. Мелкие auto_closed (< 100₽) и так не интересны
+# подписчикам (Telegram-spam). Расходная категория — abs(amount) > threshold.
+EVENT_PUBLISH_MIN_AMOUNT: Final = Decimal("500")
 
 
 # ── Словарь оспоримых операций ────────────────────────────────────────
@@ -201,6 +208,24 @@ async def sync_chargebacks(
                 auto_closed += 1
             else:
                 created += 1
+                # Publish event для уведомлений (Telegram). Только новые `new`,
+                # не auto_closed (мелкие). Только суммы выше порога — иначе
+                # selfspam при ежедневном syncе сотен мелких удержаний.
+                if amount >= EVENT_PUBLISH_MIN_AMOUNT:
+                    await publish(
+                        EventType.CHARGEBACK_DETECTED,
+                        tenant_id=tenant_id,
+                        data={
+                            "rrd_id": int(r.rrd_id) if r.rrd_id is not None else 0,
+                            "category": category,
+                            "supplier_oper_name": r.supplier_oper_name,
+                            "amount_rub": float(amount),
+                            "nm_id": int(r.nm_id) if r.nm_id is not None else None,
+                            "operation_dt": str(r.supplier_oper_dt)
+                            if r.supplier_oper_dt
+                            else None,
+                        },
+                    )
     await session.commit()
     log.info(
         "sync_chargebacks tenant=%d lookback=%dd: created=%d auto_closed=%d skipped=%d",
