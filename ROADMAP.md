@@ -16,6 +16,7 @@
 | 5 | ~200 | Celery: `tasks_abtest.py` + beat schedule (rotate 15м / poll budget 30м / stats full 4×/день) + wire self-scheduling |
 | 6 | ~1266 | Frontend: AbTestList/AbTestNew/AbTestDetail + sidebar «A/B тесты» + recharts |
 | 7 | ~600 | `scripts/migrate_wbab_to_rnp.py` + docs update (CLAUDE.md / WB_API_REFERENCE.md / ROADMAP.md) |
+| 8 | ~3170 | Chrome-расширение (MV3): перенос `extension/` (~2841 LOC) + ребрендинг wbab→РНП + backend `api/extension.py` (~330 LOC, 5 endpoints, Bearer JWT) + `main.py` auth_gate Bearer-fallback |
 
 Отложено: **Phase 8** — Chrome-расширение `wbab/extension/` ретаргет на rnp API (~50 LOC правок в `wbab-api.ts`, делается параллельно в репо wbab после cutover).
 
@@ -29,6 +30,42 @@
 | **2026-07-15** | `GET /supplier/reportDetailByPeriod` | `POST /api/finance/v1/sales-reports/detailed` (host `finance-api`, scope **Finance**, async create→status→download) | Серьёзный рефактор `sync_report_detail` — async polling, camelCase response, money как string |
 
 Без миграции после deadline — `stocks` и `report_detail` перестанут получать данные → дашборд / P&L / reconciliation сломаются.
+
+---
+
+## P1 · Новый модуль «Перераспределение остатков» (план готов, не начато)
+
+📋 **Полный план:** [`REDISTRIBUTION_PLAN.md`](REDISTRIBUTION_PLAN.md) — 12 разделов, 8-недельный MVP roadmap, спецификация реальных endpoints LK из HAR.
+
+**TL;DR.** Услуга WB «Перераспределение остатков» (+0.5% от всех продаж в Конструкторе тарифов) — публичного API нет, все боты на рынке (QuotaBot, WBCON, WBchamp, Супербот, А-КОРП) работают через session-capture LK. Окна **09:00 и 18:00 МСК**, лимиты разбираются за 4–60 секунд. **Дифференциация:** ROI-дашборд в рублях (никто не показывает) + связка прогноз→план→автобронь (никто не делает).
+
+**Что уже сделано в подготовке (2026-05-18):**
+
+- Снят первый HAR на `seller.wildberries.ru/analytics-reports/warehouse-remains` → найдены реальные endpoints (`/ns/shifts/analytics-back/api/v1/`), auth-схема (два JWT в headers: `AuthorizeV3` долгий + `Wb-Seller-Lk` 5-мин), endpoint квот `quota?officeID=…&type=src` (int 0 = окно закрыто, >0 = открыто). См. [`REDISTRIBUTION_PLAN.md § 6.1.1`](REDISTRIBUTION_PLAN.md).
+- HAR-файл: `tmp/redistribution_har/seller.wildberries.ru-2026-05-18.har` (не в git).
+- В [`WB_API_REFERENCE.md`](WB_API_REFERENCE.md) добавлена секция **«§ LK Shifts API (reverse-engineered)»**.
+
+**Что нужно перед стартом разработки:**
+
+- [ ] Снять HAR на момент создания заявки (главный пробел — POST endpoint неизвестен)
+- [ ] Снять HAR в окно 09:00 или 18:00 МСК (увидеть переход quota из 0 в >0)
+- [ ] Снять HAR на «Отчёт о перемещениях» и при выборе склада-приёмника (type=dst)
+- [ ] Подключить опцию в Конструкторе тарифов (90-дневный коммит, +0.5%)
+- [ ] Юридическая модель — disclaimer пользователю что credentials предоставлены добровольно
+
+**Какие части кода появятся:**
+
+- `backend/app/integrations/wb_lk/` — session-capture клиент (auth, client, endpoints, captcha, session_store)
+- `backend/app/services/redistribution/` — recommender, demand_forecast, economics, scheduler, execution
+- `backend/app/sync/tasks/redistribution_window.py` — Celery task на окна 09:00 и 18:00 МСК
+- `backend/app/api/routers/redistribution.py` — REST для дашборда
+- `backend/app/bot/handlers/redistribution.py` — Telegram-команды (/redist, /recs, /il, /roi, /connect_lk)
+- `frontend/src/pages/Redistribution/` — Dashboard, Recommendations, Queue, Settings
+- `db/models.py` — +5 таблиц (`wb_lk_sessions`, `redistribution_recommendations`, `redistribution_tasks`, `redistribution_cooldowns`, `redistribution_roi_snapshots`), все с `tenant_id` (multi-tenant с 11.05.2026)
+
+**Зависимости:** до старта модуля должны быть закрыты P0 sunset-миграции `stocks` (23.06.2026) и `report_detail` (15.07.2026) — модуль использует те же данные для расчёта ИЛ и прогноза спроса.
+
+---
 
 ## P0 · Открытые проблемы WB-интеграции
 

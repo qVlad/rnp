@@ -25,6 +25,7 @@
 | **`TAX_USN_BANK.md`** | УСН 6% (3 режима: без НДС / + НДС 5% / + НДС 7%) — методика Стаса (новое) |
 | **`TAX_BOOKKEEPER_OVERRIDES.md`** | per-regime флаги исключения отчётов из налоговой базы (новое) |
 | **`UI_UX_AUDIT.md`** | 20 задач от art-director'а, все закрыты — для регрессий и понимания дизайн-системы (новое) |
+| **`REDISTRIBUTION_PLAN.md`** | План нового модуля «Перераспределение остатков» — 12 разделов, 8-недельный roadmap, разобранные endpoints LK shifts из HAR 2026-05-18 (новое) |
 
 ## Первые 3 команды на старте
 
@@ -36,7 +37,122 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
-## ⭐ Что сделано в текущей сессии (2026-05-15 / 16) — **ВСЁ ЗАДЕПЛОЕНО НА ПРОД, НЕ ЗАКОММИЧЕНО**
+## ⭐ Что сделано в сессии 2026-05-19 (вечер) — **UNIT-план** (Sprint 1 + Sprint 2 backend/frontend skeleton)
+
+Порт Excel-методики LeymanKids (`/Users/user/Downloads/LeymanKids UNIT_план WB Обновление.xlsx`) — плановая юнит-экономика для всех SKU. Отдельная страница `/unit-plan`, **не трогает** существующие `/units` (факт) и `/unit-calculator` (single-SKU).
+
+**Канон:** [`UNIT_PLAN.md`](UNIT_PLAN.md) — методика 1:1, 60 формул Excel → DTO. **Backlog:** `agents/tasks-lead.md` секция «UNIT-план WB» (23 задачи UNIT-PLAN-001…023 + TASK-LEAD-018).
+
+**Sprint 1 (фундамент) — готов:**
+- ✅ Миграции **0040** (`wb_tariff_box/pallet/commission` — без `tenant_id`, SCD Type 2) / **0041** (`products.volume_l/warehouse_default/is_monopallet/items_per_monopallet`) / **0042** (`unit_plan_global_config/override/snapshot` — tenant-scoped)
+- ✅ `backend/app/integrations/wb/tariffs.py` — 3 fetch-функции (box/pallet/commission), Pydantic models. Категория `"tariffs"` в `WbApiClient`, лимитер 6/мин.
+- ✅ `backend/app/sync/tasks_tariffs.py` — Celery beat `sync.tariffs` ежедневно 08:00 MSK, SCD Type 2 upsert через `services/unit_plan_reference.py`.
+- ✅ `backend/app/services/unit_plan.py` — **pure-function `compute_row`** (~600 строк) + 11 frozen dataclasses, фиксы под Excel-формулы (5-ступенчатый Z/AG, точная storage formula).
+- ✅ 17 unit-тестов + contract-test против 45 строк Excel: **81% pass** (587/720), 19% failures — известная Excel-противоречие в AF formula (rows 4+ используют `Z+50` вместо `Z+AG`, см. UNIT_PLAN.md §14.5).
+- ✅ Скрипт `scripts/unit_plan/extract_excel_fixture.py` + `scripts/unit_plan/verify_tariffs_api.sh` (curl-верификация).
+
+**Sprint 2 (API + frontend skeleton) — готов:**
+- ✅ `backend/app/services/unit_plan_loader.py` — bulk-loaders (`load_reference_bundle`, `load_global_config`, `load_per_nm_snapshots`). Конвенция БД (0-100%) → dataclass (0-1 доли) через `_pct_to_share`.
+- ✅ `backend/app/api/unit_plan.py` — **9 endpoints** под `/api/unit-plan`: GET `/rows` (brands-filter), GET/PUT `/global-config` (director), GET/PUT/DELETE `/overrides/{nm}` (manager — свои brands), POST/GET `/snapshots`, GET `/snapshots/{id}/diff`, GET `/reference/status`. Все mutations через `audit_log`.
+- ✅ `frontend/src/pages/UnitPlan.tsx` (~1100 строк): **52 колонки** (30 видимых, 22 скрытых через `localStorage`), 3-уровневая sticky-зона, frozen-left 6 колонок, color coding (margin 4 порога / buyout 3 / stockout 3), drill-down drawer 480px (заглушка), mobile fallback. Mock-data при недоступном API.
+- ✅ Регистрация в `App.tsx` + пункт меню в `Layout.tsx` (группа «SKU и продажи»).
+
+**Состояние:** код в main репо, не закоммичен. **Не задеплоен** — перед миграциями нужен `pg_dump` бэкап.
+
+**Что осталось для финального запуска UNIT-плана (Sprint 3-4):**
+- Inline-edit ячеек на `/unit-plan` (overrides через PUT)
+- Paste-from-Excel (литры/СПП bulk-import)
+- Полный drill-down (история цен 90дн, разбивка COGS)
+- XLSX export 1:1 (UNIT-PLAN-014)
+- Settings UI для global-constants timeline (UNIT-PLAN-007)
+- Settings UI для tariff-таблиц с override (UNIT-PLAN-006)
+- Snapshot diff UI (UNIT-PLAN-015) и реальная диффа в `/snapshots/{id}/diff`
+- Прогноз остатка на конкретную дату (UNIT-PLAN-016)
+- Snapshot заказов в 3 исторических периодах (UNIT-PLAN-017, BA-BF колонки)
+- QA cell-by-cell (UNIT-PLAN-019), RBAC smoke (UNIT-PLAN-020)
+
+**Чек-лист деплоя Sprint 1+2:**
+```bash
+docker compose up -d
+docker compose exec -T postgres pg_dump -U app rnp | gzip > pgdata-pre-unit-plan-$(date +%F-%H%M).sql.gz
+docker compose exec backend pytest backend/tests/unit_plan/ backend/tests/test_wb_tariffs_integration.py backend/tests/test_sync_tariffs.py backend/tests/test_unit_plan_api.py -v
+./scripts/unit_plan/verify_tariffs_api.sh  # подтвердить response shape WB Tariffs API
+docker compose exec backend alembic upgrade head  # применить 0040-0042
+docker compose exec backend python -c "from app.sync.tasks_tariffs import sync_tariffs; sync_tariffs.delay()"  # первый sync
+# Открыть /unit-plan в браузере — должна показать пустую таблицу с message о sync в процессе
+```
+
+---
+
+## 🆕 Готов к разработке — модуль «Перераспределение остатков»
+
+В сессии 2026-05-12..18 проведено исследование и составлен план:
+
+- **План:** [`REDISTRIBUTION_PLAN.md`](REDISTRIBUTION_PLAN.md) — 12 разделов, 8-недельный MVP roadmap
+- **Reverse-engineered endpoints:** [`WB_API_REFERENCE.md § 13. LK Shifts API`](WB_API_REFERENCE.md) — внутренние endpoints `/ns/shifts/analytics-back/api/v1/` (host `seller-weekly-report.wildberries.ru`), auth через два JWT (`AuthorizeV3` + `Wb-Seller-Lk` TTL 5 мин)
+- **HAR-snapshot:** `tmp/redistribution_har/seller.wildberries.ru-2026-05-18.har` (не в git)
+- **Готовность:** план составлен, реальные endpoints разобраны частично. **Не хватает:** HAR на момент создания заявки (POST endpoint), HAR в открытом окне 09:00/18:00 МСК. Список TODO в начале [`REDISTRIBUTION_PLAN.md`](REDISTRIBUTION_PLAN.md) и в [`ROADMAP.md § P1`](ROADMAP.md).
+- **Когда начинать:** после закрытия P0 sunset-миграций stocks (23.06.2026) и report_detail (15.07.2026), либо параллельно если стек хочется.
+- **TL;DR ниши:** услуга WB +0.5% от всех продаж, окна 09:00/18:00 МСК, лимиты разбираются за 4–60 сек. Публичного API нет — все боты (QuotaBot, WBCON, А-КОРП, Супербот) через session-capture LK. Наш дифференциатор: ROI-дашборд в рублях (никто не показывает) + связка прогноз→план→автобронь (никто не делает).
+
+---
+
+## ⭐ Что сделано в сессии 2026-05-19 — перенос Chrome-расширения wbab → РНП
+
+> Локально лежит, **не задеплоено, не закоммичено**. Локальные правки:
+> `extension/` (новая папка) + `backend/app/api/extension.py` (новый) +
+> правки `backend/app/main.py` + `FEATURES.md` + `CLAUDE.md` + `ROADMAP.md`.
+
+**Что переехало:**
+- Source-tree расширения (~2841 LOC, 13 файлов) из `test4/extension/` в
+  `test5/extension/` — Vite + React + @crxjs + TS, MV3, service worker +
+  2 content scripts (seller-card, wb-search) + popup + options.
+- Ребрендинг user-facing: manifest name «РНП — A/B тесты Wildberries»,
+  popup/options заголовки «РНП», placeholder URL `http://localhost:4098`,
+  host_permissions `https://rnp.sellerfriends.ru/*` (legacy wbab оставлен
+  для совместимости).
+- README + REVERSE_ENGINEERING.md адаптированы.
+- Внутренние идентификаторы `wbab*` (storage keys, переменные `wbabUrl`/
+  `wbabToken`, log prefixes, имя файла `wbab-api.ts`) оставлены — это тех.
+  долг, переименование требует storage-migration старых ключей.
+
+**Backend контракт** (`backend/app/api/extension.py`, ~330 LOC):
+
+| Endpoint | Состояние |
+|---|---|
+| GET `/api/extension/tests/active[?nmId=]` | реализован (читает AbTest, manager-brand-filter через products.brand) |
+| GET `/api/extension/winners/since?cursor=ms` | реализован (через `AbTestResult.computed_at`) |
+| POST `/api/extension/positions` | stub (логирует, не сохраняет — нужна таблица) |
+| POST `/api/extension/wb-token/save` | 400 (auto-token deprecated) |
+| GET `/api/extension/wb-token/status` | реализован (декодирует tenant.wb_token JWT) |
+
+**Auth:** `Authorization: Bearer <jwt>` — тот же JWT, что в cookie `rnp_session`
+(пользователь копирует из DevTools → Application → Cookies). `auth_gate`
+middleware в `main.py`: для `/api/extension/*` пропускает cookie-check (handler
+сам валидирует Bearer); на остальных `/api/*` — fallback на Bearer если
+cookie не валидна.
+
+**Что НЕ сделано — следующие шаги:**
+1. `cd extension && npm install` — установить deps (там нет `node_modules`).
+2. Smoke-test backend: `docker compose up -d backend` + curl с Bearer.
+3. `cd extension && npm run build` → load unpacked в Chrome → проверить
+   content script на seller.wildberries.ru.
+4. Полировка — см. ROADMAP «Полировка Chrome-расширения»: long-lived API
+   token, реальное хранение позиций, `sampleProgressPct`/`nextRotationAt`,
+   переименование storage keys.
+
+**Файлы тронуты:**
+- new: `extension/` (вся папка)
+- new: `backend/app/api/extension.py`
+- modified: `backend/app/main.py` (импорт extension + register router + auth_gate Bearer-fallback)
+- modified: `FEATURES.md` (раздел 8 — Chrome-расширение + backend endpoints)
+- modified: `CLAUDE.md` (таблица API + новый раздел про расширение)
+- modified: `ROADMAP.md` (Phase 8 → completed + полировка)
+- modified: `CONTINUE_HERE.md` (этот блок)
+
+---
+
+## ⭐ Что сделано в сессии 2026-05-15 / 16 — **ВСЁ ЗАДЕПЛОЕНО НА ПРОД, НЕ ЗАКОММИЧЕНО**
 
 > `git status` покажет ~40 modified + 20 untracked. Деплоено через `./scripts/remote.sh deploy` напрямую с локальной копии (без git push). Перед коммитом — проверь diff, особенно sed-замены цветов в pages.
 

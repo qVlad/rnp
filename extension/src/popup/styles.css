@@ -1,0 +1,129 @@
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  width: 360px;
+  min-height: 200px;
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #111827;
+  background: white;
+}
+.popup-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid #e5e7eb;
+  background: linear-gradient(90deg, #f9fafb, #fff);
+}
+.popup-header h1 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.popup-header .sub {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: #6b7280;
+}
+.popup-body {
+  padding: 12px 16px;
+}
+.section {
+  margin-bottom: 16px;
+}
+.section h2 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #6b7280;
+  font-weight: 600;
+}
+.test-item {
+  padding: 8px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.test-item:hover {
+  background: #f9fafb;
+}
+.test-item .name {
+  font-weight: 500;
+  color: #111827;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.test-item .meta {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+.test-item.winner {
+  background: #fef3c7;
+  border-color: #f59e0b;
+}
+.empty {
+  color: #9ca3af;
+  font-size: 12px;
+  text-align: center;
+  padding: 16px 8px;
+}
+.btn {
+  display: inline-block;
+  padding: 6px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  font-size: 12px;
+  cursor: pointer;
+  background: white;
+  color: #374151;
+  text-decoration: none;
+}
+.btn:hover {
+  background: #f3f4f6;
+}
+.btn-primary {
+  background: #2563eb;
+  color: white;
+  border-color: #2563eb;
+}
+.btn-primary:hover {
+  background: #1d4ed8;
+}
+.footer {
+  display: flex;
+  gap: 6px;
+  padding: 8px 16px;
+  border-top: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+.footer .btn {
+  flex: 1;
+  text-align: center;
+}
+.status-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: 1px;
+}
+.status-dot.green {
+  background: #10b981;
+}
+.status-dot.gray {
+  background: #d1d5db;
+}
+.status-dot.amber {
+  background: #f59e0b;
+}

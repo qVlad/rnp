@@ -2,6 +2,25 @@
 
 Single-tenant аналитика для одного селлера WB. Локально через `docker compose`.
 
+## ⚠️ ОБЯЗАТЕЛЬНОЕ ПРАВИЛО: документация после новой фичи
+
+**После завершения любой новой функции (UI-страница / API endpoint / сервис /
+миграция / Celery-task) — обязательно обновить документацию:**
+
+1. **`FEATURES.md`** — добавить запись в соответствующий раздел (UI / API / сервис).
+   Это **single source of truth** по тому что есть в системе.
+2. **`CLAUDE.md`** (этот файл) — если добавлена миграция / поменялись API группы /
+   подключён audit log / появилась новая интеграция → обновить таблицы ниже.
+3. **`OPERATIONS.md`** — если фича требует backup/restore/migration на проде.
+4. **`MANAGER_GUIDE.md` / `ADMIN_GUIDE.md` / `OWNER_GUIDE.md`** — если есть UX-нюансы
+   для соответствующей роли.
+5. **`ROADMAP.md`** — пометить пункт выполненным, если был запланирован.
+6. **`CONTINUE_HERE.md`** — топовая запись в начале файла «Что сделано в текущей
+   сессии» (короткий чек-лист новых миграций / эндпоинтов / страниц).
+
+Без обновления документации фича **не считается завершённой**. Применимо как к
+человеку-разработчику, так и к Claude в новых сессиях.
+
 ## ⚠️ ОБЯЗАТЕЛЬНОЕ ПРАВИЛО: бэкап перед изменениями
 
 **Любое из перечисленного требует pg_dump БЕЗУСЛОВНО, до начала работы:**
@@ -29,6 +48,7 @@ Single-tenant аналитика для одного селлера WB. Лока
 
 | Тебе нужно | Открывай |
 |---|---|
+| **Полный каталог функционала** (все UI / API / сервисы / Celery-tasks) | [`FEATURES.md`](FEATURES.md) ⭐ |
 | Запустить, остановить, посмотреть логи, восстановить из бэкапа | [`OPERATIONS.md`](OPERATIONS.md) |
 | Что менеджер/директор/собственник делает в UI | [`MANAGER_GUIDE.md`](MANAGER_GUIDE.md), [`ADMIN_GUIDE.md`](ADMIN_GUIDE.md), [`OWNER_GUIDE.md`](OWNER_GUIDE.md) |
 | Работаешь с WB API (rate-limits, sunset, retry) | [`WB_API_REFERENCE.md`](WB_API_REFERENCE.md) |
@@ -38,9 +58,14 @@ Single-tenant аналитика для одного селлера WB. Лока
 | Расчёт АУСН-Доходы 8% по методике бухгалтера (cash-basis) | [`TAX_AUSN_BANK.md`](TAX_AUSN_BANK.md) |
 | Расчёт УСН-Доходы 6% (без НДС / + НДС 5% / + НДС 7%) | [`TAX_USN_BANK.md`](TAX_USN_BANK.md) |
 | Ручное исключение отчётов из налоговой базы (per-regime флаги) | [`TAX_BOOKKEEPER_OVERRIDES.md`](TAX_BOOKKEEPER_OVERRIDES.md) |
+| UI/UX правки и задачи арт-директора | [`UI_UX_AUDIT.md`](UI_UX_AUDIT.md) |
 | Конкурентный анализ vs Eggheads.solutions + план развития | [`COMPETITIVE_EGGHEADS.md`](COMPETITIVE_EGGHEADS.md) |
 | Конкурентный анализ vs Evirma (Chrome-расширение) + 3 идеи для web-app | [`COMPETITIVE_EVIRMA.md`](COMPETITIVE_EVIRMA.md) |
 | Конкурентный анализ vs TrueStats + Sprint-план (custom-metrics, триал, аудит-режим) | [`COMPETITIVE_TRUESTATS.md`](COMPETITIVE_TRUESTATS.md) |
+| Конкурентный анализ vs MPump (внимание: имя «РНП» у них занято, наш SEO-ребренд) + 5 Sprint'ов | [`COMPETITIVE_MPUMP.md`](COMPETITIVE_MPUMP.md) |
+| Стратегический cockpit (бизнес-метрики, decision log) | [`STRATEGY_COCKPIT.md`](STRATEGY_COCKPIT.md) |
+| План перераспределения функционала между модулями | [`REDISTRIBUTION_PLAN.md`](REDISTRIBUTION_PLAN.md) |
+| **UNIT-план — методика и формулы** (60 колонок Excel → DTO, 1:1 с LeymanKids) | [`UNIT_PLAN.md`](UNIT_PLAN.md) ⭐ |
 
 ## Стек
 
@@ -93,35 +118,34 @@ docker-compose.yml
 .claude/settings.json   permissions для агента
 ```
 
-## Миграции БД (31 шт., 0001-0031)
+## Миграции БД (42 шт., 0001-0042)
+
+> Полный список с деталями — в [`FEATURES.md`](FEATURES.md) → «Миграции». Здесь — топ-уровневое.
 
 | № | Что добавлено |
 |---|---|
-| 0001 | products / cogs / wb_orders / wb_sales / wb_stocks / wb_report_detail / wb_ad_* / settings / sync_checkpoints |
-| 0002 | report_detail новые поля |
-| 0003 | artificial_orders, external_ad_costs, opex_*, finance-модель |
-| 0004 | sales_plans (store / nm / group scope) |
-| 0005 | opex.cf_section (operating / investing / financing) |
-| 0006 | wb_tariff_categories (16 seed) |
-| 0007 | products archive flags |
-| 0008 | setting_timeline (date-effective tax/VAT) |
-| 0009 | off_platform_stock_movements |
-| 0010 | report_detail.kiz → TEXT |
-| 0011 | product_groups + assignments + audit_log |
-| 0012 | users (bcrypt + JWT, 3 роли) |
-| 0013 | brand_assignments (1 brand → 1 manager) |
-| 0014 | size_fields (chrt_id, tech_size в orders/sales) |
-| 0015 | wb_paid_storage (точное хранение per-day per-nm из Analytics API) |
+| 0001-0010 | Базовая модель: products / cogs / wb_* / settings / sync_checkpoints / sales_plans / opex / tariffs / setting_timeline / off_platform / report_detail KIZ→TEXT |
+| 0011-0015 | product_groups + audit_log, users (RBAC), brand_assignments, size_fields, paid_storage |
 | 0016 | **tenants** + tenant_id во всех 22 пользовательских таблицах (multi-tenant) |
-| 0017 | wb_report_detail **+58 полей** = полное 88-полевое покрытие finance-api |
-| 0018 | opex_entries.contractor (поле «Контрагент/Подрядчик») |
+| 0017 | wb_report_detail **+58 полей** = 88-полевое покрытие finance-api |
+| 0018 | opex_entries.contractor |
 | 0019 | **wb_redeem_notification** (Уведомления о выкупе, Documents API) |
-| 0020 | **supplies** (закупки у поставщиков, weighted-avg COGS) |
+| 0020 | **supplies** (weighted-avg COGS) |
 | 0021 | **wb_offset_act** (Акты взаимозачёта, Documents API) |
-| 0022 | external_ad_costs.end_date (период действия рекламной кампании) |
-| 0023 | jam_queries (поисковые запросы для 10X-кластеров) |
-| 0024-0030 | payment_orders, payment_upd_delivery, payment_buyout_returns, payment_excluded_from_tax, payment_per_regime_exclusion, user_view_preset, notification_rules |
-| 0031 | **A/B testing** — 11 таблиц: abtest, abtest_variant, abtest_variant_photo, abtest_rotation, abtest_alert, abtest_event, abtest_daily_stat, abtest_ad_platform_stat, abtest_ad_platform_snapshot, abtest_stats_snapshot, abtest_result + wb_campaign_budget (порт сервиса wbab) |
+| 0022 | external_ad_costs.end_date |
+| 0023 | jam_queries (10X-кластеры) |
+| 0024-0028 | payment_orders + period_end/report_type/upd_delivery/buyout_returns + excluded_from_tax + **per-regime excluded_from_ausn/excluded_from_usn** |
+| 0029 | user_view_preset (сохранённые фильтры + sharable links) |
+| 0030 | notification_rule (правила алертов через TG) |
+| 0031 | brand_assignments_nm |
+| 0032 | external_ad_brand |
+| 0033 | **A/B testing** — 11 таблиц + wb_campaign_budget (порт сервиса wbab) |
+| 0034 | tenant_modules (включение/выключение модулей per-tenant) |
+| 0035 | audit_imports (лог импортов XLSX) |
+| 0036-0039 | chargebacks / redistribution / bookkeeper_templates / claim_templates |
+| **0040** | **WB Tariffs** — wb_tariff_box / wb_tariff_pallet / wb_tariff_commission (БЕЗ tenant_id, SCD Type 2 через `effective_from`). Sync с WB Tariffs API ежедневно 08:00 MSK. |
+| **0041** | products.volume_l / warehouse_default / is_monopallet / items_per_monopallet — атрибуты для UNIT-плана |
+| **0042** | **UNIT-план** — unit_plan_global_config / unit_plan_override / unit_plan_snapshot (tenant-scoped) |
 
 ## Роли и RBAC
 
@@ -142,24 +166,40 @@ Helper `app.services.auth.current_brands_filter()` возвращает `set[str
 
 ## API endpoints (по группам)
 
+> Полный список с описаниями каждого эндпоинта — в [`FEATURES.md`](FEATURES.md). Здесь — топ-уровневое.
+
 | Prefix | Guard | Что делает |
 |---|---|---|
-| `/api/auth/*` | публ. + login/bootstrap/needs-bootstrap | bcrypt + JWT, cookie |
-| `/api/dashboard*` | brands-filter | KPI + timeseries + top-skus + alerts |
+| `/api/auth/*` | публ. + login/bootstrap/needs-bootstrap/signup | bcrypt + JWT cookie |
+| `/api/dashboard*` | brands-filter | KPI + timeseries + top-skus + alerts + today-vs-yesterday |
 | `/api/pnl*` | brands-filter | scope-aware P&L + reconciliation |
-| `/api/units`, `/abc-analysis`, `/forecast/stockout` | brands-filter | per-SKU аналитика |
+| `/api/units`, `/abc-analysis`, `/forecast/stockout` | brands-filter | per-SKU аналитика + размерная сетка |
 | `/api/cost-history`, `/cost-history/missing` | brands-filter | COGS timeline |
 | `/api/products` | brands-filter | список SKU |
-| `/api/plans*` | brands-filter (read), CUD = director_or_head | план-факт по scope |
+| `/api/products/{nm_id}/photo` | публ. | proxy на WB CDN с Redis-кешем 24h/1h |
+| `/api/plans*`, `/season-plan*` | brands-filter (read), CUD = director_or_head | план-факт + сезонность |
 | `/api/cash-flow`, `/opex`, `/external-ad-costs`, `/artificial-orders`, `/off-platform` | director_or_head | non-SKU финансы |
-| `/api/brands*` | director_or_head | назначения брендов |
-| `/api/users*` | director | CRUD юзеров |
-| `/api/audit-log*` | director | read-only лог |
-| `/api/settings*` | mutations = director | timeline налогов, валидатор WB-токена, Excel I/O |
-| `/api/products/{nm_id}/photo` | публ. (для `<img>` без cookie) | proxy на WB CDN с Redis-кешем 24h (positive) / 1h (negative) |
-| `/api/tax-report*`, `/buybacks`, `/sync-buybacks` | director_or_head | налоговый отчёт по методике 1С + sync Уведомлений о выкупе |
-| `/api/supplies*` | director_or_head | CRUD закупок у поставщиков (для weighted-avg COGS) |
-| `/api/abtest*`, `/api/abtest/.../photos` | brands-filter (manager видит только свои nm_id) | A/B-тестирование фото карточек: CRUD тестов/вариантов, multipart upload фото, lifecycle (start/pause/stop/apply-winner), results с p-value и Wilson CI |
+| `/api/cash-flow/calendar` | director_or_head | прогнозный календарь платежей |
+| `/api/ads/*` | brands-filter | heatmap (DRR/spent/revenue/orders/clicks) |
+| `/api/brands*`, `/product-groups*` | director_or_head | назначения брендов + группы |
+| `/api/users*`, `/audit-log*`, `/audit/imports` | director | RBAC + лог изменений |
+| `/api/settings*` | director (mutations) | timeline налогов, Excel I/O, sync trigger (per-tenant до 1825 дней) |
+| `/api/wb-token` | director | per-tenant WB-токен (Fernet шифрование) + auto-trigger sync |
+| `/api/tenant-modules*` | director | включение/выключение модулей per-tenant |
+| `/api/tax-report*`, `/tax-report-ausn`, `/tax-report-usn` | director_or_head | налоги (1С / АУСН / УСН ±НДС) + per-regime exclusion |
+| `/api/tax-report/payment-orders/*` | director_or_head | платёжные документы WB, toggle exclude, import history |
+| `/api/tax-report/buybacks`, `/sync-buybacks` | director_or_head | Уведомления о выкупе |
+| `/api/supplies*` | director_or_head | закупки → weighted-avg COGS |
+| `/api/abtest*`, `/api/abtest/.../photos` | brands-filter | A/B-тестирование фото карточек (порт wbab) |
+| `/api/extension/*` | Bearer JWT (header) | Chrome-расширение: active tests / winners polling / positions / wb-token status. См. `extension/` |
+| `/api/jam*` | brands-filter | поисковые запросы / кластеры |
+| `/api/notifications*` | director | правила TG-уведомлений + evaluate |
+| `/api/view-presets*` | tenant-scoped | сохранённые фильтры + sharable links |
+| `/api/checklist*` | tenant-scoped | онбординг чек-лист |
+| `/api/audit-mode*` | director_or_head | read-only режим для бухгалтерии |
+| `/api/sync/status` | tenant-scoped | sync checkpoints + WB cooldowns + celery active tasks |
+| `/api/unit-plan/*` | brands-filter (rows), director (global-config PUT), director_or_head (overrides/snapshots) | **UNIT-план** — плановая юнит-экономика на базе Excel-методики LeymanKids. См. [`UNIT_PLAN.md`](UNIT_PLAN.md). |
+| `/api/version`, `/api/whoami`, `/api/health` | публ. | служебные |
 
 Видимость пунктов меню фронта — в `frontend/src/components/Layout.tsx` (`directorOnly`, `directorOrHead`).
 
@@ -205,6 +245,8 @@ exclusive `end` — даст лишний день рекламы в Units (бы
 Универсальный реестр в `services/excel_io.py`. Round-trip OK (export → edit → import upsert по натуральному ключу). UI в `/settings`.
 
 Сущности: `products, cogs, opex_categories, opex_entries, artificial_orders, external_ad_costs, sales_plans, wb_tariff_categories, settings, setting_timeline, off_platform_stock, product_groups, product_group_assignments`.
+
+Импорты логируются в `audit_imports` (миграция 0035) для разбора если что-то пошло не так.
 
 ## WB sync (Celery beat)
 
@@ -282,6 +324,67 @@ X-Photo-Number headers). Rate limit ~10/min — на rotation worker concurrency
   /var/lib/docker/volumes/rnp_abtest_photos/_data/` + переименовать
   каталоги cuid → bigint (скрипт выведет команды `mv`).
 
+## Chrome-расширение (companion для A/B-модуля)
+
+`extension/` (Vite + React + @crxjs + TypeScript, MV3). Перенесено из репозитория
+wbab (исторически писалось под Next.js-сервис wbab, ребрендинг wbab→РНП в
+user-facing строках; внутренние идентификаторы `wbab*` пока остались как
+технический долг — переименование требует storage-migration).
+
+**Что делает:**
+- Content script на `seller.wildberries.ru` → виджет «Запустить A/B-тест в РНП»
+  + badge активного теста на карточке (`src/content/seller-card.ts`).
+- Content script на `www.wildberries.ru` → трекинг позиций карточек из активных
+  тестов в SEO-выдаче (`src/content/wb-search.ts`).
+- Service worker MV3 → polling `/api/extension/winners/since` через
+  `chrome.alarms`, показ `chrome.notifications` + опционально Telegram-форвард.
+- Popup + Options (React) → URL РНП, Bearer JWT, Telegram bot/chat_id, флаги.
+
+**Backend контракт:** `backend/app/api/extension.py` — 5 endpoints под
+`/api/extension/*`, аутентификация `Authorization: Bearer <jwt>` (тот же JWT,
+что в cookie `rnp_session`). Манагер автоматически ограничен `brands` через
+JOIN на `products.brand`.
+
+**auth_gate (`main.py`)** обновлён: на `/api/extension/*` пропускает cookie-
+проверку (extension использует только Bearer); на остальных `/api/*` пытается
+fallback на `Authorization: Bearer <jwt>` если cookie не валидна.
+
+**Сборка:** `cd extension && npm install && npm run build`. Load unpacked
+`extension/dist/` через `chrome://extensions`.
+
+**Auto-connect через cookies API** (без ручного копирования JWT):
+- Третий content script `src/content/rnp-detector.ts` запускается на
+  `localhost:4098/*` и `rnp.sellerfriends.ru/*` (см. manifest →
+  content_scripts[2]). При загрузке страницы шлёт SW сообщение
+  `rnp:detected` с URL.
+- SW handler `tryAutoConnect(url)` через `chrome.cookies.get({url, name:
+  'rnp_session'})` достаёт JWT (cookie HttpOnly, но cookies API видит её
+  при `permissions: ["cookies"]`) и сохраняет URL+JWT в `chrome.storage.sync`.
+- `chrome.cookies.onChanged` listener обновляет токен мгновенно при relogin.
+- Alarm `wbab.rnpCookieSync` раз в 30 мин делает периодический pull
+  (страховка для случая когда content script не сработал).
+- Whitelist URL'ов в `RNP_ORIGINS` (background/index.ts) — должен
+  совпадать с `matches` content_script'а в manifest.
+- Notification «РНП подключено» показывается один раз на токен
+  (дедуп через хеш последних 12 символов в storage.local).
+- Manual fallback (options.tsx) остаётся для случая когда auto-connect
+  не сработал (юзер не залогинен / нестандартный URL).
+
+**TODO (нереализовано в этом порте, держим в roadmap):**
+- `POST /api/extension/positions` — пока no-op + лог. Нужна таблица
+  `abtest_position_snapshot`.
+- `GET /api/extension/winners/since` — выборка из `AbTestResult`; для
+  больших данных нужен индекс по `computed_at`.
+- `sampleProgressPct` всегда возвращает 0 — агрегация из
+  `AbTestDailyStat` / `AbTestVariantPlatformSnap`.
+- Long-lived API-токен с привязкой к user_id (сейчас срок жизни =
+  `cfg.jwt_expires_hours`, default 12h — пользователь должен периодически
+  обновлять токен в options).
+- `nextRotationAt` в response — null (нужно подтянуть из Celery beat
+  для TIME-триггера).
+- Полное переименование `wbabUrl`/`wbabToken` → `rnpUrl`/`rnpToken` в
+  `chrome.storage.sync` с миграцией старых ключей.
+
 ## Telegram-бот
 
 Отдельный сервис `bot` (long-polling, чистый httpx). Команды: `/start /now /alerts /pnl /help /resetowner`. Первый зашедший становится владельцем; ежедневная сводка через Celery beat в 09:00 MSK.
@@ -310,7 +413,15 @@ X-Photo-Number headers). Rate limit ~10/min — на rotation worker concurrency
 - Списки/таблицы, не сплошной текст.
 - Smoke-test после каждой фичи.
 - TypeScript LSP-warnings про `react`/`@tanstack`/JSX игнорируем.
-- Не коммитим без явного запроса.
+- **Обязательно после каждой завершённой фичи** — `git commit` + `git push` +
+  `./scripts/remote.sh deploy`. Без отдельного запроса от пользователя. Цикл:
+  1. `git add` затронутые файлы (не `git add -A` — может попасть .env/секреты).
+  2. `git commit -m "feat|fix|docs|chore(<scope>): <что сделано>"` (conventional-commits).
+  3. `git push` в `qVlad/rnp` main.
+  4. `./scripts/remote.sh deploy` (FORCE=1 если нет активных celery-тасков).
+     Pre-deploy `pg_dump` делается автоматически.
+  Исключения (НЕ коммитим): когда юзер сказал «не коммить», когда работа явно
+  WIP/черновик, когда меняем `.env` или секреты.
 - Перед нетривиальными WB-правками — `WB_API_REFERENCE.md` § 3 (limits) и § 9 (sunset).
 - Финансовые правки → прогон qa-tester subagent'а.
 

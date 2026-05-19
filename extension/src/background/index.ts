@@ -1,0 +1,619 @@
+/**
+ * Service Worker — entry point background-логики MV3.
+ *
+ * Ответственности:
+ *   1. Периодический polling wbab API: тянем активные тесты + новые
+ *      winner-события. Используем chrome.alarms (минимум 30 сек интервал
+ *      для production-расширений, для unpacked dev — 1 минута). Service
+ *      worker засыпает после ~30 сек idle, но alarm пробуждает его.
+ *   2. Обработка сообщений от content scripts (wbab:position-found и т.п.).
+ *   3. Показ chrome.notifications при обнаружении winner-события.
+ *   4. (Опционально) дублирование notification'ов в Telegram через bot API
+ *      если пользователь настроил token+chatId в options.
+ *
+ * Ограничения SW (важно помнить):
+ *   • Не может держать долгие соединения (WebSocket / EventSource) — после
+ *     30 сек idle процесс убивается. Используем pull-polling.
+ *   • Глобальные переменные сбрасываются на каждом wake-up. Любое
+ *     состояние — через chrome.storage.
+ *   • setTimeout/setInterval не выживают между tick'ами SW.
+ */
+
+import {
+  fetchActiveTests,
+  fetchActiveTestForNmId,
+  fetchWinnersSince,
+  getWbTokenStatus,
+  openWbabLauncher,
+  postPositions,
+  saveWbToken,
+} from "@/lib/wbab-api";
+import { generateWbToken } from "@/lib/wb-token";
+import type { BgRequest, BgResponse } from "@/lib/bg-bridge";
+import {
+  getCachedActiveTests,
+  getLastSync,
+  getSeenWinnerTestIds,
+  getSettings,
+  markWinnerSeen,
+  saveCachedActiveTests,
+  saveSettings,
+} from "@/lib/storage";
+import type { WinnerEvent } from "@/lib/types";
+
+const ALARM_POLL = "wbab.poll";
+const ALARM_SESSION_SYNC = "wbab.sessionSync";
+const ALARM_TOKEN_REFRESH = "wbab.tokenRefresh";
+const ALARM_RNP_COOKIE_SYNC = "wbab.rnpCookieSync";
+
+/**
+ * Домены РНП, на которых пытаемся auto-connect. Содержит origin'ы без
+ * trailing slash. Должно соответствовать `matches` для rnp-detector.ts
+ * content_script в manifest.config.ts. Если добавляешь новый домен —
+ * обновляй оба места.
+ */
+const RNP_ORIGINS = [
+  "http://localhost:4098",
+  "https://rnp.sellerfriends.ru",
+];
+
+/**
+ * Минимальный интервал auto-token refresh (минут). JWT от cabinet живёт
+ * обычно 30-60 мин, обновляем заранее с запасом. Реальное обновление
+ * выполняется только если status.needsRefresh=true, поэтому можем
+ * безопасно тикать раз в 5 минут — лишних запросов не будет.
+ */
+const TOKEN_REFRESH_INTERVAL_MINUTES = 5;
+
+// ---- Install / activate hooks ----
+
+chrome.runtime.onInstalled.addListener(async (details) => {
+  console.log("[wbab-ext SW] onInstalled:", details.reason);
+  await ensureAlarms();
+  // На первой установке: ПЕРЕД тем как открывать options пытаемся
+  // auto-connect — если у юзера уже залогинена сессия в РНП в этом
+  // браузере, расширение настроится автоматически и options не нужны.
+  if (details.reason === "install") {
+    await refreshTokenFromRnpCookies();
+    const settings = await getSettings();
+    if (!settings.wbabToken) {
+      // Auto-connect не сработал (юзер не залогинен или не на этих URL)
+      // → открываем options для ручной настройки.
+      await chrome.runtime.openOptionsPage();
+    }
+  }
+});
+
+chrome.runtime.onStartup.addListener(async () => {
+  console.log("[wbab-ext SW] onStartup");
+  await ensureAlarms();
+  // При запуске браузера тоже пробуем auto-connect — на случай если
+  // юзер в прошлой сессии вошёл, а cookie ещё валидна.
+  void refreshTokenFromRnpCookies().catch(() => undefined);
+});
+
+async function ensureAlarms(): Promise<void> {
+  let settings = await getSettings();
+  // АВТО-МИГРАЦИЯ: auto-token deprecated (tokensjrpc возвращает cabinet-session,
+  // не Personal API token). Если в storage остался enableAutoToken=true с
+  // предыдущей версии — принудительно сбрасываем. Без этого SW alarm будет
+  // вечно дёргать tokensjrpc + получать 400 от backend save endpoint.
+  if (settings.enableAutoToken) {
+    console.log("[wbab-ext SW] миграция: enableAutoToken=true → false (фича deprecated)");
+    const { saveSettings } = await import("@/lib/storage");
+    await saveSettings({ enableAutoToken: false });
+    settings = { ...settings, enableAutoToken: false };
+  }
+  // Polling tests/winners — всегда активен (нужен для core-функций)
+  chrome.alarms.create(ALARM_POLL, {
+    periodInMinutes: Math.max(1, settings.pollIntervalMinutes),
+    delayInMinutes: 0.1,
+  });
+  // RNP cookie sync — раз в 30 мин проверяем актуальный rnp_session cookie
+  // на сконфигурированном URL и обновляем wbabToken если изменился.
+  // Это страхует на случай если юзер залогинился в РНП в фоновой вкладке
+  // (без визита) — content script `rnp-detector.ts` тогда не сработал.
+  chrome.alarms.create(ALARM_RNP_COOKIE_SYNC, {
+    periodInMinutes: 30,
+    delayInMinutes: 0.5,
+  });
+  // Session sync — только если юзер дал согласие в options
+  if (settings.enableSessionSync) {
+    chrome.alarms.create(ALARM_SESSION_SYNC, {
+      periodInMinutes: Math.max(15, settings.sessionRefreshIntervalMinutes),
+      delayInMinutes: 0.2,
+    });
+  } else {
+    await chrome.alarms.clear(ALARM_SESSION_SYNC);
+  }
+  // Auto-token refresh — только если юзер дал согласие. SW сам пытается
+  // дёрнуть tokensjrpc с куками из shared cookie jar (host_permissions
+  // покрывает seller-content.wildberries.ru). Если в SW-контексте куки
+  // не виден (бывает в некоторых конфигурациях Chrome), fallback —
+  // content script на seller.wildberries.ru делает то же самое при
+  // следующем визите юзера в кабинет.
+  if (settings.enableAutoToken) {
+    chrome.alarms.create(ALARM_TOKEN_REFRESH, {
+      periodInMinutes: TOKEN_REFRESH_INTERVAL_MINUTES,
+      delayInMinutes: 0.3,
+    });
+  } else {
+    await chrome.alarms.clear(ALARM_TOKEN_REFRESH);
+  }
+}
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  try {
+    if (alarm.name === ALARM_POLL) {
+      await pollOnce();
+    } else if (alarm.name === ALARM_SESSION_SYNC) {
+      await syncSessionCookies();
+    } else if (alarm.name === ALARM_TOKEN_REFRESH) {
+      await maybeRefreshWbToken();
+    } else if (alarm.name === ALARM_RNP_COOKIE_SYNC) {
+      await refreshTokenFromRnpCookies();
+    }
+  } catch (e) {
+    console.warn(`[wbab-ext SW] alarm ${alarm.name} failed:`, e);
+  }
+});
+
+// ───────────────────────────────────────────────────────────────────────
+// Auto-connect через cookies API
+// ───────────────────────────────────────────────────────────────────────
+
+/**
+ * Попытаться auto-connect к РНП на заданном URL.
+ *
+ * Алгоритм:
+ *   1. chrome.cookies.get({url, name: 'rnp_session'}) — HttpOnly cookie
+ *      видна расширению при `permissions: ["cookies"]` + host_permissions.
+ *   2. Если cookie есть и отличается от текущего wbabToken — сохраняем
+ *      в settings (wbabUrl + wbabToken).
+ *   3. Показываем chrome.notifications «РНП подключено» один раз на токен
+ *      (дедуп через хеш последних 12 символов токена в storage.local).
+ *   4. Дёргаем pollOnce() с новым токеном чтобы UI сразу увидел тесты.
+ *
+ * Если cookie нет — silently no-op (юзер ещё не залогинен). Если URL не из
+ * RNP_ORIGINS — игнорируем (защита от подделки сообщения с произвольной
+ * страницы).
+ */
+/**
+ * Возврат для диагностики. Возвращается из tryAutoConnect и далее в
+ * sendResponse handler'а `rnp:detected` → content script пишет в DOM
+ * (meta[name="rnp-auto-connect-result"]) → видно из page world.
+ */
+type AutoConnectResult =
+  | { status: "not-in-whitelist"; url: string; allowed: readonly string[] }
+  | { status: "no-cookie"; url: string }
+  | { status: "cookies-api-error"; url: string; error: string }
+  | { status: "unchanged"; url: string; tokenSuffix: string }
+  | { status: "connected"; url: string; tokenSuffix: string; notified: boolean };
+
+async function tryAutoConnect(url: string): Promise<AutoConnectResult> {
+  if (!RNP_ORIGINS.includes(url)) {
+    console.warn(`[wbab-ext SW] auto-connect: URL не в RNP_ORIGINS: ${url}`);
+    return { status: "not-in-whitelist", url, allowed: RNP_ORIGINS };
+  }
+  let cookie: chrome.cookies.Cookie | null;
+  try {
+    cookie = await chrome.cookies.get({ url, name: "rnp_session" });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn("[wbab-ext SW] auto-connect: cookies.get failed:", e);
+    return { status: "cookies-api-error", url, error: msg };
+  }
+  if (!cookie?.value) {
+    return { status: "no-cookie", url };
+  }
+
+  const tokenSuffix = cookie.value.slice(-12);
+  const settings = await getSettings();
+  const tokenChanged = settings.wbabToken !== cookie.value;
+  const urlChanged = settings.wbabUrl !== url;
+  if (!tokenChanged && !urlChanged) {
+    return { status: "unchanged", url, tokenSuffix };
+  }
+
+  await saveSettings({ wbabUrl: url, wbabToken: cookie.value });
+  console.log(
+    `[wbab-ext SW] auto-connected to ${url} (token=${tokenSuffix})`,
+  );
+
+  // Дедуп: показываем notification «РНП подключено» один раз на токен.
+  // Если юзер relogin'ится — хеш изменится → новый notification.
+  const stored = await chrome.storage.local.get("rnp.lastAutoConnectHash");
+  let notified = false;
+  if (stored["rnp.lastAutoConnectHash"] !== tokenSuffix) {
+    chrome.notifications.create("rnp.auto-connect", {
+      type: "basic",
+      iconUrl: chrome.runtime.getURL("icons/icon-128.png"),
+      title: "РНП подключено",
+      message: `Расширение настроено на ${url}. Токен будет обновляться автоматически.`,
+      priority: 1,
+    });
+    await chrome.storage.local.set({ "rnp.lastAutoConnectHash": tokenSuffix });
+    notified = true;
+  }
+
+  // Сразу обновляем кеш активных тестов с новым токеном.
+  void pollOnce().catch(() => undefined);
+
+  return { status: "connected", url, tokenSuffix, notified };
+}
+
+/**
+ * Периодический refresh: пробегаем по RNP_ORIGINS, для каждого проверяем
+ * cookie. Это страхует на случай если юзер залогинился в РНП в фоновой
+ * вкладке без визита (content script `rnp-detector.ts` тогда не сработал).
+ *
+ * Вызывается из ALARM_RNP_COOKIE_SYNC alarm раз в 30 мин.
+ */
+async function refreshTokenFromRnpCookies(): Promise<void> {
+  const settings = await getSettings();
+  // Если юзер сконфигурировал кастомный URL вручную — пробуем сначала его.
+  const candidates = [
+    ...(settings.wbabUrl ? [settings.wbabUrl] : []),
+    ...RNP_ORIGINS.filter((u) => u !== settings.wbabUrl),
+  ];
+  for (const url of candidates) {
+    if (!RNP_ORIGINS.includes(url)) continue; // safety: только из whitelist
+    const r = await tryAutoConnect(url);
+    if (r.status === "connected" || r.status === "unchanged") return;
+  }
+}
+
+/**
+ * Instant-listener на изменения rnp_session cookie. Срабатывает мгновенно
+ * когда:
+ *   • Юзер залогинился (cookie появилась) → auto-connect
+ *   • Юзер relogin'ится (cookie value сменилась) → токен обновлён
+ *   • Юзер вышел из РНП (cookie удалена) → НЕ сбрасываем wbabToken
+ *     (расширение продолжает работать со старым токеном до истечения JWT;
+ *     иначе случайный logout в одной вкладке убил бы badge на seller-
+ *     кабинете в другой).
+ */
+chrome.cookies.onChanged.addListener((info) => {
+  if (info.cookie.name !== "rnp_session") return;
+  if (info.removed) return; // logout — оставляем токен в storage
+  // info.cookie.domain не всегда совпадает с URL'ом; восстановим URL для
+  // cookies.get. Domain вида "localhost" или "rnp.sellerfriends.ru".
+  const url = RNP_ORIGINS.find((origin) => {
+    try {
+      const host = new URL(origin).hostname;
+      return host === info.cookie.domain || info.cookie.domain.endsWith(`.${host}`);
+    } catch {
+      return false;
+    }
+  });
+  if (!url) return;
+  void tryAutoConnect(url).catch((e) =>
+    console.warn("[wbab-ext SW] cookie.onChanged auto-connect failed:", e),
+  );
+});
+
+/**
+ * Auto-token refresh из service worker'а.
+ *
+ * Логика:
+ *   1. Спрашиваем backend: hasToken? needsRefresh?
+ *   2. Если backend говорит «нужен refresh» (или токена нет) — пытаемся
+ *      дёрнуть tokensjrpc из SW. Куки уходят автоматически если
+ *      host_permissions покрывает домен.
+ *   3. Если получили JWT — POST на /api/extension/wb-token/save.
+ *
+ * Тихо завершается без ошибок если:
+ *   • расширение не настроено (нет wbabUrl/wbabToken)
+ *   • enableAutoToken=false
+ *   • нет сессии WB (tokensjrpc вернул 401)
+ *   • backend недоступен
+ *
+ * Это «безопасный no-op» паттерн — пользователь не видит ошибок в браузере,
+ * fallback на content script при следующем визите на seller.wildberries.ru.
+ */
+async function maybeRefreshWbToken(): Promise<void> {
+  const settings = await getSettings();
+  if (!settings.enableAutoToken) return;
+  if (!settings.wbabUrl || !settings.wbabToken) return;
+
+  const status = await getWbTokenStatus();
+  if (!status) {
+    console.warn("[wbab-ext SW] auto-refresh: backend wbab недоступен (нет ответа на /status)");
+    return;
+  }
+  // ВАЖНО: НЕ выходим если source='manual'. enableAutoToken=true означает
+  // что юзер явно хочет переключиться с manual на auto при первой возможности.
+  if (status.source === "auto" && status.hasToken && !status.needsRefresh) {
+    console.log(
+      `[wbab-ext SW] auto-token свежий, expires=${status.expiresAt}, skip`,
+    );
+    return;
+  }
+
+  const result = await generateWbToken();
+  if (!result) {
+    // tokensjrpc не отдал JWT — скорее всего нет сессии WB в SW-контексте.
+    // Не страшно: content script на seller.wildberries.ru попробует
+    // при следующем визите юзера в кабинет.
+    return;
+  }
+  const ok = await saveWbToken(result.jwt, result.expiresAt);
+  if (ok) {
+    console.log(
+      `[wbab-ext SW] auto-token refreshed, expires=${result.expiresAt ? new Date(result.expiresAt).toISOString() : "unknown"}`,
+    );
+  }
+}
+
+/**
+ * Фаза 2 token-less mode: читаем сессионные куки seller.wildberries.ru
+ * и шлём snapshot на backend wbab.
+ *
+ * Тихо пропускает refresh если:
+ *   • расширение не настроено (URL/токен)
+ *   • юзер не давал согласие (enableSessionSync = false)
+ *   • в браузере нет сессии WB (юзер не залогинен)
+ *
+ * Это **безопасный no-op** в любом из этих случаев — никаких ошибок в UI.
+ */
+async function syncSessionCookies(): Promise<void> {
+  const settings = await getSettings();
+  if (!settings.enableSessionSync) return;
+  if (!settings.wbabUrl || !settings.wbabToken) return;
+
+  const { getSellerCabinetCookies } = await import("@/lib/wb-session");
+  const cookies = await getSellerCabinetCookies();
+  if (cookies.length === 0) {
+    console.debug("[wbab-ext SW] no WB session cookies — skipping refresh");
+    return;
+  }
+
+  const payload = {
+    cookies: cookies.map((c) => ({
+      name: c.name,
+      value: c.value,
+      domain: c.domain,
+      path: c.path,
+      secure: c.secure,
+      httpOnly: c.httpOnly,
+      sameSite: c.sameSite,
+      expirationDate: c.expirationDate,
+    })),
+  };
+
+  try {
+    const res = await fetch(
+      `${settings.wbabUrl.replace(/\/$/, "")}/api/extension/session/refresh`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${settings.wbabToken}`,
+        },
+        body: JSON.stringify(payload),
+      },
+    );
+    if (!res.ok) {
+      console.warn("[wbab-ext SW] session refresh failed:", res.status);
+      return;
+    }
+    console.log(`[wbab-ext SW] session refreshed (${cookies.length} cookies)`);
+  } catch (e) {
+    console.warn("[wbab-ext SW] session refresh request failed:", e);
+  }
+}
+
+async function pollOnce(): Promise<void> {
+  // 1. Обновляем кеш активных тестов — он нужен content script'у
+  //    wb-search.ts чтобы знать какие nmId трекать.
+  const active = await fetchActiveTests();
+  await saveCachedActiveTests(active);
+
+  // 2. Тянем новые winner-события. cursor = timestamp последнего sync.
+  const lastSync = (await getLastSync()) ?? 0;
+  const winners = await fetchWinnersSince(lastSync);
+  if (winners.length > 0) {
+    const seen = await getSeenWinnerTestIds();
+    for (const w of winners) {
+      if (seen.has(w.testId)) continue;
+      await showWinnerNotification(w);
+      await maybeForwardToTelegram(w);
+      await markWinnerSeen(w.testId);
+    }
+  }
+}
+
+async function showWinnerNotification(w: WinnerEvent): Promise<void> {
+  const settings = await getSettings();
+  const url = `${(settings.wbabUrl || "https://rnp.sellerfriends.ru").replace(/\/$/, "")}/abtest/${w.testId}`;
+  const id = `wbab.winner.${w.testId}`;
+  chrome.notifications.create(id, {
+    type: "basic",
+    iconUrl: chrome.runtime.getURL("icons/icon-128.png"),
+    title: `🏆 Победитель найден: ${w.winnerVariantLabel}`,
+    message: `${w.testName} (артикул ${w.nmId}) — кликните, чтобы зафиксировать на WB`,
+    priority: 2,
+    requireInteraction: true,
+  });
+  // Сохраняем URL для onClicked handler через storage (SW глобалы не выживают).
+  const map = (await chrome.storage.local.get("wbab.notifClickMap"))[
+    "wbab.notifClickMap"
+  ] as Record<string, string> | undefined;
+  await chrome.storage.local.set({
+    "wbab.notifClickMap": { ...(map ?? {}), [id]: url },
+  });
+}
+
+chrome.notifications.onClicked.addListener(async (id) => {
+  const map = (await chrome.storage.local.get("wbab.notifClickMap"))[
+    "wbab.notifClickMap"
+  ] as Record<string, string> | undefined;
+  const url = map?.[id];
+  if (url) {
+    await chrome.tabs.create({ url });
+    chrome.notifications.clear(id);
+  }
+});
+
+async function maybeForwardToTelegram(w: WinnerEvent): Promise<void> {
+  const s = await getSettings();
+  if (!s.telegramBotToken || !s.telegramChatId) return;
+  const text =
+    `🏆 *Победитель найден*\n` +
+    `Тест: ${w.testName}\n` +
+    `Артикул: ${w.nmId}\n` +
+    `Вариант: *${w.winnerVariantLabel}*\n` +
+    `[Открыть в РНП](${(s.wbabUrl || "").replace(/\/$/, "")}/abtest/${w.testId})`;
+  try {
+    await fetch(`https://api.telegram.org/bot${s.telegramBotToken}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: s.telegramChatId,
+        text,
+        parse_mode: "Markdown",
+        disable_web_page_preview: true,
+      }),
+    });
+  } catch (e) {
+    console.warn("[wbab-ext SW] Telegram forward failed:", e);
+  }
+}
+
+// ---- Message handlers from content scripts ----
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  // Все handlers — async, поэтому возвращаем true чтобы MV3 держал канал открытым.
+  (async () => {
+    // ---- Auto-connect: content script `rnp-detector.ts` шлёт это при
+    //      загрузке любой страницы РНП. SW достаёт rnp_session cookie
+    //      (HttpOnly, видна cookies API) и сохраняет в settings. ----
+    if (msg?.type === "rnp:detected" && typeof msg.url === "string") {
+      const result = await tryAutoConnect(msg.url);
+      sendResponse(result);
+      return;
+    }
+    // ---- Legacy message types (legacy от первой итерации, оставляем для
+    //      обратной совместимости с installed v0.1.x расширениями) ----
+    if (msg?.type === "wbab:position-found") {
+      const ok = await postPositions(msg.payload);
+      sendResponse({ ok });
+      return;
+    }
+    if (msg?.type === "wbab:get-active-tests") {
+      const tests = await getCachedActiveTests();
+      sendResponse({ tests });
+      return;
+    }
+    if (msg?.type === "wbab:trigger-poll") {
+      await pollOnce();
+      sendResponse({ ok: true });
+      return;
+    }
+
+    // ---- Типизированные RPC через BgRequest (bg-bridge.ts) ----
+    const req = msg as BgRequest;
+    switch (req?.type) {
+      case "fetchActiveTestForNmId": {
+        const data = await fetchActiveTestForNmId(req.nmId);
+        const resp: BgResponse = { kind: "activeTest", data };
+        sendResponse(resp);
+        return;
+      }
+      case "fetchActiveTests": {
+        const data = await fetchActiveTests();
+        const resp: BgResponse = { kind: "activeTests", data };
+        sendResponse(resp);
+        return;
+      }
+      case "fetchWinnersSince": {
+        const data = await fetchWinnersSince(req.cursor);
+        const resp: BgResponse = { kind: "winners", data };
+        sendResponse(resp);
+        return;
+      }
+      case "postPositions": {
+        const ok = await postPositions(req.payload);
+        const resp: BgResponse = { kind: "ok", recorded: ok };
+        sendResponse(resp);
+        return;
+      }
+      case "openLauncher": {
+        await openWbabLauncher(req.nmId);
+        sendResponse({ kind: "ok" } as BgResponse);
+        return;
+      }
+      case "openTestPage": {
+        const settings = await getSettings();
+        const url = `${(settings.wbabUrl || "https://rnp.sellerfriends.ru").replace(/\/$/, "")}/abtest/${req.testId}`;
+        await chrome.tabs.create({ url });
+        sendResponse({ kind: "ok" } as BgResponse);
+        return;
+      }
+      case "saveWbToken": {
+        const ok = await saveWbToken(req.jwt, req.expiresAt);
+        sendResponse({ kind: "ok", recorded: ok } as BgResponse);
+        return;
+      }
+      case "getWbTokenStatus": {
+        const data = await getWbTokenStatus();
+        sendResponse({ kind: "wbTokenStatus", data } as BgResponse);
+        return;
+      }
+      default: {
+        // exhaustive check: TS подсветит если добавили новый BgRequest type без handler.
+        const _exhaustive: never = req;
+        void _exhaustive;
+        sendResponse({
+          kind: "error",
+          error: `unknown type: ${(msg as { type?: string })?.type}`,
+        } as BgResponse);
+        return;
+      }
+    }
+  })();
+  return true; // keep channel open
+});
+
+// Реакция на изменения настроек — пере-создаём alarm с новым интервалом.
+// Дополнительно: если юзер выключил enableSessionSync — шлём backend
+// DELETE /api/extension/session чтобы пометить session revoked.
+chrome.storage.onChanged.addListener(async (changes, area) => {
+  if (area !== "sync") return;
+  if (!("wbab.settings" in changes)) return;
+
+  const oldVal = changes["wbab.settings"].oldValue as
+    | { enableSessionSync?: boolean; enableAutoToken?: boolean }
+    | undefined;
+  const newVal = changes["wbab.settings"].newValue as
+    | { enableSessionSync?: boolean; enableAutoToken?: boolean }
+    | undefined;
+
+  await ensureAlarms();
+
+  // Юзер только что включил auto-token → дёргаем refresh сразу, не ждём alarm.
+  if (oldVal?.enableAutoToken !== true && newVal?.enableAutoToken === true) {
+    void maybeRefreshWbToken();
+  }
+
+  // Юзер выключил session sync → отзываем сессию на backend.
+  if (oldVal?.enableSessionSync === true && newVal?.enableSessionSync === false) {
+    const settings = await getSettings();
+    if (settings.wbabUrl && settings.wbabToken) {
+      try {
+        await fetch(
+          `${settings.wbabUrl.replace(/\/$/, "")}/api/extension/session`,
+          {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${settings.wbabToken}` },
+          },
+        );
+        console.log("[wbab-ext SW] session revoked on backend");
+      } catch (e) {
+        console.warn("[wbab-ext SW] session revoke failed:", e);
+      }
+    }
+  }
+});
+
+console.log("[wbab-ext SW] loaded");
