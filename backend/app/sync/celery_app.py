@@ -7,7 +7,7 @@ celery_app = Celery(
     "rnp",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.sync.tasks", "app.sync.tasks_abtest"],
+    include=["app.sync.tasks", "app.sync.tasks_abtest", "app.sync.event_consumers"],
 )
 
 celery_app.conf.update(

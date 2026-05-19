@@ -1023,6 +1023,7 @@ async def _sync_chargebacks_async(tenant_id: int, lookback_days: int = 60) -> in
     для проблемных supplier_oper_name. Без вызовов WB API — чистый SQL UPSERT.
     Идемпотентен по UNIQUE(rrd_id, category).
     """
+    from app.db.session import task_session_scope  # noqa: WPS433
     from app.services.chargebacks import sync_chargebacks as _do  # noqa: WPS433
     from app.services.tenant_context import set_tenant  # noqa: WPS433
 
@@ -1073,6 +1074,7 @@ async def _generate_redistribution_recs_async(tenant_id: int) -> int:
         RedistributionRecommendation,
         WbSale,
     )
+    from app.db.session import task_session_scope
     from app.services.redistribution.recommender import build_recommendations
     from app.services.tenant_context import set_tenant
 
@@ -1167,6 +1169,7 @@ async def _publish_redistribution_windows_async() -> int:
     `redistribution.window.open` для активных tenants. Идемпотентно через
     consumer-side dedup (event_id с timestamp).
     """
+    from app.db.session import task_session_scope
     from app.services.redistribution.scheduler import publish_window_event
 
     async with task_session_scope() as session:
