@@ -118,22 +118,8 @@ export default function App() {
               </DirectorOrHead>
             }
           />
-          <Route
-            path="chargebacks"
-            element={
-              <DirectorOrHead>
-                <Chargebacks />
-              </DirectorOrHead>
-            }
-          />
-          <Route
-            path="redistribution"
-            element={
-              <DirectorOrHead>
-                <Redistribution />
-              </DirectorOrHead>
-            }
-          />
+          <Route path="chargebacks" element={<Chargebacks />} />
+          <Route path="redistribution" element={<Redistribution />} />
           <Route
             path="tax-report"
             element={

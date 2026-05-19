@@ -29,6 +29,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
+    Product,
     RedistributionRecommendation,
     RedistributionRoiSnapshot,
     RedistributionTask,
@@ -37,6 +38,7 @@ from app.db.models import (
 from app.services.audit import audit_log
 from app.services.auth import (
     CurrentUser,
+    current_brands_filter,
     get_current_user,
     get_db_tenant_scoped,
     require_director,
@@ -51,14 +53,41 @@ from app.services.redistribution.session_store import (
 )
 
 
+# Read-endpoints доступны manager'у (с brand-фильтром). Mutation-endpoints
+# (lk/connect, approve/dismiss, generate, transition) защищены отдельно
+# `Depends(require_director_or_head)`.
 router = APIRouter(
     prefix="/api/redistribution",
     tags=["redistribution"],
     dependencies=[
         Depends(require_module("redistribution")),
-        Depends(require_director_or_head),
     ],
 )
+
+
+def _apply_brand_filter_recs(stmt, brands: set[str] | None):
+    """Brand-filter для RedistributionRecommendation через nm_id → products.brand."""
+    if brands is None:
+        return stmt
+    if not brands:
+        return stmt.where(RedistributionRecommendation.id < 0)
+    nm_filter = select(Product.nm_id).where(Product.brand.in_(list(brands)))
+    return stmt.where(RedistributionRecommendation.nm_id.in_(nm_filter))
+
+
+def _apply_brand_filter_tasks(stmt, brands: set[str] | None):
+    """Brand-filter для RedistributionTask. Tasks не имеют nm_id напрямую —
+    джоин через recommendation_id. Если recommendation удалена — task недоступен.
+    """
+    if brands is None:
+        return stmt
+    if not brands:
+        return stmt.where(RedistributionTask.id < 0)
+    nm_filter = select(Product.nm_id).where(Product.brand.in_(list(brands)))
+    rec_filter = select(RedistributionRecommendation.id).where(
+        RedistributionRecommendation.nm_id.in_(nm_filter)
+    )
+    return stmt.where(RedistributionTask.recommendation_id.in_(rec_filter))
 
 
 @router.get("/status")
@@ -181,9 +210,13 @@ def _serialize_rec(r: RedistributionRecommendation) -> dict[str, Any]:
 async def list_recommendations(
     status: str | None = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict[str, Any]:
-    """Топ-N рекомендаций. По умолчанию status='pending'."""
-    stmt = select(RedistributionRecommendation)
+    """Топ-N рекомендаций. По умолчанию status='pending'.
+
+    Manager видит рекомендации только по своим брендам.
+    """
+    stmt = _apply_brand_filter_recs(select(RedistributionRecommendation), brands)
     if status:
         stmt = stmt.where(RedistributionRecommendation.status == status)
     else:
@@ -195,7 +228,7 @@ async def list_recommendations(
     return {"items": [_serialize_rec(r) for r in rows]}
 
 
-@router.post("/recommendations/{rid}/approve")
+@router.post("/recommendations/{rid}/approve", dependencies=[Depends(require_director_or_head)])
 async def approve_recommendation(
     rid: int,
     user: CurrentUser = Depends(get_current_user),
@@ -244,7 +277,7 @@ async def approve_recommendation(
     return {"task_window_at": window.isoformat(), "task_id": task.id}
 
 
-@router.post("/recommendations/{rid}/dismiss")
+@router.post("/recommendations/{rid}/dismiss", dependencies=[Depends(require_director_or_head)])
 async def dismiss_recommendation(
     rid: int,
     user: CurrentUser = Depends(get_current_user),
@@ -295,9 +328,10 @@ async def list_tasks(
     status: str | None = None,
     limit: int = 100,
     session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict[str, Any]:
-    """Очередь tasks + история. По умолчанию все статусы DESC."""
-    stmt = select(RedistributionTask)
+    """Очередь tasks + история. Manager видит свои бренды (через recommendation_id join)."""
+    stmt = _apply_brand_filter_tasks(select(RedistributionTask), brands)
     if status:
         stmt = stmt.where(RedistributionTask.status == status)
     stmt = stmt.order_by(RedistributionTask.created_at.desc()).limit(limit)
@@ -347,7 +381,7 @@ async def get_roi(
     }
 
 
-@router.post("/generate")
+@router.post("/generate", dependencies=[Depends(require_director_or_head)])
 async def trigger_generate(
     user: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_tenant_scoped),

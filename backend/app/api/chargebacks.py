@@ -16,10 +16,11 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Chargeback, ChargebackHistory
+from app.db.models import Chargeback, ChargebackHistory, Product
 from app.services.audit import audit_log
 from app.services.auth import (
     CurrentUser,
+    current_brands_filter,
     get_current_user,
     get_db_tenant_scoped,
     require_director_or_head,
@@ -35,14 +36,33 @@ from app.services.chargebacks import (
 from app.services.feature_flags import require_module
 
 
+# Roвутер БЕЗ default `require_director_or_head` — manager должен видеть
+# свои бренды в read-endpoints. Мутации (transition, sync, update) защищены
+# через per-endpoint `Depends(require_director_or_head)`.
 router = APIRouter(
     prefix="/api/chargebacks",
     tags=["chargebacks"],
     dependencies=[
         Depends(require_module("chargebacks")),
-        Depends(require_director_or_head),
     ],
 )
+
+
+def _apply_brand_filter(stmt, brands: set[str] | None):
+    """Применяет фильтр по брендам через JOIN на products.
+
+    `brands=None` → unrestricted (director / head_of_sales).
+    `brands=set()` → пустой результат (manager без brand_assignments).
+    `brands={...}` → только chargebacks где chargeback.nm_id есть в товарах
+                     этих брендов.
+    """
+    if brands is None:
+        return stmt
+    if not brands:
+        # Empty set — guaranteed no results
+        return stmt.where(Chargeback.id < 0)
+    nm_filter = select(Product.nm_id).where(Product.brand.in_(list(brands)))
+    return stmt.where(Chargeback.nm_id.in_(nm_filter))
 
 
 def _serialize_chargeback(c: Chargeback) -> dict[str, Any]:
@@ -82,9 +102,14 @@ async def list_chargebacks(
     limit: int = Query(default=200, ge=1, le=2000),
     offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict[str, Any]:
-    """Список чарджбэков с фильтрами. Сортировка по operation_dt DESC."""
-    stmt = select(Chargeback)
+    """Список чарджбэков с фильтрами. Сортировка по operation_dt DESC.
+
+    Manager видит только chargebacks по своим брендам (через join nm_id → products.brand).
+    Director / head_of_sales — все.
+    """
+    stmt = _apply_brand_filter(select(Chargeback), brands)
     if status:
         stmt = stmt.where(Chargeback.status == status)
     if category:
@@ -106,17 +131,18 @@ async def get_stats(
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
     session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict[str, Any]:
     """Сводка по категориям × статусам за период.
 
-    Возвращает таблицу: для каждой категории — count и sum(amount) по статусам.
+    Manager видит свои бренды; director / head_of_sales — все.
     """
-    stmt = select(
+    stmt = _apply_brand_filter(select(
         Chargeback.category,
         Chargeback.status,
         func.count(Chargeback.id).label("cnt"),
         func.coalesce(func.sum(Chargeback.amount_rub), 0).label("total"),
-    ).group_by(Chargeback.category, Chargeback.status)
+    ), brands).group_by(Chargeback.category, Chargeback.status)
     if date_from:
         stmt = stmt.where(Chargeback.operation_dt >= date_from)
     if date_to:
@@ -148,10 +174,10 @@ async def get_stats(
 async def get_chargeback(
     cid: int,
     session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict[str, Any]:
-    c = (
-        await session.execute(select(Chargeback).where(Chargeback.id == cid))
-    ).scalar_one_or_none()
+    stmt = _apply_brand_filter(select(Chargeback).where(Chargeback.id == cid), brands)
+    c = (await session.execute(stmt)).scalar_one_or_none()
     if c is None:
         raise HTTPException(404, "chargeback not found")
     # История переходов
@@ -177,7 +203,7 @@ async def get_chargeback(
     }
 
 
-@router.put("/{cid}")
+@router.put("/{cid}", dependencies=[Depends(require_director_or_head)])
 async def update_chargeback(
     cid: int,
     comment: str | None = Body(default=None, embed=True),
@@ -208,7 +234,7 @@ async def update_chargeback(
     return _serialize_chargeback(c)
 
 
-@router.post("/{cid}/transition")
+@router.post("/{cid}/transition", dependencies=[Depends(require_director_or_head)])
 async def transition_chargeback(
     cid: int,
     to_status: str = Body(..., embed=True),
@@ -255,7 +281,7 @@ async def transition_chargeback(
     return _serialize_chargeback(c)
 
 
-@router.post("/sync")
+@router.post("/sync", dependencies=[Depends(require_director_or_head)])
 async def trigger_sync(
     lookback_days: int = Body(default=60, embed=True, ge=1, le=365),
     user: CurrentUser = Depends(get_current_user),
