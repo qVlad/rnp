@@ -195,6 +195,177 @@ Lead использует этот файл как master-view: сюда скл�
 
 ---
 
+### TASK-LEAD-009: Деплой LEAD-004/005/006/008 на прод
+
+- **Исполнитель:** Lead
+- **Приоритет:** P0 (всё код готов, BUG-DEV-001 исправлен — нужно выкатить)
+- **Оценка:** 15 мин
+- **Описание:** Прод сейчас на миграции 0036 (chargebacks накатились, но sync падал из-за BUG-DEV-001). Нужно задеплоить:
+  - 0035 audit_imports/audit_decisions (если ещё не) — проверить `alembic_version`
+  - 0036 chargebacks + fix BUG-DEV-001
+  - 0037 redistribution
+  - event_consumers + всё новое из LEAD-008/004
+- **Критерии готовности:**
+  - [ ] `./scripts/remote.sh deploy` прошёл
+  - [ ] `alembic_version = 0037` после деплоя
+  - [ ] `POST /api/chargebacks/sync` возвращает 200 (BUG-DEV-001 фикс работает)
+  - [ ] QA-tester re-run по списку из `post-launch-priority-2026-05-19.md`
+- **Зависимости:** нет (всё в коммитах `e4f9d50`, `d9b60de`, `22e3f5f`, `92f3531` + текущий BUG-DEV-001 fix)
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-010: RBAC fix для chargebacks/redistribution — manager должен видеть свои бренды
+
+- **Исполнитель:** Lead → Developer
+- **Приоритет:** P0 (BUG-DES-001 — модули неюзабельны для основной операционной роли)
+- **Оценка:** ~3-5 дней (M)
+- **Описание:** `services/chargebacks.py` + `api/chargebacks.py` + `api/redistribution.py` имеют `require_director_or_head` на уровне APIRouter. Manager получает 403. Должен видеть chargebacks по своим брендам (через `current_brands_filter()`). См. `bugs-designer.md` BUG-DES-001 для spec'ы.
+- **Критерии готовности:**
+  - [ ] TASK-DEV-NNN: переместить `require_director_or_head` с APIRouter-уровня на per-endpoint (только для мутаций — transition/sync/approve/connect_lk). Read остаётся доступным для всех ролей.
+  - [ ] TASK-DEV-NNN backend: join `chargebacks.nm_id → products.brand`, filter through `current_brands_filter`
+  - [ ] TASK-DEV-NNN backend: redistribution `tasks/recommendations` filter по brand_assignments
+  - [ ] TASK-DES + DEV frontend: убрать `directorOrHead: true` с menu items для `/chargebacks` и `/redistribution`
+  - [ ] TASK-PM-NNN (persona-manager): re-test после деплоя
+- **Зависимости:** TASK-LEAD-009 (первый деплой)
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-011: Telegram-bot consumer для event-bus
+
+- **Исполнитель:** Lead → Developer
+- **Приоритет:** P0 (главный UX-результат всей event-bus инвестиции; сейчас события только в логах)
+- **Оценка:** ~1 неделя
+- **Описание:** Без bot-consumer event-bus невидим юзеру. Все 4 персоны просят Telegram-пуши: chargeback>5000₽ (Seller), redistribution window-open + результат (Seller, Manager), tax-deadline (Seller), chargebacks summary daily (ROP).
+- **Критерии готовности:**
+  - [ ] Spec в `agents/references/spec-bot-handlers.md`: tenant→tg_chat_id lookup механика, brand-aware filtering для manager, sendMessage retry
+  - [ ] Replace stub `_handle_chargeback_telegram` в `event_consumers.py` на реальный bot.send
+  - [ ] `tax.deadline.upcoming` cron-publisher в `sync/tasks.py` (за 7/3/1 день до deadline)
+  - [ ] `redistribution.task.completed` consumer → bot push «✓ забронировано / ✗ не пойман слот»
+  - [ ] Telegram-команды: `/chargebacks_today`, `/redistribution_status`, `/disable_alerts` (mute)
+  - [ ] Persona-Seller + Manager re-test
+- **Зависимости:** TASK-LEAD-009
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-012: Weekly digest для head_of_sales
+
+- **Исполнитель:** Lead → Developer
+- **Приоритет:** P1 (ROP-wishlist #1)
+- **Оценка:** ~3-5 дней (M)
+- **Описание:** Понедельник 10:00 МСК — bot шлёт head_of_sales (если такой юзер есть) еженедельный дайджест: chargebacks summary за неделю (вернули X / в работе Y), redistribution ROI текущего месяца, pererасход рекламы (ДРР > 30%), per-brand P&L топ-5.
+- **Критерии готовности:**
+  - [ ] `services/digest_weekly.py` — сборка отчёта
+  - [ ] Beat-task в `celery_app.py`: cron Mon 07:00 UTC (10:00 МСК)
+  - [ ] Получатель: первый юзер с role=`head_of_sales` в каждом tenant'е (если нет — director)
+  - [ ] Включить per-tenant через `tenant_modules.team_digest` (нужна новая ENTRY в KNOWN_MODULES)
+- **Зависимости:** TASK-LEAD-011 (TG-handlers инфраструктура)
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-013: Per-manager analytics в chargebacks/redistribution
+
+- **Исполнитель:** Lead → Developer
+- **Приоритет:** P1 (ROP-wishlist #2; data уже есть, нужен UI)
+- **Оценка:** ~3-5 дней (M)
+- **Описание:** `chargebacks` и `redistribution_tasks` имеют `nm_id`. Через `brand_assignments` можно сджоинить с менеджерами. Добавить group_by параметр в `/stats`, новый виджет «По менеджерам» на страницах.
+- **Критерии готовности:**
+  - [ ] API расширение: `?group_by=manager` для `/api/chargebacks/stats` и `/api/redistribution/roi`
+  - [ ] Frontend: новый виджет «По менеджерам» — стат сводка count + total amount + ROI
+  - [ ] `redistribution_tasks.approved_by_user_id` (миграция 0039 — добавить колонку)
+  - [ ] Persona-ROP re-test
+- **Зависимости:** TASK-LEAD-009, TASK-LEAD-010 (brand-filter)
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-014: PDF-экспорт «Реестр претензий» + claim_templates
+
+- **Исполнитель:** Lead → Developer
+- **Приоритет:** P1 (Accountant + Seller wishlist)
+- **Оценка:** ~3-5 дней (M)
+- **Описание:** Бухгалтер хочет подшить PDF в отчётность. Менеджер хочет шаблон вместо «писать с нуля каждый штраф».
+- **Критерии готовности:**
+  - [ ] `services/chargebacks_pdf.py` через reportlab — генерация по фильтрам
+  - [ ] Кнопка «Скачать PDF» на странице `/chargebacks` (передаёт текущие фильтры)
+  - [ ] Миграция 0040: `claim_templates(tenant_id, category, name, template_text)`
+  - [ ] API: CRUD `/api/chargebacks/templates`
+  - [ ] UI: «Использовать шаблон» в expand row → autofill claim_text
+- **Зависимости:** TASK-LEAD-009
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-015: bookkeeper_templates для audit-mode
+
+- **Исполнитель:** Lead → Developer
+- **Приоритет:** P1 (Accountant wishlist — иначе бухгалтер бросит после 2-го использования)
+- **Оценка:** ~2-3 дня
+- **Описание:** BUG-DES-002. Сохраняемые маппинги колонок XLSX от бухгалтера.
+- **Критерии готовности:**
+  - [ ] Миграция 0041: `bookkeeper_templates(tenant_id, name, mapping_json, created_at)`
+  - [ ] API: POST/GET/DELETE `/api/audit-mode/templates`
+  - [ ] Frontend: dropdown «Шаблон» + кнопка «Сохранить как шаблон» в Audit.tsx wizard
+  - [ ] Persona-Accountant re-test
+- **Зависимости:** TASK-LEAD-009
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-016: HAR + POST shifts.create для redistribution
+
+- **Исполнитель:** Lead + пользователь
+- **Приоритет:** P0 (без этого LEAD-008 = декорация)
+- **Оценка:** ~1-2 нед после получения HAR
+- **Описание:** Пользователь снимает HAR в момент создания заявки в LK WB → анализ → реализация POST endpoint + миллисекундный execute_window. Это завершает Этапы 3+ из REDISTRIBUTION_PLAN.
+- **Критерии готовности:**
+  - [ ] Снят HAR в момент клика «Создать перемещение» (через DevTools → Network → Fetch/XHR)
+  - [ ] Снят HAR в окно 09:00/18:00 МСК (показывает переход quota 0→>0 → закрытие)
+  - [ ] Снят HAR в «Отчёт о перемещениях» для followup
+  - [ ] Реализация `WbLkClient.create_shift()` (placeholder уже в коде)
+  - [ ] Celery `execute_window` task с миллисекундной точностью (NTP-sync)
+  - [ ] End-to-end smoke на тестовом окне с 1 маленькой заявкой
+- **Зависимости:** TASK-LEAD-009, пользователь снимает HAR
+- **Статус:** Открыта (ЖДЁТ HAR от пользователя)
+
+---
+
+### TASK-LEAD-017: Мелкие баги P1 — мини-sprint фиксов
+
+- **Исполнитель:** Lead → Developer
+- **Приоритет:** P1
+- **Оценка:** ~1-2 дня (XS-S each, batch)
+- **Описание:** Сборка мелких багов из persona-reviews.
+- **Критерии готовности:**
+  - [ ] BUG-DEV-002: audit_compare `tax_paid` мапинг на `tax_for_fns`
+  - [ ] BUG-DEV-003: chargebacks `acquiring_correction` сумма из `acquiring_fee`
+  - [ ] BUG-DEV-004: redistribution demand_by_region (не warehouse_name)
+  - [ ] BUG-DEV-005: redistribution wb_offices справочник + cooldown по реальному office_id
+  - [ ] BUG-DES-003: chargebacks UI таб «Списания / Возмещения»
+  - [ ] BUG-DES-005: Dashboard composition bars Preliminary fallback
+- **Зависимости:** TASK-LEAD-009
+- **Статус:** Открыта
+
+---
+
+### TASK-STRAT-003: Decision A/B/C для chrome-extension «РНП Connect»
+
+- **Исполнитель:** Strategist
+- **Приоритет:** P1 (блокирует онбординг redistribution для не-технических юзеров)
+- **Оценка:** 2-3ч research
+- **Описание:** BUG-DES-004. Варианты A (chrome-ext), B (видео-инструкция), C (RuCaptcha SMS auto). Trade-offs: A — 2-3 нед dev + Chrome Web Store ревью, B — 1 день, C — 3-5 нед + per-tenant API-стоимость RuCaptcha.
+- **Критерии готовности:**
+  - [ ] Анализ из 3 вариантов с оценкой ROI (стоимость dev vs % юзеров которые подключат LK)
+  - [ ] Решение собственника через `AskUserQuestion`
+  - [ ] При выборе A — отдельная TASK-LEAD-NNN на spec расширения
+- **Зависимости:** TASK-LEAD-009
+- **Статус:** Открыта
+
+---
+
 ## Формат / Жизненный цикл
 
 См. `RULES.md` §«Формат задачи».

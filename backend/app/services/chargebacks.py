@@ -149,7 +149,7 @@ async def sync_chargebacks(
                 WbReportDetail.ppvz_for_pay,
                 WbReportDetail.penalty,
                 WbReportDetail.deduction,
-                WbReportDetail.supplier_oper_dt,
+                WbReportDetail.sale_dt,
                 WbReportDetail.rr_dt,
                 WbReportDetail.nm_id,
                 WbReportDetail.realizationreport_id,
@@ -191,9 +191,9 @@ async def sync_chargebacks(
                 supplier_oper_name=r.supplier_oper_name,
                 amount_rub=amount,
                 nm_id=r.nm_id,
-                operation_dt=r.supplier_oper_dt.date()
-                if isinstance(r.supplier_oper_dt, datetime)
-                else r.supplier_oper_dt,
+                operation_dt=r.sale_dt.date()
+                if isinstance(r.sale_dt, datetime)
+                else r.sale_dt,
                 rr_dt=r.rr_dt,
                 status=initial_status,
                 created_by="system",
@@ -221,8 +221,8 @@ async def sync_chargebacks(
                             "supplier_oper_name": r.supplier_oper_name,
                             "amount_rub": float(amount),
                             "nm_id": int(r.nm_id) if r.nm_id is not None else None,
-                            "operation_dt": str(r.supplier_oper_dt)
-                            if r.supplier_oper_dt
+                            "operation_dt": str(r.sale_dt)
+                            if r.sale_dt
                             else None,
                         },
                     )
