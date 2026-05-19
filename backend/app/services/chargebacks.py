@@ -152,7 +152,7 @@ async def sync_chargebacks(
                 WbReportDetail.sale_dt,
                 WbReportDetail.rr_dt,
                 WbReportDetail.nm_id,
-                WbReportDetail.realizationreport_id,
+                WbReportDetail.realization_id,
             )
             .where(WbReportDetail.supplier_oper_name.in_(DISPUTABLE_OPER_NAMES))
             .where(WbReportDetail.sale_dt >= cutoff)
@@ -186,7 +186,7 @@ async def sync_chargebacks(
             .values(
                 tenant_id=tenant_id,
                 rrd_id=int(r.rrd_id) if r.rrd_id is not None else 0,
-                realizationreport_id=r.realizationreport_id,
+                realizationreport_id=r.realization_id,
                 category=category,
                 supplier_oper_name=r.supplier_oper_name,
                 amount_rub=amount,
