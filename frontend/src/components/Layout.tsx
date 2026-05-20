@@ -45,6 +45,7 @@ const GROUPS: Group[] = [
       { to: "/cash-flow", label: "ДДС", directorOrHead: true },
       { to: "/payment-calendar", label: "Платёжный календарь", directorOrHead: true },
       { to: "/capitalization", label: "Капитализация", directorOrHead: true },
+      { to: "/tariffs", label: "Тарифы WB" },
     ],
   },
   {

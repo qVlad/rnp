@@ -1565,6 +1565,48 @@ paymentOrderDelete: (payment_order_id: string) =>
   // ── Sync status (для индикатора в шапке) ──
   syncStatus: () => request<SyncStatusResponse>(`/api/sync/status`),
 
+  // ── WB тарифы (timeline для страницы /tariffs) ──
+  tariffWarehouses: () =>
+    request<{ items: string[] }>(`/api/tariffs/warehouses`),
+  tariffSubjects: (q?: string, limit = 1000) => {
+    const qs = new URLSearchParams();
+    if (q) qs.set("q", q);
+    qs.set("limit", String(limit));
+    return request<{
+      items: Array<{ subject_name: string; subject_id: number | null }>;
+    }>(`/api/tariffs/subjects?${qs}`);
+  },
+  tariffBoxTimeline: (warehouse: string, from?: string, to?: string) => {
+    const qs = new URLSearchParams({ warehouse });
+    if (from) qs.set("from", from);
+    if (to) qs.set("to", to);
+    return request<TariffTimelineResponse>(
+      `/api/tariffs/timeline/box?${qs}`,
+    );
+  },
+  tariffPalletTimeline: (warehouse: string, from?: string, to?: string) => {
+    const qs = new URLSearchParams({ warehouse });
+    if (from) qs.set("from", from);
+    if (to) qs.set("to", to);
+    return request<TariffTimelineResponse>(
+      `/api/tariffs/timeline/pallet?${qs}`,
+    );
+  },
+  tariffCommissionTimeline: (subject: string, from?: string, to?: string) => {
+    const qs = new URLSearchParams({ subject });
+    if (from) qs.set("from", from);
+    if (to) qs.set("to", to);
+    return request<TariffTimelineResponse>(
+      `/api/tariffs/timeline/commission?${qs}`,
+    );
+  },
+  tariffCurrent: (kind: "box" | "pallet" = "box") =>
+    request<{
+      items: TariffTimelineRow[];
+      kind: string;
+      as_of: string;
+    }>(`/api/tariffs/current?kind=${kind}`),
+
   // ── UNIT-план (forward-looking unit economics) ──
   unitPlanRows: (filters?: UnitPlanFilters) => {
     const qs = new URLSearchParams();
@@ -1619,6 +1661,36 @@ paymentOrderDelete: (payment_order_id: string) =>
     return r.text();
   },
 };
+
+/**
+ * Точка timeline тарифов WB. Поля зависят от типа (box/pallet/commission) —
+ * для удобства tabular UI унифицирована до общего dict, недостающие = null.
+ */
+export interface TariffTimelineRow {
+  effective_from: string;
+  warehouse_name?: string | null;
+  subject_name?: string | null;
+  subject_id?: number | null;
+  delivery_base?: number | null;
+  delivery_liter?: number | null;
+  delivery_expr?: number | null;
+  storage_base?: number | null;
+  storage_liter?: number | null;
+  storage_expr?: number | null;
+  dt_next?: string | null;
+  commission_fbo?: number | null;
+  commission_fbs?: number | null;
+  commission_express?: number | null;
+  paid_storage_kgvp?: number | null;
+  return_cost?: number | null;
+  is_baseline?: boolean;
+}
+
+export interface TariffTimelineResponse {
+  items: TariffTimelineRow[];
+  from: string;
+  to: string;
+}
 
 export interface SyncEntity {
   entity: string;

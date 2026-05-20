@@ -37,6 +37,7 @@ from app.api import (
     settings,
     supplies,
     sync_status,
+    tariffs,
     tax_report,
     tenant_modules,
     tenant_settings,
@@ -212,6 +213,7 @@ app.include_router(audit_mode.router)
 app.include_router(chargebacks.router)
 app.include_router(redistribution.router)
 app.include_router(tax_report.router)
+app.include_router(tariffs.router)
 app.include_router(supplies.router)
 app.include_router(checklist.router)
 app.include_router(season_plan.router)
