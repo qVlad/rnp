@@ -35,7 +35,7 @@ import { bgRequest } from "@/lib/bg-bridge";
 async function collectPositions(): Promise<void> {
   const settings = await getSettings();
   if (!settings.enablePositionTracking) {
-    console.debug("[wbab-ext] position tracking disabled");
+    console.debug("[rnp-ext] position tracking disabled");
     return;
   }
 
@@ -52,7 +52,7 @@ async function collectPositions(): Promise<void> {
 
   const cards = findSearchCards();
   if (cards.length === 0) {
-    console.debug("[wbab-ext] no cards found on", location.href);
+    console.debug("[rnp-ext] no cards found on", location.href);
     return;
   }
 
@@ -63,13 +63,13 @@ async function collectPositions(): Promise<void> {
   if (matches.length === 0) {
     // Полезная диагностика только если есть tracked nmIds:
     console.debug(
-      `[wbab-ext] no tracked cards on "${query}" page ${page} (${cards.length} total cards)`,
+      `[rnp-ext] no tracked cards on "${query}" page ${page} (${cards.length} total cards)`,
     );
     return;
   }
 
   console.log(
-    `[wbab-ext] found ${matches.length} tracked cards on "${query}" page ${page}`,
+    `[rnp-ext] found ${matches.length} tracked cards on "${query}" page ${page}`,
   );
 
   // Шлём через типизированный bg-bridge — service worker сделает реальный fetch.
@@ -87,7 +87,7 @@ async function collectPositions(): Promise<void> {
       });
     } catch (e) {
       // Если SW не отвечает — не страшно, попробуем в следующий раз.
-      console.warn("[wbab-ext] bgRequest postPositions failed:", e);
+      console.warn("[rnp-ext] bgRequest postPositions failed:", e);
     }
 
     // Опционально подсвечиваем карточку, чтобы пользователь видел что
@@ -126,8 +126,8 @@ function derivePageNumberFromUrl(): number {
 
 function highlightTrackedCard(el: Element): void {
   const target = el as HTMLElement;
-  if (target.dataset.wbabHighlighted === "1") return;
-  target.dataset.wbabHighlighted = "1";
+  if (target.dataset.rnpHighlighted === "1") return;
+  target.dataset.rnpHighlighted = "1";
   target.style.outline = "2px solid #3b82f6";
   target.style.outlineOffset = "2px";
   target.style.borderRadius = "8px";

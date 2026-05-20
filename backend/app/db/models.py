@@ -1467,6 +1467,40 @@ class WbLkSession(Base, TenantScopedMixin):
     )
 
 
+class WbLkJob(Base, TenantScopedMixin):
+    """Job в очереди на выполнение через Chrome-extension proxy.
+
+    Используется когда backend не может вызвать WB API напрямую (WB пинит
+    сессию к IP браузера и держит JWT in-memory у фронта). Extension polls
+    GET /api/extension/lk/jobs/pending, выполняет в браузере юзера на
+    seller.wildberries.ru, POST'ит result. Миграция 0045.
+    """
+
+    __tablename__ = "wb_lk_jobs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    op: Mapped[str] = mapped_column(String(32), nullable=False)
+    params: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="queued"
+    )
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    result: Mapped[dict | None] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+    http_status: Mapped[int | None] = mapped_column(Integer)
+    originator: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class RedistributionRecommendation(Base, TenantScopedMixin):
     """Рекомендация перераспределения: что куда везти. Обновляется daily
     через `daily_recommendations` Celery task. Миграция 0037.

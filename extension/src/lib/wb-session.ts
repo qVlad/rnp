@@ -48,7 +48,7 @@ export async function getSellerCabinetCookies(): Promise<chrome.cookies.Cookie[]
     const all = await chrome.cookies.getAll({ domain: WB_SELLER_HOSTNAME });
     return all.filter((c) => KNOWN_WB_AUTH_COOKIES.includes(c.name));
   } catch (e) {
-    console.warn("[wbab-ext] cookies API not available:", e);
+    console.warn("[rnp-ext] cookies API not available:", e);
     return [];
   }
 }

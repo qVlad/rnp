@@ -25,8 +25,8 @@ import { generateWbToken } from "@/lib/wb-token";
 import { getSettings } from "@/lib/storage";
 import type { ActiveTest } from "@/lib/types";
 
-const WIDGET_ID = "wbab-ext-widget";
-const LAUNCHER_BTN_ID = "wbab-ext-launcher-btn";
+const WIDGET_ID = "rnp-ext-widget";
+const LAUNCHER_BTN_ID = "rnp-ext-launcher-btn";
 const MODE_NMID = "nmid";
 const MODE_OVERVIEW = "overview";
 
@@ -67,7 +67,7 @@ async function run(): Promise<void> {
     setSellerDebugMeta({ ts: new Date().toISOString(), stage: "ext-context-invalid" });
     return;
   }
-  console.log(`[wbab-ext] seller-card content script run() URL=${location.href}`);
+  console.log(`[rnp-ext] seller-card content script run() URL=${location.href}`);
   // Параллельно (fire-and-forget): auto-token refresh при заходе в кабинет.
   // Это **наиболее надёжный путь** получить JWT — content script на
   // seller.wildberries.ru имеет same-site cookies для tokensjrpc автоматически.
@@ -131,7 +131,7 @@ async function run(): Promise<void> {
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.warn("[wbab-ext] fetchActiveTestForNmId failed:", e);
+      console.warn("[rnp-ext] fetchActiveTestForNmId failed:", e);
       setSellerDebugMeta({
         ts: new Date().toISOString(),
         stage: "fetch-error",
@@ -162,7 +162,7 @@ async function run(): Promise<void> {
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.warn("[wbab-ext] fetchActiveTests failed:", e);
+      console.warn("[rnp-ext] fetchActiveTests failed:", e);
       updateOverviewWidget(widget, []);
       setSellerDebugMeta({
         ts: new Date().toISOString(),
@@ -194,7 +194,7 @@ function removeWidget(): void {
  * Ошибки логируются в console.warn но не показываются юзеру — это **fallback
  * механизм**, ручной токен всегда работает как primary path.
  */
-const AUTO_TOKEN_DEBOUNCE_KEY = "wbab.autoToken.lastTry";
+const AUTO_TOKEN_DEBOUNCE_KEY = "rnp.autoToken.lastTry";
 const AUTO_TOKEN_DEBOUNCE_MS = 5 * 60 * 1000;
 
 /**
@@ -225,15 +225,15 @@ async function maybeRefreshAutoToken(): Promise<void> {
   try {
     const settings = await getSettings();
     if (!settings.enableAutoToken) {
-      console.log("[wbab-ext] auto-token: enableAutoToken=false → silent skip (включите в Options расширения)");
+      console.log("[rnp-ext] auto-token: enableAutoToken=false → silent skip (включите в Options расширения)");
       return;
     }
     if (!settings.rnpUrl || !settings.rnpToken) {
-      console.warn("[wbab-ext] auto-token: wbabUrl/wbabToken не настроены в Options расширения");
+      console.warn("[rnp-ext] auto-token: rnpUrl/rnpToken не настроены в Options расширения");
       return;
     }
     console.log(
-      `[wbab-ext] auto-token: enabled, wbab=${settings.rnpUrl}, URL=${location.href}`,
+      `[rnp-ext] auto-token: enabled, rnp=${settings.rnpUrl}, URL=${location.href}`,
     );
 
     // Дебаунс на уровне вкладки (sessionStorage — per-tab).
@@ -244,37 +244,37 @@ async function maybeRefreshAutoToken(): Promise<void> {
     const lastTry = lastTryStr ? Number(lastTryStr) : 0;
     if (Date.now() - lastTry < AUTO_TOKEN_DEBOUNCE_MS) {
       const minsAgo = Math.round((Date.now() - lastTry) / 60000);
-      console.log(`[wbab-ext] auto-token: дебаунс — последняя успешная попытка ${minsAgo} мин назад (sessionStorage)`);
+      console.log(`[rnp-ext] auto-token: дебаунс — последняя успешная попытка ${minsAgo} мин назад (sessionStorage)`);
       return;
     }
 
     // Спрашиваем backend нужно ли вообще обновлять.
     const statusResp = await bgRequest({ type: "getWbTokenStatus" });
     if (statusResp.kind !== "wbTokenStatus") {
-      console.warn(`[wbab-ext] auto-token: getWbTokenStatus вернул ${statusResp.kind}`, statusResp);
+      console.warn(`[rnp-ext] auto-token: getWbTokenStatus вернул ${statusResp.kind}`, statusResp);
       return;
     }
     const status = statusResp.data;
     if (!status) {
-      console.warn("[wbab-ext] auto-token: backend wbab недоступен (нет ответа /api/extension/wb-token/status). Проверьте wbabUrl и extension-token.");
+      console.warn("[rnp-ext] auto-token: backend РНП недоступен (нет ответа /api/extension/wb-token/status). Проверьте rnpUrl и extension-token.");
       return;
     }
     console.log(
-      `[wbab-ext] auto-token: status hasToken=${status.hasToken}, source=${status.source}, needsRefresh=${status.needsRefresh}, expires=${status.expiresAt}`,
+      `[rnp-ext] auto-token: status hasToken=${status.hasToken}, source=${status.source}, needsRefresh=${status.needsRefresh}, expires=${status.expiresAt}`,
     );
     // ВАЖНО: НЕ выходим если source='manual'. Если юзер включил enableAutoToken
     // в options — он явно хочет переключиться с ручного на auto. Skip только
     // когда у нас уже свежий auto-токен и он не истекает.
     if (status.source === "auto" && status.hasToken && !status.needsRefresh) {
-      console.log(`[wbab-ext] auto-token свежий, skip (expires=${status.expiresAt})`);
+      console.log(`[rnp-ext] auto-token свежий, skip (expires=${status.expiresAt})`);
       return;
     }
 
     // Получаем JWT от cabinet. Куки уходят автоматически (same-site).
-    console.log("[wbab-ext] auto-token: дёргаем tokensjrpc…");
+    console.log("[rnp-ext] auto-token: дёргаем tokensjrpc…");
     const result = await generateWbToken();
     if (!result) {
-      console.warn("[wbab-ext] auto-token: generateWbToken вернул null — нет JWT (см. предыдущие предупреждения)");
+      console.warn("[rnp-ext] auto-token: generateWbToken вернул null — нет JWT (см. предыдущие предупреждения)");
       return;
     }
 
@@ -290,7 +290,7 @@ async function maybeRefreshAutoToken(): Promise<void> {
     const parts = result.jwt.split(".");
     if (parts.length !== 3) {
       console.warn(
-        `[wbab-ext] auto-token: ОТКАЗ отправлять на backend. ` +
+        `[rnp-ext] auto-token: ОТКАЗ отправлять на backend. ` +
           `tokensjrpc вернул opaque cabinet-token (parts=${parts.length}, length=${result.jwt.length}), ` +
           `а не Personal API token. Эта фича сейчас не работает — нужен ручной токен.`,
       );
@@ -307,16 +307,16 @@ async function maybeRefreshAutoToken(): Promise<void> {
     });
     if (saveResp.kind === "ok" && saveResp.recorded) {
       console.log(
-        `[wbab-ext] auto-token saved, expires=${result.expiresAt ? new Date(result.expiresAt).toISOString() : "unknown"}`,
+        `[rnp-ext] auto-token saved, expires=${result.expiresAt ? new Date(result.expiresAt).toISOString() : "unknown"}`,
       );
       // Дебаунс: пишем timestamp ТОЛЬКО при успешном сохранении на backend.
       // Это значит «JWT свежий ближайшие ~25 мин, не лезь чаще раз в 5 мин».
       sessionStorage.setItem(AUTO_TOKEN_DEBOUNCE_KEY, String(Date.now()));
     } else {
-      console.warn(`[wbab-ext] auto-token: saveWbToken failed`, saveResp);
+      console.warn(`[rnp-ext] auto-token: saveWbToken failed`, saveResp);
     }
   } catch (e) {
-    console.warn("[wbab-ext] maybeRefreshAutoToken failed:", e);
+    console.warn("[rnp-ext] maybeRefreshAutoToken failed:", e);
   }
 }
 
@@ -448,14 +448,14 @@ function renderInitialWidget(nmId: number): HTMLElement {
       <div class="info">
         <div class="title">
           <span class="emoji">🧪</span>
-          <span>wbab — A/B-тесты</span>
+          <span>РНП — A/B-тесты</span>
         </div>
-        <div class="status" id="wbab-ext-status">
+        <div class="status" id="rnp-ext-status">
           Проверяем статус теста для артикула ${nmId}…
         </div>
       </div>
       <button class="launcher" id="${LAUNCHER_BTN_ID}" type="button">+ Новый A/B-тест</button>
-      <button class="close" id="wbab-ext-close" type="button" title="Скрыть виджет" aria-label="Закрыть">×</button>
+      <button class="close" id="rnp-ext-close" type="button" title="Скрыть виджет" aria-label="Закрыть">×</button>
     </div>
   `;
 
@@ -470,7 +470,7 @@ function renderInitialWidget(nmId: number): HTMLElement {
       void bgRequest({ type: "openLauncher", nmId });
     };
   }
-  const closeBtn = shadow.querySelector<HTMLButtonElement>("#wbab-ext-close");
+  const closeBtn = shadow.querySelector<HTMLButtonElement>("#rnp-ext-close");
   if (closeBtn) {
     closeBtn.onclick = (e) => {
       e.preventDefault();
@@ -486,7 +486,7 @@ function updateWidget(host: HTMLElement, nmId: number, test: ActiveTest | null):
   // Query через shadowRoot, не через host.querySelector — id'шники живут в Shadow DOM.
   const shadow = host.shadowRoot;
   if (!shadow) return;
-  const status = shadow.querySelector("#wbab-ext-status") as HTMLElement | null;
+  const status = shadow.querySelector("#rnp-ext-status") as HTMLElement | null;
   if (!status) return;
 
   const launcherBtn = shadow.querySelector(`#${LAUNCHER_BTN_ID}`) as HTMLButtonElement | null;
@@ -609,7 +609,7 @@ async function toggleEmbedIframe(host: HTMLElement, testId: string): Promise<voi
     fallback.innerHTML = `
       <div class="heading">⚠ Не удалось загрузить виджет в iframe</div>
       <div>
-        Возможно ваш wbab-сервер по адресу <code>${escapeHtml(base)}</code>
+        Возможно ваш РНП-сервер по адресу <code>${escapeHtml(base)}</code>
         блокирует iframe или временно недоступен.
       </div>
       <a href="${escapeAttr(fullUrl)}" target="_blank" rel="noopener noreferrer">
@@ -786,20 +786,20 @@ function renderOverviewWidget(): HTMLElement {
       <div class="head">
         <div class="title">
           <span class="emoji">🧪</span>
-          <span>wbab — все мои A/B-тесты</span>
+          <span>РНП — все мои A/B-тесты</span>
         </div>
-        <button class="close" id="wbab-ext-close" type="button" title="Скрыть" aria-label="Закрыть">×</button>
+        <button class="close" id="rnp-ext-close" type="button" title="Скрыть" aria-label="Закрыть">×</button>
       </div>
-      <div class="subtitle" id="wbab-ext-subtitle">Загружаем список тестов…</div>
-      <div class="tests" id="wbab-ext-tests"></div>
+      <div class="subtitle" id="rnp-ext-subtitle">Загружаем список тестов…</div>
+      <div class="tests" id="rnp-ext-tests"></div>
       <div class="footer">
-        <a href="#" id="wbab-ext-open-wbab" target="_blank" rel="noopener">Открыть wbab →</a>
-        <span id="wbab-ext-stamp"></span>
+        <a href="#" id="rnp-ext-open-rnp" target="_blank" rel="noopener">Открыть РНП →</a>
+        <span id="rnp-ext-stamp"></span>
       </div>
     </div>
   `;
 
-  const closeBtn = shadow.querySelector<HTMLButtonElement>("#wbab-ext-close");
+  const closeBtn = shadow.querySelector<HTMLButtonElement>("#rnp-ext-close");
   if (closeBtn) {
     closeBtn.onclick = (e) => {
       e.preventDefault();
@@ -809,9 +809,9 @@ function renderOverviewWidget(): HTMLElement {
   }
 
   // Открыть основной wbab — пробрасываем через SW потому что нужен chrome.tabs.create.
-  const openWbabLink = shadow.querySelector<HTMLAnchorElement>("#wbab-ext-open-wbab");
-  if (openWbabLink) {
-    openWbabLink.onclick = async (e) => {
+  const openRnpLink = shadow.querySelector<HTMLAnchorElement>("#rnp-ext-open-rnp");
+  if (openRnpLink) {
+    openRnpLink.onclick = async (e) => {
       e.preventDefault();
       const { getSettings } = await import("@/lib/storage");
       const settings = await getSettings();
@@ -828,9 +828,9 @@ function renderOverviewWidget(): HTMLElement {
 function updateOverviewWidget(host: HTMLElement, tests: ActiveTest[]): void {
   const shadow = host.shadowRoot;
   if (!shadow) return;
-  const subtitle = shadow.querySelector<HTMLElement>("#wbab-ext-subtitle");
-  const list = shadow.querySelector<HTMLElement>("#wbab-ext-tests");
-  const stamp = shadow.querySelector<HTMLElement>("#wbab-ext-stamp");
+  const subtitle = shadow.querySelector<HTMLElement>("#rnp-ext-subtitle");
+  const list = shadow.querySelector<HTMLElement>("#rnp-ext-tests");
+  const stamp = shadow.querySelector<HTMLElement>("#rnp-ext-stamp");
   if (!subtitle || !list) return;
 
   if (tests.length === 0) {

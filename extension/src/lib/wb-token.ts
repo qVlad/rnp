@@ -96,12 +96,12 @@ export function extractWbAuthHeaders(): {
       if (!payload) continue;
       if (!authv3 && payload.client_id === "seller-portal") {
         authv3 = cand;
-        console.log(`[wbab-ext] found authorizev3 в localStorage["${key}"], user=${payload.user}`);
+        console.log(`[rnp-ext] found authorizev3 в localStorage["${key}"], user=${payload.user}`);
       }
       const data = (payload as { data?: Record<string, unknown> }).data;
       if (!lk && data && typeof data === "object" && "Z-Sccode" in data) {
         lk = cand;
-        console.log(`[wbab-ext] found wb-seller-lk в localStorage["${key}"], Z-Sfid=${data["Z-Sfid"]}`);
+        console.log(`[rnp-ext] found wb-seller-lk в localStorage["${key}"], Z-Sfid=${data["Z-Sfid"]}`);
       }
       if (authv3 && lk) break;
     }
@@ -109,7 +109,7 @@ export function extractWbAuthHeaders(): {
   }
   if (!authv3 || !lk) {
     console.warn(
-      `[wbab-ext] WB auth tokens НЕ найдены в localStorage (authorizev3=${!!authv3}, wb-seller-lk=${!!lk}). ` +
+      `[rnp-ext] WB auth tokens НЕ найдены в localStorage (authorizev3=${!!authv3}, wb-seller-lk=${!!lk}). ` +
         `Возможно вы не залогинены в seller.wildberries.ru, или WB сменил формат хранения токенов.`,
     );
     return null;
@@ -135,13 +135,13 @@ export async function generateWbToken(
   if (!auth) {
     return null;
   }
-  const rpcId = `wbab-ext-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const rpcId = `rnp-ext-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   // 10-сек таймаут на запрос. Без явного AbortController наблюдали в проде
   // "(fetch-api): user aborted the request" когда SPA-навигация WB ломала
   // pending fetch. С AbortSignal поведение детерминированное: либо успех за 10с,
   // либо явный timeout error с понятным сообщением.
   const ctrl = new AbortController();
-  const timeoutId = setTimeout(() => ctrl.abort("wbab-timeout-10s"), 10_000);
+  const timeoutId = setTimeout(() => ctrl.abort("rnp-timeout-10s"), 10_000);
   try {
     const res = await fetch(TOKENSJRPC_URL, {
       method: "POST",
@@ -163,24 +163,24 @@ export async function generateWbToken(
     clearTimeout(timeoutId);
 
     if (!res.ok) {
-      console.warn(`[wbab-ext] tokensjrpc returned ${res.status} ${res.statusText}`);
+      console.warn(`[rnp-ext] tokensjrpc returned ${res.status} ${res.statusText}`);
       return null;
     }
 
     const data = (await res.json()) as TokenJrpcResponse;
     if (data.error) {
-      console.warn(`[wbab-ext] tokensjrpc error:`, data.error);
+      console.warn(`[rnp-ext] tokensjrpc error:`, data.error);
       return null;
     }
     const jwt = data.result?.token;
     if (!jwt || typeof jwt !== "string") {
-      console.warn(`[wbab-ext] tokensjrpc returned empty token`);
+      console.warn(`[rnp-ext] tokensjrpc returned empty token`);
       return null;
     }
 
     const expiresAt = decodeJwtExp(jwt);
     console.log(
-      `[wbab-ext] tokensjrpc OK, token length=${jwt.length}, expires=${expiresAt ? new Date(expiresAt).toISOString() : "unknown"}`,
+      `[rnp-ext] tokensjrpc OK, token length=${jwt.length}, expires=${expiresAt ? new Date(expiresAt).toISOString() : "unknown"}`,
     );
     return { jwt, expiresAt };
   } catch (e) {
@@ -192,11 +192,11 @@ export async function generateWbToken(
     //     отменил pending fetches). Тоже норм — попробуем при следующем заходе.
     if (err.name === "AbortError" || ctrl.signal.aborted) {
       console.warn(
-        `[wbab-ext] tokensjrpc aborted (reason: ${String(ctrl.signal.reason ?? "external")}). Это могло быть от SPA-навигации WB либо нашего 10с timeout — попробуем при следующем заходе.`,
+        `[rnp-ext] tokensjrpc aborted (reason: ${String(ctrl.signal.reason ?? "external")}). Это могло быть от SPA-навигации WB либо нашего 10с timeout — попробуем при следующем заходе.`,
       );
       return null;
     }
-    console.warn(`[wbab-ext] tokensjrpc fetch failed:`, err.message);
+    console.warn(`[rnp-ext] tokensjrpc fetch failed:`, err.message);
     return null;
   }
 }

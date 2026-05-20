@@ -15,7 +15,7 @@ export function OptionsApp() {
       // принудительно сбрасываем в false. Иначе SW alarm спам'ит /save endpoint
       // каждые 5 мин (backend сейчас отвергает с 400, но в логах остаётся мусор).
       if (s.enableAutoToken) {
-        console.log("[wbab-ext options] миграция: enableAutoToken=true → false (фича deprecated)");
+        console.log("[rnp-ext options] миграция: enableAutoToken=true → false (фича deprecated)");
         await saveSettings({ enableAutoToken: false });
         s = { ...s, enableAutoToken: false };
       }

@@ -52,7 +52,7 @@ export async function fetchActiveTestForNmId(nmId: number): Promise<ActiveTest |
     const data = (await res.json()) as ActiveTest | null;
     return data;
   } catch (e) {
-    console.warn("[wbab-api] fetchActiveTestForNmId failed:", e);
+    console.warn("[rnp-api] fetchActiveTestForNmId failed:", e);
     return null;
   }
 }
@@ -70,7 +70,7 @@ export async function fetchActiveTests(): Promise<ActiveTest[]> {
     if (!res.ok) return [];
     return (await res.json()) as ActiveTest[];
   } catch (e) {
-    console.warn("[wbab-api] fetchActiveTests failed:", e);
+    console.warn("[rnp-api] fetchActiveTests failed:", e);
     return [];
   }
 }
@@ -91,7 +91,7 @@ export async function fetchWinnersSince(cursor: number): Promise<WinnerEvent[]> 
     if (!res.ok) return [];
     return (await res.json()) as WinnerEvent[];
   } catch (e) {
-    console.warn("[wbab-api] fetchWinnersSince failed:", e);
+    console.warn("[rnp-api] fetchWinnersSince failed:", e);
     return [];
   }
 }
@@ -109,7 +109,7 @@ export async function postPositions(payload: {
   collectedAt: string;
 }): Promise<boolean> {
   if (USE_MOCK) {
-    console.log("[wbab-api MOCK] postPositions", payload);
+    console.log("[rnp-api MOCK] postPositions", payload);
     return true;
   }
 
@@ -127,7 +127,7 @@ export async function postPositions(payload: {
     });
     return res.ok;
   } catch (e) {
-    console.warn("[wbab-api] postPositions failed:", e);
+    console.warn("[rnp-api] postPositions failed:", e);
     return false;
   }
 }
@@ -159,12 +159,12 @@ export async function saveWbToken(
       },
     );
     if (!res.ok) {
-      console.warn(`[wbab-api] saveWbToken failed: ${res.status}`);
+      console.warn(`[rnp-api] saveWbToken failed: ${res.status}`);
       return false;
     }
     return true;
   } catch (e) {
-    console.warn("[wbab-api] saveWbToken request failed:", e);
+    console.warn("[rnp-api] saveWbToken request failed:", e);
     return false;
   }
 }
@@ -188,7 +188,7 @@ export async function getWbTokenStatus(): Promise<
     if (!res.ok) return null;
     return (await res.json()) as import("./bg-bridge").WbTokenStatus;
   } catch (e) {
-    console.warn("[wbab-api] getWbTokenStatus failed:", e);
+    console.warn("[rnp-api] getWbTokenStatus failed:", e);
     return null;
   }
 }
@@ -197,7 +197,7 @@ export async function getWbTokenStatus(): Promise<
  * Открыть форму создания теста с pre-fill артикулом.
  * Не идёт через API — открывает страницу wbab в новой вкладке.
  */
-export async function openWbabLauncher(nmId: number): Promise<void> {
+export async function openRnpLauncher(nmId: number): Promise<void> {
   const settings = await getSettings();
   const base = settings.rnpUrl || "https://rnp.sellerfriends.ru";
   const url = `${base.replace(/\/$/, "")}/abtest/new?nmId=${nmId}&fromExt=1`;

@@ -64,9 +64,16 @@ export type BgRequest =
       dst: number;
       nmID: number;
       count: Array<{ chrtID: number; count: number }>;
-    };
+    }
+  /**
+   * Ручной триггер polling WB-LK jobs queue (LEAD-016 Phase 3): SW тянет
+   * pending job'ы с backend РНП и выполняет их через content script.
+   * Обычно работает по alarm каждые 30 сек, эта команда для smoke-теста
+   * из popup'а (не ждать тика).
+   */
+  | { type: "triggerLkJobsPoll" };
 
-/** Статус токена с backend wbab (см. /api/extension/wb-token/status). */
+/** Статус токена с backend РНП (см. /api/extension/wb-token/status). */
 export type WbTokenStatus = {
   hasToken: boolean;
   source: "manual" | "auto" | null;

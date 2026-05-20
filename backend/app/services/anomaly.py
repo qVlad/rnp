@@ -352,4 +352,42 @@ async def collect_alerts(
                         ),
                     })
 
+    # 5) UNIT-план: карточки без габаритов в WB-кабинете → volume_l = NULL.
+    # Без габаритов нельзя корректно посчитать логистику и хранение.
+    # Sync.product_volume берёт dimensions из WB Content API; если у карточки
+    # в кабинете не заполнены length/width/height — `volume_l` остаётся NULL.
+    # Сообщаем директору сколько карточек нужно дозаполнить.
+    from app.db.models import Product as _Product  # noqa: WPS433
+
+    missing_dims_q = select(func.count()).select_from(_Product).where(
+        _Product.is_archived.is_(False),
+        (_Product.volume_l.is_(None)) | (_Product.volume_l == 0),
+    )
+    if tenant_id is not None:
+        missing_dims_q = missing_dims_q.where(_Product.tenant_id == tenant_id)
+    missing_dims = (await session.execute(missing_dims_q)).scalar_one() or 0
+
+    if missing_dims > 0:
+        total_active_q = select(func.count()).select_from(_Product).where(
+            _Product.is_archived.is_(False),
+        )
+        if tenant_id is not None:
+            total_active_q = total_active_q.where(_Product.tenant_id == tenant_id)
+        total_active = (await session.execute(total_active_q)).scalar_one() or 0
+        ratio = missing_dims / max(1, total_active)
+        # >50% → warning (UNIT-план существенно искажён);
+        # ≥1 → info (новые карточки, пользователь должен дозаполнить ЛК).
+        level = "warning" if ratio > 0.5 else "info"
+        alerts.append({
+            "level": level,
+            "code": "unit_plan_missing_dimensions",
+            "message": (
+                f"У {missing_dims} карточек из {total_active} не заполнены габариты "
+                f"(длина / ширина / высота) в WB-кабинете. UNIT-план не может посчитать "
+                f"логистику и хранение для этих SKU. Залейте размеры через WB Личный "
+                f"Кабинет → Товары → Карточка → Габариты, либо через WB Content API. "
+                f"Следующий sync.product_volume (воскресенье 04:00 MSK) подхватит автоматически."
+            ),
+        })
+
     return alerts

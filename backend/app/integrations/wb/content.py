@@ -70,3 +70,32 @@ def extract_photo_url(card: dict[str, Any]) -> str | None:
     first = photos[0] or {}
     url = first.get("big") or first.get("c516x688") or first.get("c246x328")
     return url if isinstance(url, str) and url else None
+
+
+def extract_dimensions_volume_l(card: dict[str, Any]) -> "Decimal | None":
+    """Возвращает объём карточки в литрах из `dimensions` WB Content API.
+
+    Структура WB: `card["dimensions"]: {"length": 30, "width": 20, "height": 5}`
+    — это габариты в **сантиметрах**. Объём = L × W × H / 1000 → литры.
+
+    Для UNIT-плана это используется в формулах логистики/хранения (см.
+    `UNIT_PLAN.md` §4). Если хотя бы одно измерение отсутствует или 0 —
+    возвращает None.
+    """
+    from decimal import Decimal as _D
+
+    dims = card.get("dimensions") or {}
+    if not isinstance(dims, dict):
+        return None
+    try:
+        l = float(dims.get("length") or 0)
+        w = float(dims.get("width") or 0)
+        h = float(dims.get("height") or 0)
+    except (TypeError, ValueError):
+        return None
+    if l <= 0 or w <= 0 or h <= 0:
+        return None
+    vol_cm3 = l * w * h
+    vol_l = vol_cm3 / 1000.0
+    # Округляем до 3 знаков (NUMERIC(8,3) в products.volume_l).
+    return _D(f"{vol_l:.3f}")

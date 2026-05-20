@@ -22,6 +22,7 @@ from app.api import (
     dashboard,
     excel,
     extension,
+    extension_lk_jobs,
     external_ad_costs,
     features_doc,
     jam,
@@ -223,3 +224,4 @@ app.include_router(features_doc.router)
 app.include_router(abtest.router)
 app.include_router(abtest_uploads.router)
 app.include_router(extension.router)
+app.include_router(extension_lk_jobs.router)

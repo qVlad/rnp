@@ -28,7 +28,7 @@ export function PopupApp() {
   async function refreshNow() {
     setLoading(true);
     try {
-      await chrome.runtime.sendMessage({ type: "wbab:trigger-poll" });
+      await chrome.runtime.sendMessage({ type: "rnp:trigger-poll" });
     } catch {
       /* SW might be sleeping */
     }
@@ -85,6 +85,28 @@ export function PopupApp() {
       setShiftsTestOutput(`✗ SW error: ${resp.error}`);
     } else {
       setShiftsTestOutput(`✗ unexpected response: ${JSON.stringify(resp)}`);
+    }
+    setShiftsTesting(false);
+  }
+
+  /**
+   * Триггер LK jobs polling вручную (LEAD-016 Phase 3) — не ждём alarm,
+   * SW сразу проверяет backend и выполняет pending WB-job'ы.
+   */
+  async function triggerJobsPoll() {
+    setShiftsTesting(true);
+    setShiftsTestOutput("Триггерю polling…");
+    const resp = await bgRequest({ type: "triggerLkJobsPoll" });
+    if (resp.kind === "ok") {
+      setShiftsTestOutput(
+        "✓ Poll триггернут. Смотри SW DevTools console для деталей:\n" +
+          "  [lk-jobs-poll] got N jobs\n" +
+          "  [lk-jobs-poll] job X (op) → result",
+      );
+    } else if (resp.kind === "error") {
+      setShiftsTestOutput(`✗ SW error: ${resp.error}`);
+    } else {
+      setShiftsTestOutput(`✗ unexpected: ${JSON.stringify(resp)}`);
     }
     setShiftsTesting(false);
   }
@@ -167,6 +189,15 @@ export function PopupApp() {
             style={{ width: "100%" }}
           >
             {shiftsTesting ? "Тестирую…" : "Тест /quota (Краснодар 130744)"}
+          </button>
+          <button
+            type="button"
+            className="btn"
+            onClick={triggerJobsPoll}
+            disabled={shiftsTesting}
+            style={{ width: "100%", marginTop: 6 }}
+          >
+            ↻ Триггер polling backend job'ов
           </button>
           {shiftsTestOutput && (
             <pre

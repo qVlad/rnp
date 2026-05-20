@@ -11,6 +11,7 @@ celery_app = Celery(
         "app.sync.tasks",
         "app.sync.tasks_abtest",
         "app.sync.tasks_tariffs",
+        "app.sync.tasks_product_volume",
         "app.sync.event_consumers",
     ],
 )
@@ -83,6 +84,7 @@ celery_app.conf.update(
         "app.sync.tasks_abtest.sync_abtest_stats_for_tenant": {"queue": "advert"},
         # WB Tariffs (UNIT-PLAN-005). Один запрос в сутки — default queue.
         "sync.tariffs": {"queue": "default"},
+        "sync.product_volume": {"queue": "default"},
     },
     # Beat schedule design constraints:
     #   - WB Statistics: docs say 1 req/min sustained, but the *real* burst
@@ -273,6 +275,15 @@ celery_app.conf.update(
         "sync-tariffs-daily": {
             "task": "sync.tariffs",
             "schedule": crontab(hour=8, minute=0),
+        },
+        # --- Product volume backfill (UNIT-план) ---
+        # Раз в неделю воскресенье 04:00 MSK — подтянуть `volume_l` и
+        # `warehouse_default` из WB Content API для новых карточек.
+        # Идемпотентно: обновляет только NULL/0 значения (не сносит ручные).
+        # См. tasks_product_volume.py.
+        "sync-product-volume-weekly": {
+            "task": "sync.product_volume",
+            "schedule": crontab(hour=4, minute=0, day_of_week="sun"),
         },
     },
 )

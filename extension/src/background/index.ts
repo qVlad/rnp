@@ -24,10 +24,10 @@ import {
   fetchActiveTestForNmId,
   fetchWinnersSince,
   getWbTokenStatus,
-  openWbabLauncher,
+  openRnpLauncher,
   postPositions,
   saveWbToken,
-} from "@/lib/wbab-api";
+} from "@/lib/rnp-api";
 import { generateWbToken } from "@/lib/wb-token";
 import type { BgRequest, BgResponse } from "@/lib/bg-bridge";
 import {
@@ -45,12 +45,14 @@ import {
   saveCachedActiveTests,
   saveSettings,
 } from "@/lib/storage";
+import { pollLkJobsOnce } from "@/lib/lk-jobs-poll";
 import type { WinnerEvent } from "@/lib/types";
 
-const ALARM_POLL = "wbab.poll";
-const ALARM_SESSION_SYNC = "wbab.sessionSync";
-const ALARM_TOKEN_REFRESH = "wbab.tokenRefresh";
-const ALARM_RNP_COOKIE_SYNC = "wbab.rnpCookieSync";
+const ALARM_POLL = "rnp.poll";
+const ALARM_SESSION_SYNC = "rnp.sessionSync";
+const ALARM_TOKEN_REFRESH = "rnp.tokenRefresh";
+const ALARM_RNP_COOKIE_SYNC = "rnp.cookieSync";
+const ALARM_LK_JOBS_POLL = "rnp.lkJobsPoll";
 
 /**
  * Домены РНП, на которых пытаемся auto-connect. Содержит origin'ы без
@@ -74,7 +76,7 @@ const TOKEN_REFRESH_INTERVAL_MINUTES = 5;
 // ---- Install / activate hooks ----
 
 chrome.runtime.onInstalled.addListener(async (details) => {
-  console.log("[wbab-ext SW] onInstalled:", details.reason);
+  console.log("[rnp-ext SW] onInstalled:", details.reason);
   await ensureAlarms();
   // На первой установке: ПЕРЕД тем как открывать options пытаемся
   // auto-connect — если у юзера уже залогинена сессия в РНП в этом
@@ -91,7 +93,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 });
 
 chrome.runtime.onStartup.addListener(async () => {
-  console.log("[wbab-ext SW] onStartup");
+  console.log("[rnp-ext SW] onStartup");
   await ensureAlarms();
   // При запуске браузера тоже пробуем auto-connect — на случай если
   // юзер в прошлой сессии вошёл, а cookie ещё валидна.
@@ -105,7 +107,7 @@ async function ensureAlarms(): Promise<void> {
   // предыдущей версии — принудительно сбрасываем. Без этого SW alarm будет
   // вечно дёргать tokensjrpc + получать 400 от backend save endpoint.
   if (settings.enableAutoToken) {
-    console.log("[wbab-ext SW] миграция: enableAutoToken=true → false (фича deprecated)");
+    console.log("[rnp-ext SW] миграция: enableAutoToken=true → false (фича deprecated)");
     const { saveSettings } = await import("@/lib/storage");
     await saveSettings({ enableAutoToken: false });
     settings = { ...settings, enableAutoToken: false };
@@ -146,6 +148,15 @@ async function ensureAlarms(): Promise<void> {
   } else {
     await chrome.alarms.clear(ALARM_TOKEN_REFRESH);
   }
+  // LK jobs poll (LEAD-016 Phase 3): каждые ~25 сек тянем queued WB-job'ы
+  // от backend РНП, выполняем через seller.wildberries.ru content script.
+  // Chrome alarms minimum interval = 1 minute (для production). Чтобы
+  // ловить окно 09:00 / 18:00 МСК (length ~60 сек) — берём 0.5 мин = 30s.
+  // Если флага rnpToken нет — pollLkJobsOnce silently no-op (см. внутри).
+  chrome.alarms.create(ALARM_LK_JOBS_POLL, {
+    periodInMinutes: 0.5,
+    delayInMinutes: 0.1,
+  });
 }
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
@@ -158,9 +169,11 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
       await maybeRefreshWbToken();
     } else if (alarm.name === ALARM_RNP_COOKIE_SYNC) {
       await refreshTokenFromRnpCookies();
+    } else if (alarm.name === ALARM_LK_JOBS_POLL) {
+      await pollLkJobsOnce();
     }
   } catch (e) {
-    console.warn(`[wbab-ext SW] alarm ${alarm.name} failed:`, e);
+    console.warn(`[rnp-ext SW] alarm ${alarm.name} failed:`, e);
   }
 });
 
@@ -198,7 +211,7 @@ type AutoConnectResult =
 
 async function tryAutoConnect(url: string): Promise<AutoConnectResult> {
   if (!RNP_ORIGINS.includes(url)) {
-    console.warn(`[wbab-ext SW] auto-connect: URL не в RNP_ORIGINS: ${url}`);
+    console.warn(`[rnp-ext SW] auto-connect: URL не в RNP_ORIGINS: ${url}`);
     return { status: "not-in-whitelist", url, allowed: RNP_ORIGINS };
   }
   let cookie: chrome.cookies.Cookie | null;
@@ -206,7 +219,7 @@ async function tryAutoConnect(url: string): Promise<AutoConnectResult> {
     cookie = await chrome.cookies.get({ url, name: "rnp_session" });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.warn("[wbab-ext SW] auto-connect: cookies.get failed:", e);
+    console.warn("[rnp-ext SW] auto-connect: cookies.get failed:", e);
     return { status: "cookies-api-error", url, error: msg };
   }
   if (!cookie?.value) {
@@ -223,7 +236,7 @@ async function tryAutoConnect(url: string): Promise<AutoConnectResult> {
 
   await saveSettings({ rnpUrl: url, rnpToken: cookie.value });
   console.log(
-    `[wbab-ext SW] auto-connected to ${url} (token=${tokenSuffix})`,
+    `[rnp-ext SW] auto-connected to ${url} (token=${tokenSuffix})`,
   );
 
   // Дедуп: показываем notification «РНП подключено» один раз на токен.
@@ -294,7 +307,7 @@ chrome.cookies.onChanged.addListener((info) => {
   });
   if (!url) return;
   void tryAutoConnect(url).catch((e) =>
-    console.warn("[wbab-ext SW] cookie.onChanged auto-connect failed:", e),
+    console.warn("[rnp-ext SW] cookie.onChanged auto-connect failed:", e),
   );
 });
 
@@ -324,14 +337,14 @@ async function maybeRefreshWbToken(): Promise<void> {
 
   const status = await getWbTokenStatus();
   if (!status) {
-    console.warn("[wbab-ext SW] auto-refresh: backend wbab недоступен (нет ответа на /status)");
+    console.warn("[rnp-ext SW] auto-refresh: backend РНП недоступен (нет ответа на /status)");
     return;
   }
   // ВАЖНО: НЕ выходим если source='manual'. enableAutoToken=true означает
   // что юзер явно хочет переключиться с manual на auto при первой возможности.
   if (status.source === "auto" && status.hasToken && !status.needsRefresh) {
     console.log(
-      `[wbab-ext SW] auto-token свежий, expires=${status.expiresAt}, skip`,
+      `[rnp-ext SW] auto-token свежий, expires=${status.expiresAt}, skip`,
     );
     return;
   }
@@ -346,7 +359,7 @@ async function maybeRefreshWbToken(): Promise<void> {
   const ok = await saveWbToken(result.jwt, result.expiresAt);
   if (ok) {
     console.log(
-      `[wbab-ext SW] auto-token refreshed, expires=${result.expiresAt ? new Date(result.expiresAt).toISOString() : "unknown"}`,
+      `[rnp-ext SW] auto-token refreshed, expires=${result.expiresAt ? new Date(result.expiresAt).toISOString() : "unknown"}`,
     );
   }
 }
@@ -370,7 +383,7 @@ async function syncSessionCookies(): Promise<void> {
   const { getSellerCabinetCookies } = await import("@/lib/wb-session");
   const cookies = await getSellerCabinetCookies();
   if (cookies.length === 0) {
-    console.debug("[wbab-ext SW] no WB session cookies — skipping refresh");
+    console.debug("[rnp-ext SW] no WB session cookies — skipping refresh");
     return;
   }
 
@@ -400,12 +413,12 @@ async function syncSessionCookies(): Promise<void> {
       },
     );
     if (!res.ok) {
-      console.warn("[wbab-ext SW] session refresh failed:", res.status);
+      console.warn("[rnp-ext SW] session refresh failed:", res.status);
       return;
     }
-    console.log(`[wbab-ext SW] session refreshed (${cookies.length} cookies)`);
+    console.log(`[rnp-ext SW] session refreshed (${cookies.length} cookies)`);
   } catch (e) {
-    console.warn("[wbab-ext SW] session refresh request failed:", e);
+    console.warn("[rnp-ext SW] session refresh request failed:", e);
   }
 }
 
@@ -432,7 +445,7 @@ async function pollOnce(): Promise<void> {
 async function showWinnerNotification(w: WinnerEvent): Promise<void> {
   const settings = await getSettings();
   const url = `${(settings.rnpUrl || "https://rnp.sellerfriends.ru").replace(/\/$/, "")}/abtest/${w.testId}`;
-  const id = `wbab.winner.${w.testId}`;
+  const id = `rnp.winner.${w.testId}`;
   chrome.notifications.create(id, {
     type: "basic",
     iconUrl: chrome.runtime.getURL("icons/icon-128.png"),
@@ -442,17 +455,17 @@ async function showWinnerNotification(w: WinnerEvent): Promise<void> {
     requireInteraction: true,
   });
   // Сохраняем URL для onClicked handler через storage (SW глобалы не выживают).
-  const map = (await chrome.storage.local.get("wbab.notifClickMap"))[
-    "wbab.notifClickMap"
+  const map = (await chrome.storage.local.get("rnp.notifClickMap"))[
+    "rnp.notifClickMap"
   ] as Record<string, string> | undefined;
   await chrome.storage.local.set({
-    "wbab.notifClickMap": { ...(map ?? {}), [id]: url },
+    "rnp.notifClickMap": { ...(map ?? {}), [id]: url },
   });
 }
 
 chrome.notifications.onClicked.addListener(async (id) => {
-  const map = (await chrome.storage.local.get("wbab.notifClickMap"))[
-    "wbab.notifClickMap"
+  const map = (await chrome.storage.local.get("rnp.notifClickMap"))[
+    "rnp.notifClickMap"
   ] as Record<string, string> | undefined;
   const url = map?.[id];
   if (url) {
@@ -482,7 +495,7 @@ async function maybeForwardToTelegram(w: WinnerEvent): Promise<void> {
       }),
     });
   } catch (e) {
-    console.warn("[wbab-ext SW] Telegram forward failed:", e);
+    console.warn("[rnp-ext SW] Telegram forward failed:", e);
   }
 }
 
@@ -501,17 +514,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }
     // ---- Legacy message types (legacy от первой итерации, оставляем для
     //      обратной совместимости с installed v0.1.x расширениями) ----
-    if (msg?.type === "wbab:position-found") {
+    if (msg?.type === "rnp:position-found") {
       const ok = await postPositions(msg.payload);
       sendResponse({ ok });
       return;
     }
-    if (msg?.type === "wbab:get-active-tests") {
+    if (msg?.type === "rnp:get-active-tests") {
       const tests = await getCachedActiveTests();
       sendResponse({ tests });
       return;
     }
-    if (msg?.type === "wbab:trigger-poll") {
+    if (msg?.type === "rnp:trigger-poll") {
       await pollOnce();
       sendResponse({ ok: true });
       return;
@@ -545,7 +558,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
       }
       case "openLauncher": {
-        await openWbabLauncher(req.nmId);
+        await openRnpLauncher(req.nmId);
         sendResponse({ kind: "ok" } as BgResponse);
         return;
       }
@@ -566,9 +579,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse({ kind: "wbTokenStatus", data } as BgResponse);
         return;
       }
+      case "triggerLkJobsPoll": {
+        try {
+          await pollLkJobsOnce();
+          sendResponse({ kind: "ok" } as BgResponse);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          sendResponse({ kind: "error", error: msg } as BgResponse);
+        }
+        return;
+      }
       case "wbShiftsProxy": {
         try {
-          console.log("[wbab-ext SW] wbShiftsProxy op=", req.op);
+          console.log("[rnp-ext SW] wbShiftsProxy op=", req.op);
           let result;
           switch (req.op) {
             case "quota":
@@ -589,11 +612,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
               });
               break;
           }
-          console.log("[wbab-ext SW] wbShiftsProxy result=", result);
+          console.log("[rnp-ext SW] wbShiftsProxy result=", result);
           sendResponse({ kind: "wbShiftsProxy", result } as BgResponse);
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
-          console.error("[wbab-ext SW] wbShiftsProxy handler crashed:", e);
+          console.error("[rnp-ext SW] wbShiftsProxy handler crashed:", e);
           sendResponse({
             kind: "wbShiftsProxy",
             result: { ok: false, status: 0, reason: `SW handler error: ${msg}` },
@@ -621,12 +644,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // DELETE /api/extension/session чтобы пометить session revoked.
 chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== "sync") return;
-  if (!("wbab.settings" in changes)) return;
+  if (!("rnp.settings" in changes)) return;
 
-  const oldVal = changes["wbab.settings"].oldValue as
+  const oldVal = changes["rnp.settings"].oldValue as
     | { enableSessionSync?: boolean; enableAutoToken?: boolean }
     | undefined;
-  const newVal = changes["wbab.settings"].newValue as
+  const newVal = changes["rnp.settings"].newValue as
     | { enableSessionSync?: boolean; enableAutoToken?: boolean }
     | undefined;
 
@@ -649,12 +672,12 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
             headers: { Authorization: `Bearer ${settings.rnpToken}` },
           },
         );
-        console.log("[wbab-ext SW] session revoked on backend");
+        console.log("[rnp-ext SW] session revoked on backend");
       } catch (e) {
-        console.warn("[wbab-ext SW] session revoke failed:", e);
+        console.warn("[rnp-ext SW] session revoke failed:", e);
       }
     }
   }
 });
 
-console.log("[wbab-ext SW] loaded");
+console.log("[rnp-ext SW] loaded");

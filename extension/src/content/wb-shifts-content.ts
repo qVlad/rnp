@@ -60,75 +60,17 @@ window.addEventListener("message", (e: MessageEvent) => {
   if (h["root-version"]) cachedRootVersion = h["root-version"];
   interceptCount++;
   if (interceptCount <= 3) {
-    console.log("[wbab-ext content] intercepted headers from", e.data.url, {
+    console.log("[rnp-ext content] intercepted headers from", e.data.url, {
       authV3: !!cachedAuthV3,
       wbSellerLk: !!cachedWbSellerLk,
     });
   }
 });
 
-/**
- * Инжектим MAIN-world скрипт через <script> тег. MAIN world имеет доступ к
- * странице's window.fetch (можем его подменить), а ISOLATED world видит
- * только свой. postMessage — мост между ними.
- */
-function injectMainWorldInterceptor(): void {
-  const code = `(() => {
-    const origFetch = window.fetch.bind(window);
-    window.fetch = function(input, init) {
-      const url = typeof input === 'string' ? input : (input instanceof Request ? input.url : String(input));
-      // Только запросы к WB-доменам интересны
-      if (url.includes('seller-weekly-report.wildberries.ru') || url.includes('seller.wildberries.ru/ns/')) {
-        let headers = {};
-        if (init?.headers) {
-          if (init.headers instanceof Headers) {
-            init.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
-          } else if (Array.isArray(init.headers)) {
-            for (const [k, v] of init.headers) headers[k.toLowerCase()] = v;
-          } else {
-            for (const k of Object.keys(init.headers)) headers[k.toLowerCase()] = init.headers[k];
-          }
-        }
-        if (input instanceof Request) {
-          input.headers.forEach((v, k) => { if (!headers[k.toLowerCase()]) headers[k.toLowerCase()] = v; });
-        }
-        if (headers['authorizev3'] || headers['wb-seller-lk']) {
-          window.postMessage({ __rnp: 'wb-headers', url, headers }, '*');
-        }
-      }
-      return origFetch(input, init);
-    };
-    // Также XHR
-    const OrigXHR = window.XMLHttpRequest;
-    const origOpen = OrigXHR.prototype.open;
-    const origSetRH = OrigXHR.prototype.setRequestHeader;
-    const origSend = OrigXHR.prototype.send;
-    OrigXHR.prototype.open = function(method, url) {
-      this.__rnpUrl = url;
-      this.__rnpHeaders = {};
-      return origOpen.apply(this, arguments);
-    };
-    OrigXHR.prototype.setRequestHeader = function(k, v) {
-      if (this.__rnpHeaders) this.__rnpHeaders[k.toLowerCase()] = v;
-      return origSetRH.apply(this, arguments);
-    };
-    OrigXHR.prototype.send = function() {
-      const url = this.__rnpUrl || '';
-      if ((url.includes('seller-weekly-report.wildberries.ru') || url.includes('seller.wildberries.ru/ns/'))
-          && (this.__rnpHeaders?.['authorizev3'] || this.__rnpHeaders?.['wb-seller-lk'])) {
-        window.postMessage({ __rnp: 'wb-headers', url, headers: this.__rnpHeaders }, '*');
-      }
-      return origSend.apply(this, arguments);
-    };
-    console.log('[wbab-ext MAIN] fetch+XHR interceptor installed');
-  })();`;
-  const s = document.createElement("script");
-  s.textContent = code;
-  (document.head || document.documentElement).appendChild(s);
-  s.remove();
-}
-
-injectMainWorldInterceptor();
+// MAIN-world interceptor живёт в отдельном файле
+// `src/content/wb-shifts-interceptor-main.ts` — он регистрируется
+// в manifest.config.ts с `world: "MAIN"` чтобы обойти CSP страницы WB.
+// Сюда (ISOLATED world) он шлёт перехваченные headers через postMessage.
 
 async function doShiftsCall(
   method: "GET" | "POST",
@@ -210,7 +152,7 @@ chrome.runtime.onMessage.addListener((msg: ProxyMsg, _sender, sendResponse) => {
   if (msg?.type !== "wbShiftsProxyContent") return false;
   (async () => {
     try {
-      console.log("[wbab-ext content] shifts proxy op=", msg.op, {
+      console.log("[rnp-ext content] shifts proxy op=", msg.op, {
         cachedAuthV3: !!cachedAuthV3,
         cachedWbSellerLk: !!cachedWbSellerLk,
         intercepts: interceptCount,
@@ -245,15 +187,15 @@ chrome.runtime.onMessage.addListener((msg: ProxyMsg, _sender, sendResponse) => {
           });
           break;
       }
-      console.log("[wbab-ext content] result =", result);
+      console.log("[rnp-ext content] result =", result);
       sendResponse(result);
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e);
-      console.error("[wbab-ext content] handler error:", e);
+      console.error("[rnp-ext content] handler error:", e);
       sendResponse({ ok: false, status: 0, reason: `content handler error: ${errMsg}` });
     }
   })();
   return true;
 });
 
-console.log("[wbab-ext content] wb-shifts-content.ts loaded on", location.href);
+console.log("[rnp-ext content] wb-shifts-content.ts loaded on", location.href);
