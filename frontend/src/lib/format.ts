@@ -8,13 +8,18 @@ export const fmtRub = (v: number | null | undefined) =>
 export const fmtNum = (v: number | null | undefined) =>
   v == null ? "—" : new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(v);
 
-export const fmtPct = (v: number | null | undefined, digits = 1) =>
-  v == null ? "—" : `${v.toFixed(digits)}%`;
-
-export const fmtChange = (v: number | null) => {
+export const fmtPct = (v: number | string | null | undefined, digits = 1) => {
   if (v == null) return "—";
-  const sign = v > 0 ? "+" : "";
-  return `${sign}${v.toFixed(1)}%`;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? `${n.toFixed(digits)}%` : "—";
+};
+
+export const fmtChange = (v: number | string | null | undefined) => {
+  if (v == null) return "—";
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return "—";
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${n.toFixed(1)}%`;
 };
 
 export const formatValue = (value: number, unit: string) => {
