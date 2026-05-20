@@ -106,8 +106,14 @@ async function ensureAlarms(): Promise<void> {
   };
   if (legacy.enableAutoToken === true || legacy.enableSessionSync === true) {
     console.log("[rnp-ext SW] cleanup: enableAutoToken/enableSessionSync → false (deprecated)");
-    const { saveSettings } = await import("@/lib/storage");
-    await saveSettings({ enableAutoToken: false, enableSessionSync: false });
+    // ВАЖНО: saveSettings уже импортирован статически выше. Не использовать
+    // `await import()` в service worker — Vite оборачивает dynamic imports
+    // в preload-helper, который дёргает window.dispatchEvent на ошибках —
+    // ReferenceError: window is not defined в SW.
+    await saveSettings({
+      enableAutoToken: false,
+      enableSessionSync: false,
+    } as Partial<typeof settings>);
     settings = { ...settings, enableAutoToken: false, enableSessionSync: false };
   }
   await chrome.alarms.clear(ALARM_SESSION_SYNC);
