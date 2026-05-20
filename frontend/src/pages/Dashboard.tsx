@@ -16,6 +16,8 @@ import MetricDrilldownModal, {
 } from "@/components/MetricDrilldownModal";
 import { type CompositionSegment } from "@/components/CompositionBar";
 import AlertsBar from "@/components/AlertsBar";
+import ManagerPlanProgressCard from "@/components/ManagerPlanProgressCard";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   ColumnVisibilityButton,
   useColumnVisibility,
@@ -46,6 +48,7 @@ const daysAgo = (n: number) => {
 };
 
 export default function Dashboard() {
+  const { user } = useAuth();
   const [mode, setMode] = useState<Mode>({ kind: "preset", period: "day" });
   const [dataMode, setDataMode] = useState<DataMode>("preliminary");
   const [customStart, setCustomStart] = useState(daysAgo(6));
@@ -103,6 +106,7 @@ export default function Dashboard() {
   return (
     <div className="flex flex-col gap-4" ref={dashboardRef}>
       <AlertsBar alerts={alertsQ.data?.alerts ?? []} />
+      {user?.role === "manager" && <ManagerPlanProgressCard />}
       <TodayVsYesterdayStrip />
 
       <div className="flex items-center justify-between">
