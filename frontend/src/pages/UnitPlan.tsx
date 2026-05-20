@@ -1468,6 +1468,30 @@ function UnitPlanDesktop() {
         </div>
       )}
 
+      {/* Data-readiness banner: если у >50% SKU нет volume_l / warehouse —
+          логистика и хранение считаются как 0, маржа завышена.
+          QA-рекомендация от 2026-05-20 (P2). */}
+      {!isMock && items.length > 0 && (() => {
+        const missingVolume = items.filter((r) => !r.volume_l || Number(r.volume_l) === 0).length;
+        const missingWarehouse = items.filter((r) => !r.warehouse).length;
+        const missingCogs = items.filter((r) => !r.cogs_rub || Number(r.cogs_rub) === 0).length;
+        const half = items.length / 2;
+        const warnings: string[] = [];
+        if (missingVolume > half) warnings.push(`литры (${missingVolume} из ${items.length})`);
+        if (missingWarehouse > half) warnings.push(`склад (${missingWarehouse} из ${items.length})`);
+        if (missingCogs > half) warnings.push(`себестоимость (${missingCogs} из ${items.length})`);
+        if (warnings.length === 0) return null;
+        return (
+          <div className="card bg-rose-500/10 border-rose-500/30 text-rose-200 text-sm">
+            <strong>⚠ Расчёты неполные.</strong>{" "}
+            У большинства SKU не заполнено: {warnings.join(", ")}.
+            Логистика, хранение, прибыль и маржа могут быть существенно искажены.{" "}
+            Заполни через paste-from-Excel в колонке «Литры», или через{" "}
+            <a href="/settings#products" className="underline">Excel I/O в Settings</a>.
+          </div>
+        );
+      })()}
+
       {/* ── Top-panel: глобальные константы (read-only chips) ── */}
       <TopConstants config={config} />
 
