@@ -19,17 +19,13 @@
 
 ---
 
-## Статус: 🔴 Занято
+## Статус: 🟢 Свободно
 
-- **Кто:** Claude Opus 4.7 (1M) — основная сессия (доводки Sprint+1)
-- **Когда:** 2026-05-21 00:15 MSK
-- **Что катит:** UI порогов аномалий + ROI monthly chart + top-10 SKU
-  + Reconciliation 4-way UI MVP (Stratege ставка #2)
-- **Версия:** 0.9.1 → 0.10.0
-- **Ожидаемая длительность:** ~4-5 мин (без миграций)
-
-> Перебит замок BUG-DEV-006 (23:55, 0.9.1): backend на проде уже
-> отвечает на 0.9.1, та сессия видимо закончила. Мой коммит поверх.
+> Последний релиз: v0.10.0 (commit c800fe1, build 2026-05-20T20:30 UTC).
+> Hotfix-коммит чинил недостающий import reconciliation_4way в main.py
+> (race condition: include_router добавил, импорт пропустил → 502).
+> На проде сейчас Sprint+1 доводки: UI порогов аномалий + ROI monthly chart +
+> top-10 SKU breakdown + Reconciliation 4-way UI MVP.
 
 ---
 
