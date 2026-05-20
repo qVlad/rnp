@@ -1,19 +1,22 @@
-"""execute_window — отправка `redistribution_tasks` в WB в окнах 09:00/18:00 МСК.
+"""execute_window — отправка `redistribution_tasks` в WB через Chrome-extension proxy.
 
-Дизайн (LEAD-016 после получения HAR 2026-05-19):
+После реализации Phase 3 (extension proxy) — этот модуль больше не вызывает
+WB API напрямую (server-side WB-вызовы блокируются: IP-binding + JWT
+in-memory у WB-фронта). Вместо этого:
 
-1. **Trigger:** beat-task `publish_redistribution_windows` каждую минуту
-   проверяет окно; если попадает на 09:00 или 18:00 МСК — публикует event
-   `redistribution.window.open` через event_bus.
-2. **Consumer:** этот модуль читает `queued` task'и tenant'а, для каждой
-   проверяет quota dst, отправляет через `WbLkClient.create_order` и
-   обновляет статус.
+  1. Group queued tasks по (src, dst, nmID)
+  2. Для каждой группы создаём WbLkJob(op='quota') → wait_for_job → читаем dst quota
+  3. Cap qty по quota
+  4. Создаём WbLkJob(op='create_order') → wait_for_job → читаем success
+  5. Update RedistributionTask.status + RedistributionCooldown
 
-В v1 — sequential per-tenant с проверкой quota на каждую заявку. v2 —
-параллельный submit batch'ем через asyncio.gather.
+Если extension оффлайн (timeout):
+  - dst quota check не вернулся → group skip, tasks остаются queued
+  - create_order не вернулся → tasks помечаем 'failed_no_extension', в next
+    окне executor попробует снова
 
-Group by (src, dst, nmID) — WB позволяет несколько `chrtID` в одной заявке
-для одной пары src/dst/nm. Это уменьшает число API-вызовов.
+Trigger: beat-task `publish_redistribution_windows` → event-bus
+`redistribution.window.open` → consumer enqueue execute_window task per tenant.
 """
 from __future__ import annotations
 
@@ -25,32 +28,25 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import (
-    RedistributionCooldown,
-    RedistributionTask,
-)
-from app.integrations.wb_lk.client import LkClientError, WbLkClient
-from app.services.redistribution.session_store import (
-    load_tokens,
-    mark_needs_relogin,
-    save_wb_seller_lk,
+from app.db.models import RedistributionCooldown, RedistributionTask
+from app.services.redistribution.extension_jobs import (
+    create_job,
+    wait_for_job,
 )
 
 log = logging.getLogger(__name__)
 
 
-# Минимальная quota dst чтобы попытаться — иначе skip (или статус
-# `failed: dst_quota_zero`). 1 — потому что HAR показал минимум 1 ед.
+# Минимальная dst quota для попытки отправки
 MIN_DST_QUOTA = 1
+
+# Таймаут ожидания extension ответа (sec). 45 сек хватает на typical case
+# (extension polls каждые 5-30 сек, content script fetch ~1-3 сек).
+JOB_TIMEOUT_S = 45
 
 
 def _office_id_lookup(office_name: str) -> int | None:
-    """Резолв office_name → office_id. В v1 у нас в task.to_office_id
-    лежит реальный ID если recommendation его проставил. Эта функция —
-    fallback для legacy задач (до миграции на office_id). Расширять
-    справочник по мере встречи новых ID'ов.
-    """
-    # Карта на основе HAR-данных:
+    """Резолв office_name → office_id (fallback для legacy tasks без to_office_id)."""
     KNOWN: dict[str, int] = {
         "Казань": 117986,
         "Краснодар": 130744,
@@ -58,8 +54,7 @@ def _office_id_lookup(office_name: str) -> int | None:
         "Пенза": 50045809,
         "Самара (Новосемейкино)": 301805,
         "Екатеринбург - Перспективная 14": 300571,
-        "Котовск": 1733,  # placeholder, нужно подтвердить
-        # Расширять при встрече с реальными запросами /stocks
+        "Котовск": 1733,
     }
     return KNOWN.get(office_name)
 
@@ -67,34 +62,9 @@ def _office_id_lookup(office_name: str) -> int | None:
 async def execute_window_for_tenant(
     session: AsyncSession, *, tenant_id: int, window_dt: datetime
 ) -> dict[str, int]:
-    """Главная функция: читает queued tasks tenant'а на это окно (или
-    ближайшее), группирует по (src, dst, nmID) и отправляет через
-    WbLkClient.create_order.
-
-    Обновляет:
-      - task.status: queued → sent → accepted (если WB вернул success)
-                         или → failed (если LkClientError / 4xx)
-      - task.attempt_count, last_attempt_at, last_status_code, last_response
-      - RedistributionCooldown: 72ч с момента accepted
-
-    Возвращает stats: {accepted, failed, skipped_quota, skipped_no_office, total}.
+    """Главная функция: читает queued tasks tenant'а, через extension proxy
+    отправляет в WB. Возвращает stats.
     """
-    tokens = await load_tokens(session, tenant_id)
-    if tokens is None:
-        log.info(
-            "execute_window: no LK tokens for tenant=%d — skip (need /lk/connect)",
-            tenant_id,
-        )
-        return {
-            "accepted": 0,
-            "failed": 0,
-            "skipped_quota": 0,
-            "skipped_no_office": 0,
-            "total": 0,
-        }
-
-    # Берём queued tasks с target_window_at <= window_dt + 6h (на случай
-    # пропущенных окон — добираем их если ещё не expired)
     stmt = (
         select(RedistributionTask)
         .where(RedistributionTask.status == "queued")
@@ -112,15 +82,12 @@ async def execute_window_for_tenant(
             "failed": 0,
             "skipped_quota": 0,
             "skipped_no_office": 0,
+            "skipped_no_extension": 0,
             "total": 0,
         }
 
-    # Группировка по (src_office, dst_office, nm_id) — несколько chrtID
-    # в один запрос. Если src_office_id=0/None — пробуем resolve через
-    # office name lookup.
-    grouped: dict[tuple[int, int, int], list[RedistributionTask]] = defaultdict(
-        list
-    )
+    # Группировка по (src, dst, nm_id)
+    grouped: dict[tuple[int, int, int], list[RedistributionTask]] = defaultdict(list)
     no_office: list[RedistributionTask] = []
     for t in tasks:
         src = t.from_office_id or _office_id_lookup(t.from_office_name)
@@ -134,8 +101,9 @@ async def execute_window_for_tenant(
     failed = 0
     skipped_quota = 0
     skipped_no_office = len(no_office)
+    skipped_no_extension = 0
 
-    # Пометим no_office как failed
+    # No-office tasks → failed
     for t in no_office:
         t.status = "failed"
         t.last_attempt_at = datetime.now(timezone.utc)
@@ -144,158 +112,157 @@ async def execute_window_for_tenant(
         )
         t.attempt_count = (t.attempt_count or 0) + 1
 
-    # Используем on_token_refreshed callback чтобы сохранять свежий
-    # Wb-Seller-Lk в БД (иначе следующий beat-tick получит истёкший).
-    async def _persist_refreshed_token(new_token: str) -> None:
-        try:
-            await save_wb_seller_lk(
-                session, tenant_id=tenant_id, wb_seller_lk=new_token
-            )
-            await session.commit()
-        except Exception:
-            log.exception(
-                "execute_window: failed to persist refreshed Wb-Seller-Lk"
-            )
-
-    # WB-кабинет: один nmID на заявку, но в count[] можно несколько chrt_id.
-    # У нас key уже (src, dst, nm) — внутри chrt_ids могут различаться по
-    # task'ам (но обычно один SKU = одна группа задач). Если task.chrt_id
-    # одинаковый у всех в группе (что норма) — items=[(chrt_id, sum_qty)].
-    # Если разные — отправим несколько `items`.
-    try:
-        async with WbLkClient(
-            tokens, on_token_refreshed=_persist_refreshed_token
-        ) as lk:
-            for (src, dst, nm_id), group_tasks in grouped.items():
-                # Проверяем dst quota
-                try:
-                    dst_quota = await lk.get_quota(dst, kind="dst")
-                except LkClientError as e:
-                    log.warning(
-                        "execute_window: get_quota dst=%d failed (%s) — skip group",
-                        dst,
-                        e,
-                    )
-                    for t in group_tasks:
-                        t.status = "failed"
-                        t.last_attempt_at = datetime.now(timezone.utc)
-                        t.last_status_code = e.status
-                        t.last_response = f"quota check failed: {e}"
-                        t.attempt_count = (t.attempt_count or 0) + 1
-                        failed += 1
-                    continue
-
-                if dst_quota < MIN_DST_QUOTA:
-                    log.info(
-                        "execute_window: dst=%d quota=%d < %d — skip group (%d tasks)",
-                        dst,
-                        dst_quota,
-                        MIN_DST_QUOTA,
-                        len(group_tasks),
-                    )
-                    for t in group_tasks:
-                        t.last_attempt_at = datetime.now(timezone.utc)
-                        t.last_status_code = None
-                        t.last_response = f"dst quota = {dst_quota}, window closed"
-                        t.attempt_count = (t.attempt_count or 0) + 1
-                        # Не меняем status — оставляем queued для следующего окна
-                        skipped_quota += 1
-                    continue
-
-                # Группируем по chrt_id внутри — суммируем count
-                by_chrt: dict[int, int] = defaultdict(int)
-                for t in group_tasks:
-                    by_chrt[int(t.chrt_id)] += int(t.qty)
-
-                # Cap по quota: не запрашиваем больше чем доступно
-                total_requested = sum(by_chrt.values())
-                if total_requested > dst_quota:
-                    log.info(
-                        "execute_window: requested=%d > dst_quota=%d — proportional cap",
-                        total_requested,
-                        dst_quota,
-                    )
-                    scale = dst_quota / total_requested
-                    by_chrt = {c: max(1, int(q * scale)) for c, q in by_chrt.items()}
-
-                items = list(by_chrt.items())
-                try:
-                    result = await lk.create_order(
-                        src_office_id=src,
-                        dst_office_id=dst,
-                        nm_id=nm_id,
-                        items=items,
-                    )
-                except LkClientError as e:
-                    log.warning(
-                        "execute_window: create_order failed (%s) — group failed",
-                        e,
-                    )
-                    for t in group_tasks:
-                        t.status = "failed"
-                        t.last_attempt_at = datetime.now(timezone.utc)
-                        t.last_status_code = e.status
-                        t.last_response = f"{e}"
-                        t.attempt_count = (t.attempt_count or 0) + 1
-                        failed += 1
-                    if e.status == 401:
-                        # Token broken — пометить session needs_relogin
-                        await mark_needs_relogin(
-                            session,
-                            tenant_id,
-                            reason=f"401 on create_order: {e.body[:200]}",
-                        )
-                    continue
-
-                # Success!
-                if isinstance(result, dict) and result.get("success"):
-                    now = datetime.now(timezone.utc)
-                    cooldown_until = now + timedelta(hours=72)
-                    for t in group_tasks:
-                        t.status = "accepted"
-                        t.accepted_at = now
-                        t.last_attempt_at = now
-                        t.last_status_code = 200
-                        t.last_response = "success"
-                        t.attempt_count = (t.attempt_count or 0) + 1
-                        accepted += 1
-                        # Cooldown — 72ч на пару (chrt_id, dst). PK composite
-                        # (tenant_id, chrt_id, to_office_id) → upsert через
-                        # session.merge (update если уже был, insert если нет).
-                        await session.merge(
-                            RedistributionCooldown(
-                                tenant_id=tenant_id,
-                                chrt_id=int(t.chrt_id),
-                                to_office_id=dst,
-                                cooldown_until=cooldown_until,
-                                last_task_id=t.id,
-                            )
-                        )
-                    log.info(
-                        "execute_window: ✓ accepted tenant=%d src=%d dst=%d nm=%d items=%d",
-                        tenant_id,
-                        src,
-                        dst,
-                        nm_id,
-                        len(items),
-                    )
-                else:
-                    log.warning(
-                        "execute_window: unexpected response: %r",
-                        result,
-                    )
-                    for t in group_tasks:
-                        t.status = "failed"
-                        t.last_attempt_at = datetime.now(timezone.utc)
-                        t.last_response = f"unexpected: {result!r}"
-                        t.attempt_count = (t.attempt_count or 0) + 1
-                        failed += 1
-
-    except Exception:
-        log.exception(
-            "execute_window: unexpected error for tenant=%d — partial commit",
-            tenant_id,
+    for (src, dst, nm_id), group_tasks in grouped.items():
+        # === 1. Quota check via extension ===
+        quota_job_id = await create_job(
+            session,
+            tenant_id=tenant_id,
+            op="quota",
+            params={"office_id": dst, "kind": "dst"},
+            originator=f"execute_window:{window_dt.isoformat()}",
         )
+        await session.commit()
+        quota_res = await wait_for_job(
+            session, job_id=quota_job_id, tenant_id=tenant_id, timeout_s=JOB_TIMEOUT_S
+        )
+        if quota_res is None:
+            log.warning(
+                "execute_window: quota job %d timed out — extension offline?",
+                quota_job_id,
+            )
+            for t in group_tasks:
+                t.last_attempt_at = datetime.now(timezone.utc)
+                t.last_response = "extension offline (quota check timed out)"
+                t.attempt_count = (t.attempt_count or 0) + 1
+                # Не меняем status — оставляем queued для следующего окна
+                skipped_no_extension += 1
+            continue
+        if not quota_res["ok"]:
+            log.warning(
+                "execute_window: quota job %d failed: %s",
+                quota_job_id,
+                quota_res["error"],
+            )
+            for t in group_tasks:
+                t.status = "failed"
+                t.last_attempt_at = datetime.now(timezone.utc)
+                t.last_status_code = quota_res["http_status"]
+                t.last_response = f"quota check failed: {quota_res['error']}"
+                t.attempt_count = (t.attempt_count or 0) + 1
+                failed += 1
+            continue
+
+        dst_quota = int((quota_res["data"] or {}).get("quota", 0))
+        if dst_quota < MIN_DST_QUOTA:
+            log.info(
+                "execute_window: dst=%d quota=%d < %d — skip group",
+                dst,
+                dst_quota,
+                MIN_DST_QUOTA,
+            )
+            for t in group_tasks:
+                t.last_attempt_at = datetime.now(timezone.utc)
+                t.last_status_code = None
+                t.last_response = f"dst quota = {dst_quota}, window closed"
+                t.attempt_count = (t.attempt_count or 0) + 1
+                skipped_quota += 1
+            continue
+
+        # === 2. Cap by quota ===
+        by_chrt: dict[int, int] = defaultdict(int)
+        for t in group_tasks:
+            by_chrt[int(t.chrt_id)] += int(t.qty)
+        total_requested = sum(by_chrt.values())
+        if total_requested > dst_quota:
+            log.info(
+                "execute_window: requested=%d > dst_quota=%d — proportional cap",
+                total_requested,
+                dst_quota,
+            )
+            scale = dst_quota / total_requested
+            by_chrt = {c: max(1, int(q * scale)) for c, q in by_chrt.items()}
+
+        items = [{"chrtID": int(c), "count": int(q)} for c, q in by_chrt.items()]
+
+        # === 3. Create order via extension ===
+        order_job_id = await create_job(
+            session,
+            tenant_id=tenant_id,
+            op="create_order",
+            params={
+                "src": int(src),
+                "dst": int(dst),
+                "nmID": int(nm_id),
+                "count": items,
+            },
+            originator=f"execute_window:{window_dt.isoformat()}",
+        )
+        await session.commit()
+        order_res = await wait_for_job(
+            session, job_id=order_job_id, tenant_id=tenant_id, timeout_s=JOB_TIMEOUT_S
+        )
+        if order_res is None:
+            log.warning(
+                "execute_window: create_order job %d timed out", order_job_id
+            )
+            for t in group_tasks:
+                t.last_attempt_at = datetime.now(timezone.utc)
+                t.last_response = "extension offline (create_order timed out)"
+                t.attempt_count = (t.attempt_count or 0) + 1
+                skipped_no_extension += 1
+            continue
+        if not order_res["ok"]:
+            log.warning(
+                "execute_window: create_order failed: %s",
+                order_res["error"],
+            )
+            for t in group_tasks:
+                t.status = "failed"
+                t.last_attempt_at = datetime.now(timezone.utc)
+                t.last_status_code = order_res["http_status"]
+                t.last_response = f"create_order failed: {order_res['error']}"
+                t.attempt_count = (t.attempt_count or 0) + 1
+                failed += 1
+            continue
+
+        # === 4. Success → accepted + cooldown ===
+        data: Any = order_res["data"] or {}
+        if isinstance(data, dict) and data.get("success"):
+            now = datetime.now(timezone.utc)
+            cooldown_until = now + timedelta(hours=72)
+            for t in group_tasks:
+                t.status = "accepted"
+                t.accepted_at = now
+                t.last_attempt_at = now
+                t.last_status_code = 200
+                t.last_response = "success"
+                t.attempt_count = (t.attempt_count or 0) + 1
+                accepted += 1
+                session.add(
+                    RedistributionCooldown(
+                        tenant_id=tenant_id,
+                        chrt_id=int(t.chrt_id),
+                        to_office_id=dst,
+                        cooldown_until=cooldown_until,
+                        last_task_id=t.id,
+                    )
+                )
+            log.info(
+                "execute_window: ✓ accepted tenant=%d src=%d dst=%d nm=%d items=%d",
+                tenant_id,
+                src,
+                dst,
+                nm_id,
+                len(items),
+            )
+        else:
+            log.warning("execute_window: unexpected response: %r", data)
+            for t in group_tasks:
+                t.status = "failed"
+                t.last_attempt_at = datetime.now(timezone.utc)
+                t.last_response = f"unexpected: {data!r}"
+                t.attempt_count = (t.attempt_count or 0) + 1
+                failed += 1
 
     await session.commit()
     return {
@@ -303,5 +270,6 @@ async def execute_window_for_tenant(
         "failed": failed,
         "skipped_quota": skipped_quota,
         "skipped_no_office": skipped_no_office,
+        "skipped_no_extension": skipped_no_extension,
         "total": len(tasks),
     }

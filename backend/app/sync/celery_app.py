@@ -167,12 +167,16 @@ celery_app.conf.update(
             "task": "app.sync.event_consumers.reclaim_all_pending",
             "schedule": 300.0,
         },
-        # Redistribution (LEAD-008): daily генерация рекомендаций в 06:00 МСК
-        # (03:00 UTC) — после report_detail-sync, до окон 09:00 МСК.
-        "generate-redistribution-recs-daily": {
-            "task": "app.sync.tasks.generate_redistribution_recs",
-            "schedule": crontab(hour=3, minute=0),
-        },
+        # Beat-генерация рекомендаций отключена после LEAD-020: recommender
+        # теперь использует Chrome-extension proxy для get_stocks. В 03:00 UTC
+        # (06:00 МСК) браузер юзера обычно оффлайн → все stocks-jobs
+        # timeout → пустой результат. Генерация перенесена на on-demand:
+        # юзер жмёт «↻ Пересчитать» на /redistribution в любое время когда
+        # Chrome открыт и расширение подключено.
+        # "generate-redistribution-recs-daily": {
+        #     "task": "app.sync.tasks.generate_redistribution_recs",
+        #     "schedule": crontab(hour=3, minute=0),
+        # },
         # Каждую минуту проверяем окно 09:00/18:00 МСК; в окне публикуем
         # событие redistribution.window.open. is_window_now() сам отсекает
         # «не окно».

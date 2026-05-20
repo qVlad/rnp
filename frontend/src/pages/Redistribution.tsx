@@ -260,10 +260,8 @@ function LkStatusCard({
 
   if (!status) return <div className="card text-muted">Загрузка…</div>;
 
-  const lkSec = status.wb_seller_lk_seconds_left;
-  const lkFresh = typeof lkSec === "number" && lkSec > 30;
-  const lkSoon = typeof lkSec === "number" && lkSec > 0 && lkSec <= 30;
-  const lkExpired = typeof lkSec === "number" && lkSec <= 0;
+  // (после LEAD-019/020 wb_seller_lk_seconds_left больше не используется
+  // для предупреждений — JWT берётся из MAIN-world interceptor расширения)
 
   return (
     <div className="card">
@@ -287,17 +285,10 @@ function LkStatusCard({
         </div>
       )}
       {status.lk_connected && (
-        <div className="text-xs mt-1">
-          Wb-Seller-Lk:{" "}
-          {lkFresh ? (
-            <span className="text-success">✓ свежий ({Math.floor(lkSec / 60)}мин {lkSec % 60}с до истечения)</span>
-          ) : lkSoon ? (
-            <span className="text-warn">⚠ истекает через {lkSec}с — обновите перед окном</span>
-          ) : lkExpired ? (
-            <span className="text-red-400">✗ истёк — обновите перед заявкой в окне</span>
-          ) : (
-            <span className="text-muted">— не задан (нужен перед окном)</span>
-          )}
+        <div className="text-xs mt-1 text-muted">
+          После LEAD-019/020 JWT-токены вытаскиваются автоматически
+          Chrome-расширением (MAIN-world fetch interceptor на seller.wb.ru).
+          Сохранённый Wb-Seller-Lk больше не используется в бэкенде.
         </div>
       )}
       <div className="text-xs text-muted mt-2">

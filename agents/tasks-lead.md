@@ -342,9 +342,15 @@ Lead использует этот файл как master-view: сюда скл�
   - [x] Circuit breaker в `_ensure_fresh_lk_token` — при 401 на refresh клиент перестаёт повторять попытки в рамках одной session (иначе spam "refreshing…" в логах при батч-обработке SKU)
   - [x] Включён `tenant_modules.redistribution=true` для tenant=1
   - [x] Деплой 2026-05-19
-  - [ ] **End-to-end smoke** — заблокирован TASK-LEAD-019 (refresh endpoint TBD)
+  - [x] **Архитектурный пивот → Chrome-extension proxy** (LEAD-019 / Phase 3): server-side WB-вызовы невозможны (WB пинит сессию к IP + cookies + JWT in-memory у фронта). Решение: backend кладёт job'ы в `wb_lk_jobs` queue, extension polls и выполняет в браузере юзера через MAIN-world fetch interceptor + content script.
+  - [x] Миграция 0045 `wb_lk_jobs` + model
+  - [x] Service `extension_jobs.py` (create_job / claim_pending / submit_result / wait_for_job / expire_stale_claimed)
+  - [x] API `/api/extension/lk/jobs/{pending,/:id/result}` (Bearer auth)
+  - [x] `execute_window_for_tenant` рефакторен: вместо WbLkClient — создаёт jobs и ждёт через `wait_for_job`
+  - [x] Extension: `wb-shifts-interceptor-main.ts` (MAIN world, перехватывает AuthorizeV3/Wb-Seller-Lk из WB-фронта), `wb-shifts-content.ts` (ISOLATED, делает fetch с cookies), `wb-shifts-proxy.ts` (роутер + reinject через chrome.scripting), `lk-jobs-poll.ts` (alarm каждые 30s)
+  - [x] **End-to-end smoke 2026-05-20:** quota job → extension → WB → quota=4804 (HTTP 200), результат записан в БД ✓
 - **Зависимости:** TASK-LEAD-009 ✅, HAR получен ✅
-- **Статус:** Код задеплоен 2026-05-19, **частично закрыт**. Остался blocker: наш refresh-endpoint `/ns/suppliers-auth/.../auth/token` возвращает 401 — реальный refresh-flow в HAR не зафиксирован (HAR span 2 мин < 5-мин TTL). Создан TASK-LEAD-019 на reverse-engineering правильного refresh-endpoint'а. До его закрытия E2E smoke невозможен.
+- **Статус:** **CLOSED 2026-05-20**. Полный e2e flow доказан: `backend → wb_lk_jobs → extension SW poll → content script → WB API → result → backend`. Реальный POST /order в окно 09:00/18:00 МСК — будет работать когда есть recommendations (LEAD-020 для миграции recommender на jobs queue).
 
 ---
 
@@ -382,25 +388,55 @@ Lead использует этот файл как master-view: сюда скл�
 
 ---
 
-### TASK-LEAD-019: Найти правильный Wb-Seller-Lk refresh endpoint
+### TASK-LEAD-019: Chrome-extension proxy для WB shifts API
 
-- **Исполнитель:** Lead + пользователь (новый HAR)
-- **Приоритет:** P0 (блокирует E2E smoke LEAD-016)
-- **Оценка:** 0.5-1 день после получения HAR
-- **Описание:** Наш `refresh_wb_seller_lk()` бьёт в `/ns/suppliers-auth/suppliers-portal-core/auth/token` (JSON-RPC) и получает 401 на реальном AuthorizeV3. В HAR 2026-05-19 (2 мин активности, 50 запросов) refresh-запрос не зафиксирован — Wb-Seller-Lk не успел истечь (TTL ровно 5 мин). Нужен новый HAR с активностью ≥6 мин чтобы поймать момент refresh.
-- **Что нужно от пользователя:**
-  1. Открыть `seller.wildberries.ru`, F12 → Network → ✓ **Preserve log**, фильтр Network = «All» (не только XHR/Fetch)
-  2. Залогиниться, активничать в кабинете **≥6 минут** (кликать по разделам каждые 30 сек), особенно через 4 мин — там должен быть авто-refresh со стороны JS / Service Worker
-  3. Сохранить HAR (`Save all as HAR with content`) → положить в `tmp/redistribution_har/`
-  4. Доп. fallback если в HAR refresh так и не виден: снять отдельный HAR именно с момента когда вкладка простояла открытой ~5 мин и потом сделан клик (Wb-Seller-Lk должен быть обновлён к этому моменту)
+- **Исполнитель:** Lead
+- **Приоритет:** P0 (был блокером LEAD-016)
+- **Оценка:** 1 день
+- **Описание:** Reverse-engineering refresh-endpoint показал что WB пинит сессию к IP браузера, JWT-токены держит in-memory у фронта (не в localStorage / cookies), плюс антифрод проверяет cookies. Server-side бот невозможен. Решение — proxy через Chrome-extension в браузере юзера: MAIN-world fetch interceptor вытаскивает JWT из любого вызова WB-фронта, ISOLATED content script делает наши запросы из контекста страницы с нативными cookies, SW polls backend job queue.
 - **Критерии готовности:**
-  - [ ] HAR ≥6 мин получен и положен в `tmp/redistribution_har/`
-  - [ ] Найден URL + body + headers refresh-запроса
-  - [ ] `refresh_wb_seller_lk()` в `backend/app/integrations/wb_lk/auth.py` обновлён, smoke-тест `refresh()` в backend shell возвращает свежий 5-мин токен
-  - [ ] E2E smoke: 1 маленькая заявка отправлена в окно 09:00 или 18:00 МСК → response `success: true` → row в `redistribution_tasks` status=accepted + `RedistributionCooldown` 72ч
-  - [ ] LEAD-016 закрыт полностью
-- **Зависимости:** —
-- **Статус:** Открыта, ждём HAR от пользователя.
+  - [x] Backend: `wb_lk_jobs` table + service + API (см. LEAD-016)
+  - [x] Extension: interceptor MAIN + content ISOLATED + proxy router + SW polling
+  - [x] Auto-reinject через `chrome.scripting.executeScript` если content script orphaned после reload extension'а
+  - [x] E2E smoke 2026-05-20: HTTP 200 quota=4804
+- **Статус:** **CLOSED 2026-05-20**.
+
+---
+
+### TASK-LEAD-020: Перевести recommender и beat-tasks на extension proxy
+
+- **Исполнитель:** Lead
+- **Приоритет:** P1
+- **Оценка:** 0.5 дня
+- **Описание:** После LEAD-019 экзекьютор уже идёт через jobs queue. Осталось перевести:
+  - `services/redistribution/recommender.py` — `get_stocks()` для каждой nm_id через jobs queue (не через WbLkClient)
+  - Подумать про timing: recommendations daily в 06:00 МСК — extension вероятно оффлайн (юзер не в Chrome). Варианты: a) перенести генерацию на on-demand (юзер заходит в /redistribution → backend генерит); b) ждать пока юзер откроет Chrome и заметить через extension. **Рекомендация: on-demand** (проще + актуальнее).
+- **Критерии готовности:**
+  - [ ] `build_recommendations()` использует `create_job(op='stocks')` + `wait_for_job` вместо WbLkClient
+  - [ ] `WbLkClient` удалить (мёртвый код после миграции)
+  - [ ] Beat-task `daily_recommendations` → удалить (заменить на on-demand из UI)
+  - [ ] E2E: юзер нажимает «↻ Пересчитать рекомендации» → backend генерит jobs → extension выгребает → recommendations появляются
+  - [ ] Smoke в окно 09:00 МСК с реальной заявкой (минимум 1 шт qty=1)
+- **Зависимости:** LEAD-019 ✅
+- **Статус:** Открыта.
+
+---
+
+### TASK-LEAD-021: Live smoke 1 реальной redistribution-заявки
+
+- **Исполнитель:** Lead + пользователь
+- **Приоритет:** P1
+- **Оценка:** 15 мин в окне
+- **Описание:** Финальное доказательство: в окне 09:00 или 18:00 МСК запустить реальный POST /order через всю цепочку.
+- **Что нужно:**
+  1. Юзер: открыт Chrome, залогинен в seller.wildberries.ru, расширение reload'нуто
+  2. Иметь хотя бы 1 chrt_id в src-складе с count > 0 (можно посмотреть через UI кабинета или get_stocks job)
+  3. Создать `redistribution_task` (через UI «Пересчитать» после LEAD-020 ИЛИ руками в БД для smoke сейчас)
+  4. Ждать окно (09:00:00..09:00:30 МСК или 18:00...)
+  5. Видеть в БД: task.status=accepted, RedistributionCooldown.cooldown_until=+72h
+  6. В кабинете WB: заявка появилась в «Перемещение остатков» → История
+- **Зависимости:** LEAD-019 ✅, LEAD-020 (опционально)
+- **Статус:** Открыта.
 
 ---
 

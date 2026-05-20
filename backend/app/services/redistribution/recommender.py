@@ -34,13 +34,12 @@ from app.db.models import (
     WbOrder,
     WbSale,
 )
-from app.integrations.wb_lk.client import LkClientError, WbLkClient
 from app.services.redistribution.economics import (
     MIN_LOT,
     Economics,
     compute_economics,
 )
-from app.services.redistribution.session_store import load_tokens
+from app.services.redistribution.extension_jobs import create_job, wait_for_job
 
 log = logging.getLogger(__name__)
 
@@ -184,126 +183,139 @@ async def build_recommendations(
     - Фильтрует по кулдауну, MIN_LOT, net_benefit > 0
     - Сортирует и режет по max_per_day
     """
-    tokens = await load_tokens(session, tenant_id)
-    if tokens is None:
-        log.info(
-            "redistribution: no WbLkSession or needs_relogin for tenant=%d — skip",
-            tenant_id,
-        )
-        return []
-
     candidates: list[Recommendation] = []
 
-    async with WbLkClient(tokens) as lk:
-        for nm_id in nm_ids:
-            try:
-                src_by_office = await lk.get_stocks(nm_id)
-            except LkClientError as e:
-                log.warning(
-                    "redistribution: get_stocks nm_id=%d failed (%s) — skip",
-                    nm_id,
-                    e,
-                )
-                continue
-            if not src_by_office:
-                continue
+    # Создаём все stocks job'ы СРАЗУ → extension выгребет их одним батчем →
+    # потом ждём результаты последовательно. Это гораздо быстрее чем
+    # serial create_job + wait_for_job (расширение polls раз в 30 сек).
+    job_id_by_nm: dict[int, int] = {}
+    for nm_id in nm_ids:
+        jid = await create_job(
+            session,
+            tenant_id=tenant_id,
+            op="stocks",
+            params={"nm_id": int(nm_id)},
+            originator="recommender",
+        )
+        job_id_by_nm[nm_id] = jid
+    await session.commit()
+    log.info(
+        "redistribution: created %d stocks jobs for tenant=%d — waiting extension",
+        len(job_id_by_nm),
+        tenant_id,
+    )
 
-            # Демэнд на 14 дней по складам (по orders)
-            demand_by_office = await _demand_by_target_office(session, nm_id=nm_id)
-            avg_price = await _avg_price_for_nm(session, nm_id=nm_id)
-            if avg_price <= 0:
-                continue
+    for nm_id in nm_ids:
+        job_id = job_id_by_nm[nm_id]
+        res = await wait_for_job(
+            session, job_id=job_id, tenant_id=tenant_id, timeout_s=60
+        )
+        if res is None:
+            log.warning(
+                "redistribution: stocks job %d (nm_id=%d) timed out — extension offline?",
+                job_id,
+                nm_id,
+            )
+            continue
+        if not res["ok"]:
+            log.warning(
+                "redistribution: stocks job %d (nm_id=%d) failed: %s",
+                job_id,
+                nm_id,
+                res["error"],
+            )
+            continue
+        src_by_office = ((res["data"] or {}).get("src") or [])
+        if not src_by_office:
+            continue
 
-            # Flatten: каждая «полка»(склад × chrt_id) — потенциальный source
-            shelves: list[dict] = []
-            for office in src_by_office:
-                office_id = int(office.get("officeID") or 0)
-                office_name = office.get("officeName") or ""
-                for stk in office.get("inStock") or []:
-                    chrt_id = int(stk.get("chrtID") or 0)
-                    count = int(stk.get("count") or 0)
-                    if chrt_id and count > 0:
-                        shelves.append(
-                            dict(
-                                office_id=office_id,
-                                office_name=office_name,
-                                chrt_id=chrt_id,
-                                count=count,
-                            )
+        # Демэнд на 14 дней по складам (по orders)
+        demand_by_office = await _demand_by_target_office(session, nm_id=nm_id)
+        avg_price = await _avg_price_for_nm(session, nm_id=nm_id)
+        if avg_price <= 0:
+            continue
+
+        # Flatten: каждая «полка»(склад × chrt_id) — потенциальный source
+        shelves: list[dict] = []
+        for office in src_by_office:
+            office_id = int(office.get("officeID") or 0)
+            office_name = office.get("officeName") or ""
+            for stk in office.get("inStock") or []:
+                chrt_id = int(stk.get("chrtID") or 0)
+                count = int(stk.get("count") or 0)
+                if chrt_id and count > 0:
+                    shelves.append(
+                        dict(
+                            office_id=office_id,
+                            office_name=office_name,
+                            chrt_id=chrt_id,
+                            count=count,
                         )
+                    )
 
-            # Для каждой пары (chrt_id, target_office) ищем кандидата
-            # target_office определяется по demand_by_office: самые «голодные»
-            # склады — где спроса много, но мало товара.
-            target_offices: dict[str, dict] = {}  # office_name → {demand, current_stock}
-            for off_name, demand in demand_by_office.items():
-                cur_stock = sum(
-                    s["count"] for s in shelves if s["office_name"] == off_name
+        # Для каждой пары (chrt_id, target_office) ищем кандидата
+        target_offices: dict[str, dict] = {}
+        for off_name, demand in demand_by_office.items():
+            cur_stock = sum(
+                s["count"] for s in shelves if s["office_name"] == off_name
+            )
+            target_offices[off_name] = {
+                "demand": demand,
+                "current_stock": cur_stock,
+            }
+
+        for off_name, info in target_offices.items():
+            demand_14d = info["demand"]
+            if demand_14d <= 0:
+                continue
+            cur = info["current_stock"]
+            target = math.ceil(demand_14d * float(safety_factor))
+            deficit = target - cur
+            if deficit < MIN_LOT:
+                continue
+
+            for shelf in sorted(shelves, key=lambda s: -s["count"]):
+                if shelf["office_name"] == off_name:
+                    continue
+                src_count = shelf["count"]
+                if src_count < MIN_LOT:
+                    continue
+                qty = min(src_count, deficit)
+                if qty < MIN_LOT:
+                    continue
+
+                if await _is_in_cooldown(
+                    session,
+                    tenant_id=tenant_id,
+                    chrt_id=shelf["chrt_id"],
+                    to_office_id=0,
+                ):
+                    continue
+
+                econ = compute_economics(
+                    qty=qty,
+                    avg_price_rub=avg_price,
+                    demand_14d=demand_14d,
                 )
-                target_offices[off_name] = {
-                    "demand": demand,
-                    "current_stock": cur_stock,
-                }
-
-            for off_name, info in target_offices.items():
-                demand_14d = info["demand"]
-                if demand_14d <= 0:
-                    continue
-                cur = info["current_stock"]
-                target = math.ceil(demand_14d * float(safety_factor))
-                deficit = target - cur
-                if deficit < MIN_LOT:
+                if econ.net_benefit_rub <= 0:
                     continue
 
-                # Подбираем источник: склад с тем же chrt_id, у которого
-                # значительный excess (count - его_собственный_demand).
-                # Сортируем источники по убыванию count.
-                for shelf in sorted(shelves, key=lambda s: -s["count"]):
-                    if shelf["office_name"] == off_name:
-                        continue
-                    src_count = shelf["count"]
-                    if src_count < MIN_LOT:
-                        continue
-                    qty = min(src_count, deficit)
-                    if qty < MIN_LOT:
-                        continue
-
-                    # Кулдаун check (по chrt_id × to_office_id)
-                    # to_office_id у нас может быть 0 (нет в HAR) — тогда не
-                    # проверяем (но и не пишем cooldown позже). v2: добавить
-                    # справочник office_name → office_id.
-                    if await _is_in_cooldown(
-                        session,
-                        tenant_id=tenant_id,
+                candidates.append(
+                    Recommendation(
+                        nm_id=nm_id,
                         chrt_id=shelf["chrt_id"],
-                        to_office_id=0,  # placeholder, см. v2
-                    ):
-                        continue
-
-                    econ = compute_economics(
+                        from_office_id=shelf["office_id"],
+                        from_office_name=shelf["office_name"],
+                        to_office_id=0,
+                        to_office_name=off_name,
                         qty=qty,
-                        avg_price_rub=avg_price,
-                        demand_14d=demand_14d,
+                        econ=econ,
+                        demand_14d_at_target=demand_14d,
+                        current_stock_at_target=cur,
+                        current_stock_at_source=src_count,
                     )
-                    if econ.net_benefit_rub <= 0:
-                        continue
-
-                    candidates.append(
-                        Recommendation(
-                            nm_id=nm_id,
-                            chrt_id=shelf["chrt_id"],
-                            from_office_id=shelf["office_id"],
-                            from_office_name=shelf["office_name"],
-                            to_office_id=0,  # placeholder
-                            to_office_name=off_name,
-                            qty=qty,
-                            econ=econ,
-                            demand_14d_at_target=demand_14d,
-                            current_stock_at_target=cur,
-                            current_stock_at_source=src_count,
-                        )
-                    )
-                    break  # один источник на target — хватит
+                )
+                break
 
     candidates.sort(key=lambda c: c.econ.net_benefit_rub, reverse=True)
     return candidates[:max_per_day]

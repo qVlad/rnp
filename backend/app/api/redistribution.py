@@ -496,13 +496,20 @@ async def get_roi(
 
 @router.post("/generate", dependencies=[Depends(require_director_or_head)])
 async def trigger_generate(
+    limit: int = 30,
     user: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
-    """Ручной триггер генерации рекомендаций (для тестов и первой настройки).
+    """Ручной триггер генерации рекомендаций.
 
-    Запускает синхронно в текущем процессе (не через Celery) — может занять
-    время если nm_ids много. Для production используется beat-task в 06:00 МСК.
+    После LEAD-020 рекомендации генерятся **через Chrome-extension proxy**
+    (расширение должно быть подключено + открыта вкладка seller.wildberries.ru).
+    Каждый nm_id → один stocks job в queue, extension polls раз в 30 сек.
+    Для batch=10 SKU расширение обработает за один цикл ~5-10 сек, для
+    larger limit — несколько циклов.
+
+    Параметр `limit` (default 30) ограничивает кол-во SKU. Для smoke-теста
+    рекомендую 5-10 чтобы не ждать долго.
     """
     from app.db.models import Product, WbSale
     from app.services.redistribution.recommender import build_recommendations
@@ -516,12 +523,23 @@ async def trigger_generate(
             .where(WbSale.sale_dt >= since, WbSale.is_return.is_(False))
             .where(Product.is_archived.is_(False))
             .group_by(Product.nm_id)
-            .limit(200)
+            .limit(max(1, min(limit, 200)))
         )
     ).all()
     nm_ids = [int(r[0]) for r in rows]
     if not nm_ids:
         return {"created": 0, "message": "no active SKU"}
+
+    # Удаляем старые pending-рекомендации перед генерацией свежих — иначе
+    # повторный клик «Пересчитать» создаёт дубли (один и тот же candidate
+    # × количество запусков). Approved/dismissed — оставляем как историю.
+    from sqlalchemy import delete as sql_delete
+
+    await session.execute(
+        sql_delete(RedistributionRecommendation).where(
+            RedistributionRecommendation.status == "pending",
+        )
+    )
 
     recs = await build_recommendations(
         session, tenant_id=user.tenant_id, nm_ids=nm_ids

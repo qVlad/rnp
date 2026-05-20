@@ -69,12 +69,25 @@ export default defineManifest({
     {
       // Shifts API proxy (LEAD-016): SW не может fetch напрямую к
       // seller-weekly-report (cookies третьей стороны не прикрепляются).
-      // Этот content script ловит messages от SW и делает fetch ИЗ
-      // контекста страницы seller.wildberries.ru — там cookies и
-      // localStorage с JWT-токенами нативные.
+      // Этот content script (ISOLATED world) ловит messages от SW и
+      // делает fetch ИЗ контекста страницы seller.wildberries.ru — там
+      // cookies нативные. JWT-токены он получает через postMessage от
+      // MAIN-world interceptor'а (следующая запись).
       matches: ["https://seller.wildberries.ru/*"],
       js: ["src/content/wb-shifts-content.ts"],
       run_at: "document_start",
+    },
+    {
+      // MAIN-world interceptor (Chrome 111+): подменяет window.fetch и
+      // XMLHttpRequest на странице seller.wildberries.ru, ловит каждый
+      // запрос WB-фронта с заголовками AuthorizeV3/Wb-Seller-Lk и шлёт
+      // их через postMessage в ISOLATED world. Без MAIN мы не видим
+      // window.fetch страницы и не можем достать JWT — они in-memory
+      // в WB-фронте, нет ни в localStorage, ни в cookies.
+      matches: ["https://seller.wildberries.ru/*"],
+      js: ["src/content/wb-shifts-interceptor-main.ts"],
+      run_at: "document_start",
+      world: "MAIN",
     },
     {
       // Поиск/каталог WB — трекинг позиций карточек, участвующих в активных
@@ -120,5 +133,5 @@ export default defineManifest({
     "http://localhost:4098/*",
     "http://localhost:3000/*",
   ],
-  permissions: ["storage", "notifications", "alarms", "cookies"],
+  permissions: ["storage", "notifications", "alarms", "cookies", "scripting"],
 });
