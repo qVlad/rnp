@@ -49,6 +49,7 @@
 | Timeseries | Графики revenue / orders / margin по дням | `Dashboard.tsx` + recharts | brands-filter |
 | Top-SKU | Топ-5 SKU по выручке / марже / **худшие** (worst-margin, кандидаты на ребренд). `order=asc\|desc` query-param в `/api/dashboard/top-skus` | `Dashboard.tsx`, `metrics.py:top_skus(order=...)` | brands-filter |
 | Alerts bar | Шапка дашборда с активными правилами уведомлений | `components/AlertsBar.tsx` | brands-filter |
+| ManagersKpi: Δ м/м + sparkline + sort | На `/managers-kpi` — колонки «Δ м/м» (Δ выручки в % к прошлому месяцу, цвет по порогу 3%) и «6 мес» (sparkline-линия выручки за последние 6 мес). Прошлый месяц всегда `mode=final` чтобы preliminary-шум не давал ложную просадку. Все столбцы сортируются кликом по `<th>` (persist в localStorage). TASK-DEV-009 | `pages/ManagersKpi.tsx`, `api/managers_kpi.py:_month_revenue_margin` | director, head |
 
 ---
 

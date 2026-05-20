@@ -37,6 +37,44 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## 2026-05-20 (ночь) — **TASK-DEV-009: Δ м/м + sparkline + sort в `/managers-kpi`**
+
+Закрыли вторую по ценности задачу из backlog'а после ревью персон. РОП теперь
+видит не только абсолютные KPI, но и **тренд кто просел** (Δ к прошлому месяцу
+с цветным порогом 3%) + **6-месячный sparkline выручки** для каждого менеджера.
+
+- **Backend (`api/managers_kpi.py`):** новый helper `_month_revenue_margin(year,
+  month, brands, mode)` через `compute_dashboard`. В endpoint'е для каждого
+  менеджера с брендами строится 6-точечная цепочка месяцев (oldest first) +
+  отдельно прошлый месяц. **Прошлый месяц всегда `mode='final'`** — иначе
+  preliminary даёт ложную «просадку» 5-15% (свежие недели всегда выше final
+  пока WB их не закрыл). Новые поля в ответе:
+  `prev_revenue_net_rub`, `prev_margin_pct`, `delta_revenue_pct` (может быть
+  `null` если prev=0), `delta_margin_pp`, `sparkline_revenue: number[6]`.
+- **Frontend (`pages/ManagersKpi.tsx`):** 2 новые колонки «Δ м/м» и «6 мес»,
+  все остальные `<th>` теперь кликабельны → сортируют (persist
+  `localStorage.managers-kpi.sort.v1`, default revenue ↓). no_brands строки
+  всегда внизу независимо от сортировки. Sparkline — `<LineChart width=80
+  height=24>` из recharts, без осей, цвет линии = цвет Δ (currentColor).
+  Δ-цвет: >+3% зелёный, <−3% красный, |Δ|<3 серый (шум).
+- **Cost note:** N менеджеров × 6 месяцев compute_dashboard последовательно
+  (async session не безопасна для concurrent execute). Для N=5-15 приемлемо;
+  если упрётся — оптимизация через GROUP BY month в `metrics.py`.
+
+**Изменённые файлы:**
+- `backend/app/api/managers_kpi.py` — `_month_revenue_margin` helper + 6-point
+  sparkline loop + Δ/prev поля в response (сделано параллельной сессией)
+- `frontend/src/api/client.ts` — типы новых полей в `managersKpi` response
+- `frontend/src/pages/ManagersKpi.tsx` — sortable headers + Δ-cell + sparkline-cell
+- `agents/tasks-developer.md` — TASK-DEV-009 закрыта
+- `FEATURES.md` — запись в раздел «Дашборд и KPI»
+
+**Следующая по ценности из backlog'а:**
+- TASK-DEV-008 — Owner cockpit на `/` (toggle «вид Owner», 4 виджета)
+- TASK-DEV-018 — drill-down строки `/managers-kpi` → P&L с `?brands=...`
+
+---
+
 ## 2026-05-20 — **TASK-DEV-011: recon-drift алерт в AlertsBar**
 
 Версии **0.6.1 → 0.7.0** (feat → minor).
