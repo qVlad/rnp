@@ -733,6 +733,8 @@ export default function Settings() {
 
       <WbTariffsSection />
 
+      <ExtensionTokensSection />
+
       <ExcelSection />
 
       <section className="card">
@@ -2336,6 +2338,197 @@ function WbTariffsSection() {
           Данные пустые. Проверьте что был хотя бы один sync.tariffs (кнопка «↻
           Sync now») и что у текущего tenant'а есть валидный WB-токен.
         </div>
+      )}
+    </section>
+  );
+}
+
+function ExtensionTokensSection() {
+  const qc = useQueryClient();
+  const q = useQuery({
+    queryKey: ["extension-api-tokens"],
+    queryFn: () => api.extensionApiTokenList(),
+  });
+  const [label, setLabel] = useState("");
+  const [expiresInDays, setExpiresInDays] = useState<string>("");
+  const [justCreated, setJustCreated] = useState<{
+    token: string;
+    label: string;
+  } | null>(null);
+
+  const createMut = useMutation({
+    mutationFn: () =>
+      api.extensionApiTokenCreate(
+        label.trim() || "Chrome extension",
+        expiresInDays.trim() ? parseInt(expiresInDays, 10) : null,
+      ),
+    onSuccess: (data) => {
+      setJustCreated({ token: data.token, label: data.label });
+      setLabel("");
+      setExpiresInDays("");
+      qc.invalidateQueries({ queryKey: ["extension-api-tokens"] });
+    },
+  });
+
+  const revokeMut = useMutation({
+    mutationFn: (id: number) => api.extensionApiTokenRevoke(id),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["extension-api-tokens"] }),
+  });
+
+  const items = q.data || [];
+
+  return (
+    <section className="card">
+      <h2 className="font-medium mb-1">Токены для Chrome-расширения</h2>
+      <p className="text-muted text-sm mb-3">
+        JWT в cookie живёт 12 часов — расширение приходится переподключать
+        ежедневно. Здесь генерируется отдельный long-lived токен формата
+        <code className="mx-1">rnpext_…</code> с настраиваемым сроком жизни
+        (или без срока). Вставь токен в options расширения вместо JWT из
+        cookie.
+      </p>
+
+      <div className="flex flex-wrap gap-2 items-end mb-3">
+        <div>
+          <label className="block text-xs text-muted mb-1">
+            Название (для себя)
+          </label>
+          <input
+            className="input"
+            placeholder="Chrome на ноутбуке"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-muted mb-1">
+            Срок жизни (дней, пусто = бессрочно)
+          </label>
+          <input
+            type="number"
+            className="input"
+            placeholder="365"
+            value={expiresInDays}
+            onChange={(e) => setExpiresInDays(e.target.value)}
+            min={1}
+            max={3650}
+          />
+        </div>
+        <button
+          className="btn"
+          onClick={() => createMut.mutate()}
+          disabled={createMut.isPending}
+        >
+          {createMut.isPending ? "Создание…" : "+ Создать токен"}
+        </button>
+      </div>
+
+      {justCreated && (
+        <div className="card mb-3" style={{ borderColor: "var(--accent)" }}>
+          <div className="text-sm font-medium mb-1">
+            Токен «{justCreated.label}» создан. Скопируй его прямо сейчас — он
+            больше не покажется:
+          </div>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 p-2 text-xs break-all bg-surface-2 rounded">
+              {justCreated.token}
+            </code>
+            <button
+              className="btn"
+              onClick={() => {
+                navigator.clipboard.writeText(justCreated.token);
+              }}
+            >
+              Копировать
+            </button>
+            <button
+              className="btn btn-ghost"
+              onClick={() => setJustCreated(null)}
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
+      {q.isLoading && <div className="text-muted text-sm">Загрузка…</div>}
+
+      {!q.isLoading && items.length === 0 && (
+        <div className="text-muted text-sm">
+          Токенов ещё нет. Создай первый кнопкой выше.
+        </div>
+      )}
+
+      {items.length > 0 && (
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-muted">
+              <th className="py-1">Префикс</th>
+              <th className="py-1">Название</th>
+              <th className="py-1">Создан</th>
+              <th className="py-1">Использован</th>
+              <th className="py-1">Истекает</th>
+              <th className="py-1">Статус</th>
+              <th className="py-1"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((t) => {
+              const isRevoked = t.revokedAt != null;
+              const isExpired =
+                t.expiresAt != null && new Date(t.expiresAt) < new Date();
+              const status = isRevoked
+                ? "отозван"
+                : isExpired
+                ? "истёк"
+                : "активен";
+              return (
+                <tr
+                  key={t.id}
+                  className={
+                    isRevoked || isExpired ? "text-muted" : undefined
+                  }
+                >
+                  <td className="py-1 font-mono text-xs">{t.prefix}…</td>
+                  <td className="py-1">{t.label || "—"}</td>
+                  <td className="py-1 text-xs">
+                    {new Date(t.createdAt).toLocaleString("ru")}
+                  </td>
+                  <td className="py-1 text-xs">
+                    {t.lastUsedAt
+                      ? new Date(t.lastUsedAt).toLocaleString("ru")
+                      : "—"}
+                  </td>
+                  <td className="py-1 text-xs">
+                    {t.expiresAt
+                      ? new Date(t.expiresAt).toLocaleDateString("ru")
+                      : "∞"}
+                  </td>
+                  <td className="py-1 text-xs">{status}</td>
+                  <td className="py-1 text-right">
+                    {!isRevoked && !isExpired && (
+                      <button
+                        className="btn btn-ghost"
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              `Отозвать токен «${t.label || t.prefix}»? Расширения с ним перестанут работать.`,
+                            )
+                          ) {
+                            revokeMut.mutate(t.id);
+                          }
+                        }}
+                      >
+                        Отозвать
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       )}
     </section>
   );

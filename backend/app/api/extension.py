@@ -50,12 +50,13 @@ from app.db.models import (
     AbTestResult,
     AbTestRotation,
     AbTestVariant,
+    ExtensionApiToken,
     Product,
     Tenant,
     User,
 )
 from app.db.session import get_db
-from app.services.auth import CurrentUser, decode_session_token
+from app.services.auth import CurrentUser, decode_session_token, get_current_user
 from app.services.tenant_context import set_tenant
 
 log = logging.getLogger(__name__)
@@ -67,19 +68,78 @@ router = APIRouter(prefix="/api/extension", tags=["extension"])
 # ─────────────────────────────────────────────────────────────────────────
 
 
+EXTENSION_TOKEN_PREFIX = "rnpext_"
+
+
+def _hash_token(token: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+async def _user_from_extension_token(
+    session: AsyncSession, token: str
+) -> CurrentUser | None:
+    """Resolve user from long-lived extension token (миграция 0048).
+
+    Возвращает None если токен невалиден/revoked/expired — caller fallback'ит
+    на JWT-декод.
+    """
+    now = datetime.now(timezone.utc)
+    row = (
+        await session.execute(
+            select(ExtensionApiToken, User)
+            .join(User, User.id == ExtensionApiToken.user_id)
+            .where(
+                ExtensionApiToken.token_hash == _hash_token(token),
+                ExtensionApiToken.revoked_at.is_(None),
+            )
+        )
+    ).first()
+    if row is None:
+        return None
+    tok, user = row
+    if tok.expires_at is not None and tok.expires_at < now:
+        return None
+    if not user.is_active:
+        return None
+    tok.last_used_at = now
+    await session.commit()
+    return CurrentUser(
+        id=user.id,
+        username=user.username,
+        role=user.role,
+        full_name=user.full_name,
+        tenant_id=int(user.tenant_id),
+    )
+
+
 async def _user_from_bearer(
     request: Request,
     session: AsyncSession,
     authorization: str | None,
 ) -> CurrentUser:
-    """Resolve user from `Authorization: Bearer <jwt>` header.
+    """Resolve user from `Authorization: Bearer <token>` header.
 
-    Mirrors `services.auth.get_current_user` but reads the token from the
-    HTTP header instead of the session cookie. Raises 401 on any failure.
+    Поддерживает два формата:
+      • `rnpext_<32-hex>` — long-lived extension token (таблица
+        `extension_api_tokens`, миграция 0048). Бессрочный или с
+        настраиваемым `expires_at`, можно revoke.
+      • JWT — тот же что в cookie `rnp_session` (TTL 12h). Legacy
+        fallback пока пользователи не пересели на long-lived.
+
+    Raises 401 on any failure.
     """
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(401, "missing bearer token")
     token = authorization[7:].strip()
+
+    if token.startswith(EXTENSION_TOKEN_PREFIX):
+        user = await _user_from_extension_token(session, token)
+        if user is None:
+            raise HTTPException(401, "extension token invalid, revoked or expired")
+        return user
+
     payload = decode_session_token(token)
     if not payload:
         raise HTTPException(401, "bearer token invalid or expired")
@@ -578,3 +638,117 @@ async def wb_token_status(
         expiresAt=expires_at_iso,
         needsRefresh=needs_refresh,
     ).model_dump()
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Long-lived extension API tokens (миграция 0048)
+# ─────────────────────────────────────────────────────────────────────────
+
+
+class ApiTokenCreateIn(BaseModel):
+    label: str = Field(default="", max_length=255)
+    expiresInDays: int | None = Field(default=None, ge=1, le=3650)
+
+
+class ApiTokenCreateOut(BaseModel):
+    id: int
+    token: str  # full token, показывается ОДИН РАЗ
+    prefix: str
+    label: str
+    expiresAt: str | None
+
+
+class ApiTokenListOut(BaseModel):
+    id: int
+    prefix: str
+    label: str
+    createdAt: str
+    lastUsedAt: str | None
+    expiresAt: str | None
+    revokedAt: str | None
+
+
+def _generate_token() -> str:
+    import secrets
+
+    return f"{EXTENSION_TOKEN_PREFIX}{secrets.token_hex(16)}"
+
+
+@router.post("/api-tokens", response_model=ApiTokenCreateOut)
+async def create_api_token(
+    payload: ApiTokenCreateIn,
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Создать новый long-lived токен для расширения.
+
+    Полный token возвращается **только один раз** — хранится только sha256.
+    Если потерял — отзови и сгенерируй новый.
+    """
+    token = _generate_token()
+    expires_at: datetime | None = None
+    if payload.expiresInDays is not None:
+        expires_at = datetime.now(timezone.utc) + timedelta(days=payload.expiresInDays)
+
+    row = ExtensionApiToken(
+        tenant_id=user.tenant_id,
+        user_id=user.id,
+        token_hash=_hash_token(token),
+        prefix=token[:12],
+        label=payload.label.strip()[:255],
+        expires_at=expires_at,
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+
+    return ApiTokenCreateOut(
+        id=row.id,
+        token=token,
+        prefix=row.prefix,
+        label=row.label,
+        expiresAt=expires_at.isoformat() if expires_at else None,
+    ).model_dump()
+
+
+@router.get("/api-tokens", response_model=list[ApiTokenListOut])
+async def list_api_tokens(
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """Список токенов текущего пользователя — без самих токенов, только prefix."""
+    rows = (
+        await session.execute(
+            select(ExtensionApiToken)
+            .where(ExtensionApiToken.user_id == user.id)
+            .order_by(desc(ExtensionApiToken.created_at))
+        )
+    ).scalars().all()
+    return [
+        ApiTokenListOut(
+            id=r.id,
+            prefix=r.prefix,
+            label=r.label,
+            createdAt=r.created_at.isoformat(),
+            lastUsedAt=r.last_used_at.isoformat() if r.last_used_at else None,
+            expiresAt=r.expires_at.isoformat() if r.expires_at else None,
+            revokedAt=r.revoked_at.isoformat() if r.revoked_at else None,
+        ).model_dump()
+        for r in rows
+    ]
+
+
+@router.delete("/api-tokens/{token_id}", status_code=204)
+async def revoke_api_token(
+    token_id: int,
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> None:
+    """Revoke токен (set revoked_at). Юзер может revoke только свои токены."""
+    row = await session.get(ExtensionApiToken, token_id)
+    if row is None or row.user_id != user.id:
+        raise HTTPException(404, "token not found")
+    if row.revoked_at is None:
+        row.revoked_at = datetime.now(timezone.utc)
+        await session.commit()
+    return None

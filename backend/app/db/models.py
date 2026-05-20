@@ -2102,3 +2102,33 @@ class UnitPlanSnapshotConfig(Base, TenantScopedMixin):
             name="uq_unit_plan_snapshot_cfg",
         ),
     )
+
+
+class ExtensionApiToken(Base, TenantScopedMixin):
+    """Long-lived токен для Chrome-расширения (миграция 0048).
+
+    JWT в cookie `rnp_session` имеет TTL 12h — расширение перестаёт работать
+    каждый день. Этот токен формата `rnpext_<32-hex>` живёт до явного
+    revoke или до `expires_at` (NULL = бессрочно).
+
+    Lookup в `api/extension.py:_user_from_bearer` — по sha256 от full token.
+    """
+
+    __tablename__ = "extension_api_tokens"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    prefix: Mapped[str] = mapped_column(String(16), nullable=False)
+    label: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

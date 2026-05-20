@@ -1636,6 +1636,33 @@ paymentOrderDelete: (payment_order_id: string) =>
       method: "POST",
     }),
 
+  // ── Long-lived API tokens для Chrome-расширения (миграция 0048) ──
+  extensionApiTokenList: () =>
+    request<
+      Array<{
+        id: number;
+        prefix: string;
+        label: string;
+        createdAt: string;
+        lastUsedAt: string | null;
+        expiresAt: string | null;
+        revokedAt: string | null;
+      }>
+    >(`/api/extension/api-tokens`),
+  extensionApiTokenCreate: (label: string, expiresInDays: number | null) =>
+    request<{
+      id: number;
+      token: string;
+      prefix: string;
+      label: string;
+      expiresAt: string | null;
+    }>(`/api/extension/api-tokens`, {
+      method: "POST",
+      body: JSON.stringify({ label, expiresInDays }),
+    }),
+  extensionApiTokenRevoke: (id: number) =>
+    request<void>(`/api/extension/api-tokens/${id}`, { method: "DELETE" }),
+
   // ── UNIT-план (forward-looking unit economics) ──
   unitPlanRows: (filters?: UnitPlanFilters) => {
     const qs = new URLSearchParams();
@@ -1682,6 +1709,27 @@ paymentOrderDelete: (payment_order_id: string) =>
     request<UnitPlanReferenceStatus>(`/api/unit-plan/reference/status`),
   unitPlanDetail: (nm_id: number) =>
     request<UnitPlanDetail>(`/api/unit-plan/${nm_id}/detail`),
+  /** UNIT-PLAN-015: snapshots — список (grouped by date+label с count). */
+  unitPlanSnapshotsList: () =>
+    request<{ items: UnitPlanSnapshotListItem[] }>(
+      `/api/unit-plan/snapshots`,
+    ),
+  /** UNIT-PLAN-015: создать snapshot (freeze rows + global_config). */
+  unitPlanSnapshotCreate: (body: {
+    label?: string | null;
+    period_from?: string | null;
+    period_to?: string | null;
+  }) =>
+    request<{ snapshot_date: string; label: string | null; rows: number }>(
+      `/api/unit-plan/snapshots`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  /** UNIT-PLAN-015: diff snapshot vs current. config_diff содержит frozen+
+   *  current+changed_keys (миграция 0047). */
+  unitPlanSnapshotDiff: (snapshot_id: number) =>
+    request<UnitPlanSnapshotDiff>(
+      `/api/unit-plan/snapshots/${snapshot_id}/diff`,
+    ),
 
   // ── Features doc (FEATURES.md as plain text для страницы /features) ──
   featuresDoc: async (): Promise<string> => {
@@ -1966,4 +2014,60 @@ export interface UnitPlanDetail {
   price_history: UnitPlanPricePoint[];
   cogs_breakdown: UnitPlanCogsBreakdown | null;
   plan_vs_fact: UnitPlanPlanVsFact;
+}
+
+// ── UNIT-PLAN-015: snapshots ──────────────────────────────────────────
+
+export interface UnitPlanSnapshotListItem {
+  id: number;
+  snapshot_date: string;
+  label: string | null;
+  rows: number;
+}
+
+/** Дельта абсолютной величины (₽/qty): snapshot vs current. */
+export interface UnitPlanSnapshotDeltaAbs {
+  snapshot: string | null;
+  current: string | null;
+  delta: string | null;
+  delta_pct: string | null;
+}
+
+/** Дельта процентной величины (margin/buyout): % → percentage points. */
+export interface UnitPlanSnapshotDeltaPp {
+  snapshot: string | null;
+  current: string | null;
+  delta_pp: string | null;
+}
+
+export interface UnitPlanSnapshotDiffItem {
+  nm_id: number;
+  vendor_code: string | null;
+  brand: string | null;
+  subject: string | null;
+  revenue: UnitPlanSnapshotDeltaAbs;
+  profit_rub: UnitPlanSnapshotDeltaAbs;
+  margin_pct: UnitPlanSnapshotDeltaPp;
+  buyout_pct: UnitPlanSnapshotDeltaPp;
+}
+
+export interface UnitPlanSnapshotDiff {
+  snapshot_id: number;
+  snapshot_date: string;
+  current_date: string;
+  label: string | null;
+  items: UnitPlanSnapshotDiffItem[];
+  summary: {
+    rows_in_snapshot: number;
+    rows_in_current: number;
+    new_nm: Array<{ nm_id: number; vendor_code: string | null; subject: string | null }>;
+    removed_nm: Array<{ nm_id: number; vendor_code: string | null; subject: string | null }>;
+  };
+  /** Миграция 0047: frozen-cfg в момент snapshot'а + текущий + изменённые ключи. */
+  config_diff: {
+    snapshot: Record<string, unknown> | null;
+    current: Record<string, unknown> | null;
+    changed_keys: string[];
+    frozen_available: boolean;
+  };
 }
