@@ -66,6 +66,7 @@ celery_app.conf.update(
         "app.sync.tasks.generate_redistribution_recs_for_tenant": {"queue": "default"},
         "app.sync.tasks.publish_redistribution_windows": {"queue": "default"},
         "app.sync.tasks.execute_window_for_tenant": {"queue": "default"},
+        "app.sync.tasks.try_execute_queued_redistribution_tasks": {"queue": "default"},
         "app.sync.tasks.send_weekly_digest": {"queue": "default"},
         # Event-bus consumers (LEAD-004). Используют существующий
         # worker-default — добавление отдельного worker-events service
@@ -177,21 +178,29 @@ celery_app.conf.update(
         #     "task": "app.sync.tasks.generate_redistribution_recs",
         #     "schedule": crontab(hour=3, minute=0),
         # },
-        # Каждую минуту проверяем окно 09:00/18:00 МСК; в окне публикуем
-        # событие redistribution.window.open. is_window_now() сам отсекает
-        # «не окно».
-        "publish-redistribution-windows-1m": {
-            "task": "app.sync.tasks.publish_redistribution_windows",
-            "schedule": 60.0,
+        # LEAD-022: непрерывный polling вместо устаревшей концепции окон 09/18 МСК.
+        # Smoke 2026-05-20 доказал что WB открывает dst-квоты непрерывно
+        # (Электросталь = 19350+ единиц в 08:47 МСК). Закрыты бывают
+        # отдельные src-склады для отдельных chrt_id, но это не «окно».
+        # Стратегия: каждые 2 мин проверять есть ли queued tasks → если да,
+        # дёрнуть execute_window. Cooldown 72ч защищает от дублей. Idle
+        # tick стоит 1 SQL SELECT, поэтому безопасно держать 24/7.
+        "try-execute-queued-redistribution-2m": {
+            "task": "app.sync.tasks.try_execute_queued_redistribution_tasks",
+            "schedule": 120.0,
         },
-        # Consumer (LEAD-016): тик каждые 30 сек; в окне читает событие
-        # `redistribution.window.open` и enqueue'ит execute_window per tenant.
-        # Вне окна — beat тоже стучит, но publish ничего не выдал → consumer
-        # просто блокируется на 5 сек и выходит.
-        "consume-redistribution-window-30s": {
-            "task": "app.sync.event_consumers.consume_redistribution_window",
-            "schedule": 30.0,
-        },
+        # Старая концепция (события 09/18 МСК) — отключена. Beat-task'и
+        # publish_redistribution_windows + consume_redistribution_window
+        # больше не используются, оставлены закомментированными для
+        # отката если потребуется.
+        # "publish-redistribution-windows-1m": {
+        #     "task": "app.sync.tasks.publish_redistribution_windows",
+        #     "schedule": 60.0,
+        # },
+        # "consume-redistribution-window-30s": {
+        #     "task": "app.sync.event_consumers.consume_redistribution_window",
+        #     "schedule": 30.0,
+        # },
         # Weekly digest (LEAD-012) — понедельник 10:00 МСК (07:00 UTC)
         "weekly-digest-monday": {
             "task": "app.sync.tasks.send_weekly_digest",

@@ -137,14 +137,24 @@ async def wait_for_job(
         {"ok": bool, "http_status": int, "data": ..., "error": ...}
     или None при timeout (job так и остался queued/claimed).
 
-    ВАЖНО: caller должен периодически рефрешить сессию (postgres MVCC
-    snapshot не обновится сам). Поэтому используем session.expire_all()
-    между poll'ами.
+    Реализация: на каждом тике делаем `session.commit()` (закрывает
+    transaction → следующий SELECT откроет новую транзакцию и увидит
+    обновлённую запись от extension'а). Раньше использовали
+    session.expire_all() но он invalidate'ит ВСЕ ORM-объекты caller'а
+    (например `group_tasks` в execute_window), что ломает их
+    последующее использование → MissingGreenlet при lazy-load.
     """
     deadline = asyncio.get_event_loop().time() + timeout_s
     while asyncio.get_event_loop().time() < deadline:
-        session.expire_all()
-        j = await session.get(WbLkJob, job_id)
+        # commit закрывает текущую транзакцию (если она открыта) →
+        # следующий SELECT откроет новую транзакцию со свежим MVCC
+        # snapshot. populate_existing=True заставляет ORM перечитать
+        # данные из БД, минуя identity-map cache (иначе вернёт stale
+        # копию с status='queued' пока сессия живёт).
+        await session.commit()
+        j = await session.get(
+            WbLkJob, job_id, populate_existing=True
+        )
         if j is None:
             return None
         if j.tenant_id != tenant_id:

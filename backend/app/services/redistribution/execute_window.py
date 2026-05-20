@@ -28,7 +28,11 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import RedistributionCooldown, RedistributionTask
+from app.db.models import (
+    RedistributionCooldown,
+    RedistributionRecommendation,
+    RedistributionTask,
+)
 from app.services.redistribution.extension_jobs import (
     create_job,
     wait_for_job,
@@ -54,7 +58,17 @@ def _office_id_lookup(office_name: str) -> int | None:
         "Пенза": 50045809,
         "Самара (Новосемейкино)": 301805,
         "Екатеринбург - Перспективная 14": 300571,
-        "Котовск": 1733,
+        "Котовск": 301809,
+        # ─── added 2026-05-20 из stocks responses ───
+        "СПБ Шушары": 50045246,
+        "Шушары": 50045246,  # некоторые fronts используют короткое имя
+        "Владимир": 301981,
+        "Волгоград": 301983,
+        "Коледино": 507,
+        "Невинномысск": 208277,
+        "Рязань (Тюшевское)": 301760,
+        "Сарапул": 301987,
+        "Тула": 206348,
     }
     return KNOWN.get(office_name)
 
@@ -86,16 +100,36 @@ async def execute_window_for_tenant(
             "total": 0,
         }
 
+    # Достаём nm_id для каждой task через recommendation_id (в schema task'и
+    # nm_id отсутствует — он только в recommendation). Без nmID create_order
+    # отвалится с nmError на WB-стороне.
+    rec_ids = [t.recommendation_id for t in tasks if t.recommendation_id]
+    nm_by_rec: dict[int, int] = {}
+    if rec_ids:
+        rows = (
+            await session.execute(
+                select(
+                    RedistributionRecommendation.id, RedistributionRecommendation.nm_id
+                ).where(RedistributionRecommendation.id.in_(rec_ids))
+            )
+        ).all()
+        nm_by_rec = {int(r[0]): int(r[1]) for r in rows}
+
     # Группировка по (src, dst, nm_id)
     grouped: dict[tuple[int, int, int], list[RedistributionTask]] = defaultdict(list)
     no_office: list[RedistributionTask] = []
+    no_nm: list[RedistributionTask] = []
     for t in tasks:
         src = t.from_office_id or _office_id_lookup(t.from_office_name)
         dst = t.to_office_id or _office_id_lookup(t.to_office_name)
         if not src or not dst:
             no_office.append(t)
             continue
-        grouped[(int(src), int(dst), int(t.chrt_id))].append(t)
+        nm_id = nm_by_rec.get(t.recommendation_id) if t.recommendation_id else None
+        if not nm_id:
+            no_nm.append(t)
+            continue
+        grouped[(int(src), int(dst), int(nm_id))].append(t)
 
     accepted = 0
     failed = 0
@@ -111,6 +145,14 @@ async def execute_window_for_tenant(
             f"office_id not resolved: src={t.from_office_name!r} dst={t.to_office_name!r}"
         )
         t.attempt_count = (t.attempt_count or 0) + 1
+
+    # No-nmID tasks → failed (recommendation orphaned или удалена)
+    for t in no_nm:
+        t.status = "failed"
+        t.last_attempt_at = datetime.now(timezone.utc)
+        t.last_response = f"nm_id not resolved (recommendation_id={t.recommendation_id})"
+        t.attempt_count = (t.attempt_count or 0) + 1
+        skipped_no_office += 1  # bucket в общую корзину
 
     for (src, dst, nm_id), group_tasks in grouped.items():
         # === 1. Quota check via extension ===
@@ -230,6 +272,7 @@ async def execute_window_for_tenant(
         if isinstance(data, dict) and data.get("success"):
             now = datetime.now(timezone.utc)
             cooldown_until = now + timedelta(hours=72)
+            accepted_rec_ids: set[int] = set()
             for t in group_tasks:
                 t.status = "accepted"
                 t.accepted_at = now
@@ -238,6 +281,8 @@ async def execute_window_for_tenant(
                 t.last_response = "success"
                 t.attempt_count = (t.attempt_count or 0) + 1
                 accepted += 1
+                if t.recommendation_id:
+                    accepted_rec_ids.add(int(t.recommendation_id))
                 session.add(
                     RedistributionCooldown(
                         tenant_id=tenant_id,
@@ -246,6 +291,16 @@ async def execute_window_for_tenant(
                         cooldown_until=cooldown_until,
                         last_task_id=t.id,
                     )
+                )
+            # Подтягиваем recommendation.status='executed' → нужно для
+            # by-manager analytics (LEAD-013 group by rec.status).
+            if accepted_rec_ids:
+                from sqlalchemy import update as sql_update
+
+                await session.execute(
+                    sql_update(RedistributionRecommendation)
+                    .where(RedistributionRecommendation.id.in_(accepted_rec_ids))
+                    .values(status="executed")
                 )
             log.info(
                 "execute_window: ✓ accepted tenant=%d src=%d dst=%d nm=%d items=%d",
@@ -257,12 +312,23 @@ async def execute_window_for_tenant(
             )
         else:
             log.warning("execute_window: unexpected response: %r", data)
+            failed_rec_ids: set[int] = set()
             for t in group_tasks:
                 t.status = "failed"
                 t.last_attempt_at = datetime.now(timezone.utc)
                 t.last_response = f"unexpected: {data!r}"
                 t.attempt_count = (t.attempt_count or 0) + 1
                 failed += 1
+                if t.recommendation_id:
+                    failed_rec_ids.add(int(t.recommendation_id))
+            if failed_rec_ids:
+                from sqlalchemy import update as sql_update
+
+                await session.execute(
+                    sql_update(RedistributionRecommendation)
+                    .where(RedistributionRecommendation.id.in_(failed_rec_ids))
+                    .values(status="failed")
+                )
 
     await session.commit()
     return {

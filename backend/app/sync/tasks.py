@@ -1214,6 +1214,61 @@ def execute_window_for_tenant_task(tenant_id: int) -> dict[str, Any]:
     return asyncio.run(_execute_window_async(tenant_id))
 
 
+# ─── LEAD-022: continuous polling вместо окон 09/18 ────────────────────
+# Smoke 2026-05-20 показал что концепция «окон 09/18 МСК» неверна — WB
+# открывает dst-квоты непрерывно (Электросталь = 19350+ единиц в 08:47 МСК),
+# зато src-квоты гуляют (Волгоград закрыт для одного chrt_id, Краснодар
+# открыт). Поэтому смысл polling'а в том чтобы:
+#   1. постоянно (каждые 2 мин) проверять есть ли queued tasks у любого tenant'а
+#   2. если есть — дёргать execute_window: он проверит dst quota,
+#      попробует create_order. Если quota=0 на dst или WB отказала по
+#      бизнес-причине (exceeded src quota) — task остаётся queued и
+#      попробуется через 2 мин снова.
+# Cooldown 72ч защищает от повторного create_order для (chrt, dst).
+
+
+async def _try_execute_queued_tasks_async() -> dict[str, Any]:
+    """Найти tenant'ов с queued tasks и попытаться отправить через
+    execute_window. Используется как непрерывный poller взамен 09/18 окон.
+    """
+    from sqlalchemy import distinct, select
+
+    from app.db.models import RedistributionTask
+    from app.db.session import task_session_scope
+
+    async with task_session_scope() as session:
+        rows = (
+            await session.execute(
+                select(distinct(RedistributionTask.tenant_id)).where(
+                    RedistributionTask.status == "queued"
+                )
+            )
+        ).all()
+    tenant_ids = [int(r[0]) for r in rows]
+    if not tenant_ids:
+        return {"tenants": 0, "dispatched": 0}
+
+    # Async-dispatch — кладём задачи в Celery, не ждём результат
+    for tid in tenant_ids:
+        execute_window_for_tenant_task.delay(tid)
+    log.info(
+        "try_execute_queued: dispatched execute_window for %d tenant(s) with queued tasks",
+        len(tenant_ids),
+    )
+    return {"tenants": len(tenant_ids), "dispatched": len(tenant_ids)}
+
+
+@celery_app.task(name="app.sync.tasks.try_execute_queued_redistribution_tasks")
+def try_execute_queued_redistribution_tasks() -> dict[str, Any]:
+    """Beat-task каждые 2 мин: если есть queued redistribution_tasks у
+    любого tenant'а — диспатчит execute_window. Замена для устаревшей
+    концепции окон 09/18 МСК (LEAD-022).
+
+    Cheap when idle: 1 SQL SELECT → возвращает {tenants:0, dispatched:0}.
+    """
+    return asyncio.run(_try_execute_queued_tasks_async())
+
+
 # ─── Weekly digest для head_of_sales (LEAD-012) ─────────────────────────
 
 
