@@ -47,6 +47,9 @@ export type Me = {
   username: string;
   role: "director" | "head_of_sales" | "manager";
   full_name: string | null;
+  // null = unrestricted (director/head); array = manager's brand assignments
+  // (может быть пустым массивом — нет назначений)
+  brands?: string[] | null;
 };
 
 export interface Chargeback {

@@ -90,6 +90,75 @@ export default function Plans() {
     },
   });
 
+  const prevPeriod = (() => {
+    const m = month === 1 ? 12 : month - 1;
+    const y = month === 1 ? year - 1 : year;
+    return { year: y, month: m };
+  })();
+
+  const copyFromPrevMut = useMutation({
+    mutationFn: async () => {
+      const prev = await api.listPlans(prevPeriod);
+      const items = prev.items ?? [];
+      if (items.length === 0) {
+        throw new Error(
+          `За ${MONTHS[prevPeriod.month - 1]} ${prevPeriod.year} нет планов — копировать нечего.`,
+        );
+      }
+      // Не дублируем то, что уже есть в текущем периоде (по scope_type+scope_id)
+      const currentItems = plansQ.data?.items ?? [];
+      const existingKeys = new Set(
+        currentItems.map(
+          (p: any) => `${p.scope_type}:${p.scope_id ?? ""}`,
+        ),
+      );
+      const candidates = items.filter(
+        (p: any) => !existingKeys.has(`${p.scope_type}:${p.scope_id ?? ""}`),
+      );
+      if (candidates.length === 0) {
+        throw new Error(
+          "Все планы прошлого месяца уже есть в текущем — копировать нечего.",
+        );
+      }
+      const results = await Promise.allSettled(
+        candidates.map((p: any) =>
+          api.createPlan({
+            period_year: year,
+            period_month: month,
+            scope_type: p.scope_type,
+            scope_id: p.scope_id,
+            planned_orders_qty: p.planned_orders_qty,
+            planned_orders_revenue: p.planned_orders_revenue,
+            planned_sales_qty: p.planned_sales_qty,
+            planned_sales_revenue: p.planned_sales_revenue,
+            planned_profit: p.planned_profit,
+            planned_marketing_cost: p.planned_marketing_cost,
+            comment: p.comment ?? null,
+          }),
+        ),
+      );
+      const ok = results.filter((r) => r.status === "fulfilled").length;
+      const fail = results.length - ok;
+      return { ok, fail, total: results.length };
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["plans"] });
+      qc.invalidateQueries({ queryKey: ["plan-fact"] });
+    },
+  });
+
+  const handleCopyFromPrev = () => {
+    const prevLabel = `${MONTHS[prevPeriod.month - 1]} ${prevPeriod.year}`;
+    const curLabel = `${MONTHS[month - 1]} ${year}`;
+    if (
+      confirm(
+        `Скопировать планы из ${prevLabel} в ${curLabel}? Существующие планы текущего месяца не будут затронуты.`,
+      )
+    ) {
+      copyFromPrevMut.mutate();
+    }
+  };
+
   const startEdit = (p: any) => {
     setForm({
       period_year: p.period_year,
@@ -114,6 +183,19 @@ export default function Plans() {
       <div className="flex items-end justify-between flex-wrap gap-3">
         <h1 className="text-xl font-semibold">План — Факт</h1>
         <div className="flex items-end gap-3 flex-wrap">
+          {canEdit && (
+            <button
+              type="button"
+              className="btn text-xs self-end"
+              onClick={handleCopyFromPrev}
+              disabled={copyFromPrevMut.isPending}
+              title={`Перенести все планы из ${MONTHS[prevPeriod.month - 1]} ${prevPeriod.year} в ${MONTHS[month - 1]} ${year}`}
+            >
+              {copyFromPrevMut.isPending
+                ? "Копирую…"
+                : `📋 Скопировать из ${MONTHS[prevPeriod.month - 1]} ${prevPeriod.year}`}
+            </button>
+          )}
           <label className="flex flex-col text-xs text-muted">
             Месяц
             <select
@@ -141,6 +223,22 @@ export default function Plans() {
           </label>
         </div>
       </div>
+      {copyFromPrevMut.isError && (
+        <div className="rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+          {(copyFromPrevMut.error as Error).message}
+        </div>
+      )}
+      {copyFromPrevMut.isSuccess && copyFromPrevMut.data && (
+        <div className="rounded border border-success/30 bg-success/10 px-3 py-2 text-xs text-success">
+          Скопировано {copyFromPrevMut.data.ok} из {copyFromPrevMut.data.total}
+          {copyFromPrevMut.data.fail > 0 && (
+            <span className="ml-1 text-muted">
+              ({copyFromPrevMut.data.fail} с ошибкой — возможно, такой план уже
+              был)
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="card text-sm text-muted leading-relaxed">
         План задаёт месячные KPI по магазину или конкретному SKU. Факт берётся из

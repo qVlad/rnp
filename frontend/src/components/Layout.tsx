@@ -12,6 +12,7 @@ import VersionBadge from "@/components/VersionBadge";
 import { Icon, IconName } from "@/components/Icon";
 import CommandPalette from "@/components/CommandPalette";
 import SyncStatusIndicator from "@/components/SyncStatusIndicator";
+import ManagerBrandsBanner from "@/components/ManagerBrandsBanner";
 
 type Link = {
   to: string;
@@ -101,7 +102,7 @@ const GROUPS: Group[] = [
   {
     label: "Админка",
     items: [
-      { to: "/audit-log", label: "Audit log", directorOnly: true },
+      { to: "/audit-log", label: "Журнал изменений", directorOnly: true },
       { to: "/users", label: "Пользователи", directorOnly: true },
       { to: "/settings", label: "Настройки", directorOnly: true },
     ],
@@ -223,7 +224,7 @@ export default function Layout() {
                     : "text-muted"
                 }
               >
-                {user.role}
+                {isDirector ? "Директор" : isHead ? "РОП" : "Менеджер"}
               </div>
             </div>
           )}
@@ -242,6 +243,9 @@ export default function Layout() {
         </div>
       </aside>
       <main className="flex-1 min-w-0 px-6 py-6">
+        {user && user.role === "manager" && (
+          <ManagerBrandsBanner brands={user.brands ?? []} />
+        )}
         <Outlet />
       </main>
       <CommandPalette />

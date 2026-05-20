@@ -80,6 +80,20 @@
 
 ---
 
+## P0/P1 · UX из ревью c8f6609 (2026-05-20, QA + РОП + Manager + Owner)
+
+Дешёвые правки сделаны в коммите после ревью (локализация Layout/Dashboard,
+manager-баннер брендов в Layout, кнопка «Скопировать план из прошлого месяца»
+на Plans). Sprint'овые задачи — в [`agents/tasks-developer.md`](agents/tasks-developer.md):
+
+- [ ] **TASK-DEV-001 (P0):** менеджер-центричный view `/managers-kpi` — главная боль РОПа
+- [ ] **TASK-DEV-002 (P1):** drill-down по брендам в P&L (матрица бренд × месяц × маржа)
+- [ ] **TASK-DEV-003 (P1):** глобальный 403-handler + disabled-кнопки CUD с тултипом для manager
+- [ ] **TASK-DEV-004 (P2):** фильтр «маржа<N%» + сохраняемые пресеты в Unit-Plan
+- [ ] **TASK-DEV-005 (P2):** экспорт рекомендаций закупок Supply→XLSX (для 1С/логистики)
+- [ ] **TASK-DEV-006 (P2):** AlertsBar — история прочитанных за день
+- [ ] **TASK-DEV-007 (P2):** карточка «Ваши планы» на Dashboard для manager
+
 ## P1 · Доводка RBAC и брендов
 
 - [ ] **Audit-log** для `artificial_orders` / `external_ad_costs` / `plans` / `off_platform/movements` — сейчас не пишется

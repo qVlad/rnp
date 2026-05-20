@@ -238,6 +238,22 @@ async def me(
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     tenant = await session.get(Tenant, user.tenant_id)
+    # brands: None = unrestricted (director/head); list = manager's assignments
+    # (может быть пустой — нет назначений).
+    brands: list[str] | None
+    if user.sees_all_brands:
+        brands = None
+    else:
+        from app.db.models import BrandAssignment  # local import — avoid circular
+        rows = (
+            await session.execute(
+                select(BrandAssignment.brand).where(
+                    BrandAssignment.user_id == user.id,
+                    BrandAssignment.tenant_id == user.tenant_id,
+                )
+            )
+        ).scalars().all()
+        brands = sorted({b for b in rows if b})
     return {
         "id": user.id,
         "username": user.username,
@@ -247,6 +263,7 @@ async def me(
         "tenant_name": tenant.name if tenant else None,
         "tenant_slug": tenant.slug if tenant else None,
         "wb_token_set": bool(tenant and tenant.wb_token),
+        "brands": brands,
     }
 
 

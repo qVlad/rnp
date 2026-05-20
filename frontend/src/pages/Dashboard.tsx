@@ -120,7 +120,7 @@ export default function Dashboard() {
                 "включает свежие заказы (часть из них ещё не выкуплена)."
               }
             >
-              Preliminary
+              Предварительные
             </button>
             <button
               type="button"
@@ -134,7 +134,7 @@ export default function Dashboard() {
                 "закрытому отчёту реализации."
               }
             >
-              Hybrid
+              Гибрид
             </button>
             <button
               type="button"
@@ -147,15 +147,15 @@ export default function Dashboard() {
                 "Совпадает с WB-кабинетом 1:1. Лаг ~14 дней."
               }
             >
-              Final
+              Финальные
             </button>
           </div>
           <span className="text-xs text-muted">
             {dataMode === "preliminary"
-              ? "preliminary · скользящее окно (orders/sales)"
+              ? "черновые данные · обновл. каждые 30 мин (orders/sales)"
               : dataMode === "hybrid"
-                ? "hybrid · final + preliminary по cutoff"
-                : "final · WB report_detail (как в кабинете)"}
+                ? "финальные за закрытые недели + черновые за свежие дни"
+                : "финальные · WB report_detail (как в кабинете), лаг ~14 дн."}
           </span>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
