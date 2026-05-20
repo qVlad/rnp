@@ -162,7 +162,9 @@ async def test_fetch_box_tariffs_parses_and_filters_synthetic():
     kld = result[0]
     assert kld.delivery_base == Decimal("53.00")
     assert kld.delivery_liter == Decimal("9.50")
-    assert kld.delivery_expr == Decimal("120.00")
+    # Hot-fix Sprint 4: WB возвращает коэф как процент (120 = 120%), код делит
+    # на 100 чтобы dataclass получил долю (1.20). См. tariffs.py:177.
+    assert kld.delivery_expr == Decimal("1.20")
     assert kld.storage_base == Decimal("0.20")
     assert kld.storage_liter == Decimal("0.07")
     assert kld.dt_next == date(2026, 6, 1)
@@ -200,7 +202,9 @@ async def test_fetch_pallet_tariffs_parses():
     assert r.warehouse_name == "Коледино"
     assert r.delivery_base == Decimal("550.00")
     assert r.delivery_liter == Decimal("12.50")
-    assert r.delivery_expr == Decimal("1200.00")
+    # Hot-fix Sprint 4: WB возвращает коэф как процент (1200 = 1200%), код делит
+    # на 100 → 12.00. См. tariffs.py:237.
+    assert r.delivery_expr == Decimal("12.00")
     assert r.storage_base == Decimal("27.00")
     assert r.storage_liter == Decimal("0.95")
     assert r.dt_next == date(2026, 6, 1)

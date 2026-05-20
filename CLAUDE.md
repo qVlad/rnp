@@ -118,7 +118,7 @@ docker-compose.yml
 .claude/settings.json   permissions для агента
 ```
 
-## Миграции БД (44 шт., 0001-0044)
+## Миграции БД (47 шт., 0001-0047)
 
 > Полный список с деталями — в [`FEATURES.md`](FEATURES.md) → «Миграции». Здесь — топ-уровневое.
 
@@ -148,6 +148,9 @@ docker-compose.yml
 | **0042** | **UNIT-план** — unit_plan_global_config / unit_plan_override / unit_plan_snapshot (tenant-scoped) |
 | **0043** | unit_plan_override.volume_l — per-row override литров (paste-from-Excel bulk) |
 | 0044 | abtest_position_snapshot (Chrome-extension tracking) |
+| 0045 | wb_lk_jobs (LK shifts async jobs для /redistribution) |
+| **0046** | unit_plan_global_config.reverse_logistics_mode (`tariff` \| `flat_50`) — флаг режима обратной логистики (UNIT_PLAN.md §14.5) |
+| **0047** | unit_plan_snapshot_config — freeze global_config в момент snapshot'а (UNIT_PLAN.md §10), чтобы diff не показывал false-positive при изменении констант после snapshot'а |
 
 ## Роли и RBAC
 
@@ -201,6 +204,7 @@ Helper `app.services.auth.current_brands_filter()` возвращает `set[str
 | `/api/audit-mode*` | director_or_head | read-only режим для бухгалтерии |
 | `/api/sync/status` | tenant-scoped | sync checkpoints + WB cooldowns + celery active tasks |
 | `/api/unit-plan/*` | brands-filter (rows), director (global-config PUT), director_or_head (overrides/snapshots) | **UNIT-план** — плановая юнит-экономика на базе Excel-методики LeymanKids. См. [`UNIT_PLAN.md`](UNIT_PLAN.md). |
+| `/api/tariffs/*` | director_or_head (list/timeline/current), director (sync POST) | WB Tariffs box/pallet/commission — view (latest as-of, timeline, current) + manual sync. SCD2 reference-таблицы, sync ежедневно 08:00 MSK. |
 | `/api/version`, `/api/whoami`, `/api/health` | публ. | служебные |
 
 Видимость пунктов меню фронта — в `frontend/src/components/Layout.tsx` (`directorOnly`, `directorOrHead`).

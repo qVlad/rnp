@@ -42,6 +42,7 @@ from app.db.models import (
     UnitPlanGlobalConfig,
     UnitPlanOverride,
     UnitPlanSnapshot,
+    UnitPlanSnapshotConfig,
     WbOrder,
     WbSale,
 )
@@ -128,6 +129,7 @@ def _global_config_to_dict(g: UnitPlanGlobalConfig) -> dict[str, Any]:
         "velocity_days": g.velocity_days,
         "buyout_fallback_pct": _decimalize(g.buyout_fallback_pct),
         "storage_days": g.storage_days,
+        "reverse_logistics_mode": getattr(g, "reverse_logistics_mode", "tariff"),
         "created_at": g.created_at.isoformat() if g.created_at else None,
         "created_by": g.created_by,
     }
@@ -500,6 +502,9 @@ class GlobalConfigPayload(BaseModel):
     velocity_days: int | None = None
     buyout_fallback_pct: Decimal | None = None
     storage_days: int | None = None
+    reverse_logistics_mode: str | None = Field(
+        default=None, pattern="^(tariff|flat_50)$"
+    )
 
 
 @router.get("/global-config")
@@ -572,6 +577,7 @@ async def put_global_config(
         velocity_days=payload.velocity_days,
         buyout_fallback_pct=payload.buyout_fallback_pct,
         storage_days=payload.storage_days,
+        reverse_logistics_mode=payload.reverse_logistics_mode or "tariff",
         created_by=user.id,
     )
     session.add(row)
@@ -821,6 +827,67 @@ async def create_snapshot(
         brands=None,  # снапшот = всё что есть, независимо от роли вызвавшего
         velocity_days=cfg.velocity_days,
     )
+
+    # UNIT_PLAN.md §10 — freeze global_config в snapshot.
+    # Берём last-as-of сырую row из БД (значения в 0-100 как хранятся),
+    # копируем 1:1 в `unit_plan_snapshot_config`. Если diff-эндпоинт
+    # увидит эту row → будет использовать её, а не текущий config.
+    cfg_db_row = (
+        await session.execute(
+            select(UnitPlanGlobalConfig)
+            .where(
+                UnitPlanGlobalConfig.tenant_id == user.tenant_id,
+                UnitPlanGlobalConfig.effective_date <= on_date,
+            )
+            .order_by(UnitPlanGlobalConfig.effective_date.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    # Защита: если на ту же дату+label запись уже есть — не дублируем
+    # (повторный POST snapshot на сегодня просто перезаписывает rows, а cfg
+    # остаётся первой версией — снапшот immutable).
+    cfg_exists = (
+        await session.execute(
+            select(UnitPlanSnapshotConfig).where(
+                UnitPlanSnapshotConfig.tenant_id == user.tenant_id,
+                UnitPlanSnapshotConfig.snapshot_date == on_date,
+                UnitPlanSnapshotConfig.label == payload.label,
+            )
+        )
+    ).scalar_one_or_none()
+    if cfg_exists is None:
+        session.add(
+            UnitPlanSnapshotConfig(
+                tenant_id=user.tenant_id,
+                snapshot_date=on_date,
+                label=payload.label,
+                wb_club_pct=cfg_db_row.wb_club_pct if cfg_db_row else None,
+                spp_default_pct=cfg_db_row.spp_default_pct if cfg_db_row else None,
+                spp_by_subject=cfg_db_row.spp_by_subject if cfg_db_row else None,
+                wb_wallet_pct=cfg_db_row.wb_wallet_pct if cfg_db_row else None,
+                acquiring_pct=cfg_db_row.acquiring_pct if cfg_db_row else None,
+                il_coef=cfg_db_row.il_coef if cfg_db_row else None,
+                irp_coef=cfg_db_row.irp_coef if cfg_db_row else None,
+                marketing_pct=cfg_db_row.marketing_pct if cfg_db_row else None,
+                tax_pct=cfg_db_row.tax_pct if cfg_db_row else None,
+                vat_mode=cfg_db_row.vat_mode if cfg_db_row else None,
+                vat_pct=cfg_db_row.vat_pct if cfg_db_row else None,
+                acceptance_rub_per_liter=(
+                    cfg_db_row.acceptance_rub_per_liter if cfg_db_row else None
+                ),
+                acceptance_multiplier=(
+                    cfg_db_row.acceptance_multiplier if cfg_db_row else None
+                ),
+                velocity_days=cfg_db_row.velocity_days if cfg_db_row else None,
+                buyout_fallback_pct=(
+                    cfg_db_row.buyout_fallback_pct if cfg_db_row else None
+                ),
+                storage_days=cfg_db_row.storage_days if cfg_db_row else None,
+                reverse_logistics_mode=(
+                    cfg_db_row.reverse_logistics_mode if cfg_db_row else "tariff"
+                ),
+            )
+        )
 
     ref_cache: dict[tuple[str, str | None], Any] = {}
     inserted = 0
@@ -1095,6 +1162,71 @@ async def diff_snapshot(
 
     items.sort(key=_sort_key)
 
+    # UNIT_PLAN.md §10 — config_diff между frozen snapshot cfg и current cfg.
+    # Если frozen-row нет (snapshot создан до миграции 0047) → frozen=None.
+    snap_cfg_row = (
+        await session.execute(
+            select(UnitPlanSnapshotConfig).where(
+                UnitPlanSnapshotConfig.tenant_id == user.tenant_id,
+                UnitPlanSnapshotConfig.snapshot_date == snapshot_date,
+                UnitPlanSnapshotConfig.label == head_row.label,
+            )
+        )
+    ).scalar_one_or_none()
+    cur_cfg_row = (
+        await session.execute(
+            select(UnitPlanGlobalConfig)
+            .where(UnitPlanGlobalConfig.tenant_id == user.tenant_id)
+            .order_by(UnitPlanGlobalConfig.effective_date.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    def _cfg_snapshot_to_dict(c: UnitPlanSnapshotConfig | None) -> dict[str, Any] | None:
+        if c is None:
+            return None
+        return {
+            "snapshot_date": c.snapshot_date.isoformat(),
+            "label": c.label,
+            "wb_club_pct": _decimalize(c.wb_club_pct),
+            "spp_default_pct": _decimalize(c.spp_default_pct),
+            "spp_by_subject": c.spp_by_subject or {},
+            "wb_wallet_pct": _decimalize(c.wb_wallet_pct),
+            "acquiring_pct": _decimalize(c.acquiring_pct),
+            "il_coef": _decimalize(c.il_coef),
+            "irp_coef": _decimalize(c.irp_coef),
+            "marketing_pct": _decimalize(c.marketing_pct),
+            "tax_pct": _decimalize(c.tax_pct),
+            "vat_mode": c.vat_mode,
+            "vat_pct": _decimalize(c.vat_pct),
+            "acceptance_rub_per_liter": _decimalize(c.acceptance_rub_per_liter),
+            "acceptance_multiplier": _decimalize(c.acceptance_multiplier),
+            "velocity_days": c.velocity_days,
+            "buyout_fallback_pct": _decimalize(c.buyout_fallback_pct),
+            "storage_days": c.storage_days,
+            "reverse_logistics_mode": c.reverse_logistics_mode,
+        }
+
+    cfg_snap_d = _cfg_snapshot_to_dict(snap_cfg_row)
+    cfg_cur_d = _global_config_to_dict(cur_cfg_row) if cur_cfg_row else None
+    cfg_changed_keys: list[str] = []
+    if cfg_snap_d and cfg_cur_d:
+        compare_keys = [
+            "wb_club_pct", "spp_default_pct", "wb_wallet_pct", "acquiring_pct",
+            "il_coef", "irp_coef", "marketing_pct", "tax_pct", "vat_mode",
+            "vat_pct", "acceptance_rub_per_liter", "acceptance_multiplier",
+            "velocity_days", "buyout_fallback_pct", "storage_days",
+            "reverse_logistics_mode",
+        ]
+        for k in compare_keys:
+            if str(cfg_snap_d.get(k)) != str(cfg_cur_d.get(k)):
+                cfg_changed_keys.append(k)
+        # spp_by_subject — JSONB, сравниваем как dict
+        if (cfg_snap_d.get("spp_by_subject") or {}) != (
+            cfg_cur_d.get("spp_by_subject") or {}
+        ):
+            cfg_changed_keys.append("spp_by_subject")
+
     return {
         "snapshot_id": snapshot_id,
         "snapshot_date": snapshot_date.isoformat(),
@@ -1106,6 +1238,12 @@ async def diff_snapshot(
             "rows_in_current": len(cur_by_nm),
             "new_nm": new_nm,
             "removed_nm": removed_nm,
+        },
+        "config_diff": {
+            "snapshot": cfg_snap_d,
+            "current": cfg_cur_d,
+            "changed_keys": cfg_changed_keys,
+            "frozen_available": cfg_snap_d is not None,
         },
     }
 

@@ -83,6 +83,7 @@ def _default_global_config() -> GlobalConfig:
         velocity_days=30,
         buyout_fallback_pct=D("0.5"),
         storage_days=60,
+        reverse_logistics_mode="tariff",
     )
 
 
@@ -304,6 +305,11 @@ async def load_global_config(
         velocity_days=int(row.velocity_days or 30),
         buyout_fallback_pct=_pct_to_share(row.buyout_fallback_pct),
         storage_days=int(row.storage_days or 60),
+        reverse_logistics_mode=(
+            row.reverse_logistics_mode
+            if row.reverse_logistics_mode in ("tariff", "flat_50")
+            else "tariff"
+        ),
     )
 
 

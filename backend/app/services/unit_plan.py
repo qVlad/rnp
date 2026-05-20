@@ -175,6 +175,10 @@ class GlobalConfig:
     velocity_days: int
     buyout_fallback_pct: Decimal  # 0-1 (в БД хранится 0-100; caller конвертирует)
     storage_days: int
+    # UNIT_PLAN.md §14.5: режим расчёта обратной логистики (AG в Excel).
+    #   'tariff'  — AG из WB-тарифа короба (методически правильно, default)
+    #   'flat_50' — фиксированная 50 ₽ (как в большинстве rows Excel-эталона)
+    reverse_logistics_mode: str = "tariff"
 
 
 @dataclass(frozen=True)
@@ -392,12 +396,17 @@ def _storage_rub(
     pallet: PalletTariffSnapshot | None,
     storage_days: int,
 ) -> Decimal:
-    """AI: Хранение ₽ — точная формула из Excel-эталона LeymanKids.
+    """AI: Хранение ₽ — формула из Excel-эталона LeymanKids (UNIT_PLAN.md §4).
 
     FBS → 0.
     Монопаллет → pallet_storage_base × storage_days / items_per_pallet.
-    Box → (storage_base + max(0, V-1) × storage_liter) × storage_days.
-          (та же форма «base + доп.л × per_liter» как у логистики).
+    Box → box_storage_base × литры × storage_days.
+
+    Примечание про `storage_liter`: WB Tariffs API возвращает «per-litre
+    surcharge» как отдельное поле, но Excel-методика LeymanKids считает
+    хранение по линейной формуле «base ₽/л/день × V × days», игнорируя
+    storage_liter. Если в будущем понадобится точная WB-формула — добавить
+    флаг в global_config (аналогично reverse_logistics_mode §14.5).
     """
     if is_fbs:
         return D0
@@ -408,9 +417,7 @@ def _storage_rub(
         return pallet.storage_base * days / Decimal(items_per_pallet)
     if box is None or box.storage_base is None:
         return D0
-    storage_liter = box.storage_liter if box.storage_liter is not None else D0
-    extra = (volume_l - D1) * storage_liter if volume_l > D1 else D0
-    return (box.storage_base + extra) * days
+    return box.storage_base * volume_l * days
 
 
 def _vat_rub(*, price_final_t: Decimal, vat_mode: str, vat_pct: Decimal) -> Decimal:
@@ -562,12 +569,22 @@ def compute_row(
         _reverse_logistics_for_volume(volume_l, refs.box) if volume_l > D0 else D0
     )
 
+    # UNIT_PLAN.md §14.5: в Excel-эталоне rows 4+ зашит flat 50 ₽ обратной
+    # логистики вместо тарифного AG. По-умолчанию (`tariff`) — методически
+    # правильно (AG из тарифа). Если бухгалтер хочет 1:1 с Excel — переключает
+    # на `flat_50` в Settings → подмена reverse при weighted-расчёте.
+    reverse_for_weighted = (
+        Decimal("50")
+        if getattr(config, "reverse_logistics_mode", "tariff") == "flat_50"
+        else reverse_logistics_rub
+    )
+
     logistics_rub = _logistics_weighted(
         is_monopallet=is_monopallet,
         buyout=buyout_pct,
         z=logistics_box_rub,
         ac=logistics_pallet_rub,
-        reverse=reverse_logistics_rub,
+        reverse=reverse_for_weighted,
     )
     logistics_share_opt = _safe_div(logistics_rub, price_o)
     logistics_share = logistics_share_opt if logistics_share_opt is not None else D0

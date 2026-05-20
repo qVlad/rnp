@@ -24,7 +24,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import WbTariffBox, WbTariffCommission, WbTariffPallet
 from app.db.session import get_db
-from app.services.auth import CurrentUser, get_current_user
+from app.services.auth import (
+    CurrentUser,
+    get_current_user,
+    require_director,
+    require_director_or_head,
+)
 
 router = APIRouter(prefix="/api/tariffs", tags=["tariffs"])
 
@@ -341,3 +346,143 @@ async def current_tariffs(
     )
     rows = (await session.execute(stmt)).scalars().all()
     return {"items": [serializer(r) for r in rows], "kind": kind, "as_of": today.isoformat()}
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# UNIT-PLAN-006: list-view для Settings (director+head)
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _box_or_pallet_list(
+    model: type[WbTariffBox] | type[WbTariffPallet],
+    serializer,
+    *,
+    on_date: date,
+    search: str | None,
+    limit: int,
+):
+    """SCD2 latest-as-of выборка с фильтром по складу."""
+    subq = (
+        select(
+            model.warehouse_name,
+            func.max(model.effective_from).label("max_eff"),
+        )
+        .where(model.effective_from <= on_date)
+        .group_by(model.warehouse_name)
+        .subquery()
+    )
+    stmt = (
+        select(model)
+        .join(
+            subq,
+            (model.warehouse_name == subq.c.warehouse_name)
+            & (model.effective_from == subq.c.max_eff),
+        )
+        .order_by(model.warehouse_name)
+        .limit(limit)
+    )
+    if search:
+        stmt = stmt.where(func.lower(model.warehouse_name).like(f"%{search.lower()}%"))
+    return stmt, serializer
+
+
+@router.get(
+    "/list",
+    dependencies=[Depends(require_director_or_head)],
+)
+async def list_tariffs(
+    kind: Annotated[Literal["box", "pallet", "commission"], Query()],
+    on_date: Annotated[date | None, Query(alias="date")] = None,
+    search: Annotated[str | None, Query(max_length=255)] = None,
+    limit: Annotated[int, Query(ge=1, le=5000)] = 2000,
+    _user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Latest-as-of выборка одного из 3 тариф-справочников.
+
+    Используется Settings → раздел «WB Tariffs»: пользователь видит
+    действующий на дату `date` (default today) тариф для каждого склада/
+    предмета. Поиск `search` — case-insensitive подстрока по `warehouse_name`
+    (box/pallet) или `subject_name` (commission). RBAC: director + head.
+    """
+    on_date = on_date or date.today()
+
+    if kind == "box":
+        stmt, ser = _box_or_pallet_list(
+            WbTariffBox, _serialize_box, on_date=on_date, search=search, limit=limit
+        )
+    elif kind == "pallet":
+        stmt, ser = _box_or_pallet_list(
+            WbTariffPallet,
+            _serialize_pallet,
+            on_date=on_date,
+            search=search,
+            limit=limit,
+        )
+    else:  # commission
+        subq = (
+            select(
+                WbTariffCommission.subject_name,
+                func.max(WbTariffCommission.effective_from).label("max_eff"),
+            )
+            .where(WbTariffCommission.effective_from <= on_date)
+            .group_by(WbTariffCommission.subject_name)
+            .subquery()
+        )
+        stmt = (
+            select(WbTariffCommission)
+            .join(
+                subq,
+                (WbTariffCommission.subject_name == subq.c.subject_name)
+                & (WbTariffCommission.effective_from == subq.c.max_eff),
+            )
+            .order_by(WbTariffCommission.subject_name)
+            .limit(limit)
+        )
+        if search:
+            stmt = stmt.where(
+                func.lower(WbTariffCommission.subject_name).like(
+                    f"%{search.lower()}%"
+                )
+            )
+        ser = _serialize_commission
+
+    rows = (await session.execute(stmt)).scalars().all()
+    return {
+        "kind": kind,
+        "as_of": on_date.isoformat(),
+        "search": search,
+        "total": len(rows),
+        "items": [ser(r) for r in rows],
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Manual sync — кнопка «Sync now» (director-only)
+# ─────────────────────────────────────────────────────────────────────────
+
+
+@router.post(
+    "/sync",
+    dependencies=[Depends(require_director)],
+)
+async def trigger_sync(
+    _user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Ручной запуск Celery-таски `sync.tariffs` (UNIT-PLAN-006).
+
+    Не ждёт результата — отправляет в очередь и возвращает task_id. Реальный
+    sync ходит в WB Tariffs API (3 endpoint'а) и UPSERT'ит таблицы по SCD2.
+    Длительность обычно &lt; 5 сек. Прогресс смотреть в SyncStatusIndicator
+    в sidebar или `/api/sync/status`.
+    """
+    # Импорт внутри функции — таска ставится в Celery brokerа и НЕ ждёт
+    # backend-локального исполнения. Избегаем cyclic-import (sync_status →
+    # sync.tasks_tariffs → ...).
+    from app.sync.tasks_tariffs import sync_tariffs
+
+    try:
+        result = sync_tariffs.delay()
+    except Exception as exc:  # pragma: no cover — broker недоступен
+        raise HTTPException(503, f"celery broker unavailable: {exc}") from exc
+    return {"task_id": result.id, "queued": True}

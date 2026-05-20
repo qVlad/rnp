@@ -1964,6 +1964,12 @@ class UnitPlanGlobalConfig(Base, TenantScopedMixin):
     velocity_days: Mapped[int | None] = mapped_column(Integer, default=30)
     buyout_fallback_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), default=50)
     storage_days: Mapped[int | None] = mapped_column(Integer, default=60)
+    # UNIT_PLAN.md §14.5 — режим обратной логистики:
+    #   'tariff'  — AG из WB-тарифа короба (методически правильно, default)
+    #   'flat_50' — фиксированная 50 ₽ (как в большинстве rows Excel-эталона)
+    reverse_logistics_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="tariff", server_default="tariff"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -2045,5 +2051,54 @@ class UnitPlanSnapshot(Base, TenantScopedMixin):
             "tenant_id",
             "snapshot_date",
             "nm_id",
+        ),
+    )
+
+
+class UnitPlanSnapshotConfig(Base, TenantScopedMixin):
+    """Замороженная копия `unit_plan_global_config` на момент snapshot'а.
+
+    PK по (tenant_id, snapshot_date, label) — совпадает с identity снапшота.
+    Без этой freeze-копии `/snapshots/{id}/diff` сравнивал бы свежий
+    compute_row с текущими константами против сохранённых rows → false-
+    positive если директор подкрутил `tax_pct` после создания snapshot'а.
+
+    Миграция 0047. См. UNIT_PLAN.md §10.
+    """
+
+    __tablename__ = "unit_plan_snapshot_config"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    label: Mapped[str | None] = mapped_column(String(64))
+    wb_club_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    spp_default_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    spp_by_subject: Mapped[dict | None] = mapped_column(JSONB)
+    wb_wallet_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    acquiring_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    il_coef: Mapped[Decimal | None] = mapped_column(Numeric(6, 4))
+    irp_coef: Mapped[Decimal | None] = mapped_column(Numeric(6, 4))
+    marketing_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    tax_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    vat_mode: Mapped[str | None] = mapped_column(String(16))
+    vat_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    acceptance_rub_per_liter: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    acceptance_multiplier: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    velocity_days: Mapped[int | None] = mapped_column(Integer)
+    buyout_fallback_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    storage_days: Mapped[int | None] = mapped_column(Integer)
+    reverse_logistics_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="tariff", server_default="tariff"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "snapshot_date",
+            "label",
+            name="uq_unit_plan_snapshot_cfg",
         ),
     )

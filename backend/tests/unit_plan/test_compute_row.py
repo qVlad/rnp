@@ -10,7 +10,7 @@ from decimal import Decimal
 
 import pytest
 
-from backend.app.services.unit_plan import (
+from app.services.unit_plan import (
     BoxTariffSnapshot,
     CogsSnapshot,
     CommissionSnapshot,
@@ -51,6 +51,7 @@ def _config(
     velocity_days: int = 30,
     buyout_fallback_pct: str = "0.5",
     storage_days: int = 60,
+    reverse_logistics_mode: str = "tariff",
 ) -> GlobalConfig:
     return GlobalConfig(
         wb_club_pct=D(wb_club_pct),
@@ -69,6 +70,7 @@ def _config(
         velocity_days=velocity_days,
         buyout_fallback_pct=D(buyout_fallback_pct),
         storage_days=storage_days,
+        reverse_logistics_mode=reverse_logistics_mode,
     )
 
 
@@ -718,3 +720,67 @@ def test_commission_uses_fbs_rate_when_is_fbs() -> None:
     assert row.commission_pct == D("0.18")
     assert row.commission_total_pct == D("0.20")
     assert row.commission_rub == D("200.00")
+
+
+# ---------------------------------------------------------------------------
+# 14. reverse_logistics_mode (UNIT_PLAN.md §14.5)
+# ---------------------------------------------------------------------------
+
+
+def test_reverse_logistics_mode_flat50_overrides_tariff() -> None:
+    """`flat_50`: при weighted-расчёте AF используется 50 ₽ вместо AG из тарифа.
+
+    Z (box logistics, volume=3, coef=1, il=1, irp=0): (70 + 2*12)*1*1 = 94.
+    Reverse (AG) тарифный для volume=3: 70 + 2*12 = 94.
+
+    AF = (buyout*Z + (1−buyout)*(Z + reverse)) / buyout. При buyout=0.5:
+      tariff:  AF = (0.5*94 + 0.5*(94+94))/0.5 = (47 + 94)/0.5 = 282
+      flat_50: AF = (0.5*94 + 0.5*(94+50))/0.5 = (47 + 72)/0.5 = 238
+    """
+    common = dict(
+        product=_product(volume_l="3.0"),
+        price=_price("3016", "0.52"),
+        cogs=_cogs(),
+        funnel=_funnel(buyout_pct="0.5"),
+        stock=_stock(),
+        refs=_refs(),
+        override=_override(),
+    )
+    row_tariff = compute_row(
+        **common,
+        config=_config(il_coef="1.0", irp_coef="0", reverse_logistics_mode="tariff"),
+    )
+    row_flat = compute_row(
+        **common,
+        config=_config(il_coef="1.0", irp_coef="0", reverse_logistics_mode="flat_50"),
+    )
+    # reverse_logistics_rub в DTO всегда остаётся тарифный (раскрытие формулы).
+    # Меняется только агрегированная logistics_rub.
+    assert row_tariff.reverse_logistics_rub == D("94.00")
+    assert row_flat.reverse_logistics_rub == D("94.00")
+    assert row_tariff.logistics_box_rub == D("94.00")
+    assert row_flat.logistics_box_rub == D("94.00")
+    assert row_tariff.logistics_rub == D("282.00")
+    assert row_flat.logistics_rub == D("238.00")
+
+
+def test_reverse_logistics_mode_flat50_at_buyout_100() -> None:
+    """При buyout=100% возвратов нет → AF=Z, режим не влияет."""
+    common = dict(
+        product=_product(volume_l="3.0"),
+        price=_price("3016", "0.52"),
+        cogs=_cogs(),
+        funnel=_funnel(buyout_pct="1.0"),
+        stock=_stock(),
+        refs=_refs(),
+        override=_override(),
+    )
+    row_tariff = compute_row(
+        **common,
+        config=_config(il_coef="1.0", irp_coef="0", reverse_logistics_mode="tariff"),
+    )
+    row_flat = compute_row(
+        **common,
+        config=_config(il_coef="1.0", irp_coef="0", reverse_logistics_mode="flat_50"),
+    )
+    assert row_tariff.logistics_rub == row_flat.logistics_rub == D("94.00")

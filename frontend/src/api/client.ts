@@ -1611,6 +1611,30 @@ paymentOrderDelete: (payment_order_id: string) =>
       kind: string;
       as_of: string;
     }>(`/api/tariffs/current?kind=${kind}`),
+  /** UNIT-PLAN-006: list-view для Settings (director+head). Latest as-of
+   *  по выбранному kind, фильтр по подстроке `search`. */
+  tariffList: (
+    kind: "box" | "pallet" | "commission",
+    opts?: { date?: string; search?: string; limit?: number },
+  ) => {
+    const qs = new URLSearchParams({ kind });
+    if (opts?.date) qs.set("date", opts.date);
+    if (opts?.search) qs.set("search", opts.search);
+    if (opts?.limit) qs.set("limit", String(opts.limit));
+    return request<{
+      kind: string;
+      as_of: string;
+      search: string | null;
+      total: number;
+      items: TariffTimelineRow[];
+    }>(`/api/tariffs/list?${qs}`);
+  },
+  /** UNIT-PLAN-006: manual sync (director-only). Возвращает task_id —
+   *  прогресс в SyncStatusIndicator (sidebar). */
+  tariffSyncNow: () =>
+    request<{ task_id: string; queued: boolean }>(`/api/tariffs/sync`, {
+      method: "POST",
+    }),
 
   // ── UNIT-план (forward-looking unit economics) ──
   unitPlanRows: (filters?: UnitPlanFilters) => {
@@ -1872,6 +1896,10 @@ export interface UnitPlanGlobalConfig {
   velocity_days: number;
   buyout_fallback_pct: number;
   storage_days?: number;
+  /** UNIT_PLAN.md §14.5: режим расчёта обратной логистики (AG).
+   *  'tariff'  — AG из WB-тарифа короба (методически правильно, default)
+   *  'flat_50' — фикс 50 ₽ (как в большинстве rows Excel-эталона) */
+  reverse_logistics_mode?: "tariff" | "flat_50";
 }
 
 export type UnitPlanGlobalConfigUpdate = Partial<

@@ -197,8 +197,8 @@ def test_r2_headers_match_reference() -> None:
     assert ws["AV2"].value == "Маржинальность, прибыль % от продажи"
     assert ws["AW2"].value == "Рентабельность, прибыль % от сс"
     assert ws["AZ2"].value == "АВС"
-    # последняя BF
-    assert ws["BF2"].value == "Прогноз остатока на 1.08.2026"
+    # последняя BF — header без даты (она задаётся query-param forecast_date)
+    assert ws["BF2"].value == "Прогноз остатка"
 
 
 def test_data_rows_count_and_values() -> None:

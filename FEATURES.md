@@ -100,6 +100,10 @@
 | **Snapshot diff** | `GET /api/unit-plan/snapshots/{id}/diff` сравнение со state в момент снапшота | `api/unit_plan.py:snapshot_diff` | director_or_head |
 | **Drill-down drawer** | Side-panel 480px: история цен 90 дн (recharts), разбивка COGS, план vs факт месяца | `components/UnitPlanDrillDrawer.tsx`, `GET /api/unit-plan/{nm_id}/detail` | brands-filter |
 | **History версий global-config** | Список всех timeline-записей константы + diff между ними | `GET /api/unit-plan/global-config/versions` | director |
+| **`reverse_logistics_mode` флаг** | `tariff` (AG из WB-тарифа, default) или `flat_50` (фикс 50 ₽ — как в Excel-эталоне rows 4+, см. UNIT_PLAN.md §14.5). Поле в `unit_plan_global_config`, селектор в Settings → UNIT-план параметры | `services/unit_plan.py:_logistics_weighted`, миграция 0046 | director |
+| **WB Tariffs Settings view** | `/settings` → раздел «WB Tariffs»: 3 вкладки (Короб/Монопаллет/Комиссии), фильтр по дате + search по складу/предмету, кнопка «↻ Sync now» | `pages/Settings.tsx:WbTariffsSection`, `GET /api/tariffs/list`, `POST /api/tariffs/sync` | director_or_head view, director sync |
+| **Immutable snapshot config** | При POST `/snapshots` freeze'ит копию `unit_plan_global_config` в `unit_plan_snapshot_config`. Diff отдаёт `config_diff: {snapshot, current, changed_keys, frozen_available}` — UI может показать «изменено: tax_pct, marketing_pct» отдельно от per-nm дельт | миграция 0047, `api/unit_plan.py:create_snapshot/diff_snapshot` | director_or_head |
+| **Bug-fix `_storage_rub`** | Линейная формула `box_storage_base × литры × storage_days` (как в Excel-эталоне UNIT_PLAN.md §4). Раньше использовал WB-tariff форму `base + (V−1)×liter` → расхождение с эталоном | `services/unit_plan.py:_storage_rub` | — |
 
 ### API endpoints (12 шт.)
 
@@ -470,7 +474,7 @@ Daily digest через Celery beat в 09:00 MSK. TG_BOT_TOKEN в `.env`.
 
 ---
 
-## Миграции (0001–0044)
+## Миграции (0001–0047)
 
 | № | Что |
 |---|---|
@@ -518,6 +522,9 @@ Daily digest через Celery beat в 09:00 MSK. TG_BOT_TOKEN в `.env`.
 | **0042** | **unit_plan_global_config / unit_plan_override / unit_plan_snapshot** — tenant-scoped плановая юнит-экономика |
 | **0043** | unit_plan_override.volume_l — per-row override литров (paste-from-Excel bulk) |
 | 0044 | abtest_position_snapshot (Chrome-extension SEO-tracking) |
+| 0045 | wb_lk_jobs (LK shifts async jobs для /redistribution) |
+| **0046** | unit_plan_global_config.reverse_logistics_mode (`tariff` \| `flat_50`) — флаг режима обратной логистики (см. UNIT_PLAN.md §14.5) |
+| **0047** | unit_plan_snapshot_config — freeze global_config в момент snapshot'а (UNIT_PLAN.md §10): diff отдаёт frozen+current+changed_keys, чтобы изменения констант после snapshot'а не давали false-positive |
 
 ---
 

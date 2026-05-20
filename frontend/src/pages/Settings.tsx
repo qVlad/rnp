@@ -731,6 +731,8 @@ export default function Settings() {
 
       <UnitPlanGlobalConfigSection />
 
+      <WbTariffsSection />
+
       <ExcelSection />
 
       <section className="card">
@@ -1185,6 +1187,7 @@ type UnitPlanConfigDraft = {
   velocity_days: string;
   buyout_fallback_pct: string;
   storage_days: string;
+  reverse_logistics_mode: "tariff" | "flat_50";
   spp_by_subject: Array<{ subject: string; pct: string }>;
 };
 
@@ -1205,6 +1208,7 @@ const EMPTY_DRAFT: UnitPlanConfigDraft = {
   velocity_days: "",
   buyout_fallback_pct: "",
   storage_days: "",
+  reverse_logistics_mode: "tariff",
   spp_by_subject: [],
 };
 
@@ -1233,6 +1237,8 @@ function draftFromConfig(c: any): UnitPlanConfigDraft {
     velocity_days: c?.velocity_days?.toString() ?? "",
     buyout_fallback_pct: c?.buyout_fallback_pct?.toString() ?? "",
     storage_days: c?.storage_days?.toString() ?? "",
+    reverse_logistics_mode:
+      (c?.reverse_logistics_mode as "tariff" | "flat_50") ?? "tariff",
     spp_by_subject: Object.entries(sbs).map(([subject, pct]) => ({
       subject,
       pct: String(pct),
@@ -1335,6 +1341,7 @@ function UnitPlanGlobalConfigSection() {
         velocity_days: Number(draft.velocity_days),
         buyout_fallback_pct: Number(draft.buyout_fallback_pct),
         storage_days: Number(draft.storage_days),
+        reverse_logistics_mode: draft.reverse_logistics_mode,
       });
     },
     onSuccess: () => {
@@ -1716,6 +1723,23 @@ function UnitPlanGlobalConfigSection() {
                 }
               />
             </Field>
+            <Field label="Обратная логистика (AG в Excel)">
+              <select
+                className="input"
+                value={draft.reverse_logistics_mode}
+                onChange={(e) =>
+                  setDraft((d) => ({
+                    ...d,
+                    reverse_logistics_mode: e.target.value as
+                      | "tariff"
+                      | "flat_50",
+                  }))
+                }
+              >
+                <option value="tariff">tariff — AG из WB-тарифа (правильно)</option>
+                <option value="flat_50">flat_50 — фикс 50 ₽ (как в Excel-эталоне)</option>
+              </select>
+            </Field>
           </div>
 
           {/* Validation errors */}
@@ -2093,6 +2117,226 @@ function ExcelSection() {
           })}
         </tbody>
       </table>
+    </section>
+  );
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// WB Tariffs — read-only view + Sync now (UNIT-PLAN-006)
+// ─────────────────────────────────────────────────────────────────────────
+
+type TariffKind = "box" | "pallet" | "commission";
+
+function WbTariffsSection() {
+  const qc = useQueryClient();
+  const [kind, setKind] = useState<TariffKind>("box");
+  const [search, setSearch] = useState("");
+  const [onDate, setOnDate] = useState<string>(() =>
+    new Date().toISOString().slice(0, 10),
+  );
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
+
+  const q = useQuery({
+    queryKey: ["wb-tariffs-list", kind, onDate, search],
+    queryFn: () =>
+      api.tariffList(kind, {
+        date: onDate || undefined,
+        search: search.trim() || undefined,
+        limit: 2000,
+      }),
+    // Кэшируем 5 минут — тарифы меняются max раз в неделю.
+    staleTime: 5 * 60_000,
+  });
+
+  const syncMut = useMutation({
+    mutationFn: () => api.tariffSyncNow(),
+    onSuccess: (r) => {
+      setSyncMsg(`✓ Запущено (task ${r.task_id.slice(0, 8)}…). Прогресс в sidebar.`);
+      setTimeout(() => setSyncMsg(null), 8000);
+      // Перезагрузим список через 5 сек — обычно sync проходит за ~5 сек.
+      setTimeout(() => {
+        qc.invalidateQueries({ queryKey: ["wb-tariffs-list"] });
+      }, 5000);
+    },
+    onError: (e: any) => setSyncMsg(`✗ Ошибка: ${e.message ?? "unknown"}`),
+  });
+
+  const items: any[] = q.data?.items ?? [];
+
+  return (
+    <section className="card">
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+        <div>
+          <h2 className="font-medium">WB Tariffs</h2>
+          <div className="text-xs text-muted">
+            Тарифы коробов, монопаллетов и комиссий из WB Tariffs API. Sync
+            ежедневно 08:00 MSK. SCD2 — показывается действующий на выбранную
+            дату.
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            className="btn"
+            onClick={() => syncMut.mutate()}
+            disabled={syncMut.isPending}
+            title="Только director. Запускает sync.tariffs (Celery)."
+          >
+            {syncMut.isPending ? "..." : "↻ Sync now"}
+          </button>
+        </div>
+      </div>
+
+      {syncMsg && (
+        <div
+          className={`text-xs mb-3 ${
+            syncMsg.startsWith("✓") ? "text-emerald-400" : "text-danger"
+          }`}
+        >
+          {syncMsg}
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-2 mb-3">
+        {(["box", "pallet", "commission"] as TariffKind[]).map((k) => (
+          <button
+            key={k}
+            className={`btn ${kind === k ? "btn-primary" : ""}`}
+            onClick={() => setKind(k)}
+          >
+            {k === "box"
+              ? "Короб"
+              : k === "pallet"
+              ? "Монопаллет"
+              : "Комиссии"}
+          </button>
+        ))}
+        <input
+          type="date"
+          className="input"
+          value={onDate}
+          onChange={(e) => setOnDate(e.target.value)}
+          style={{ maxWidth: 160 }}
+          title="Действующие на дату"
+        />
+        <input
+          type="text"
+          className="input"
+          placeholder={
+            kind === "commission" ? "поиск по предмету..." : "поиск по складу..."
+          }
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ minWidth: 240, flex: 1 }}
+        />
+      </div>
+
+      {q.isLoading && <div className="text-muted text-sm">Загрузка...</div>}
+      {q.error && (
+        <div className="text-danger text-sm">
+          {(q.error as Error).message}
+        </div>
+      )}
+
+      {q.data && (
+        <div className="text-xs text-muted mb-2">
+          Показано {items.length} из {q.data.total}. As of {q.data.as_of}.
+        </div>
+      )}
+
+      {items.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              {kind === "commission" ? (
+                <tr className="text-left text-muted border-b border-border">
+                  <th className="py-1.5 pr-2">Предмет</th>
+                  <th className="py-1.5 pr-2">subject_id</th>
+                  <th className="py-1.5 pr-2 text-right">FBO %</th>
+                  <th className="py-1.5 pr-2 text-right">FBS %</th>
+                  <th className="py-1.5 pr-2 text-right">Express %</th>
+                  <th className="py-1.5 pr-2 text-right">Paid storage %</th>
+                  <th className="py-1.5 pr-2 text-right">Return ₽</th>
+                  <th className="py-1.5 pr-2">eff. from</th>
+                </tr>
+              ) : (
+                <tr className="text-left text-muted border-b border-border">
+                  <th className="py-1.5 pr-2">Склад</th>
+                  <th className="py-1.5 pr-2 text-right">delivery_base ₽</th>
+                  <th className="py-1.5 pr-2 text-right">delivery_liter ₽</th>
+                  <th className="py-1.5 pr-2 text-right">delivery_expr</th>
+                  <th className="py-1.5 pr-2 text-right">storage_base ₽</th>
+                  <th className="py-1.5 pr-2 text-right">storage_liter ₽</th>
+                  {kind === "pallet" && (
+                    <th className="py-1.5 pr-2 text-right">storage_expr</th>
+                  )}
+                  <th className="py-1.5 pr-2">eff. from</th>
+                </tr>
+              )}
+            </thead>
+            <tbody>
+              {items.map((r: any, i: number) =>
+                kind === "commission" ? (
+                  <tr key={i} className="border-b border-border/40 hover:bg-card-hover">
+                    <td className="py-1 pr-2">{r.subject_name}</td>
+                    <td className="py-1 pr-2 text-muted">
+                      {r.subject_id ?? "—"}
+                    </td>
+                    <td className="py-1 pr-2 text-right">
+                      {r.commission_fbo ?? "—"}
+                    </td>
+                    <td className="py-1 pr-2 text-right">
+                      {r.commission_fbs ?? "—"}
+                    </td>
+                    <td className="py-1 pr-2 text-right">
+                      {r.commission_express ?? "—"}
+                    </td>
+                    <td className="py-1 pr-2 text-right">
+                      {r.paid_storage_kgvp ?? "—"}
+                    </td>
+                    <td className="py-1 pr-2 text-right">
+                      {r.return_cost ?? "—"}
+                    </td>
+                    <td className="py-1 pr-2 text-muted">{r.effective_from}</td>
+                  </tr>
+                ) : (
+                  <tr key={i} className="border-b border-border/40 hover:bg-card-hover">
+                    <td className="py-1 pr-2">{r.warehouse_name}</td>
+                    <td className="py-1 pr-2 text-right">
+                      {r.delivery_base ?? "—"}
+                    </td>
+                    <td className="py-1 pr-2 text-right">
+                      {r.delivery_liter ?? "—"}
+                    </td>
+                    <td className="py-1 pr-2 text-right">
+                      {r.delivery_expr ?? "—"}
+                    </td>
+                    <td className="py-1 pr-2 text-right">
+                      {r.storage_base ?? "—"}
+                    </td>
+                    <td className="py-1 pr-2 text-right">
+                      {r.storage_liter ?? "—"}
+                    </td>
+                    {kind === "pallet" && (
+                      <td className="py-1 pr-2 text-right">
+                        {r.storage_expr ?? "—"}
+                      </td>
+                    )}
+                    <td className="py-1 pr-2 text-muted">{r.effective_from}</td>
+                  </tr>
+                ),
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {!q.isLoading && items.length === 0 && (
+        <div className="text-muted text-sm">
+          Данные пустые. Проверьте что был хотя бы один sync.tariffs (кнопка «↻
+          Sync now») и что у текущего tenant'а есть валидный WB-токен.
+        </div>
+      )}
     </section>
   );
 }

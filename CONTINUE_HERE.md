@@ -37,6 +37,94 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## 2026-05-20 (ночь) — **UNIT-план Sprint 6: reverse_logistics_mode + WB Tariffs Settings UI**
+
+Закрыли два пункта из остающегося scope UNIT-плана.
+
+- **`reverse_logistics_mode` флаг** (UNIT_PLAN.md §14.5 — Excel-AF
+  противоречие). Миграция **0046** добавляет колонку в
+  `unit_plan_global_config` (`VARCHAR(16) NOT NULL DEFAULT 'tariff'`).
+  - `tariff` (default) — AG из WB-тарифа короба, методически правильно
+  - `flat_50` — фикс 50 ₽ обратной логистики (как в Excel-эталоне rows 4+)
+  - `compute_row._logistics_weighted` подменяет `reverse` на 50 при flat_50
+  - Селектор «Обратная логистика (AG в Excel)» в Settings → UNIT-план
+    параметры рядом со `storage_days`
+  - 2 новых теста (`test_reverse_logistics_mode_flat50_*`) в
+    `tests/unit_plan/test_compute_row.py`
+- **WB Tariffs Settings UI (UNIT-PLAN-006)** — view + Sync now.
+  - Backend: `GET /api/tariffs/list?kind=box|pallet|commission&date=...&search=...`
+    (director+head, SCD2 latest-as-of выборка) и `POST /api/tariffs/sync`
+    (director only, ставит `sync.tariffs` в Celery, возвращает task_id).
+  - Frontend: новая секция `WbTariffsSection` в `/settings` — 3 вкладки
+    (Короб / Монопаллет / Комиссии), date-picker, search-input, кнопка
+    «↻ Sync now», таблица результатов.
+
+**Изменённые файлы:**
+- `backend/app/db/migrations/versions/0046_reverse_logistics_mode.py` (new)
+- `backend/app/db/models.py` — `UnitPlanGlobalConfig.reverse_logistics_mode`
+- `backend/app/services/unit_plan.py` — `GlobalConfig.reverse_logistics_mode`,
+  подмена reverse в weighted
+- `backend/app/services/unit_plan_loader.py` — defaults + чтение из БД
+- `backend/app/api/unit_plan.py` — Pydantic-поле + сериализация
+- `backend/app/api/tariffs.py` — `list_tariffs`, `trigger_sync`
+- `backend/tests/unit_plan/test_compute_row.py` — `_config` поддерживает
+  новый параметр + 2 теста
+- `frontend/src/api/client.ts` — `tariffList`, `tariffSyncNow`,
+  `reverse_logistics_mode` в типе `UnitPlanGlobalConfig`
+- `frontend/src/pages/Settings.tsx` — селектор + `WbTariffsSection`
+- `CLAUDE.md`, `FEATURES.md` — миграции 0044-0046 + API строки
+
+**Тесты:** 35/37 unit_plan compute_row passed. 2 failed (`test_storage_fbo_box`,
+`test_profit_formula_full_row`) — pre-existing (storage formula edge case).
+Excel-contract test ~81% pass (известный gap, UNIT_PLAN.md §14.5). API smoke:
+все новые endpoints отдают 401 без cookie. Frontend tsc + vite build clean.
+
+**Локально применено:** миграция 0046 на postgres, backend+frontend образы
+пересобраны. Pre-migration backup: `pgdata-pre-0046-2026-05-20-1742.sql.gz`.
+
+**Что осталось из UNIT-плана:**
+- Frontend snapshot UI (UNIT-PLAN-015) — список snapshot'ов, сравнение
+  side-by-side, кнопка «📸 Сохранить snapshot». Backend полностью готов
+  (`POST/GET /api/unit-plan/snapshots`, `GET .../diff` с `config_diff`).
+- Excel-contract test (~19% gap) — расхождения в logistics/storage/profit
+  для отдельных rows. Часть из них объясняется flat_50 vs tariff (см.
+  §14.5). Остальное требует cell-by-cell сверки с эталоном (UNIT-PLAN-019).
+
+## 2026-05-20 (ночь, доп) — **UNIT-план Sprint 7: _storage_rub fix + unit_plan_snapshot_config**
+
+Доделали остатки UNIT-плана из todo выше.
+
+- **Bug-fix `_storage_rub`** — `services/unit_plan.py` теперь использует
+  линейную формулу `box_storage_base × литры × storage_days` (как в
+  Excel-методике LeymanKids UNIT_PLAN.md §4). Раньше код считал по
+  WB-tariff форме `(base + (V−1)×liter) × days` — расхождение с Excel.
+  Починены: `test_storage_fbo_box`, `test_profit_formula_full_row`.
+  Тесты: 35/35 compute_row passed.
+- **Миграция 0047 `unit_plan_snapshot_config`** — freeze копия
+  `unit_plan_global_config` в момент создания snapshot'а (UNIT_PLAN.md §10).
+  `POST /api/unit-plan/snapshots` дополнительно создаёт row в новой таблице.
+  `GET .../diff` возвращает новую секцию `config_diff: {snapshot, current,
+  changed_keys, frozen_available}`. UI может показать «изменилось: tax_pct,
+  marketing_pct» отдельно от per-nm дельт.
+- **Hot-fix тестов** — `test_wb_tariffs_integration.py` ожидал
+  `delivery_expr=120.00`/`1200.00`, но Sprint 4 Hot-fix делит на 100 →
+  `1.20`/`12.00`. Тестовые фикстуры приведены в соответствие. Аналогично
+  `test_unit_plan_xlsx.py:test_r2_headers_match_reference` ожидал
+  «Прогноз остатока на 1.08.2026» (с датой), а header без даты (динамический
+  через query-param).
+
+**Тесты:** 63/65 в полном пакете UNIT-плана (`unit_plan/` + `test_unit_plan_*`
++ `test_wb_tariffs_*` + `test_sync_tariffs.py`). 2 failed остаются:
+- `test_compute_row_excel_contract.py::test_excel_contract_all_rows` — Excel
+  19% gap (logistics/storage edge cases требуют per-cell сверки, см. §14.5).
+- `test_unit_plan_api.py::test_override_upsert_create_then_update` — sqlalchemy
+  `MissingGreenlet` ошибка в тестовом сетапе, не из UNIT-плана.
+
+**Состояние:** миграции 0046 + 0047 применены локально. Backend rebuild +
+restart. Pre-migration backups: `pgdata-pre-0046-2026-05-20-1742.sql.gz`,
+`pgdata-pre-0047-2026-05-20-1802.sql.gz`. Локально, не задеплоено, не
+закоммичено.
+
 ## 2026-05-20 (вечер) — **Redistribution: «Отменить» + age-индикатор + авто-резолв office_id**
 
 Три параллельные доработки страницы `/redistribution`:
