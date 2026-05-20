@@ -1834,8 +1834,273 @@ function UnitPlanDesktop() {
           }}
         />
       )}
+      {periodsModalOpen && (
+        <HistoricalPeriodsModal
+          initial={extractHistoricalFromFilters(filters)}
+          onClose={() => setPeriodsModalOpen(false)}
+          onApply={(next) => {
+            // Сохраняем в localStorage, мержим в filters → useQuery перезагрузит.
+            const merged: UnitPlanFilters = {
+              ...stripHistoricalFromFilters(filters),
+              ...next,
+            };
+            setFilters(merged);
+            try {
+              localStorage.setItem(
+                HIST_PERIODS_KEY,
+                JSON.stringify(next),
+              );
+            } catch {}
+            // При активации хотя бы одного периода — автоматически показываем
+            // соответствующие BA-BF колонки.
+            const cols: Record<string, boolean> = { ...visibility };
+            if (next.period_1_from || next.period_1_to) {
+              cols.orders_period_1 = true;
+              cols.sold_period_1 = true;
+            }
+            if (next.period_2_from || next.period_2_to) {
+              cols.orders_period_2 = true;
+            }
+            if (next.period_3_from || next.period_3_to) {
+              cols.orders_period_3 = true;
+            }
+            if (next.forecast_date) {
+              cols.stock_forecast = true;
+            }
+            setVisibility(cols);
+            setPeriodsModalOpen(false);
+          }}
+        />
+      )}
     </div>
     </EditCtx.Provider>
+  );
+}
+
+/** True если в filters есть хоть один из historical-параметров. */
+function hasHistoricalActive(f: UnitPlanFilters): boolean {
+  return Boolean(
+    f.period_1_from ||
+      f.period_1_to ||
+      f.period_2_from ||
+      f.period_2_to ||
+      f.period_3_from ||
+      f.period_3_to ||
+      f.forecast_date,
+  );
+}
+
+function extractHistoricalFromFilters(f: UnitPlanFilters): HistoricalPeriods {
+  return {
+    period_1_from: f.period_1_from,
+    period_1_to: f.period_1_to,
+    period_2_from: f.period_2_from,
+    period_2_to: f.period_2_to,
+    period_3_from: f.period_3_from,
+    period_3_to: f.period_3_to,
+    forecast_date: f.forecast_date,
+  };
+}
+
+function stripHistoricalFromFilters(f: UnitPlanFilters): UnitPlanFilters {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const {
+    period_1_from, period_1_to,
+    period_2_from, period_2_to,
+    period_3_from, period_3_to,
+    forecast_date,
+    ...rest
+  } = f;
+  // Тушим unused warnings без префикса `_`:
+  void period_1_from;
+  void period_1_to;
+  void period_2_from;
+  void period_2_to;
+  void period_3_from;
+  void period_3_to;
+  void forecast_date;
+  return rest;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// HistoricalPeriodsModal — UI для выбора периодов BA-BF
+// ──────────────────────────────────────────────────────────────────────────
+
+function HistoricalPeriodsModal({
+  initial,
+  onClose,
+  onApply,
+}: {
+  initial: HistoricalPeriods;
+  onClose: () => void;
+  onApply: (next: HistoricalPeriods) => void;
+}) {
+  const [p1From, setP1From] = useState(initial.period_1_from || "");
+  const [p1To, setP1To] = useState(initial.period_1_to || "");
+  const [p2From, setP2From] = useState(initial.period_2_from || "");
+  const [p2To, setP2To] = useState(initial.period_2_to || "");
+  const [p3From, setP3From] = useState(initial.period_3_from || "");
+  const [p3To, setP3To] = useState(initial.period_3_to || "");
+  const [forecastDate, setForecastDate] = useState(initial.forecast_date || "");
+
+  // Defaults: P1 = последние 30 дней, forecast = +60 дней. P2/P3 — без default.
+  useEffect(() => {
+    if (!initial.period_1_from && !initial.period_1_to) {
+      const today = new Date();
+      const from = new Date(today.getTime() - 30 * 86400 * 1000);
+      setP1From(from.toISOString().slice(0, 10));
+      setP1To(today.toISOString().slice(0, 10));
+    }
+    if (!initial.forecast_date) {
+      const fc = new Date(Date.now() + 60 * 86400 * 1000);
+      setForecastDate(fc.toISOString().slice(0, 10));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ESC закрывает
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const onSubmit = () => {
+    const next: HistoricalPeriods = {
+      period_1_from: p1From || undefined,
+      period_1_to: p1To || undefined,
+      period_2_from: p2From || undefined,
+      period_2_to: p2To || undefined,
+      period_3_from: p3From || undefined,
+      period_3_to: p3To || undefined,
+      forecast_date: forecastDate || undefined,
+    };
+    onApply(next);
+  };
+
+  const onClear = () => {
+    setP1From("");
+    setP1To("");
+    setP2From("");
+    setP2To("");
+    setP3From("");
+    setP3To("");
+    setForecastDate("");
+    onApply({});
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      onClick={onClose}
+    >
+      <div
+        className="card bg-bg p-5 w-[560px] max-w-full"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-base font-semibold">
+            Исторические периоды (BA-BF)
+          </h3>
+          <button className="btn text-xs" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+        <p className="text-tiny text-muted mb-4">
+          Показывает фактические заказы/выкупы за прошлые окна + прогноз
+          остатка на дату. Пустые поля → колонка не рассчитывается.
+        </p>
+
+        <div className="space-y-3 text-sm">
+          <PeriodRow
+            label="Период 1 (BB/BC: заказано/выкуплено)"
+            from={p1From}
+            to={p1To}
+            onFrom={setP1From}
+            onTo={setP1To}
+          />
+          <PeriodRow
+            label="Период 2 (BD: заказано)"
+            from={p2From}
+            to={p2To}
+            onFrom={setP2From}
+            onTo={setP2To}
+          />
+          <PeriodRow
+            label="Период 3 (BE: заказано)"
+            from={p3From}
+            to={p3To}
+            onFrom={setP3From}
+            onTo={setP3To}
+          />
+          <div className="flex items-center gap-3">
+            <label className="text-xs text-muted w-72">
+              Прогноз остатка на дату (BF):
+            </label>
+            <input
+              type="date"
+              className="input text-sm flex-1"
+              value={forecastDate}
+              onChange={(e) => setForecastDate(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-between gap-2 mt-5">
+          <button className="btn text-xs" onClick={onClear}>
+            Очистить все
+          </button>
+          <div className="flex gap-2">
+            <button className="btn text-xs" onClick={onClose}>
+              Отмена
+            </button>
+            <button
+              className="btn btn-primary text-xs"
+              onClick={onSubmit}
+            >
+              Применить
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PeriodRow({
+  label,
+  from,
+  to,
+  onFrom,
+  onTo,
+}: {
+  label: string;
+  from: string;
+  to: string;
+  onFrom: (v: string) => void;
+  onTo: (v: string) => void;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <label className="text-xs text-muted w-72">{label}</label>
+      <input
+        type="date"
+        className="input text-sm flex-1"
+        value={from}
+        onChange={(e) => onFrom(e.target.value)}
+        placeholder="С"
+      />
+      <span className="text-muted">—</span>
+      <input
+        type="date"
+        className="input text-sm flex-1"
+        value={to}
+        onChange={(e) => onTo(e.target.value)}
+        placeholder="По"
+      />
+    </div>
   );
 }
 
