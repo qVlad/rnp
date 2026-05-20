@@ -691,16 +691,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse({ kind: "wbTokenStatus", data } as BgResponse);
         return;
       }
-      case "triggerLkJobsPoll": {
-        try {
-          await pollLkJobsOnce();
-          sendResponse({ kind: "ok" } as BgResponse);
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          sendResponse({ kind: "error", error: msg } as BgResponse);
-        }
-        return;
-      }
       case "wbShiftsProxy": {
         try {
           console.log("[rnp-ext SW] wbShiftsProxy op=", req.op);

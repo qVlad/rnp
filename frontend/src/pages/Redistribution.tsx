@@ -204,6 +204,12 @@ export default function Redistribution() {
       {/* Tasks */}
       <div className="card">
         <h2 className="font-medium mb-3">Очередь и история бронирований</h2>
+        <div className="text-xs text-muted mb-3 leading-relaxed">
+          Бэкенд опрашивает очередь каждые 2 мин (LEAD-022). Если расширение
+          оффлайн или dst-квота=0 — заявка остаётся в <code>queued</code> и
+          ретраится автоматически. После accepted ставится 72-часовой кулдаун
+          на пару (chrt_id × склад-приёмник).
+        </div>
         {tasksQ.isLoading && <div className="text-muted">Загрузка…</div>}
         {tasksQ.data && tasksQ.data.items.length === 0 && (
           <div className="text-muted text-sm">Задач в очереди нет.</div>
@@ -217,12 +223,13 @@ export default function Redistribution() {
                 <th className="text-left p-2">Откуда → Куда</th>
                 <th className="text-right p-2">Qty</th>
                 <th className="text-left p-2">Статус</th>
-                <th className="text-right p-2">Попыток</th>
+                <th className="text-right p-2">Попыток<br/><span className="text-[10px] normal-case">посл.</span></th>
+                <th className="text-left p-2">Последний ответ</th>
               </tr>
             </thead>
             <tbody>
               {tasksQ.data.items.map((t) => (
-                <tr key={t.id} className="border-t border-border">
+                <tr key={t.id} className="border-t border-border align-top">
                   <td className="p-2 font-mono text-xs">
                     {(t.created_at || t.target_window_at)?.slice(0, 16) || "—"}
                   </td>
@@ -231,8 +238,39 @@ export default function Redistribution() {
                     {t.from_office_name} → {t.to_office_name}
                   </td>
                   <td className="p-2 text-right font-mono">{t.qty}</td>
-                  <td className="p-2">{t.status}</td>
-                  <td className="p-2 text-right font-mono">{t.attempt_count}</td>
+                  <td className="p-2">
+                    <TaskStatusBadge status={t.status} acceptedAt={t.accepted_at} />
+                  </td>
+                  <td className="p-2 text-right font-mono">
+                    {t.attempt_count}
+                    {t.last_attempt_at && (
+                      <div className="text-[10px] text-muted">
+                        {t.last_attempt_at.slice(11, 16)}
+                      </div>
+                    )}
+                  </td>
+                  <td className="p-2 text-xs text-muted max-w-[280px]">
+                    {t.last_status_code != null && (
+                      <span
+                        className={`font-mono mr-1 ${
+                          t.last_status_code >= 200 && t.last_status_code < 300
+                            ? "text-success"
+                            : "text-red-400"
+                        }`}
+                      >
+                        HTTP {t.last_status_code}
+                      </span>
+                    )}
+                    {t.last_response ? (
+                      <span title={t.last_response} className="break-words">
+                        {t.last_response.length > 80
+                          ? t.last_response.slice(0, 80) + "…"
+                          : t.last_response}
+                      </span>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -401,6 +439,41 @@ function LkStatusCard({
               Отмена
             </button>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TaskStatusBadge({
+  status,
+  acceptedAt,
+}: {
+  status: string;
+  acceptedAt: string | null;
+}) {
+  const tone =
+    status === "accepted"
+      ? "text-success"
+      : status === "failed"
+        ? "text-red-400"
+        : status === "queued"
+          ? "text-accent"
+          : "text-muted";
+  const label =
+    status === "queued"
+      ? "в очереди"
+      : status === "accepted"
+        ? "✓ принята"
+        : status === "failed"
+          ? "✗ ошибка"
+          : status;
+  return (
+    <div>
+      <span className={`text-xs ${tone}`}>{label}</span>
+      {acceptedAt && status === "accepted" && (
+        <div className="text-[10px] text-muted font-mono">
+          {acceptedAt.slice(0, 16)}
         </div>
       )}
     </div>

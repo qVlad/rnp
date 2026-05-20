@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { getCachedActiveTests, getLastSync, getSettings } from "@/lib/storage";
-import { bgRequest } from "@/lib/bg-bridge";
 import type { ActiveTest } from "@/lib/types";
 
 export function PopupApp() {
@@ -8,8 +7,6 @@ export function PopupApp() {
   const [lastSync, setLastSync] = useState<number | null>(null);
   const [rnpUrl, setRnpUrl] = useState("https://rnp.sellerfriends.ru");
   const [loading, setLoading] = useState(true);
-  const [shiftsTestOutput, setShiftsTestOutput] = useState<string | null>(null);
-  const [shiftsTesting, setShiftsTesting] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -49,66 +46,6 @@ export function PopupApp() {
 
   function openOptions() {
     chrome.runtime.openOptionsPage();
-  }
-
-  /**
-   * Smoke-тест WB shifts API через SW proxy.
-   * Тестируем quota для известного склада 130744 (Краснодар, src) — на любом
-   * аккаунте должен вернуть число (0 если окно закрыто, >0 если открыто).
-   * Если получили число — proxy через user-cookies работает, можно идти
-   * дальше к интеграции с backend РНП (фаза 2).
-   */
-  async function testShiftsProxy() {
-    setShiftsTesting(true);
-    setShiftsTestOutput(null);
-    const resp = await bgRequest({
-      type: "wbShiftsProxy",
-      op: "quota",
-      officeId: 130744,
-      kind: "src",
-    });
-    if (resp.kind === "wbShiftsProxy") {
-      if (resp.result.ok) {
-        const data = resp.result.data as { quota?: number };
-        setShiftsTestOutput(
-          `✓ OK (HTTP ${resp.result.status}): quota=${data?.quota ?? "—"}\n` +
-            `→ proxy РАБОТАЕТ, cookies прикрепились, IP подошёл`,
-        );
-      } else {
-        setShiftsTestOutput(
-          `✗ FAIL (HTTP ${resp.result.status}): ${resp.result.reason}\n` +
-            (resp.result.body ? `Body: ${resp.result.body}` : "") +
-            `\n→ если 401/x-reason=unauthenticated — открой seller.wildberries.ru в этом браузере и залогинься, потом повтори`,
-        );
-      }
-    } else if (resp.kind === "error") {
-      setShiftsTestOutput(`✗ SW error: ${resp.error}`);
-    } else {
-      setShiftsTestOutput(`✗ unexpected response: ${JSON.stringify(resp)}`);
-    }
-    setShiftsTesting(false);
-  }
-
-  /**
-   * Триггер LK jobs polling вручную (LEAD-016 Phase 3) — не ждём alarm,
-   * SW сразу проверяет backend и выполняет pending WB-job'ы.
-   */
-  async function triggerJobsPoll() {
-    setShiftsTesting(true);
-    setShiftsTestOutput("Триггерю polling…");
-    const resp = await bgRequest({ type: "triggerLkJobsPoll" });
-    if (resp.kind === "ok") {
-      setShiftsTestOutput(
-        "✓ Poll триггернут. Смотри SW DevTools console для деталей:\n" +
-          "  [lk-jobs-poll] got N jobs\n" +
-          "  [lk-jobs-poll] job X (op) → result",
-      );
-    } else if (resp.kind === "error") {
-      setShiftsTestOutput(`✗ SW error: ${resp.error}`);
-    } else {
-      setShiftsTestOutput(`✗ unexpected: ${JSON.stringify(resp)}`);
-    }
-    setShiftsTesting(false);
   }
 
   const withWinner = tests.filter((t) => t.winnerVariantLabel != null);
@@ -174,47 +111,6 @@ export function PopupApp() {
           </div>
         )}
         {loading && <div className="empty">Загрузка…</div>}
-
-        <div className="section" style={{ marginTop: 16 }}>
-          <h2>🧪 WB Shifts proxy (LEAD-016)</h2>
-          <div style={{ fontSize: 11, color: "#888", marginBottom: 6 }}>
-            Smoke-тест: расширение → WB shifts API с куками текущей сессии.
-            Залогинься в seller.wildberries.ru в этом браузере перед запуском.
-          </div>
-          <button
-            type="button"
-            className="btn"
-            onClick={testShiftsProxy}
-            disabled={shiftsTesting}
-            style={{ width: "100%" }}
-          >
-            {shiftsTesting ? "Тестирую…" : "Тест /quota (Краснодар 130744)"}
-          </button>
-          <button
-            type="button"
-            className="btn"
-            onClick={triggerJobsPoll}
-            disabled={shiftsTesting}
-            style={{ width: "100%", marginTop: 6 }}
-          >
-            ↻ Триггер polling backend job'ов
-          </button>
-          {shiftsTestOutput && (
-            <pre
-              style={{
-                fontSize: 11,
-                background: "#f4f4f4",
-                padding: 8,
-                marginTop: 6,
-                borderRadius: 4,
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-              }}
-            >
-              {shiftsTestOutput}
-            </pre>
-          )}
-        </div>
       </div>
 
       <div className="footer">
