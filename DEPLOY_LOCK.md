@@ -19,13 +19,17 @@
 
 ---
 
-## Статус: 🟢 Свободно
+## Статус: 🔴 Занято
 
-> Последний релиз: v0.10.0 (commit c800fe1, build 2026-05-20T20:30 UTC).
-> Hotfix-коммит чинил недостающий import reconciliation_4way в main.py
-> (race condition: include_router добавил, импорт пропустил → 502).
-> На проде сейчас Sprint+1 доводки: UI порогов аномалий + ROI monthly chart +
-> top-10 SKU breakdown + Reconciliation 4-way UI MVP.
+- **Кто:** Claude Opus 4.7 (1M) — основная сессия
+- **Когда:** 2026-05-21 00:10 MSK
+- **Что катит:** TASK-DEV-018/019/008 — drill-down /managers-kpi → P&L,
+  колонка «менеджер» в PnLByBrandView, Owner cockpit toggle (4 виджета)
+- **Версия:** 0.10.0 → 0.11.0
+- **Ожидаемая длительность:** ~4 мин (frontend rebuild + warm shutdown,
+  без миграций)
+
+> Предыдущий релиз: v0.10.0 (commit c800fe1, build 2026-05-20T20:30 UTC).
 
 ---
 

@@ -65,6 +65,9 @@
 | Канонические формулы | `ppvz_net` и `acquiring_net` через case (Продажа − Возврат) | `services/period_aggregates.py` | — |
 | Drill-down по строкам | Раскрытие строк P&L в детали по nm_id | `PnL.tsx` | brands-filter |
 | Drill-down «По брендам» (heatmap) | Матрица бренд × месяц × маржа (TASK-DEV-002): heatmap-таблица, красная подсветка <5%, жёлтая 5-15%, зелёная ≥15%. Глубина 3/6/12 мес. Manager видит только свои бренды. | `pages/PnL.tsx`, `components/PnLByBrandView.tsx`, `api/pnl.py:get_pnl_by_brand` (`GET /api/pnl/by-brand?months=N`) | brands-filter |
+| Колонка «менеджер» в by-brand (TASK-DEV-019) | LEFT JOIN `brand_assignments → users`, dropdown-фильтр «Все / ФИО / Без назначения». Бренды без назначения — курсивом «— нет». | `api/pnl.py:get_pnl_by_brand`, `components/PnLByBrandView.tsx` | director, head |
+| Drill-down `/managers-kpi` → P&L (TASK-DEV-018) | Клик по строке менеджера → `/pnl?brands=A,B&label=ФИО`. Баннер с фильтром и кнопкой «сбросить». Backend `/api/pnl` принимает `?brands=`, для manager — INTERSECT с brand_assignments (RBAC). | `pages/ManagersKpi.tsx:openDrilldown`, `pages/PnL.tsx` (useSearchParams), `api/pnl.py:get_pnl` (`brands` query) | director, head |
+| Owner cockpit (TASK-DEV-008) | Toggle на `/` для `director` — 4 виджета: recon-Δ 4 нед (sparkline), план месяца компании (% выполнено vs % срока), top/bottom-3 бренды по марже, top/bottom-3 менеджеры по выручке. Каждый — `<Link>` на полный экран. Toggle persist в localStorage. Без нового backend — переиспользует 4 endpoint'а. | `components/OwnerCockpitView.tsx`, `pages/Dashboard.tsx` (`localStorage["dashboard.owner-view.v1"]`) | director |
 
 ---
 

@@ -29,6 +29,9 @@ function monthLabel(yyyymm: string): string {
 
 export default function PnLByBrandView() {
   const [months, setMonths] = useState(6);
+  // TASK-DEV-019 — фильтр по менеджеру для drill-down РОПа.
+  // "" = все · "__unassigned__" = только бренды без назначения · иначе ФИО.
+  const [managerFilter, setManagerFilter] = useState<string>("");
 
   const q = useQuery({
     queryKey: ["pnl-by-brand", months],
@@ -36,6 +39,23 @@ export default function PnLByBrandView() {
   });
 
   const data = q.data;
+
+  // Уникальные менеджеры из rows для фильтр-dropdown.
+  const allManagers = (() => {
+    if (!data) return [] as string[];
+    const set = new Set<string>();
+    for (const r of data.rows) {
+      for (const m of r.managers ?? []) set.add(m);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "ru"));
+  })();
+  const hasUnassigned = (data?.rows ?? []).some((r) => (r.managers ?? []).length === 0);
+
+  const filteredRows = (data?.rows ?? []).filter((r) => {
+    if (!managerFilter) return true;
+    if (managerFilter === "__unassigned__") return (r.managers ?? []).length === 0;
+    return (r.managers ?? []).includes(managerFilter);
+  });
 
   return (
     <div className="flex flex-col gap-3">
@@ -51,6 +71,25 @@ export default function PnLByBrandView() {
             {n} мес.
           </button>
         ))}
+        {(allManagers.length > 0 || hasUnassigned) && (
+          <>
+            <span className="text-muted ml-3">Менеджер:</span>
+            <select
+              value={managerFilter}
+              onChange={(e) => setManagerFilter(e.target.value)}
+              className="bg-surface border border-border rounded-md p-1 text-xs"
+              title="Фильтр по менеджеру (TASK-DEV-019)"
+            >
+              <option value="">Все ({allManagers.length})</option>
+              {allManagers.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+              {hasUnassigned && (
+                <option value="__unassigned__">Без назначения</option>
+              )}
+            </select>
+          </>
+        )}
         <span className="text-xs text-muted ml-auto">
           Подсветка: &lt;5% — красная (убыток), 5-15% — жёлтая, &gt;15% — зелёная
         </span>
@@ -69,12 +108,13 @@ export default function PnLByBrandView() {
         </div>
       )}
 
-      {data && data.rows.length > 0 && (
+      {data && filteredRows.length > 0 && (
         <div className="card overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="text-xs text-muted border-b border-border">
                 <th className="text-left p-2 sticky left-0 bg-surface">Бренд</th>
+                <th className="text-left p-2">Менеджер</th>
                 {data.months.map((m) => (
                   <th key={m} className="text-right p-2 whitespace-nowrap">
                     {monthLabel(m)}
@@ -87,10 +127,26 @@ export default function PnLByBrandView() {
               </tr>
             </thead>
             <tbody>
-              {data.rows.map((row) => (
-                <tr key={row.brand} className="border-b border-border/40">
+              {filteredRows.map((row) => {
+                const unassigned = (row.managers ?? []).length === 0;
+                return (
+                <tr
+                  key={row.brand}
+                  className={`border-b border-border/40 ${unassigned ? "italic text-muted" : ""}`}
+                >
                   <td className="p-2 sticky left-0 bg-surface font-medium">
                     {row.brand}
+                  </td>
+                  <td className="p-2 text-xs whitespace-nowrap">
+                    {unassigned ? (
+                      <span className="text-warning">— нет</span>
+                    ) : (row.managers ?? []).length === 1 ? (
+                      row.managers[0]
+                    ) : (
+                      <span title={row.managers.join(", ")}>
+                        {row.managers.length} человек
+                      </span>
+                    )}
                   </td>
                   {row.monthly.map((cell) => {
                     const pct = Number(cell.net_margin_pct);
@@ -117,7 +173,8 @@ export default function PnLByBrandView() {
                     {fmtPct(row.total_margin_pct)}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

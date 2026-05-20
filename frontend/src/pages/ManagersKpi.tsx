@@ -11,6 +11,7 @@
  */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { LineChart, Line, YAxis } from "recharts";
 import { api } from "@/api/client";
 import { fmtRub, fmtNum, fmtPct } from "@/lib/format";
@@ -52,10 +53,19 @@ function _loadSort(): { field: SortField; dir: "asc" | "desc" } {
 }
 
 export default function ManagersKpi() {
+  const navigate = useNavigate();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
   const [mode, setMode] = useState<Mode>("hybrid");
   const [sort, setSort] = useState(_loadSort);
+
+  // TASK-DEV-018 — drill-down: клик по строке → /pnl с фильтром брендов менеджера.
+  const openDrilldown = (m: any) => {
+    if (m.no_brands || !m.brands?.length) return;
+    const brands = encodeURIComponent(m.brands.join(","));
+    const label = encodeURIComponent(m.full_name || m.username);
+    navigate(`/pnl?brands=${brands}&label=${label}`);
+  };
 
   const q = useQuery({
     queryKey: ["managers-kpi", year, month, mode],
@@ -282,13 +292,29 @@ export default function ManagersKpi() {
                 return (
                   <tr
                     key={m.user_id}
-                    className={`border-b border-border/40 ${
-                      m.no_brands ? "opacity-60" : ""
+                    className={`border-b border-border/40 transition-colors ${
+                      m.no_brands
+                        ? "opacity-60"
+                        : "cursor-pointer hover:bg-surface-2/40"
                     }`}
+                    onClick={() => openDrilldown(m)}
+                    title={
+                      m.no_brands
+                        ? undefined
+                        : `Открыть P&L с фильтром по брендам ${m.brands.join(", ")}`
+                    }
                   >
                     <td className="py-2 pr-3">
-                      <div className="font-medium">
+                      <div className="font-medium flex items-center gap-1.5">
                         {m.full_name || m.username}
+                        {!m.no_brands && (
+                          <span
+                            className="text-muted text-[10px]"
+                            aria-hidden
+                          >
+                            →
+                          </span>
+                        )}
                       </div>
                       {m.full_name && (
                         <div className="text-xs text-muted">{m.username}</div>

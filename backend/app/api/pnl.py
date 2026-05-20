@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Product
+from app.db.models import BrandAssignment, Product, User
 from app.db.session import get_db
 from app.services.auth import (
     CurrentUser,
@@ -32,6 +32,15 @@ async def get_pnl(
             "же длины, сдвинутый назад. Для сравнения «текущий vs предыдущий»."
         ),
     ),
+    brands_param: str | None = Query(
+        default=None,
+        alias="brands",
+        description=(
+            "Comma-separated список брендов для drill-down (TASK-DEV-018). "
+            "Для director/head — override unrestricted scope. Для manager — "
+            "INTERSECT с его brand_assignments (extra бренды просто игнорируются)."
+        ),
+    ),
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
@@ -39,6 +48,20 @@ async def get_pnl(
         date_to = date.today()
     if date_from is None:
         date_from = date_to - timedelta(days=29)
+
+    # Drill-down: explicit brands в query-param. Manager — intersect (RBAC).
+    requested_brands: set[str] | None = None
+    if brands_param:
+        requested_brands = {b.strip() for b in brands_param.split(",") if b.strip()}
+    if requested_brands is not None:
+        if brands is None:
+            brands = requested_brands
+        else:
+            brands = brands & requested_brands
+            # Если intersect пуст → manager попросил чужие бренды → возвращаем
+            # пустой brand-set, build_pnl отдаст нули. Не 403 чтобы UI не падал
+            # на bookmarked deep-link'е, который потом был ограничен.
+
     out = await build_pnl(
         session,
         date_from=date_from,
@@ -47,6 +70,8 @@ async def get_pnl(
         brands=brands,
     )
     out["scope"] = "company" if brands is None else "brands"
+    if requested_brands is not None:
+        out["filter_brands"] = sorted(brands) if brands else []
 
     if compare:
         # Период такой же длины, сдвинутый назад на (N+1) дней, чтобы прошлый
@@ -211,6 +236,29 @@ async def get_pnl_by_brand(
     else:
         brand_list = sorted(brands)
 
+    # TASK-DEV-019: brand → manager mapping. Один SELECT для всех брендов,
+    # JOIN brand_assignments → users → собираем строкой через ", " если
+    # один бренд → несколько manager (редкий, но валидный кейс).
+    brand_to_managers: dict[str, list[str]] = {}
+    if brand_list:
+        rows_bm = (
+            await session.execute(
+                select(BrandAssignment.brand, User.full_name, User.username)
+                .join(User, User.id == BrandAssignment.user_id)
+                .where(
+                    BrandAssignment.brand.in_(brand_list),
+                    User.is_active.is_(True),
+                )
+            )
+        ).all()
+        for b, fname, uname in rows_bm:
+            name = (fname or uname or "").strip()
+            if not name:
+                continue
+            brand_to_managers.setdefault(b, [])
+            if name not in brand_to_managers[b]:
+                brand_to_managers[b].append(name)
+
     # Список месячных меток (YYYY-MM) для UI-сетки
     month_labels: list[str] = []
     y, m = start_y, start_m
@@ -256,9 +304,11 @@ async def get_pnl_by_brand(
                     }
                 )
         totals = pnl.get("totals", {})
+        mgrs = brand_to_managers.get(brand, [])
         rows.append(
             {
                 "brand": brand,
+                "managers": mgrs,  # пустой массив = бренд без назначения
                 "monthly": monthly,
                 "total_revenue_net": totals.get("revenue_net", 0),
                 "total_profit": totals.get("profit", 0),

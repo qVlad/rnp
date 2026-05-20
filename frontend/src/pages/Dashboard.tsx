@@ -18,6 +18,7 @@ import { type CompositionSegment } from "@/components/CompositionBar";
 import AlertsBar from "@/components/AlertsBar";
 import ManagerPlanProgressCard from "@/components/ManagerPlanProgressCard";
 import CustomMetricsCard from "@/components/CustomMetricsCard";
+import OwnerCockpitView from "@/components/OwnerCockpitView";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   ColumnVisibilityButton,
@@ -50,6 +51,16 @@ const daysAgo = (n: number) => {
 
 export default function Dashboard() {
   const { user } = useAuth();
+  // TASK-DEV-008 — Owner cockpit toggle, persist в localStorage.
+  // Видим только director — head_of_sales/manager используют дефолтный дашборд.
+  const [ownerView, setOwnerView] = useState<boolean>(() => {
+    try { return localStorage.getItem("dashboard.owner-view.v1") === "1"; } catch { return false; }
+  });
+  const toggleOwnerView = () => {
+    const next = !ownerView;
+    setOwnerView(next);
+    try { localStorage.setItem("dashboard.owner-view.v1", next ? "1" : "0"); } catch {}
+  };
   const [mode, setMode] = useState<Mode>({ kind: "preset", period: "day" });
   const [dataMode, setDataMode] = useState<DataMode>("preliminary");
   const [customStart, setCustomStart] = useState(daysAgo(6));
@@ -115,6 +126,19 @@ export default function Dashboard() {
     <div className="flex flex-col gap-4" ref={dashboardRef}>
       <AlertsBar alerts={alertsQ.data?.alerts ?? []} />
       {user?.role === "manager" && <ManagerPlanProgressCard />}
+      {user?.role === "director" && (
+        <div className="flex items-center gap-2 -mb-1">
+          <button
+            type="button"
+            onClick={toggleOwnerView}
+            className={`btn text-xs ${ownerView ? "border-accent text-accent" : ""}`}
+            title="Owner cockpit — 4 виджета на одном экране: сверка, план месяца, топ/bottom бренды и менеджеры"
+          >
+            👑 {ownerView ? "Скрыть Owner cockpit" : "Owner cockpit"}
+          </button>
+        </div>
+      )}
+      {user?.role === "director" && ownerView && <OwnerCockpitView />}
       <CustomMetricsCard period="week" />
       <TodayVsYesterdayStrip />
 

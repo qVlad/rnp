@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
 import {
@@ -157,6 +158,14 @@ type ViewMode = "table" | "cards" | "by-brand";
 const VIEW_KEY = "pnl.view.v1";
 
 export default function PnL() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  // TASK-DEV-018 — drill-down с /managers-kpi: query-param `?brands=A,B,C&label=ФИО`.
+  const drillBrandsParam = searchParams.get("brands");
+  const drillLabel = searchParams.get("label");
+  const drillBrands: string[] | null = drillBrandsParam
+    ? drillBrandsParam.split(",").map((s) => s.trim()).filter(Boolean)
+    : null;
+
   const [from, setFrom] = useState(daysAgo(29));
   const [to, setTo] = useState(today());
   const [granularity, setGranularity] = useState<"day" | "week" | "month">("day");
@@ -177,17 +186,43 @@ export default function PnL() {
   const { isHidden: rowHidden } = useColumnVisibility("pnl.rows.hidden.v1");
 
   const q = useQuery({
-    queryKey: ["pnl", from, to, granularity, compare],
+    queryKey: ["pnl", from, to, granularity, compare, drillBrandsParam],
     queryFn: () =>
-      api.pnl(from, to, granularity, compare) as Promise<any>,
+      api.pnl(from, to, granularity, compare, drillBrands) as Promise<any>,
   });
 
   const isBrandsScope = q.data?.scope === "brands";
   const prevTotals = q.data?.previous?.totals;
 
+  const clearDrillFilter = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete("brands");
+    next.delete("label");
+    setSearchParams(next);
+  };
+
   return (
     <div className="flex flex-col gap-4">
-      {isBrandsScope && (
+      {drillBrands && drillBrands.length > 0 && (
+        <div className="card text-xs border-l-[3px] border-l-accent bg-surface flex items-center gap-2">
+          <span className="text-muted">Drill-down фильтр</span>
+          {drillLabel && (
+            <span className="font-medium text-accent">{drillLabel}</span>
+          )}
+          <span className="text-muted">·</span>
+          <span className="text-muted">бренды:</span>
+          <span className="font-mono text-fg">{drillBrands.join(", ")}</span>
+          <button
+            type="button"
+            onClick={clearDrillFilter}
+            className="ml-auto text-muted hover:text-fg underline underline-offset-2"
+            title="Снять drill-down, вернуть полный обзор"
+          >
+            сбросить ✕
+          </button>
+        </div>
+      )}
+      {isBrandsScope && !drillBrands && (
         <div className="card text-xs text-muted border-border bg-surface">
           Вы видите P&amp;L по своим брендам — contribution-margin вид (без OPEX,
           fixed-costs, налогов и НДС). Чтобы увидеть полный финансовый

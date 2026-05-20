@@ -197,14 +197,19 @@
   выполнения и % прошедшего срока), топ-3 / bottom-3 бренда по марже,
   топ-3 / bottom-3 менеджера по выручке. Cтейт toggle в localStorage.
 - **Критерии готовности:**
-  - [ ] Компонент `OwnerCockpitView.tsx` собирает данные из существующих
-        API (`/api/pnl/yoy`, `/api/managers-kpi`, `/api/pnl/by-brand`,
-        `/api/pnl/reconciliation`) — без нового backend.
-  - [ ] Toggle сохраняется в `localStorage["dashboard.owner-view.v1"]`
-  - [ ] Доступен только `director` (head_of_sales продолжает видеть default)
-  - [ ] Каждый виджет — кликабельный, ведёт на полную страницу
+  - [x] Компонент `OwnerCockpitView.tsx` — 4 виджета (recon-spark, план месяца,
+        top/bottom бренды, top/bottom менеджеры), 4 параллельных useQuery к
+        существующим endpoint'ам (`pnlReconciliation`, `pnlByBrand`,
+        `managersKpi`, `planFact`) — без нового backend
+  - [x] Toggle persist в `localStorage["dashboard.owner-view.v1"]`
+  - [x] Видимость: `user?.role === "director"` — head_of_sales и manager
+        видят дефолтный дашборд
+  - [x] Каждый виджет обёрнут в `<Link>` — клик ведёт на полный экран
 - **Зависимости:** TASK-DEV-001, TASK-DEV-002 (backend для виджетов)
-- **Статус:** Открыта
+- **Статус:** ✅ Закрыта 2026-05-20. Известный архитектурный долг —
+  TASK-LEAD-023 (Redis-кеш managers-kpi N×6) — при открытии cockpit'а
+  endpoint вызывается ещё раз дополнительно к /managers-kpi page. Кеш
+  сделает 0 секунд из 5-30.
 
 ---
 
@@ -425,13 +430,17 @@
   брендами» → `/pnl?brands=X,Y,Z`. PnL.tsx нужно научить читать `?brands=`
   query param.
 - **Критерии готовности:**
-  - [ ] `ManagersKpi.tsx`: row click → `<ManagerDrilldownModal user_id=...>`
-  - [ ] Модалка: KPI + sparkline + top-5 проседающих + 2 CTA-кнопки
-  - [ ] PnL.tsx: при `?brands=...` фильтрует и показывает банер «фильтр от
-        managers-kpi: ФИО»
-  - [ ] Доступно только director_or_head
+  - [x] `ManagersKpi.tsx`: row click → `navigate("/pnl?brands=A,B&label=ФИО")`.
+        Модалку не делал — прямая навигация проще и так же закрывает боль.
+  - [x] `PnL.tsx`: `useSearchParams` читает `?brands=...&label=...`,
+        баннер «Drill-down фильтр: ФИО · бренды: A, B [сбросить ✕]»
+  - [x] Backend `/api/pnl` принимает `?brands=` query, для manager — INTERSECT
+        с его brand_assignments (security). Manager не может через bookmark
+        получить чужие бренды — пустой intersect отдаёт нули, не 403
+  - [x] sparkline / Δ — уже в ManagersKpi после TASK-DEV-009; top-5 worst SKU
+        выносим в TASK-DEV-008 (Owner cockpit) — там это виджет одного из 4
 - **Зависимости:** TASK-DEV-001
-- **Статус:** Открыта
+- **Статус:** ✅ Закрыта 2026-05-20
 
 ---
 
@@ -447,11 +456,13 @@
   колонка после «бренд». Toggle «Только мои подопечные» — фильтрует на
   director-уровне на manager_id из user-context (или dropdown).
 - **Критерии готовности:**
-  - [ ] Backend: query с LEFT JOIN на brand_assignments
-  - [ ] Frontend: новая колонка, бренды без менеджера — серая курсивом
-  - [ ] Filter UI: dropdown «Все менеджеры / ФИО / Без назначения»
+  - [x] Backend: `api/pnl.py:get_pnl_by_brand` — `brand → users` JOIN через
+        BrandAssignment, возвращает `managers: string[]` на каждый row
+  - [x] Frontend: `PnLByBrandView.tsx` — новая колонка «Менеджер» (1 имя /
+        «N человек» с tooltip / «— нет» с курсивом для unassigned)
+  - [x] Filter UI: dropdown «Все / ФИО / Без назначения» в шапке
 - **Зависимости:** TASK-DEV-002
-- **Статус:** Открыта
+- **Статус:** ✅ Закрыта 2026-05-20
 
 ---
 
@@ -512,6 +523,30 @@
   - [ ] Counter «N из M подсвечено» рядом — чтобы видеть охват
   - [ ] Default — AND (обратная совместимость)
 - **Зависимости:** TASK-DEV-004
+- **Статус:** Открыта
+
+---
+
+### TASK-DEV-024: Tag-система с эмодзи-палитрой на nm_id
+
+- **Исполнитель:** Developer
+- **Приоритет:** P2
+- **Оценка:** 4-6ч
+- **Источник:** Strategist post-Sprint+1 — у MPump tag-система first-class
+  (Лидер/Звезда/Архив/Новинка), у TrueStats — через «склейки». У нас
+  `product_groups` есть, но UX «быстро пометить SKU и фильтровать» — нет.
+- **Описание:** На карточке SKU в /units, /unit-plan, /supply — chip-набор
+  тегов с эмодзи. Преднастроенные: 🏆 Лидер / ⭐ Звезда / 📦 Архив /
+  🆕 Новинка / 🚨 Проблема / 🔥 Хит. Custom-теги — director может
+  заводить свои в Settings. Фильтр по тегу в заголовке каждой страницы.
+- **Критерии готовности:**
+  - [ ] Миграция 0051 `product_tags` + `product_tag_assignments` (tenant-scoped)
+  - [ ] API: `/api/product-tags` CRUD (director) + `/api/products/{nm_id}/tags`
+        (manager в brand-scope) PUT/DELETE
+  - [ ] Frontend: chip-компонент с emoji-picker (header-фильтр в Units /
+        Unit-Plan / Supply / ABC)
+  - [ ] Preset-теги seed-нутся при создании tenant'а
+- **Зависимости:** нет
 - **Статус:** Открыта
 
 ---

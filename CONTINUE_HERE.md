@@ -37,6 +37,61 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## 2026-05-21 (ночь) — **Sprint+2 start: TASK-DEV-018 + 019 + 008** (v0.11.0)
+
+После Lead/Analyst/Strategist-планирования на следующий спринт — закрыли
+3 связанные задачи об управленческой связке РОП ↔ менеджер ↔ Owner.
+
+- **TASK-DEV-018 — drill-down `/managers-kpi` → P&L.** Клик по строке
+  менеджера → `navigate('/pnl?brands=A,B&label=ФИО')`. PnL.tsx читает
+  `useSearchParams` и показывает баннер с фильтром + кнопкой «сбросить ✕».
+  Backend `/api/pnl` принимает `?brands=` query-param — для director/head
+  заменяет unrestricted scope, для manager — INTERSECT с brand_assignments
+  (security: bookmarked deep-link к чужим брендам отдаёт нули, не 403).
+- **TASK-DEV-019 — колонка «менеджер» в `PnLByBrandView`.** Один SELECT
+  JOIN `brand_assignments → users` перед loop'ом, attach `managers: string[]`
+  на каждый row. UI: новая колонка после «Бренд» — 1 имя / «N человек»
+  с tooltip / курсивом «— нет» для unassigned. Dropdown-фильтр в шапке
+  «Все / ФИО / Без назначения».
+- **TASK-DEV-008 — Owner cockpit toggle на `/`.** Кнопка «👑 Owner cockpit»
+  только для `director` — открывает 4 виджета в 2-колоночной сетке:
+  recon-Δ за 4 недели (sparkline + worst-week label), план месяца компании
+  (% выполнено vs % срока с цветной полоской отставания), top-3 / bottom-3
+  бренды по марже за 3 мес, top-3 / bottom-3 менеджеры по выручке. Каждый
+  виджет — `<Link>` на полный экран. Toggle persist в
+  `localStorage["dashboard.owner-view.v1"]`. Без нового backend.
+
+**Также — записаны в backlog по итогам стратегического анализа:**
+- TASK-LEAD-023 — Redis-кеш `/api/managers-kpi` N×6 (блокирует cockpit
+  performance, делать перед массовым использованием)
+- TASK-LEAD-024 — `agents/CLAIMS.md` для предотвращения гонок параллельных
+  сессий за task-numbering и version-файлы
+- TASK-LEAD-025 — Funnel views→cart→order→buyout per-SKU (parity vs MPump)
+- TASK-LEAD-026 — Statistical outlier detection через z-score/IQR
+- TASK-DEV-024 — Tag-система с эмодзи-палитрой на nm_id
+
+**Изменённые файлы:**
+- `backend/app/api/pnl.py` — `brands` query-param в `get_pnl`, `managers[]`
+  JOIN в `get_pnl_by_brand`
+- `frontend/src/api/client.ts` — `pnl(...brands)`, типы `managers` в pnlByBrand
+- `frontend/src/pages/PnL.tsx` — `useSearchParams`, drill-down banner
+- `frontend/src/pages/ManagersKpi.tsx` — row click → `useNavigate`, hover-стиль
+- `frontend/src/components/PnLByBrandView.tsx` — колонка «Менеджер» + фильтр
+- `frontend/src/components/OwnerCockpitView.tsx` (new) — 4 виджета
+- `frontend/src/pages/Dashboard.tsx` — toggle + role guard
+- `agents/tasks-developer.md` — 018/019/008 закрыты, новый TASK-DEV-024
+- `agents/tasks-lead.md` — TASK-LEAD-023..026 заведены
+- `FEATURES.md` — 3 строки в разделе P&L
+- backend/pyproject.toml + frontend/package.json + extension/package.json —
+  0.10.0 → 0.11.0
+
+**Что в следующих сессиях:**
+- TASK-LEAD-023 — Redis-кеш managers-kpi (P0, разблокирует cockpit performance)
+- TASK-DEV-014 — supply→TG, TASK-DEV-021 supply CSV расширить
+- TASK-DEV-017 — read-only /plans с «предложить правку» (требует analyst)
+
+---
+
 ## 2026-05-20 (ночь) — **TASK-DEV-009: Δ м/м + sparkline + sort в `/managers-kpi`**
 
 Закрыли вторую по ценности задачу из backlog'а после ревью персон. РОП теперь

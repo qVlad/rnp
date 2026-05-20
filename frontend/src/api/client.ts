@@ -643,12 +643,17 @@ export const api = {
     to: string,
     granularity: "day" | "week" | "month",
     compare: boolean = false,
-  ) =>
-    request(
+    brands?: string[] | null,
+  ) => {
+    const brandsQ = brands && brands.length > 0
+      ? `&brands=${encodeURIComponent(brands.join(","))}`
+      : "";
+    return request(
       `/api/pnl?from=${from}&to=${to}&granularity=${granularity}${
         compare ? "&compare=true" : ""
-      }`,
-    ),
+      }${brandsQ}`,
+    );
+  },
 
   pnlYoY: (year?: number) =>
     request<{
@@ -677,6 +682,7 @@ export const api = {
       to: string;
       rows: Array<{
         brand: string;
+        managers: string[]; // TASK-DEV-019 — пустой массив = бренд без назначения
         monthly: Array<{
           period: string;
           revenue_net: number;
