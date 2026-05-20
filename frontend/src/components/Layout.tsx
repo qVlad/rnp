@@ -13,6 +13,7 @@ import { Icon, IconName } from "@/components/Icon";
 import CommandPalette from "@/components/CommandPalette";
 import SyncStatusIndicator from "@/components/SyncStatusIndicator";
 import ManagerBrandsBanner from "@/components/ManagerBrandsBanner";
+import ToastHost from "@/components/ToastHost";
 
 type Link = {
   to: string;
@@ -250,6 +251,7 @@ export default function Layout() {
         <Outlet />
       </main>
       <CommandPalette />
+      <ToastHost />
     </div>
   );
 }

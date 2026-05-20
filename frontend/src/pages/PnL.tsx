@@ -215,7 +215,7 @@ export default function PnL() {
             <button
               className={`btn ${view === "by-brand" ? "border-accent text-accent" : ""}`}
               onClick={() => onSetView("by-brand")}
-              title="Матрица бренд × месяц × маржа — где деньги, а где проблемы"
+              title="Матрица бренд × месяц × маржа (красным <5%, жёлтым 5-15%, зелёным >15%)"
             >
               По брендам
             </button>

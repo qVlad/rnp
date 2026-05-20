@@ -17,8 +17,7 @@ import { fmtRub, fmtPct } from "@/lib/format";
 function marginColor(pct: number): string {
   if (pct >= 15) return "bg-success/10 text-success";
   if (pct >= 5) return "bg-warning/10 text-warning";
-  if (pct < 0) return "bg-red-500/10 text-red-400";
-  return "text-muted";
+  return "bg-red-500/10 text-red-400";
 }
 
 function monthLabel(yyyymm: string): string {

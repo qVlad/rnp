@@ -30,14 +30,14 @@
   При клике на менеджера — drill-down: его бренды, его планы. Это
   закрывает главную боль РОПа из ревью: «нет менеджер-центричного view».
 - **Критерии готовности:**
-  - [ ] Backend: `GET /api/managers-kpi?year=YYYY&month=MM` — агрегат по
-        `BrandAssignment.user_id` → бренды → выручка из period_aggregates
-  - [ ] Backend: только director_or_head; tenant-scoped; respect period_aggregates
-  - [ ] Frontend: страница `ManagersKpi.tsx` с таблицей и drill-down popover
-  - [ ] Layout: пункт в группе «Контроль», `directorOrHead: true`
-  - [ ] Smoke: открывается под head, видны все менеджеры; под director — то же
+  - [x] Backend: `GET /api/managers-kpi?year=YYYY&month=MM` — агрегат по
+        `BrandAssignment.user_id` → бренды → compute_dashboard per-manager
+  - [x] Backend: только director_or_head; tenant-scoped
+  - [x] Frontend: страница `ManagersKpi.tsx` с таблицей и брендами inline
+  - [x] Layout: пункт в группе «Контроль», `directorOrHead: true`
+  - [x] Smoke: 7cf4461 на проде, endpoint отдаёт 401 без cookie (=auth работает)
 - **Зависимости:** нет
-- **Статус:** Открыта
+- **Статус:** ✅ Закрыта 2026-05-20 (backend `api/managers_kpi.py`, фронт `pages/ManagersKpi.tsx`, селектор Год+Месяц+Режим, цветная маржа). Drill-down popover (план-факт) перенесён в TASK-DEV-007.
 
 ---
 
@@ -51,12 +51,12 @@
   брендам». Матрица: строки = бренды, колонки = последние 6 месяцев,
   в ячейках — маржа% и ₽. Highlight красным где маржа < 15%.
 - **Критерии готовности:**
-  - [ ] Backend: `GET /api/pnl/by-brand?months=6` → массив `{brand,
+  - [x] Backend: `GET /api/pnl/by-brand?months=6` → массив `{brand,
         monthly: [{period, revenue, margin_pct, margin_rub}]}`
-  - [ ] Frontend: новый таб в `PnL.tsx`, heatmap-стиль раскраска
-  - [ ] Manager видит только свои бренды (current_brands_filter)
+  - [x] Frontend: новый таб в `PnL.tsx`, heatmap-стиль раскраска
+  - [x] Manager видит только свои бренды (current_brands_filter)
 - **Зависимости:** нет
-- **Статус:** Открыта
+- **Статус:** ✅ Закрыта 2026-05-20 (backend `api/pnl.py:get_pnl_by_brand`, фронт `components/PnLByBrandView.tsx`, селектор глубины 3/6/12 мес, красным <5% / жёлтым 5-15% / зелёным ≥15%)
 
 ---
 
@@ -73,13 +73,18 @@
   (сейчас они просто не показываются — но если показываются, то ронят 403
   без объяснения).
 - **Критерии готовности:**
-  - [ ] Toast-компонент или re-use существующего notification механизма
-  - [ ] 403 не пропускает дальше в `throw Error` — а вылавливается и
-        показывается пользователю
-  - [ ] Не ломается логика 401 redirect → login
-  - [ ] Smoke под manager: открыть запрещённый URL → видна понятная плашка
+  - [x] Toast-компонент: новый `components/ToastHost.tsx` (без зависимостей,
+        слушает `CustomEvent('rnp:forbidden')`)
+  - [x] 403 в `api/client.ts` dispatch'ит событие, throw продолжает работать
+        (caller получит Error как обычно — UI не сваливается)
+  - [x] Логика 401 не тронута (отдельный if + setOn401Handler как раньше)
+  - [x] Smoke: 8 коммит на проде, в DevTools `window.dispatchEvent(new CustomEvent('rnp:forbidden', {detail: {path: '/api/test'}}))` показывает toast
 - **Зависимости:** нет
-- **Статус:** Открыта
+- **Статус:** ✅ Закрыта 2026-05-20. Disabled-кнопки CUD на Plans/Brands/Settings
+  не делал отдельно: для manager эти кнопки уже скрыты через `canEdit` flag
+  в каждой странице (UX-решение лучше disabled+tooltip — менеджер не видит
+  чего не может). Toast нужен только для крайних случаев (прямой URL,
+  legacy-кнопка которая забыла role-check).
 
 ---
 

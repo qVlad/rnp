@@ -37,6 +37,40 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## 2026-05-20 (день) — **P&L drill-down по брендам (TASK-DEV-002)**
+
+Закрыли TASK-DEV-002 из `agents/tasks-developer.md` (P1, источник — ревью c8f6609).
+На странице `/pnl` теперь третий view-mode «По брендам» рядом с «Таблица» / «Карточки».
+
+- **Backend:** `GET /api/pnl/by-brand?months=N` (`api/pnl.py:get_pnl_by_brand`).
+  Для каждого бренда строит помесячный P&L через `build_pnl(granularity="month")`
+  и возвращает `{brand, monthly:[{period, revenue_net, profit, net_margin_pct}],
+  total_*}`. Сортировка по убыванию суммарной выручки. Manager автоматически
+  ограничен своими брендами через `current_brands_filter()` (None → DISTINCT
+  по products.brand для director/head).
+- **Frontend:** `components/PnLByBrandView.tsx` — heatmap-таблица: бренды
+  по строкам, месяцы по колонкам. В ячейке маржа% и выручка ₽ (мелким).
+  Цветовая шкала: красным <5% (плохо), жёлтым 5-15% (норма), зелёным
+  ≥15% (хорошо). Селектор глубины 3/6/12 мес. Sticky первая колонка
+  с названием бренда. Tooltip ячейки — точные ₽ выручки и прибыли.
+- **PnL.tsx:** `ViewMode` расширен до `"table" | "cards" | "by-brand"`,
+  localStorage-persist (`pnl.view.v1`).
+
+**Изменённые файлы:**
+- `backend/app/api/pnl.py` — новый endpoint `get_pnl_by_brand`
+- `frontend/src/api/client.ts` — `api.pnlByBrand(months)` + типы ответа
+- `frontend/src/pages/PnL.tsx` — кнопка «По брендам», ViewMode union, persist
+- `frontend/src/components/PnLByBrandView.tsx` (new) — heatmap-компонент
+- `FEATURES.md` — строка в разделе P&L
+- `agents/tasks-developer.md` — TASK-DEV-002 закрыта
+
+**Что в следующих сессиях:**
+- TASK-DEV-003 (глобальный 403-handler + disabled-кнопки CUD с tooltip)
+- TASK-DEV-004 (фильтр маржа<N% + пресеты в Unit-Plan)
+- TASK-DEV-005 (экспорт supply.recommendations в XLSX)
+
+---
+
 ## 2026-05-20 (ночь) — **UNIT-план Sprint 6: reverse_logistics_mode + WB Tariffs Settings UI**
 
 Закрыли два пункта из остающегося scope UNIT-плана.

@@ -63,6 +63,7 @@
 | `tax_for_fns` | Подсчёт налоговой базы внутри P&L по методике 1С | `pnl_builder.py:tax_for_fns` | director, head |
 | Канонические формулы | `ppvz_net` и `acquiring_net` через case (Продажа − Возврат) | `services/period_aggregates.py` | — |
 | Drill-down по строкам | Раскрытие строк P&L в детали по nm_id | `PnL.tsx` | brands-filter |
+| Drill-down «По брендам» (heatmap) | Матрица бренд × месяц × маржа (TASK-DEV-002): heatmap-таблица, красная подсветка <5%, жёлтая 5-15%, зелёная ≥15%. Глубина 3/6/12 мес. Manager видит только свои бренды. | `pages/PnL.tsx`, `components/PnLByBrandView.tsx`, `api/pnl.py:get_pnl_by_brand` (`GET /api/pnl/by-brand?months=N`) | brands-filter |
 
 ---
 

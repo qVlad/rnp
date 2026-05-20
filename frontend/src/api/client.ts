@@ -35,6 +35,19 @@ async function request<T>(
       on401Handler();
     }
   }
+  if (resp.status === 403) {
+    // Broadcast forbidden — ToastHost в Layout слушает и показывает плашку.
+    // Не делаем return, чтобы caller всё равно увидел Error и не свалился
+    // в успешный путь. TASK-DEV-003 из ревью c8f6609.
+    try {
+      const text = await resp.clone().text().catch(() => "");
+      window.dispatchEvent(
+        new CustomEvent("rnp:forbidden", {
+          detail: { path, message: text || resp.statusText },
+        }),
+      );
+    } catch {}
+  }
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
     throw new Error(`API ${resp.status}: ${text || resp.statusText}`);
