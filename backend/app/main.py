@@ -27,6 +27,7 @@ from app.api import (
     features_doc,
     jam,
     managers_kpi,
+    metric_templates,
     notifications,
     off_platform,
     opex,
@@ -227,3 +228,4 @@ app.include_router(abtest_uploads.router)
 app.include_router(extension.router)
 app.include_router(extension_lk_jobs.router)
 app.include_router(managers_kpi.router)
+app.include_router(metric_templates.router)
