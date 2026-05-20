@@ -2,12 +2,20 @@ from datetime import date, timedelta
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
+from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models import AlertAcknowledgement
 from app.db.session import get_db
-from app.services.auth import get_db_tenant_scoped
+from app.services.auth import (
+    CurrentUser,
+    current_brands_filter,
+    get_current_user,
+    get_db_tenant_scoped,
+)
 from app.services.anomaly import collect_alerts
-from app.services.auth import current_brands_filter
 from app.services.metrics import compute_dashboard, revenue_timeseries, top_skus
 from app.services.periods import Period, get_period, period_from_range
 
@@ -94,6 +102,62 @@ async def get_alerts(
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
     return {"alerts": await collect_alerts(session, brands=brands)}
+
+
+class AlertAckIn(BaseModel):
+    signature: str = Field(min_length=8, max_length=64)
+    alert_code: str = Field(min_length=1, max_length=64)
+
+
+@router.post("/alerts/ack")
+async def ack_alert(
+    body: AlertAckIn,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Серверный ack для алерта (TASK-DEV-020).
+
+    Один `(tenant_id, signature)` глушит алерт для всей команды. Если ack уже
+    есть — DO UPDATE обновляет user_id + acknowledged_at (последний ack-нувший
+    становится «автором»).
+    """
+    stmt = (
+        pg_insert(AlertAcknowledgement)
+        .values(
+            tenant_id=user.tenant_id,
+            user_id=user.id,
+            alert_code=body.alert_code,
+            signature=body.signature,
+        )
+        .on_conflict_do_update(
+            constraint="uq_alert_ack_tenant_signature",
+            set_={
+                "user_id": user.id,
+                "alert_code": body.alert_code,
+            },
+        )
+    )
+    await session.execute(stmt)
+    await session.commit()
+    return {"ok": True, "signature": body.signature}
+
+
+@router.delete("/alerts/ack/{signature}")
+async def unack_alert(
+    signature: str,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Снять ack — вернуть алерт в активные. Любой залогиненный юзер тенанта
+    может снять чужой ack (team-shared state, аудит — через `audit_log` отдельно)."""
+    await session.execute(
+        delete(AlertAcknowledgement).where(
+            AlertAcknowledgement.tenant_id == user.tenant_id,
+            AlertAcknowledgement.signature == signature,
+        )
+    )
+    await session.commit()
+    return {"ok": True}
 
 
 @router.get("/today-vs-yesterday")

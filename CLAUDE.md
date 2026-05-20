@@ -23,6 +23,58 @@ Workflow коротко (детали — [`agents/RULES.md`](agents/RULES.md) �
 
 ---
 
+## ⚠️ ОБЯЗАТЕЛЬНОЕ ПРАВИЛО: post-feature review loop
+
+**После того как фича помечена `Выполнено` и задеплоена — её обязательно
+проходят четыре роли (feedback) и три аналитических роли (анализ).** Детали —
+[`agents/RULES.md`](agents/RULES.md) § Правило 2.5.
+
+Кратко:
+
+1. **Шаг 1 — Feedback (1-3 дня после деплоя):**
+   - **QA** → smoke на проде, сверка цифр, регресс
+   - **Persona — Селлер (Собственник)** → бизнес-смысл, маржа, drill-down
+   - **Persona — РОП** → план/факт, менеджер-центричный view
+   - **Persona — Менеджер WB** → дневной workflow менеджера
+   Отчёты — в `agents/references/persona-reports/` (свободная форма, не задачи).
+
+2. **Шаг 2 — Анализ (параллельно):**
+   - **Lead** → технический scope, приоритеты, новые TASK-LEAD-NNN
+   - **Strategist** → рыночный угол (ICP / конкуренты / угрозы)
+   - **Analyst** → продуктовая аналитика, разбор feedback'а в гипотезы и
+     задачи, формализованные гипотезы `HYP-NNN`
+
+3. **Шаг 3 — Закрытие:** Analyst пишет `agents/references/feedback-reviews/<feature>-YYYY-MM-DD.md`
+   с финальной секцией `## Итог` (что заведено как TASK, что как HYP, что отброшено).
+   Каждый пункт feedback'а попадает в одну из 4 категорий: гипотеза / TASK / BUG / отброшено
+   с обоснованием. «Хотелки в воздухе» не разрешены.
+
+---
+
+## ⚠️ ОБЯЗАТЕЛЬНОЕ ПРАВИЛО: deploy lock перед `./scripts/remote.sh deploy`
+
+**Перед любым деплоем на прод — проверь [`DEPLOY_LOCK.md`](DEPLOY_LOCK.md) и
+поставь замок.** После завершения — сними замок. Детали —
+[`agents/RULES.md`](agents/RULES.md) § Правило 2.6.
+
+Кратко:
+
+1. Открыть `DEPLOY_LOCK.md` ДО запуска `./scripts/remote.sh deploy`.
+2. Если `🟢 Свободно` → заменить блок «Статус» на `🔴 Занято` (кто / время MSK /
+   что катит / версия / длительность), коммит `chore(deploy): lock — vX.Y.Z`,
+   push. Только потом — деплой.
+3. Если `🔴 Занято` → НЕ деплоить молча. Спросить пользователя:
+   «`DEPLOY_LOCK.md` занят (кто=X, с=Y) — реально нужно перебить?».
+   Только после явного «да» — обновить замок и продолжать.
+4. После деплоя — вернуть `🟢 Свободно`, опционально дописать строку в журнал
+   внизу файла, коммит `chore(deploy): unlock — vX.Y.Z OK`, push.
+
+Замок защищает только этап выкатки на прод (pre-deploy `pg_dump` + rsync +
+docker build + warm shutdown Celery до 30 мин). Коммитить и пушить можно
+когда угодно — деплоить параллельно нельзя.
+
+---
+
 ## ⚠️ ОБЯЗАТЕЛЬНОЕ ПРАВИЛО: документация + версия + деплой после новой фичи
 
 **После завершения любой новой функции (UI-страница / API endpoint / сервис /
@@ -196,6 +248,7 @@ docker-compose.yml
 | **0046** | unit_plan_global_config.reverse_logistics_mode (`tariff` \| `flat_50`) — флаг режима обратной логистики (UNIT_PLAN.md §14.5) |
 | **0047** | unit_plan_snapshot_config — freeze global_config в момент snapshot'а (UNIT_PLAN.md §10), чтобы diff не показывал false-positive при изменении констант после snapshot'а |
 | **0048** | extension_api_tokens — long-lived токены `rnpext_<32-hex>` для Chrome-расширения (вместо 12-часового JWT в cookie). UI в /settings → «Токены для Chrome-расширения». |
+| **0049** | **alert_acknowledgements** — серверный ack для AlertsBar (TASK-DEV-020). Заменяет `localStorage["alerts.dismissed.v2"]` на таблицу `(tenant_id, user_id, alert_code, signature, acknowledged_at)` с UNIQUE на `(tenant_id, signature)`. Один ack глушит алерт для всей команды; ФИО+время видны при разворачивании «Прочитанные». Signature = sha1(`code|message`)[:32] — если message меняется (например recon на новую неделю), новый ack не унаследуется. Endpoints `POST /api/dashboard/alerts/ack` + `DELETE /api/dashboard/alerts/ack/{signature}`. |
 
 ## Роли и RBAC
 

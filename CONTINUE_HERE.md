@@ -37,6 +37,60 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## 2026-05-20 (ночь) — **TASK-DEV-020: серверный alerts_ack (миграция 0049)**
+
+Версии **0.4.0 → 0.5.0** (backend / frontend / extension). Закрыта первая
+P0 инфра-задача Sprint-1 по плану из персон-ревью.
+
+Раньше ack алертов хранился в `localStorage["alerts.dismissed.v2"]` — на втором
+устройстве РОПа всё снова красное, между менеджерами нет sync. Теперь —
+серверное состояние:
+
+- **Миграция 0049** `alert_acknowledgements (id, tenant_id, user_id, alert_code,
+  signature, acknowledged_at)` с UNIQUE `(tenant_id, signature)` и индексом
+  `(tenant_id, alert_code)`. Один ack глушит для всей команды.
+- **Signature** = `sha1(code|message)[:32]` (см. `services/anomaly.py:alert_signature`).
+  Если message меняется (например, recon-алерт сместился на новую неделю) →
+  новый signature → ack из прошлой итерации не уносится. Future-proof для
+  TASK-DEV-011.
+- **Endpoints** в `api/dashboard.py`:
+  - `POST /api/dashboard/alerts/ack` body `{signature, alert_code}` — UPSERT
+    через PostgreSQL `on_conflict_do_update` (последний ack-нувший становится
+    «автором»).
+  - `DELETE /api/dashboard/alerts/ack/{signature}` — снять ack, вернуть в
+    активные (любой залогиненный юзер тенанта может, audit отдельно).
+- **`collect_alerts` enrich**: после сбора всех алертов вызывает
+  `_enrich_with_ack` который джойнит таблицу с `users` и добавляет каждому
+  алерту поля `signature`, `acknowledged_at` (ISO), `acknowledged_by` (full_name).
+- **AlertsBar.tsx** переписан на TanStack Query mutations с invalidate
+  `["alerts"]` после ack/unack. Старый localStorage не вычищаем — он просто
+  перестаёт читаться, постепенно забудется. В UI при разворачивании
+  «Прочитанные» отображается «ФИО · 21.05 14:23» рядом с каждым acked-алертом.
+
+**Изменённые файлы:**
+- `backend/app/db/migrations/versions/0049_alert_acknowledgements.py` (already
+  committed by parallel agent in d62b17b)
+- `backend/app/db/models.py` — `AlertAcknowledgement` (line 2137+)
+- `backend/app/services/anomaly.py` — `alert_signature` + `_enrich_with_ack` +
+  `return await _enrich_with_ack(session, alerts)` в конце
+- `backend/app/api/dashboard.py` — `ack_alert` / `unack_alert` endpoints +
+  Pydantic `AlertAckIn`
+- `frontend/src/api/client.ts` — типизация ответа + `ackAlert` / `unackAlert`
+- `frontend/src/components/AlertsBar.tsx` — server state через TanStack
+- `backend/pyproject.toml`, `frontend/package.json`, `extension/package.json`
+  — 0.4.0 → 0.5.0
+- `CLAUDE.md` — строка 0049 в таблице миграций
+- `FEATURES.md` — строка «Server-side alerts ack» в разделе 13
+- `agents/tasks-developer.md` — TASK-DEV-020 → ✅ Закрыта
+
+**Что в следующих сессиях (приоритеты по плану Sprint-1):**
+- TASK-DEV-011 — recon-алерт в AlertsBar (использует signature-механизм 020,
+  правило в `services/anomaly.py` через `pnl_reconciliation.build_reconciliation`)
+- TASK-DEV-009 — Δ + sparkline + sort в `/managers-kpi` (с Redis-кешем)
+- TASK-DEV-018 — drill-down строки `/managers-kpi` → P&L с `?brands=`
+
+---
+
 ## 2026-05-20 (вечер) — **Cashback в marketing_total + TASK-DEV-013 фильтр по бренду + Worst-SKU на дашборде + 15 новых задач из ревью**
 
 Версии бампнуты до **0.3.0** (backend / frontend / extension) по новому

@@ -601,7 +601,26 @@ export const api = {
       `/api/dashboard/top-skus?${qs}&by=${by}&order=${order}&limit=${limit}&mode=${mode}`,
     );
   },
-  alerts: () => request<{ alerts: any[] }>("/api/dashboard/alerts"),
+  alerts: () =>
+    request<{
+      alerts: Array<{
+        level: "info" | "warning" | "danger";
+        code: string;
+        message: string;
+        signature: string;
+        acknowledged_at: string | null;
+        acknowledged_by: string | null;
+      }>;
+    }>("/api/dashboard/alerts"),
+  ackAlert: (signature: string, alert_code: string) =>
+    request<{ ok: boolean; signature: string }>(
+      "/api/dashboard/alerts/ack",
+      { method: "POST", body: JSON.stringify({ signature, alert_code }) },
+    ),
+  unackAlert: (signature: string) =>
+    request<{ ok: boolean }>(`/api/dashboard/alerts/ack/${signature}`, {
+      method: "DELETE",
+    }),
 
   pnl: (
     from: string,

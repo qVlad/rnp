@@ -297,6 +297,7 @@
 | Evaluate endpoint | Ручной trigger проверки правил (dry-run) | `POST /api/notifications/evaluate` | director |
 | Beat schedule | `evaluate_notifications` каждый час | `celery_app.py:notifications-hourly` | — |
 | Anomaly detection | Сервис обнаружения аномалий (TODO: расширить до 13+ типов) | `services/anomaly.py` | — |
+| **Server-side alerts ack** (TASK-DEV-020) | Серверный ack для AlertsBar — заменяет localStorage. Один ack на `(tenant_id, signature)` глушит для всей команды; ФИО+время видны при разворачивании. Signature = sha1(`code\|message`) — при изменении message (recon на новую неделю) ack не уносится. | миграция 0049, модель `AlertAcknowledgement`, `services/anomaly.py:alert_signature/_enrich_with_ack`, endpoints `POST/DELETE /api/dashboard/alerts/ack`, `components/AlertsBar.tsx` | tenant-scoped |
 
 ---
 

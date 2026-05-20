@@ -264,7 +264,7 @@
   - [ ] Только для `director_or_head` — manager в reconciliation не имеет смысла
   - [ ] Severity: `warning` при Δ>1% / `critical` при Δ>3%
 - **Зависимости:** нет
-- **Статус:** Открыта
+- **Статус:** В работе — 2026-05-20 — Claude (dev)
 
 ---
 
@@ -442,13 +442,14 @@
   AlertsBar мигрирует с localStorage на server state + invalidate query
   при ack. Видно «Маша подтвердила в 14:23».
 - **Критерии готовности:**
-  - [ ] Migration 0049 + модель + индекс (tenant, user, code)
-  - [ ] Endpoints + tenant-scoped
-  - [ ] AlertsBar читает ack-status из API, не из localStorage
-  - [ ] В UI показывается ФИО ack-нувшего + время
-  - [ ] Backfill из localStorage не нужен (старые ack просто сбрасываются один раз)
+  - [x] Migration 0049 + модель `AlertAcknowledgement` + UNIQUE на (tenant_id, signature)
+  - [x] Endpoints `POST/DELETE /api/dashboard/alerts/ack` — tenant-scoped через `get_db_tenant_scoped`
+  - [x] AlertsBar мигрирован на server state через TanStack Query mutations
+  - [x] В UI отображается ФИО + время ack-нувшего при разворачивании «Прочитанные»
+  - [x] Signature = sha1(code\|message)[:32] — при изменении message ack не уносится
+  - [x] Старый localStorage не вычищаем — постепенно забудется
 - **Зависимости:** TASK-DEV-006
-- **Статус:** Открыта
+- **Статус:** ✅ Закрыта 2026-05-20 (миграция 0049, `services/anomaly.py:alert_signature` + `_enrich_with_ack`, `api/dashboard.py:ack_alert/unack_alert`, `components/AlertsBar.tsx` переписан на server state)
 
 ---
 

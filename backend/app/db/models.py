@@ -2132,3 +2132,30 @@ class ExtensionApiToken(Base, TenantScopedMixin):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AlertAcknowledgement(Base, TenantScopedMixin):
+    """Серверный ack для алертов (миграция 0049, TASK-DEV-020).
+
+    Заменяет localStorage-ack в AlertsBar. Один `signature` (sha1 от code+message)
+    глушит алерт для всей команды; ФИО+время видны всем при разворачивании
+    «Прочитанные сегодня».
+    """
+
+    __tablename__ = "alert_acknowledgements"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    alert_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    signature: Mapped[str] = mapped_column(String(64), nullable=False)
+    acknowledged_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "signature", name="uq_alert_ack_tenant_signature"),
+    )

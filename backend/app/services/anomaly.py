@@ -4,6 +4,7 @@ Cheap, deterministic checks. ML/forecasting is out of MVP scope.
 """
 from __future__ import annotations
 
+import hashlib
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
@@ -11,16 +12,69 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
+    AlertAcknowledgement,
     AppSetting,
     Cogs,
     Product,
     SyncCheckpoint,
+    User,
     WbAdCampaign,
     WbAdStatsDaily,
     WbReportDetail,
 )
 from app.services.metrics import compute_dashboard
 from app.services.unit_economics import build_unit_economics
+
+
+def alert_signature(code: str, message: str) -> str:
+    """Stable identifier для конкретного алерта.
+
+    Если код тот же, но message изменился (например `recon_delta` сместился
+    на новую неделю), signature будет другой → ack из прошлой итерации
+    не глушит новый. См. миграцию 0049.
+    """
+    h = hashlib.sha1(f"{code}|{message}".encode("utf-8")).hexdigest()
+    return h[:32]
+
+
+async def _enrich_with_ack(
+    session: AsyncSession, alerts: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Добавляет `signature` каждому алерту + если ack-запись есть в БД,
+    то `acknowledged_at` (ISO) и `acknowledged_by` (full_name).
+
+    Tenant scope обеспечен через `get_db_tenant_scoped` (session-level filter)
+    либо передаваемой dependency; здесь — простой SELECT без явного tenant_id.
+    """
+    if not alerts:
+        return alerts
+    for a in alerts:
+        a["signature"] = alert_signature(a.get("code", ""), a.get("message", ""))
+    signatures = [a["signature"] for a in alerts]
+    rows = (
+        await session.execute(
+            select(
+                AlertAcknowledgement.signature,
+                AlertAcknowledgement.acknowledged_at,
+                User.full_name,
+                User.username,
+            )
+            .join(User, User.id == AlertAcknowledgement.user_id)
+            .where(AlertAcknowledgement.signature.in_(signatures))
+        )
+    ).all()
+    ack_by_sig = {
+        r.signature: {
+            "at": r.acknowledged_at.isoformat() if r.acknowledged_at else None,
+            "by": r.full_name or r.username,
+        }
+        for r in rows
+    }
+    for a in alerts:
+        ack = ack_by_sig.get(a["signature"])
+        a["acknowledged_at"] = ack["at"] if ack else None
+        a["acknowledged_by"] = ack["by"] if ack else None
+    return alerts
 
 
 DEFAULT_THRESHOLDS = {
@@ -390,4 +444,4 @@ async def collect_alerts(
             ),
         })
 
-    return alerts
+    return await _enrich_with_ack(session, alerts)
