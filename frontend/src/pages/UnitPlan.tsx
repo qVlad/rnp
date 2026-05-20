@@ -406,7 +406,7 @@ const COLUMNS: ColDef[] = [
         nmId={r.nm_id}
         field="volume_l"
         value={r.volume_l}
-        display={r.volume_l != null ? r.volume_l.toFixed(2) : "—"}
+        display={r.volume_l != null ? Number(r.volume_l).toFixed(2) : "—"}
         editor={{ kind: "number", min: 0, max: 99999, step: 0.01 }}
         normalize={(s) => {
           if (s.trim() === "") return null;
