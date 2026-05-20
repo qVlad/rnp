@@ -39,7 +39,8 @@
 | `agents/designer.md` | UX Designer |
 | `agents/art-director.md` | Art Director |
 | `agents/qa.md` | QA Engineer |
-| `agents/tasks-lead.md` … `tasks-qa.md` | Задачи по ролям |
+| `agents/release-manager.md` | Release Manager — единственный исполнитель bump+deploy (single-instance через `DEPLOY_LOCK.md`) |
+| `agents/tasks-lead.md` … `tasks-qa.md`, `tasks-release-manager.md` | Задачи по ролям |
 | `agents/bugs-developer.md`, `bugs-designer.md` | Баги по ролям |
 
 ### Стратегия и аналитика
@@ -227,6 +228,12 @@ Lead'а).
 корне репо и **поставить туда замок** до запуска `./scripts/remote.sh deploy`.
 После завершения деплоя — **снять замок**.
 
+> ⚠️ С момента введения роли **Release Manager** (см. Правило 2.7 ниже) лок
+> ставит/снимает **только она**. Остальные роли запускать
+> `./scripts/remote.sh deploy` не должны вообще — если оказались перед
+> деплоем, это сигнал что цепочка handoff'ов сломалась, остановись и передай
+> Release Manager'у.
+
 ### Зачем
 
 На проде один сервер с pre-deploy `pg_dump` + warm shutdown'ом Celery (до
@@ -279,6 +286,95 @@ Lead'а).
 🟢, оба пишут 🔴, побеждает тот кто push'нул вторым). На практике
 агентов один-два, риск минимален. Если станет проблемой — переехать
 на Redis SETNX.
+
+---
+
+## Правило 2.7 — Release Manager: единственный исполнитель bump+deploy (КРИТИЧНО)
+
+**Только роль Release Manager** (см. `agents/release-manager.md`) имеет право:
+
+1. Бампать версии в `backend/pyproject.toml` + `frontend/package.json` +
+   `extension/package.json` (все три синхронно, на одну версию).
+2. Запускать `./scripts/remote.sh deploy` в любом варианте
+   (`FORCE=1`, `FAST=1`, `WAIT_MAX_SEC=N`).
+3. Ставить и снимать замок в `DEPLOY_LOCK.md`.
+
+Остальные роли (Lead, Developer, UX Designer, Art Director, QA, Strategist,
+Analyst, Persona-*) этого **НЕ делают**. После того как задача в
+`tasks-<role>.md` помечена `Выполнено — YYYY-MM-DD`, ответственный за неё
+агент пишет в логе задачи «Готово к релизу, передаю Release Manager'у» и
+останавливается. Release Manager (или новый запуск Claude'а с этой ролью)
+подхватывает.
+
+### Зачем — что ломалось без этого правила
+
+- **Гонка bump'а:** два агента после своих параллельных задач одновременно
+  бампают версии в один и тот же шаг — git merge-конфликт, один релиз
+  теряется или версии разъезжаются между тремя файлами.
+- **Гонка deploy'я:** два `./scripts/remote.sh deploy` параллельно — rsync
+  поверх rsync, `docker build` конфликтует, Celery warm-shutdown (до 30 мин)
+  ждёт первого деплоя, второй убивает worker'ы.
+- **Half-bumped state:** агент бампнул backend+frontend, забыл extension —
+  `/api/version` отдаёт одно, popup расширения — другое.
+
+Все три проблемы решаются одним правилом: **единая точка ответственности +
+файловый замок + single-instance enforcement**.
+
+### Single-instance enforcement
+
+Только **один** экземпляр Release Manager может быть в state «работаю над
+релизом» в любой момент времени. Гарантия — через два видимых сигнала:
+
+1. **`DEPLOY_LOCK.md` = `🔴 Занято`** — основной замок. Ставится **до**
+   bump'а (т.е. в начале release-flow, а не только перед `remote.sh deploy`),
+   снимается **после** деплоя.
+2. **`tasks-release-manager.md`** — у активной записи `RELEASE-NNN` (если
+   создавали) `**Статус:** В работе`. Fallback-сигнал.
+
+Если второй агент хочет запустить Release Manager и видит `🔴 Занято`:
+
+- **Дождаться** разблокировки (если деплой явно в процессе — по timestamp'у
+  замка и git-активности).
+- **Переспросить пользователя** если замок выглядит «зависшим» (>1 час без
+  активности, нет коммита со снятием).
+- **НЕ запускать второй параллельный bump+deploy ни при каких условиях** —
+  даже «срочный hotfix» ждёт. Если ситуация критическая, эскалировать
+  пользователю запросом «можно ли force-unlock?», но не делать самостоятельно.
+
+### Workflow Release Manager'а
+
+См. полный workflow в `agents/release-manager.md` §«Workflow». Краткое
+содержание:
+
+1. Проверить `DEPLOY_LOCK.md` (🟢 / 🔴).
+2. Поставить замок (отдельный коммит `chore(deploy): lock — vX.Y.Z`).
+3. Бампнуть 3 файла на единую SemVer-версию.
+4. `git add` точечно (без `-A`), commit с conventional-commit prefix.
+5. `git push origin main`.
+6. `./scripts/remote.sh deploy`.
+7. Снять замок (`chore(deploy): unlock — vX.Y.Z OK` или `FAIL: <причина>`).
+8. Опционально — строка в журнал внизу `DEPLOY_LOCK.md`.
+
+### Исключения (когда Release Manager НЕ требуется)
+
+- **WIP / черновик** — фича ещё не в `Выполнено`. Release Manager
+  подключается только после закрытия задачи.
+- **Чистый рефакторинг без user-visible изменений** — bump опционален.
+  Lead в комментарии к задаче решает: «можно без релиза» / «нужен patch-bump».
+- **Правки документации без кода/конфига** — patch-bump опционален,
+  `remote.sh deploy` можно пропустить (нет runtime-impact). Если делаем
+  bump — всё равно через Release Manager, чтобы 3 файла остались синхронными.
+
+### Что если у меня нет «отдельного агента Release Manager»
+
+В однопользовательской сессии Claude'а это та же сессия — просто **смена
+шляпы**. Закончил работу как Developer (TASK-DEV-NNN → Выполнено) → дальше
+действуй **как Release Manager**: читай `agents/release-manager.md`,
+ставь замок, бампай, коммить, пушь, деплой, снимай замок. Single-instance
+гарантия не нарушается — параллельных сессий нет.
+
+Если параллельная сессия (другой агент / второй экземпляр Claude) уже взяла
+release — увидишь это по `DEPLOY_LOCK.md` и подождёшь.
 
 ---
 

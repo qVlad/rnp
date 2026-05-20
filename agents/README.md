@@ -4,9 +4,10 @@
 
 ## Зачем
 
-- Чёткое разделение: архитектура / код / UX / бренд / QA / рынок / реальные роли клиентов
+- Чёткое разделение: архитектура / код / UX / бренд / QA / рынок / реальные роли клиентов / **релиз-инженерия**
 - Прозрачный backlog по каждой роли
 - Общая дисциплина через `RULES.md`
+- Single-instance координация деплоев — через выделенную роль **Release Manager** + `DEPLOY_LOCK.md`
 - Источник истины — `CLAUDE.md` + сопутствующие гайды
 
 ## Скоуп (read first)
@@ -29,6 +30,7 @@
 | **UX Designer** | [`designer.md`](designer.md) | [`tasks-designer.md`](tasks-designer.md) | [`bugs-designer.md`](bugs-designer.md) | UI/UX дашбордов, P&L, ДДС, drill-down, ИА |
 | **Art Director** | [`art-director.md`](art-director.md) | [`tasks-art.md`](tasks-art.md) | — | Бренд, design tokens, иконки, визуальная согласованность |
 | **QA** | [`qa.md`](qa.md) | [`tasks-qa.md`](tasks-qa.md) | (заводит в bugs-dev/des) | Smoke на проде, сверка цифр, RBAC, регресс. **Промежуточный слой между Persona и продуктовой командой** |
+| **Release Manager** | [`release-manager.md`](release-manager.md) | [`tasks-release-manager.md`](tasks-release-manager.md) | — | **Единственный** кто бампает версии (3 файла) и запускает `./scripts/remote.sh deploy`. Single-instance через [`DEPLOY_LOCK.md`](../DEPLOY_LOCK.md). Остальные роли после `Выполнено` передают эстафету. |
 
 ### Класс 2 — Стратег и Аналитик (думают про рынок и продукт)
 
@@ -77,7 +79,16 @@
                   │  Developer  Designer  ArtDir  QA   │
                   │  (реализация / визуал / тесты)     │
                   └──────────────┬─────────────────────┘
-                                 │
+                                 │ task: Выполнено
+                                 │ → handoff
+                                 ▼
+                  ┌────────────────────────────────────┐
+                  │       RELEASE MANAGER              │
+                  │  (DEPLOY_LOCK 🔴 → bump 3 файлов   │
+                  │   → commit → push → deploy →       │
+                  │   DEPLOY_LOCK 🟢)                  │
+                  │  ⚠️ single-instance (только 1)     │
+                  └──────────────┬─────────────────────┘
                                  │ deploy → prod
                                  ▼
                   ┌────────────────────────────────────┐
@@ -128,6 +139,7 @@
 3. **Persona не правит код / схему / БД.** Только наблюдает и пишет отчёт.
 4. **QA — единственный переводчик** от наблюдений Persona к тикетам команды.
 5. **Lead приоритизирует** входящее со всех трёх источников: Strategist (стратегические), Persona-feedback (UX/функциональные gaps), внутренний техдолг.
+6. **Release Manager — единственная роль, которая бампает версии и деплоит.** Single-instance: `DEPLOY_LOCK.md` = `🔴 Занято` блокирует любого второго release-агента до снятия замка. Developer/Designer/ArtDir/QA после `Выполнено` **НЕ бампают и НЕ деплоят сами** — передают эстафету. Подробности — `release-manager.md` + `RULES.md` § Правила 2.6, 2.7.
 
 ## Документы команды
 

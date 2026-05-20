@@ -78,7 +78,15 @@ docker build + warm shutdown Celery до 30 мин). Коммитить и пу�
 ## ⚠️ ОБЯЗАТЕЛЬНОЕ ПРАВИЛО: документация + версия + деплой после новой фичи
 
 **После завершения любой новой функции (UI-страница / API endpoint / сервис /
-миграция / Celery-task) — обязательно три шага в таком порядке:**
+миграция / Celery-task) — обязательно три шага в таком порядке.**
+
+> ⚠️ **Шаги 2 и 3 (bump + commit/push/deploy) выполняет ТОЛЬКО роль
+> Release Manager** (см. [`agents/release-manager.md`](agents/release-manager.md)
+> и [`agents/RULES.md`](agents/RULES.md) § Правило 2.7). Single-instance —
+> через `DEPLOY_LOCK.md`. Developer/Designer/ArtDir/QA/Lead/Strategist/Analyst
+> сами **НЕ бампают версии и НЕ запускают `./scripts/remote.sh deploy`**.
+> В однопользовательской сессии Claude'а это «смена шляпы» — закончил
+> Developer'ом, дальше та же сессия действует как Release Manager.
 
 ### 1. Обновить документацию
 
@@ -527,17 +535,24 @@ fallback на `Authorization: Bearer <jwt>` если cookie не валидна.
 - Smoke-test после каждой фичи.
 - TypeScript LSP-warnings про `react`/`@tanstack`/JSX игнорируем.
 - **Обязательно после каждой завершённой фичи** — docs + version bump + commit + push +
-  deploy. Без отдельного запроса от пользователя. Цикл:
-  1. Обновить документацию (см. правило выше, раздел 1).
-  2. **Бампнуть версию** в `backend/pyproject.toml` + `frontend/package.json` +
+  deploy. Без отдельного запроса от пользователя. **Шаги 2-6 — это работа
+  Release Manager'а** (см. `agents/release-manager.md`). Если работаешь в
+  одной сессии — смени шляпу с Developer на Release Manager после
+  `Выполнено`. Если параллельно идёт другой release (`DEPLOY_LOCK.md` = 🔴) —
+  жди или переспроси пользователя (правила 2.6 / 2.7).
+  Цикл:
+  1. Обновить документацию (см. правило выше, раздел 1). — любая роль
+  2. **[Release Manager]** Поставить замок в `DEPLOY_LOCK.md` (🟢 → 🔴).
+  3. **[Release Manager]** Бампнуть версию в `backend/pyproject.toml` + `frontend/package.json` +
      `extension/package.json` (SemVer: feat → minor, fix/chore/docs → patch,
      breaking → major). Все три файла на одну и ту же версию.
-  3. `git add` затронутые файлы + 3 файла с версиями (не `git add -A` — может
+  4. **[Release Manager]** `git add` затронутые файлы + 3 файла с версиями (не `git add -A` — может
      попасть .env/секреты).
-  4. `git commit -m "feat|fix|docs|chore(<scope>): <что сделано> (vX.Y.Z)"` (conventional-commits).
-  5. `git push` в `qVlad/rnp` main.
-  6. `./scripts/remote.sh deploy` (FORCE=1 если нет активных celery-тасков).
+  5. **[Release Manager]** `git commit -m "feat|fix|docs|chore(<scope>): <что сделано> (vX.Y.Z)"` (conventional-commits).
+  6. **[Release Manager]** `git push` в `qVlad/rnp` main.
+  7. **[Release Manager]** `./scripts/remote.sh deploy` (FORCE=1 если нет активных celery-тасков).
      Pre-deploy `pg_dump` делается автоматически.
+  8. **[Release Manager]** Снять замок в `DEPLOY_LOCK.md` (🔴 → 🟢) + опционально строка в журнал.
   Исключения (НЕ коммитим / НЕ бампаем): когда юзер сказал «не коммить», когда
   работа явно WIP/черновик, когда меняем `.env` или секреты. Чистый рефакторинг
   без user-facing изменений — patch-бамп опционален, на усмотрение.
