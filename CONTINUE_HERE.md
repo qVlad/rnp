@@ -37,6 +37,40 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## 2026-05-20 — **TASK-DEV-011: recon-drift алерт в AlertsBar**
+
+Версии **0.6.1 → 0.7.0** (feat → minor).
+
+Owner раньше узнавал о расхождении WB-кабинет ↔ наша P&L только зайдя в
+`/pnl-reconciliation` руками. Теперь — auto-warning в AlertsBar на дашборде.
+
+- **Backend** (`services/anomaly.py`, блок `# 6) Reconciliation drift`):
+  для `director_or_head` (`brands is None`) — вызываем
+  `build_reconciliation(weeks_back=4, diff_threshold_pct=1.0)`. Фильтруем
+  «закрытые» недели (`wb.revenue_gross > 0` и `rows_count > 0`), затем
+  ищем те где `|diff.revenue_gross_pct| > 1.0`. Если такие есть — один
+  суммирующий алерт (не спамим по неделе): `level=danger` если макс >3%,
+  иначе `warning`. Message: «Сверка с WB-кабинетом: N из M закрытых
+  недель с расхождением >1% (худшая — period_from…period_to, Δ ±X.XX%)».
+  Поле `link: "/pnl-reconciliation"` для deep-link.
+- **Frontend** (`components/AlertsBar.tsx`): добавил optional `link?: string`
+  в Alert-интерфейс, рендерит `<Link to={a.link}>открыть →</Link>` справа
+  от message если поле задано. `react-router-dom` уже подключён в App.tsx.
+- **Manager-фильтр**: запросы менеджера приходят с `brands=set(...)`,
+  глобальный recon для них недоступен (TASK acceptance criteria).
+- **Signature**: алерт уже подхватывает существующую `_enrich_with_ack`
+  логику — на новой неделе message изменится → новый signature → ack
+  с прошлой недели не уносится (предусмотрено в TASK-DEV-020).
+
+**Изменённые файлы:**
+- `backend/app/services/anomaly.py` — новый блок `# 6) Reconciliation drift`
+- `frontend/src/components/AlertsBar.tsx` — Link import + рендер `link` поля
+- `backend/pyproject.toml`, `frontend/package.json`, `extension/package.json` — 0.7.0
+- `FEATURES.md` — строка в разделе «Уведомления»
+- `agents/tasks-developer.md` — TASK-DEV-011 → Выполнено
+
+---
+
 ## 2026-05-20 (ночь) — **TASK-DEV-020: серверный alerts_ack (миграция 0049)**
 
 Версии **0.4.0 → 0.5.0** (backend / frontend / extension). Закрыта первая

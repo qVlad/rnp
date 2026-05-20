@@ -225,7 +225,7 @@
   - [ ] Δ-цвета: >0 зелёный, <0 красный, |Δ|<3% серый (шум)
   - [ ] Sparkline через recharts <LineChart> minimalistic (без осей)
 - **Зависимости:** TASK-DEV-001
-- **Статус:** Открыта
+- **Статус:** В работе — 2026-05-20 — Developer (Claude основная сессия)
 
 ---
 
@@ -259,12 +259,22 @@
   если на любой из последних 4 closed-недель Δ revenue_gross > 1% или
   Δ margin > 2pp — генерируем warning со ссылкой на `/pnl-reconciliation`.
 - **Критерии готовности:**
-  - [ ] Backend: правило в `services/alerts.py` (или соответствующем модуле)
-  - [ ] Alert содержит `link: "/pnl-reconciliation?week=YYYY-WW"` для deep-link
-  - [ ] Только для `director_or_head` — manager в reconciliation не имеет смысла
-  - [ ] Severity: `warning` при Δ>1% / `critical` при Δ>3%
+  - [x] Backend: правило в `services/anomaly.py` (блок `# 6) Reconciliation drift`),
+        переиспользует `build_reconciliation(weeks_back=4, diff_threshold_pct=1.0)`
+  - [x] Alert содержит `link: "/pnl-reconciliation"` (без `?week=` — страница уже
+        показывает все 4 недели; добавление anchor-scroll — follow-up)
+  - [x] Только для `director_or_head` — гейт `if brands is None` (manager
+        работает в brand-scope, у него `brands=set(...)`, у директора/head `None`)
+  - [x] Severity: `warning` при |Δ|>1% / `danger` при |Δ|>3% (фронтенд маппит
+        critical→danger). Один суммирующий алерт, не спамим по неделе.
 - **Зависимости:** нет
-- **Статус:** В работе — 2026-05-20 — Claude (dev)
+- **Статус:** ✅ Выполнено 2026-05-20 (backend `services/anomaly.py:# 6) Reconciliation drift`,
+  фронт `AlertsBar.tsx` поддерживает optional `link` поле через `react-router-dom Link`,
+  feat → v0.7.0)
+- **Не сделано (вне scope, follow-up):** Δ margin pp — в reconciliation нет «маржи»
+  в side-by-side виде (только revenue_gross_pct и payout_to_gross_pct), поэтому
+  взяли только revenue_gross в качестве primary recon-метрики. Если разъедутся
+  downstream P&L цифры — Δ revenue_gross их «потянет за собой».
 
 ---
 

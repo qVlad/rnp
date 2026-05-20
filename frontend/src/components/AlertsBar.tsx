@@ -11,6 +11,7 @@
  * после деплоя он просто перестаёт читаться и постепенно забудется.
  */
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Icon, IconName } from "@/components/Icon";
 import { api } from "@/api/client";
@@ -22,6 +23,7 @@ interface Alert {
   signature: string;
   acknowledged_at: string | null;
   acknowledged_by: string | null;
+  link?: string | null;
 }
 
 const ICON_BY_LEVEL: Record<Alert["level"], IconName> = {
@@ -82,6 +84,15 @@ export default function AlertsBar({ alerts }: { alerts: Alert[] }) {
             className="mt-0.5 shrink-0"
           />
           <span className="flex-1 text-fg leading-relaxed">{a.message}</span>
+          {a.link && (
+            <Link
+              to={a.link}
+              className="text-muted hover:text-fg transition-colors duration-150 underline underline-offset-2 whitespace-nowrap shrink-0"
+              title="Перейти"
+            >
+              открыть →
+            </Link>
+          )}
           <button
             type="button"
             onClick={() => ackMut.mutate(a)}

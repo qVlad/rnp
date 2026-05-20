@@ -298,6 +298,7 @@
 | Beat schedule | `evaluate_notifications` каждый час | `celery_app.py:notifications-hourly` | — |
 | Anomaly detection | Сервис обнаружения аномалий (TODO: расширить до 13+ типов) | `services/anomaly.py` | — |
 | **Server-side alerts ack** (TASK-DEV-020) | Серверный ack для AlertsBar — заменяет localStorage. Один ack на `(tenant_id, signature)` глушит для всей команды; ФИО+время видны при разворачивании. Signature = sha1(`code\|message`) — при изменении message (recon на новую неделю) ack не уносится. | миграция 0049, модель `AlertAcknowledgement`, `services/anomaly.py:alert_signature/_enrich_with_ack`, endpoints `POST/DELETE /api/dashboard/alerts/ack`, `components/AlertsBar.tsx` | tenant-scoped |
+| **Recon-drift alert** (TASK-DEV-011) | Авто-warning в AlertsBar если на одной из последних 4 закрытых недель `|Δ revenue_gross%|` > 1% (warning) или > 3% (danger). Owner раньше узнавал о расхождении WB↔наша P&L только зайдя в `/pnl-reconciliation` вручную. Алерт содержит `link: "/pnl-reconciliation"` для deep-link, AlertsBar рендерит кнопку «открыть →». Только для director_or_head (`brands is None`). | `services/anomaly.py` блок `# 6) Reconciliation drift`, `components/AlertsBar.tsx:Link` | director_or_head |
 
 ---
 
