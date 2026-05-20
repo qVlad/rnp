@@ -56,6 +56,29 @@ def _pick(kpis: list[dict[str, Any]], key: str) -> float | int | None:
     return None
 
 
+def _add_months(year: int, month: int, delta: int) -> tuple[int, int]:
+    """Сдвиг (year, month) на delta месяцев — отрицательный для отката."""
+    total = year * 12 + (month - 1) + delta
+    return total // 12, total % 12 + 1
+
+
+async def _month_revenue_margin(
+    session: AsyncSession,
+    year: int,
+    month: int,
+    brands: set[str] | None,
+    mode: Literal["preliminary", "final", "hybrid"],
+) -> tuple[float, float]:
+    """Возвращает (revenue_net, margin_pct) за указанный месяц для набора брендов."""
+    last_day = monthrange(year, month)[1]
+    period = period_from_range(date(year, month, 1), date(year, month, last_day))
+    d = await compute_dashboard(session, period, brands=brands, mode=mode)
+    kpis = d.get("kpis", [])
+    rev = float(_pick(kpis, "revenue_net") or 0)
+    margin_pct = float(_pick(kpis, "margin_pct") or 0)
+    return rev, margin_pct
+
+
 @router.get("/managers-kpi", dependencies=[Depends(require_director_or_head)])
 async def managers_kpi(
     year: Annotated[int, Query(ge=2020, le=2100)],
@@ -103,24 +126,65 @@ async def managers_kpi(
         if brand and brand not in m["brands"]:
             m["brands"].append(brand)
 
+    # Для Δ к прошлому месяцу и sparkline (TASK-DEV-009) — для прошлых месяцев
+    # ВСЕГДА mode='final' (закрытый отчёт), иначе preliminary даст ложную просадку
+    # на 5-15% и Δ покажет красное там где на самом деле всё ок.
+    prev_y, prev_m = _add_months(year, month, -1)
+    spark_months: list[tuple[int, int]] = []
+    for delta in range(-5, 1):  # 6 точек: 5 назад + текущий месяц
+        y, mm = _add_months(year, month, delta)
+        spark_months.append((y, mm))
+
     items: list[dict[str, Any]] = []
     for m in managers.values():
         brand_set = set(m["brands"]) if m["brands"] else None
         if brand_set:
             d = await compute_dashboard(session, period, brands=brand_set, mode=mode)
             kpis = d.get("kpis", [])
+            cur_rev = float(_pick(kpis, "revenue_net") or 0)
+            cur_margin_pct = float(_pick(kpis, "margin_pct") or 0)
+
+            prev_rev, prev_margin_pct = await _month_revenue_margin(
+                session, prev_y, prev_m, brand_set, mode="final"
+            )
+
+            sparkline: list[float] = []
+            for sy, sm in spark_months:
+                if (sy, sm) == (year, month):
+                    sparkline.append(round(cur_rev, 2))
+                elif (sy, sm) == (prev_y, prev_m):
+                    sparkline.append(round(prev_rev, 2))
+                else:
+                    r, _ = await _month_revenue_margin(
+                        session, sy, sm, brand_set, mode="final"
+                    )
+                    sparkline.append(round(r, 2))
+
+            delta_revenue_pct: float | None
+            if prev_rev > 0:
+                delta_revenue_pct = round((cur_rev - prev_rev) / prev_rev * 100, 2)
+            else:
+                delta_revenue_pct = None
+            delta_margin_pp = round(cur_margin_pct - prev_margin_pct, 2)
+
             items.append(
                 {
                     **m,
                     "no_brands": False,
-                    "revenue_net_rub": _pick(kpis, "revenue_net") or 0,
+                    "revenue_net_rub": cur_rev,
                     "margin_rub": _pick(kpis, "margin") or 0,
-                    "margin_pct": _pick(kpis, "margin_pct") or 0,
+                    "margin_pct": cur_margin_pct,
                     "drr_pct": _pick(kpis, "drr_pct") or 0,
                     "drr_sales_pct": _pick(kpis, "drr_sales_pct") or 0,
                     "orders": _pick(kpis, "orders") or 0,
                     "ad_cost_rub": _pick(kpis, "ad_cost") or 0,
                     "buyout_pct": _pick(kpis, "buyout_pct") or 0,
+                    # TASK-DEV-009 — Δ + sparkline:
+                    "prev_revenue_net_rub": round(prev_rev, 2),
+                    "prev_margin_pct": round(prev_margin_pct, 2),
+                    "delta_revenue_pct": delta_revenue_pct,
+                    "delta_margin_pp": delta_margin_pp,
+                    "sparkline_revenue": sparkline,
                 }
             )
         else:
@@ -136,6 +200,11 @@ async def managers_kpi(
                     "orders": 0,
                     "ad_cost_rub": 0,
                     "buyout_pct": 0,
+                    "prev_revenue_net_rub": 0,
+                    "prev_margin_pct": 0,
+                    "delta_revenue_pct": None,
+                    "delta_margin_pp": 0,
+                    "sparkline_revenue": [0, 0, 0, 0, 0, 0],
                 }
             )
 

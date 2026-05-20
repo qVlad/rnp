@@ -17,6 +17,7 @@ import MetricDrilldownModal, {
 import { type CompositionSegment } from "@/components/CompositionBar";
 import AlertsBar from "@/components/AlertsBar";
 import ManagerPlanProgressCard from "@/components/ManagerPlanProgressCard";
+import CustomMetricsCard from "@/components/CustomMetricsCard";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   ColumnVisibilityButton,
@@ -114,6 +115,7 @@ export default function Dashboard() {
     <div className="flex flex-col gap-4" ref={dashboardRef}>
       <AlertsBar alerts={alertsQ.data?.alerts ?? []} />
       {user?.role === "manager" && <ManagerPlanProgressCard />}
+      <CustomMetricsCard period="week" />
       <TodayVsYesterdayStrip />
 
       <div className="flex items-center justify-between">

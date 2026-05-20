@@ -2159,3 +2159,37 @@ class AlertAcknowledgement(Base, TenantScopedMixin):
     __table_args__ = (
         UniqueConstraint("tenant_id", "signature", name="uq_alert_ack_tenant_signature"),
     )
+
+
+class MetricTemplate(Base, TenantScopedMixin):
+    """Пользовательская формула KPI (миграция 0050, TASK-DEV-011).
+
+    Юзер пишет формулу вроде `(revenue_net - ad_cost) / orders` —
+    эвалюатор `simpleeval` с whitelisting считает по KPI из dashboard.
+    Результат показывается рядом со стандартными KPI карточек.
+
+    Format задаёт отображение: 'currency' (₽), 'percent' (%), 'number'.
+    """
+
+    __tablename__ = "metric_templates"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    formula: Mapped[str] = mapped_column(Text, nullable=False)
+    format: Mapped[str] = mapped_column(String(16), nullable=False, default="number")
+    description: Mapped[str | None] = mapped_column(Text)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_metric_templates_tenant_name"),
+    )

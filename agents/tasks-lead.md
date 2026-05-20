@@ -946,6 +946,26 @@ Lead использует этот файл как master-view: сюда скл�
 
 ---
 
+### TASK-LEAD-022: Ввести роль Release Manager (single-instance bump+deploy)
+
+- **Исполнитель:** Lead
+- **Приоритет:** P1
+- **Оценка:** 1ч
+- **Описание:** Зафиксировать в системе агентов отдельную роль, монопольно отвечающую за SemVer-bump (backend/pyproject.toml + frontend/package.json + extension/package.json) и за `./scripts/remote.sh deploy`. Цель — предотвратить гонку, когда два агента параллельно бампают версии или одновременно деплоят. Single-instance enforcement — через расширенный `DEPLOY_LOCK.md` (лок берётся на старте release-flow, снимается после деплоя), плюс статус задачи `В работе` в `tasks-release-manager.md`. Остальные роли (Developer, Designer, Art Director, QA, Lead) больше **не бампают версии и не деплоят сами** — после `Выполнено` они передают эстафету Release Manager'у.
+- **Критерии готовности:**
+  - [x] Создан `agents/release-manager.md` с описанием роли, workflow, чек-листом и lock-протоколом
+  - [x] Создан `agents/tasks-release-manager.md` (формат + backlog)
+  - [x] `agents/README.md`: новая строка в таблице ролей + диаграмма обновлена
+  - [x] `agents/RULES.md`: новое Правило 2.7 «Release Manager — единственный исполнитель bump+deploy» + ссылка из Правила 2.6
+  - [x] `CLAUDE.md`: в разделе «Стиль работы» и в правиле про bump+deploy добавлено указание делегировать Release Manager'у
+  - [x] `DEPLOY_LOCK.md`: уточнённая семантика (release-lock, а не только deploy-lock)
+  - [x] Версия 0.7.0 → 0.7.1 (patch, docs/agents-only)
+  - [x] Commit + push в `qVlad/rnp` main
+- **Зависимости:** нет
+- **Статус:** Выполнено — 2026-05-20
+
+---
+
 ## Формат / Жизненный цикл
 
 См. `RULES.md` §«Формат задачи».

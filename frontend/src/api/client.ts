@@ -1229,8 +1229,81 @@ paymentOrderDelete: (payment_order_id: string) =>
         orders: number;
         ad_cost_rub: number;
         buyout_pct: number;
+        // TASK-DEV-009 — Δ к прошлому месяцу + sparkline
+        prev_revenue_net_rub: number;
+        prev_margin_pct: number;
+        delta_revenue_pct: number | null;
+        delta_margin_pp: number;
+        sparkline_revenue: number[];
       }>;
     }>(`/api/managers-kpi?year=${year}&month=${month}&mode=${mode}`),
+
+  // ── Metric templates (TASK-DEV-011 — custom KPI через формулы) ──
+  metricTemplatesList: () =>
+    request<{
+      items: Array<{
+        id: number;
+        name: string;
+        formula: string;
+        format: "currency" | "percent" | "number";
+        description: string | null;
+        created_at: string | null;
+        updated_at: string | null;
+      }>;
+    }>("/api/metric-templates"),
+  metricTemplatesEvaluate: (period: "day" | "week" | "month" = "week") =>
+    request<{
+      period: string;
+      items: Array<{
+        id: number;
+        name: string;
+        formula: string;
+        format: "currency" | "percent" | "number";
+        description: string | null;
+        value: number | null;
+        error: string | null;
+      }>;
+    }>(`/api/metric-templates/evaluate?period=${period}`),
+  metricTemplatesVariables: () =>
+    request<{
+      variables: Array<{ key: string; description: string }>;
+      functions: string[];
+    }>("/api/metric-templates/variables"),
+  metricTemplatesPreview: (formula: string) =>
+    request<{
+      ok: boolean;
+      value?: number;
+      context?: Record<string, number>;
+      error?: string;
+    }>("/api/metric-templates/preview", {
+      method: "POST",
+      body: JSON.stringify({ formula }),
+    }),
+  metricTemplatesCreate: (body: {
+    name: string;
+    formula: string;
+    format: "currency" | "percent" | "number";
+    description?: string | null;
+  }) =>
+    request("/api/metric-templates", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  metricTemplatesUpdate: (
+    id: number,
+    body: {
+      name: string;
+      formula: string;
+      format: "currency" | "percent" | "number";
+      description?: string | null;
+    },
+  ) =>
+    request(`/api/metric-templates/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  metricTemplatesDelete: (id: number) =>
+    request(`/api/metric-templates/${id}`, { method: "DELETE" }),
 
   // ── Plans (План-Факт) ──
   listPlans: (params: { year?: number; month?: number; scope_type?: string } = {}) => {

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import CustomMetricsSection from "@/components/CustomMetricsSection";
 
 export default function Settings() {
   const qc = useQueryClient();
@@ -161,6 +162,8 @@ export default function Settings() {
   return (
     <div className="flex flex-col gap-6 max-w-4xl">
       <h1 className="text-xl font-semibold">Настройки</h1>
+
+      <CustomMetricsSection />
 
       {/* Новый multi-tenant блок: WB-токен per-tenant хранится в БД,
           вводится через UI. Старый блок ниже («Подключение через .env»)

@@ -220,12 +220,22 @@
   доп. колонки «Δ vs прошлый» (с цветом) и sparkline-cell. Header-sort
   по любой колонке (по умолчанию — выручка DESC).
 - **Критерии готовности:**
-  - [ ] Backend: возвращает `delta_revenue_pct`, `delta_margin_pp`, `sparkline: number[]`
-  - [ ] Frontend: 2 новые колонки + клик по `<th>` сортирует
-  - [ ] Δ-цвета: >0 зелёный, <0 красный, |Δ|<3% серый (шум)
-  - [ ] Sparkline через recharts <LineChart> minimalistic (без осей)
+  - [x] Backend: возвращает `delta_revenue_pct` (может быть `null` если prev=0),
+        `delta_margin_pp`, `sparkline_revenue: number[6]` (oldest first),
+        `prev_revenue_net_rub`, `prev_margin_pct`. Для прошлых месяцев
+        принудительно `mode='final'` — иначе preliminary-шум давал бы
+        ложную «просадку» 5-15%.
+  - [x] Frontend: 2 новые колонки «Δ м/м» и «6 мес» + sortable headers
+        (клик по `<th>` сортирует, persist в `localStorage.managers-kpi.sort.v1`)
+  - [x] Δ-цвета: >+3% зелёный (text-success), <−3% красный (text-red-400),
+        |Δ|<3% серый (text-muted) — шум
+  - [x] Sparkline через recharts `<LineChart width=80 height=24>` без осей,
+        цвет линии = цвет Δ (currentColor)
+  - [x] no_brands строки всегда внизу таблицы (независимо от сортировки)
 - **Зависимости:** TASK-DEV-001
-- **Статус:** В работе — 2026-05-20 — Developer (Claude основная сессия)
+- **Статус:** ✅ Закрыта 2026-05-20 (backend `api/managers_kpi.py:_month_revenue_margin`
+  + 6-point sparkline loop, фронт `pages/ManagersKpi.tsx` — sortable headers
+  с localStorage-persist, Δ-цвет порог 3%, recharts sparkline, no_brands в хвост)
 
 ---
 

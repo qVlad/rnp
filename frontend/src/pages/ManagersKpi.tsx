@@ -9,8 +9,9 @@
  * Доступ: director + head_of_sales. Защищено DirectorOrHead-обёрткой
  * в App.tsx и `directorOrHead: true` в Layout.tsx (пункт меню).
  */
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { LineChart, Line, YAxis } from "recharts";
 import { api } from "@/api/client";
 import { fmtRub, fmtNum, fmtPct } from "@/lib/format";
 
@@ -23,17 +24,87 @@ const today = new Date();
 
 type Mode = "preliminary" | "final" | "hybrid";
 
+// Поля по которым можно сортировать (TASK-DEV-009 — клик по <th>).
+type SortField =
+  | "full_name"
+  | "revenue_net_rub"
+  | "margin_rub"
+  | "margin_pct"
+  | "delta_revenue_pct"
+  | "drr_pct"
+  | "buyout_pct"
+  | "orders"
+  | "ad_cost_rub";
+
+const SORT_KEY = "managers-kpi.sort.v1";
+
+function _loadSort(): { field: SortField; dir: "asc" | "desc" } {
+  try {
+    const raw = localStorage.getItem(SORT_KEY);
+    if (raw) {
+      const v = JSON.parse(raw);
+      if (v && typeof v.field === "string" && (v.dir === "asc" || v.dir === "desc")) {
+        return v;
+      }
+    }
+  } catch {}
+  return { field: "revenue_net_rub", dir: "desc" };
+}
+
 export default function ManagersKpi() {
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
   const [mode, setMode] = useState<Mode>("hybrid");
+  const [sort, setSort] = useState(_loadSort);
 
   const q = useQuery({
     queryKey: ["managers-kpi", year, month, mode],
     queryFn: () => api.managersKpi(year, month, mode),
   });
 
-  const items = q.data?.items ?? [];
+  const rawItems = q.data?.items ?? [];
+
+  // Сортировка: no_brands всегда внизу, остальное — по выбранному полю.
+  const items = useMemo(() => {
+    const withBrands: any[] = [];
+    const noBrands: any[] = [];
+    for (const it of rawItems) (it.no_brands ? noBrands : withBrands).push(it);
+    const cmp = (a: any, b: any): number => {
+      const av = a[sort.field];
+      const bv = b[sort.field];
+      // null/undefined в хвост (например, delta_revenue_pct=null если prev=0)
+      const aNull = av == null;
+      const bNull = bv == null;
+      if (aNull && bNull) return 0;
+      if (aNull) return 1;
+      if (bNull) return -1;
+      let d: number;
+      if (typeof av === "string" || typeof bv === "string") {
+        d = String(av).localeCompare(String(bv), "ru");
+      } else {
+        d = Number(av) - Number(bv);
+      }
+      return sort.dir === "asc" ? d : -d;
+    };
+    withBrands.sort(cmp);
+    return [...withBrands, ...noBrands];
+  }, [rawItems, sort]);
+
+  const onSortClick = (field: SortField) => {
+    setSort((prev) => {
+      const next =
+        prev.field === field
+          ? { field, dir: prev.dir === "asc" ? "desc" : "asc" }
+          : { field, dir: "desc" as const };
+      try {
+        localStorage.setItem(SORT_KEY, JSON.stringify(next));
+      } catch {}
+      return next as { field: SortField; dir: "asc" | "desc" };
+    });
+  };
+
+  const sortArrow = (field: SortField) =>
+    sort.field === field ? (sort.dir === "asc" ? " ↑" : " ↓") : "";
 
   return (
     <div className="flex flex-col gap-4">
@@ -90,8 +161,10 @@ export default function ManagersKpi() {
       <div className="card text-sm text-muted leading-relaxed">
         Сводка по менеджерам за {MONTHS[month - 1]} {year}. Каждая строка —
         менеджер и KPI по всем его брендам (из назначений в разделе «Бренды»).
-        Сортировка — по убыванию чистой выручки. Менеджеры без назначений
-        внизу с пометкой «нет брендов».
+        Клик по заголовку колонки — сортировка (по умолчанию выручка ↓).
+        Колонка «Δ м/м» и sparkline — сравнение с прошлым месяцем (всегда
+        финальные цифры за прошлый, чтобы preliminary-шум не давал ложную
+        просадку). Менеджеры без назначений — внизу.
       </div>
 
       {q.isLoading && <div className="text-muted">Загрузка…</div>}
@@ -111,27 +184,71 @@ export default function ManagersKpi() {
         <div className="card overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-xs text-muted border-b border-border">
-                <th className="text-left py-2 pr-3">Менеджер</th>
+              <tr className="text-xs text-muted border-b border-border select-none">
+                <th
+                  className="text-left py-2 pr-3 cursor-pointer hover:text-accent"
+                  onClick={() => onSortClick("full_name")}
+                >
+                  Менеджер{sortArrow("full_name")}
+                </th>
                 <th className="text-left py-2 pr-3">Бренды</th>
-                <th className="text-right py-2 pr-3" title="Чистая выручка после WB-комиссии (revenue_net)">
-                  Выручка
+                <th
+                  className="text-right py-2 pr-3 cursor-pointer hover:text-accent"
+                  title="Чистая выручка после WB-комиссии (revenue_net)"
+                  onClick={() => onSortClick("revenue_net_rub")}
+                >
+                  Выручка{sortArrow("revenue_net_rub")}
                 </th>
-                <th className="text-right py-2 pr-3" title="Маржинальная прибыль = revenue_net − COGS − ad_cost">
-                  Маржа ₽
+                <th
+                  className="text-right py-2 pr-3 cursor-pointer hover:text-accent"
+                  title="Δ выручки к прошлому месяцу (всегда финальные цифры за прошлый месяц, чтобы не было ложной просадки)"
+                  onClick={() => onSortClick("delta_revenue_pct")}
+                >
+                  Δ м/м{sortArrow("delta_revenue_pct")}
                 </th>
-                <th className="text-right py-2 pr-3" title="Маржа в % от revenue_net. Норма 5-25%">
-                  Маржа %
+                <th className="text-center py-2 pr-3" title="Выручка по месяцам за последние 6 (sparkline, oldest first)">
+                  6 мес
                 </th>
-                <th className="text-right py-2 pr-3" title="Доля рекламных расходов от gross-выручки заказов">
-                  ДРР
+                <th
+                  className="text-right py-2 pr-3 cursor-pointer hover:text-accent"
+                  title="Маржинальная прибыль = revenue_net − COGS − ad_cost"
+                  onClick={() => onSortClick("margin_rub")}
+                >
+                  Маржа ₽{sortArrow("margin_rub")}
                 </th>
-                <th className="text-right py-2 pr-3" title="% выкупа за период">
-                  Выкуп
+                <th
+                  className="text-right py-2 pr-3 cursor-pointer hover:text-accent"
+                  title="Маржа в % от revenue_net. Норма 5-25%"
+                  onClick={() => onSortClick("margin_pct")}
+                >
+                  Маржа %{sortArrow("margin_pct")}
                 </th>
-                <th className="text-right py-2 pr-3">Заказы</th>
-                <th className="text-right py-2 pr-3" title="Расходы на рекламу WB + внеш. маркетинг">
-                  Реклама
+                <th
+                  className="text-right py-2 pr-3 cursor-pointer hover:text-accent"
+                  title="Доля рекламных расходов от gross-выручки заказов"
+                  onClick={() => onSortClick("drr_pct")}
+                >
+                  ДРР{sortArrow("drr_pct")}
+                </th>
+                <th
+                  className="text-right py-2 pr-3 cursor-pointer hover:text-accent"
+                  title="% выкупа за период"
+                  onClick={() => onSortClick("buyout_pct")}
+                >
+                  Выкуп{sortArrow("buyout_pct")}
+                </th>
+                <th
+                  className="text-right py-2 pr-3 cursor-pointer hover:text-accent"
+                  onClick={() => onSortClick("orders")}
+                >
+                  Заказы{sortArrow("orders")}
+                </th>
+                <th
+                  className="text-right py-2 pr-3 cursor-pointer hover:text-accent"
+                  title="Расходы на рекламу WB + внеш. маркетинг"
+                  onClick={() => onSortClick("ad_cost_rub")}
+                >
+                  Реклама{sortArrow("ad_cost_rub")}
                 </th>
               </tr>
             </thead>
@@ -146,6 +263,22 @@ export default function ManagersKpi() {
                       : marginPct < 0
                         ? "text-red-400"
                         : "text-muted";
+                // Δ-цвет: |Δ|<3% — шум, серый. >+3 — зелёный. <-3 — красный.
+                const dRev = m.delta_revenue_pct;
+                const deltaColor =
+                  dRev == null || Math.abs(Number(dRev)) < 3
+                    ? "text-muted"
+                    : Number(dRev) > 0
+                      ? "text-success"
+                      : "text-red-400";
+                const deltaLabel =
+                  dRev == null
+                    ? "—"
+                    : `${Number(dRev) > 0 ? "+" : ""}${Number(dRev).toFixed(1)}%`;
+                const sparkData = (m.sparkline_revenue ?? []).map(
+                  (v: number, i: number) => ({ i, v: Number(v) || 0 }),
+                );
+                const sparkAllZero = sparkData.every((p: any) => p.v === 0);
                 return (
                   <tr
                     key={m.user_id}
@@ -175,6 +308,39 @@ export default function ManagersKpi() {
                     <td className="py-2 pr-3 text-right">
                       {fmtRub(m.revenue_net_rub)}
                     </td>
+                    <td
+                      className={`py-2 pr-3 text-right ${deltaColor}`}
+                      title={
+                        dRev == null
+                          ? "Прошлый месяц был нулевым — Δ не считается"
+                          : `Прошлый месяц: ${fmtRub(m.prev_revenue_net_rub ?? 0)}`
+                      }
+                    >
+                      {m.no_brands ? "—" : deltaLabel}
+                    </td>
+                    <td className="py-2 pr-3 text-center">
+                      {m.no_brands || sparkAllZero ? (
+                        <span className="text-muted text-xs">—</span>
+                      ) : (
+                        <div
+                          className={
+                            Number(dRev ?? 0) >= 0 ? "text-success" : "text-red-400"
+                          }
+                        >
+                          <LineChart width={80} height={24} data={sparkData}>
+                            <YAxis hide domain={["dataMin", "dataMax"]} />
+                            <Line
+                              type="monotone"
+                              dataKey="v"
+                              stroke="currentColor"
+                              strokeWidth={1.5}
+                              dot={false}
+                              isAnimationActive={false}
+                            />
+                          </LineChart>
+                        </div>
+                      )}
+                    </td>
                     <td className="py-2 pr-3 text-right">
                       {fmtRub(m.margin_rub)}
                     </td>
@@ -203,6 +369,7 @@ export default function ManagersKpi() {
 
       <div className="text-xs text-muted">
         Подсказка: маржа &lt; 5% — красное, 5-15% — жёлтое, &gt;15% — зелёное.
+        Δ м/м: |Δ| &lt; 3% — серое (шум), &gt; +3% зелёное, &lt; −3% красное.
         Бренд без назначения = менеджер не виден здесь, но видим в Brands.
       </div>
     </div>

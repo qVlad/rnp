@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { fmtRub, fmtLocalDt, fmtLocalTime } from "@/lib/format";
+import { fmtRub, fmtNum, fmtLocalDt, fmtLocalTime } from "@/lib/format";
 import LkDisclaimerModal, {
   hasAgreedDisclaimer,
 } from "@/components/LkDisclaimerModal";
@@ -602,31 +602,125 @@ function QueueAgeBadge({
 }
 
 function RoiCard({ roi, loading }: { roi: any; loading: boolean }) {
-  if (loading) return <div className="card text-muted">Загрузка ROI…</div>;
-  if (!roi) return null;
-  const hasData = roi.revenue_rub > 0 || roi.successful_tasks_count > 0;
+  // TASK-DEV-012: расширенный ROI-дашборд с period selector.
+  // Дифференциатор vs QuotaBot/WBCON — у них только % успешных бронирований,
+  // у нас ROI в ₽ (экономия логистики − комиссия) + чистая прибыль модуля.
+  const [period, setPeriod] = useState<"week" | "month" | "quarter" | "ytd" | "all">("month");
+
+  // Конвертируем period в date_from/date_to
+  const range = (() => {
+    const today = new Date();
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+    if (period === "all") return {};
+    if (period === "ytd") return { from: `${today.getFullYear()}-01-01`, to: fmt(today) };
+    const back = period === "week" ? 7 : period === "month" ? 30 : 90;
+    const start = new Date(today.getTime() - back * 86400000);
+    return { from: fmt(start), to: fmt(today) };
+  })();
+
+  // Если переключили period — перезапросить. Но parent уже передаёт `roi`
+  // (без period в queryKey) — оставим как есть для MVP, period фильтрует
+  // на UI-уровне через локальный fetch (parallel). MVP: показываем то что
+  // прилетело + переключатель для UX. Полный реактивный refetch — позже.
+  const roiQ = useQuery({
+    queryKey: ["redistribution-roi-period", period],
+    queryFn: () => api.redistributionRoi(range.from, range.to),
+  });
+  const r = roiQ.data ?? roi;
+
+  if (loading || (roiQ.isLoading && !r)) {
+    return <div className="card text-muted">Загрузка ROI…</div>;
+  }
+  if (!r) return null;
+  const hasData = (r.revenue_rub || 0) > 0 || (r.successful_tasks_count || 0) > 0;
+  const netProfit = (r.logistics_saving_rub || 0) - (r.redistribution_fee_rub || 0);
+
+  const periodLabels: Record<string, string> = {
+    week: "7 дн",
+    month: "30 дн",
+    quarter: "3 мес",
+    ytd: "С нач.года",
+    all: "Всё время",
+  };
+
   return (
     <div className="card">
-      <h2 className="font-medium mb-3">ROI-дашборд</h2>
+      <div className="flex items-baseline justify-between mb-3 flex-wrap gap-2">
+        <h2 className="font-medium">ROI-дашборд</h2>
+        <div className="flex gap-1 text-xs">
+          {(Object.keys(periodLabels) as Array<keyof typeof periodLabels>).map((p) => (
+            <button
+              key={p}
+              type="button"
+              className={`btn text-xs ${period === p ? "border-accent text-accent" : ""}`}
+              onClick={() => setPeriod(p as any)}
+            >
+              {periodLabels[p]}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {!hasData && (
         <div className="text-xs text-muted mb-3">
-          Данных ещё нет. Снапшоты ROI накапливаются после первых успешных
-          бронирований.
+          Данных за период «{periodLabels[period]}» ещё нет. Снапшоты ROI
+          накапливаются после первых успешных бронирований.
         </div>
       )}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Stat label="Комиссия +0.5%" value={fmtRub(roi.redistribution_fee_rub)} tone="red" />
-        <Stat label="Экономия на логистике" value={fmtRub(roi.logistics_saving_rub)} tone="success" />
+
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
         <Stat
-          label="ROI"
-          value={roi.roi_pct !== null ? `+${roi.roi_pct.toFixed(0)}%` : "—"}
+          label="Выручка через перераспр."
+          value={fmtRub(r.revenue_rub || 0)}
+        />
+        <Stat
+          label="Экономия на логистике"
+          value={fmtRub(r.logistics_saving_rub || 0)}
           tone="success"
         />
         <Stat
-          label="Успешных / неудачных"
-          value={`${roi.successful_tasks_count} / ${roi.failed_tasks_count}`}
+          label="Комиссия +0.5%"
+          value={fmtRub(r.redistribution_fee_rub || 0)}
+          tone="red"
+        />
+        <Stat
+          label="Чистая прибыль модуля"
+          value={fmtRub(netProfit)}
+          tone={netProfit > 0 ? "success" : netProfit < 0 ? "red" : "muted"}
+        />
+        <Stat
+          label="ROI"
+          value={r.roi_pct !== null && r.roi_pct !== undefined ? `+${r.roi_pct.toFixed(0)}%` : "—"}
+          tone={r.roi_pct && r.roi_pct > 0 ? "success" : "muted"}
         />
       </div>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-3">
+        <Stat
+          label="Успешных бронирований"
+          value={fmtNum(r.successful_tasks_count || 0)}
+          tone="success"
+        />
+        <Stat
+          label="Неудачных"
+          value={fmtNum(r.failed_tasks_count || 0)}
+          tone={(r.failed_tasks_count || 0) > 0 ? "red" : "muted"}
+        />
+        <Stat
+          label="Индекс локализации (avg)"
+          value={r.il_avg_pct ? `${r.il_avg_pct.toFixed(1)}%` : "—"}
+        />
+      </div>
+      {hasData && (
+        <div className="text-xs text-muted mt-3 leading-relaxed">
+          За «{periodLabels[period]}» перераспределение принесло{" "}
+          <span className={netProfit > 0 ? "text-success" : "text-red-400"}>
+            {netProfit > 0 ? "+" : ""}{fmtRub(netProfit)}
+          </span>{" "}
+          чистой прибыли (экономия на логистике −0.5% комиссии WB). Это{" "}
+          <strong>наш дифференциатор</strong> — у QuotaBot/WBCON есть только %
+          успешных бронирований, в ₽ никто не считает.
+        </div>
+      )}
     </div>
   );
 }
