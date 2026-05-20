@@ -475,6 +475,46 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse(result);
       return;
     }
+    // ---- Debug: опрашивает все WB-вкладки и собирает что у content script
+    //      сейчас в кеше токенов. Вызывается из SW DevTools:
+    //        chrome.runtime.sendMessage({type:"rnp:debug-status"}, console.log)
+    if (msg?.type === "rnp:debug-status") {
+      const tabs = await chrome.tabs.query({
+        url: [
+          "https://seller.wildberries.ru/*",
+          "https://seller-weekly-report.wildberries.ru/*",
+        ],
+      });
+      const lkSession = await chrome.storage.local.get([
+        STORAGE_LK_LAST_HASH,
+        STORAGE_LK_NOTIFIED,
+      ]);
+      const tabSnapshots = await Promise.all(
+        tabs.map(async (t) => {
+          if (typeof t.id !== "number") return { tabId: null, error: "no tab id" };
+          try {
+            const r = await chrome.tabs.sendMessage(t.id, { type: "rnp:debug-status" });
+            return { tabId: t.id, url: t.url, snapshot: r };
+          } catch (e) {
+            return {
+              tabId: t.id,
+              url: t.url,
+              error: e instanceof Error ? e.message : String(e),
+            };
+          }
+        }),
+      );
+      const settings = await getSettings();
+      sendResponse({
+        rnpUrl: settings.rnpUrl,
+        rnpTokenSet: !!settings.rnpToken,
+        lkLastHash: lkSession[STORAGE_LK_LAST_HASH] ?? null,
+        lkNotified: lkSession[STORAGE_LK_NOTIFIED] ?? false,
+        tabs: tabSnapshots,
+        tabCount: tabs.length,
+      });
+      return;
+    }
     // ---- LK auto-connect: content script `wb-shifts-content.ts` шлёт это
     //      когда MAIN-world fetch-интерсептор поймал свежий AuthorizeV3 в
     //      запросах seller.wildberries.ru. SW сохраняет токены в backend
@@ -483,11 +523,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       msg?.type === "rnp:lk-autoconnect" &&
       typeof msg.authorize_v3 === "string"
     ) {
+      console.log(
+        `[rnp-ext SW] rnp:lk-autoconnect received (authV3=${msg.authorize_v3.slice(-12)}, wbSellerLk=${msg.wb_seller_lk ? "yes" : "no"})`,
+      );
       const result = await maybeAutoConnectLk({
         authorize_v3: msg.authorize_v3,
         wb_seller_lk: msg.wb_seller_lk ?? null,
         root_version: msg.root_version ?? null,
       });
+      console.log(`[rnp-ext SW] maybeAutoConnectLk →`, result);
       sendResponse(result);
       return;
     }

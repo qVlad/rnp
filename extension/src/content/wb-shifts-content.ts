@@ -197,8 +197,27 @@ async function doShiftsCall(
   return { ok: true, status: resp.status, data };
 }
 
-chrome.runtime.onMessage.addListener((msg: ProxyMsg, _sender, sendResponse) => {
-  if (msg?.type !== "wbShiftsProxyContent") return false;
+chrome.runtime.onMessage.addListener((rawMsg, _sender, sendResponse) => {
+  const typed = rawMsg as { type?: string };
+  // Debug-snapshot: что у content script сейчас в кеше токенов и сколько
+  // fetch'ей перехватил MAIN interceptor. Вызывается из SW DevTools:
+  //   chrome.runtime.sendMessage({type:"rnp:debug-status"}, console.log)
+  if (typed?.type === "rnp:debug-status") {
+    sendResponse({
+      origin: location.origin,
+      href: location.href,
+      interceptCount,
+      hasAuthV3: !!cachedAuthV3,
+      authV3Suffix: cachedAuthV3 ? cachedAuthV3.slice(-12) : null,
+      hasWbSellerLk: !!cachedWbSellerLk,
+      wbSellerLkSuffix: cachedWbSellerLk ? cachedWbSellerLk.slice(-12) : null,
+      rootVersion: cachedRootVersion,
+      lastSentHash: lastSentAuthV3Hash,
+    });
+    return true;
+  }
+  if (typed?.type !== "wbShiftsProxyContent") return false;
+  const msg = rawMsg as ProxyMsg;
   (async () => {
     try {
       console.log("[rnp-ext content] shifts proxy op=", msg.op, {
