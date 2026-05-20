@@ -84,6 +84,67 @@ export default function Supply() {
     setExpandedClusters(next);
   };
 
+  /**
+   * Экспорт рекомендаций в CSV (TASK-DEV-005). Excel открывает CSV нативно
+   * как «открыть как XLSX» — это самый дешёвый формат без npm-зависимостей.
+   * UTF-8 + BOM, `;` разделитель (русская локаль Excel).
+   *
+   * Колонки согласованы с РОПом из ревью c8f6609: то что нужно для импорта
+   * заказа в 1С — артикул, бренд, остаток, к отгрузке.
+   */
+  const exportToCsv = () => {
+    const headers = [
+      "Артикул WB (nm_id)",
+      "Артикул селлера",
+      "Срочность",
+      "Остаток (шт)",
+      "В пути к клиенту",
+      "В пути возврат",
+      "Скорость (шт/день)",
+      "Дней до 0",
+      "К отгрузке (шт)",
+    ];
+    const escape = (v: any): string => {
+      if (v == null) return "";
+      const s = String(v).replace(/"/g, '""');
+      return /[;\n\r"]/.test(s) ? `"${s}"` : s;
+    };
+    const lines = [headers.join(";")];
+    for (const it of items) {
+      const s = URGENCY_STYLE[it.urgency]?.label ?? it.urgency;
+      lines.push(
+        [
+          it.nm_id,
+          it.vendor_code,
+          s,
+          it.stock,
+          it.in_way_to_client,
+          it.in_way_from_client,
+          (it.velocity_per_day ?? 0).toFixed(2).replace(".", ","),
+          it.days_to_zero ?? "",
+          it.recommended_supply_qty,
+        ]
+          .map(escape)
+          .join(";"),
+      );
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    const filterTag = filter ? `-${filter}` : "";
+    const filename = `recommendations-${today}${filterTag}.csv`;
+    // BOM для распознавания UTF-8 в Excel
+    const blob = new Blob(["﻿" + lines.join("\r\n")], {
+      type: "text/csv;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const aggIl = distQ.data?.aggregate_il_pct ?? 0;
   const ilColor =
     aggIl >= 60 ? "text-success" : aggIl >= 40 ? "" : "text-warn";
@@ -207,6 +268,15 @@ export default function Supply() {
                 сбросить
               </button>
             )}
+            <button
+              type="button"
+              onClick={exportToCsv}
+              disabled={items.length === 0}
+              className="btn text-xs ml-3"
+              title="Скачать видимые рекомендации в CSV (Excel открывает напрямую). Импорт в 1С: заказ поставщику."
+            >
+              📥 Экспорт CSV ({items.length})
+            </button>
           </span>
           <span className="text-xs text-muted">{items.length} SKU показано</span>
         </div>
