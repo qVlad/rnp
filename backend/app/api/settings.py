@@ -245,7 +245,9 @@ async def list_cogs(session: AsyncSession = Depends(get_db_tenant_scoped)) -> di
 
 class TriggerPayload(BaseModel):
     entity: str  # one of: orders, sales, stocks, ad_campaigns, ad_stats, report_detail, all
-    days_back: int | None = Field(default=None, ge=1, le=365)
+    # le=1825 = 5 лет. Финансовый отчёт WB исторически глубокий, можно тянуть
+    # всю историю кабинета. Через UI кнопки 30/90/180/365/505/1825 дней.
+    days_back: int | None = Field(default=None, ge=1, le=1825)
 
 
 @router.post("/sync/trigger", dependencies=[Depends(require_director)])
@@ -253,38 +255,62 @@ async def trigger_sync(
     payload: TriggerPayload,
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, str]:
+    # Per-tenant таски — каждый принимает tenant_id первым аргументом, что
+    # делает sync строго привязанным к текущему кабинету. Никаких глобальных
+    # (без tenant_id) тасков из этого endpoint'а — те только для celery beat.
     from app.sync.tasks import (
-        sync_ad_campaign_details,
-        sync_ad_campaigns,
-        sync_ad_stats,
-        sync_all,
-        sync_orders,
-        sync_report_detail,
+        sync_ad_campaign_details_for_tenant,
+        sync_ad_campaigns_for_tenant,
+        sync_ad_stats_for_tenant,
+        sync_offset_acts_for_tenant,
+        sync_orders_for_tenant,
+        sync_paid_storage_for_tenant,
+        sync_redeem_notifications_for_tenant,
         sync_report_detail_for_tenant,
-        sync_sales,
-        sync_stocks,
+        sync_sales_for_tenant,
+        sync_stocks_for_tenant,
     )
 
-    task_map = {
-        "orders": sync_orders,
-        "sales": sync_sales,
-        "stocks": sync_stocks,
-        "ad_campaigns": sync_ad_campaigns,
-        "ad_campaign_details": sync_ad_campaign_details,
-        "ad_stats": sync_ad_stats,
-        "report_detail": sync_report_detail,
-        "all": sync_all,
+    per_tenant_task_map = {
+        "orders": sync_orders_for_tenant,
+        "sales": sync_sales_for_tenant,
+        "stocks": sync_stocks_for_tenant,
+        "ad_campaigns": sync_ad_campaigns_for_tenant,
+        "ad_campaign_details": sync_ad_campaign_details_for_tenant,
+        "ad_stats": sync_ad_stats_for_tenant,
+        "report_detail": sync_report_detail_for_tenant,
+        "paid_storage": sync_paid_storage_for_tenant,
+        "redeem_notifications": sync_redeem_notifications_for_tenant,
+        "offset_acts": sync_offset_acts_for_tenant,
     }
-    task = task_map.get(payload.entity)
+    # Таски, поддерживающие days_back параметром.
+    SUPPORTS_DAYS_BACK = {"report_detail", "redeem_notifications", "offset_acts", "ad_stats"}
+
+    tenant_id = get_tenant(session)
+    if tenant_id is None:
+        raise HTTPException(400, "Tenant context is not set")
+
+    # Спец-кейс "all": запускает все per-tenant таски для текущего tenant'а
+    # параллельно — кнопка «Первичная выгрузка» в UI.
+    if payload.entity == "all":
+        days = payload.days_back or 0
+        submitted: list[str] = []
+        for entity, task in per_tenant_task_map.items():
+            if entity in SUPPORTS_DAYS_BACK and days > 0:
+                r = task.delay(tenant_id, days)
+            else:
+                r = task.delay(tenant_id)
+            submitted.append(f"{entity}:{r.id}")
+        return {"task_id": ",".join(submitted), "entity": "all", "status": "queued"}
+
+    # Per-tenant таск, опционально с days_back.
+    task = per_tenant_task_map.get(payload.entity)
     if task is None:
         raise HTTPException(400, f"Unknown entity {payload.entity}")
-    if payload.entity == "report_detail" and payload.days_back is not None:
-        tenant_id = get_tenant(session)
-        if tenant_id is None:
-            raise HTTPException(400, "Tenant context is not set")
-        async_result = sync_report_detail_for_tenant.delay(tenant_id, payload.days_back)
+    if payload.days_back is not None and payload.entity in SUPPORTS_DAYS_BACK:
+        async_result = task.delay(tenant_id, payload.days_back)
     else:
-        async_result = task.delay()
+        async_result = task.delay(tenant_id)
     return {"task_id": async_result.id, "entity": payload.entity, "status": "queued"}
 
 

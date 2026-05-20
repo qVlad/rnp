@@ -452,6 +452,8 @@ export const api = {
       lk_connected: boolean;
       lk_needs_relogin: boolean;
       authorize_v3_expires_at?: string | null;
+      wb_seller_lk_expires_at?: string | null;
+      wb_seller_lk_seconds_left?: number | null;
       phone_last4?: string | null;
       supplier_fid?: string | null;
       last_success_at?: string | null;
@@ -460,6 +462,7 @@ export const api = {
     }>("/api/redistribution/status"),
   redistributionConnectLk: (body: {
     authorize_v3: string;
+    wb_seller_lk?: string;
     user_agent?: string;
     root_version?: string;
     phone_last4?: string;
@@ -1562,6 +1565,53 @@ paymentOrderDelete: (payment_order_id: string) =>
   // ── Sync status (для индикатора в шапке) ──
   syncStatus: () => request<SyncStatusResponse>(`/api/sync/status`),
 
+  // ── UNIT-план (forward-looking unit economics) ──
+  unitPlanRows: (filters?: UnitPlanFilters) => {
+    const qs = new URLSearchParams();
+    if (filters?.warehouse) qs.set("warehouse", filters.warehouse);
+    if (filters?.fbs != null) qs.set("fbs", filters.fbs ? "true" : "false");
+    if (filters?.monopallet != null)
+      qs.set("monopallet", filters.monopallet ? "true" : "false");
+    if (filters?.abc) qs.set("abc", filters.abc);
+    if (filters?.brand) qs.set("brand", filters.brand);
+    if (filters?.search) qs.set("search", filters.search);
+    // Historical periods (BA-BF). Все ISO yyyy-mm-dd.
+    if (filters?.period_1_from) qs.set("period_1_from", filters.period_1_from);
+    if (filters?.period_1_to) qs.set("period_1_to", filters.period_1_to);
+    if (filters?.period_2_from) qs.set("period_2_from", filters.period_2_from);
+    if (filters?.period_2_to) qs.set("period_2_to", filters.period_2_to);
+    if (filters?.period_3_from) qs.set("period_3_from", filters.period_3_from);
+    if (filters?.period_3_to) qs.set("period_3_to", filters.period_3_to);
+    if (filters?.forecast_date) qs.set("forecast_date", filters.forecast_date);
+    const tail = qs.toString();
+    return request<UnitPlanResponse>(
+      `/api/unit-plan/rows${tail ? `?${tail}` : ""}`,
+    );
+  },
+  unitPlanGlobalConfig: () =>
+    request<UnitPlanGlobalConfig>(`/api/unit-plan/global-config`),
+  unitPlanSetGlobalConfig: (body: UnitPlanGlobalConfigUpdate) =>
+    request<UnitPlanGlobalConfig>(`/api/unit-plan/global-config`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  /** История версий global_config для UNIT-плана (director-only). */
+  unitPlanGlobalConfigVersions: () =>
+    request<{ items: UnitPlanGlobalConfig[] }>(
+      `/api/unit-plan/global-config/versions`,
+    ),
+  unitPlanOverrideUpsert: (nm_id: number, body: UnitPlanOverrideUpdate) =>
+    request<void>(`/api/unit-plan/overrides/${nm_id}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  unitPlanOverrideDelete: (nm_id: number) =>
+    request<void>(`/api/unit-plan/overrides/${nm_id}`, { method: "DELETE" }),
+  unitPlanReferenceStatus: () =>
+    request<UnitPlanReferenceStatus>(`/api/unit-plan/reference/status`),
+  unitPlanDetail: (nm_id: number) =>
+    request<UnitPlanDetail>(`/api/unit-plan/${nm_id}/detail`),
+
   // ── Features doc (FEATURES.md as plain text для страницы /features) ──
   featuresDoc: async (): Promise<string> => {
     const r = await fetch("/api/features-doc", { credentials: "include" });
@@ -1601,4 +1651,214 @@ export interface SyncStatusResponse {
   active_tasks: SyncActiveTask[];
   is_syncing: boolean;
   server_time: string;
+}
+
+// ──────────────────────────────────────────────────────────────
+// UNIT-план DTOs (см. UNIT_PLAN.md §2-§4, §8)
+// ──────────────────────────────────────────────────────────────
+
+export interface UnitPlanFilters {
+  warehouse?: string;
+  fbs?: boolean;
+  monopallet?: boolean;
+  abc?: string;
+  brand?: string;
+  search?: string;
+  // Historical periods (BA-BF). Дата ISO yyyy-mm-dd.
+  period_1_from?: string;
+  period_1_to?: string;
+  period_2_from?: string;
+  period_2_to?: string;
+  period_3_from?: string;
+  period_3_to?: string;
+  forecast_date?: string;
+}
+
+/** Плановая строка по одному SKU. 60 колонок Excel-эталона. */
+export interface UnitPlanRow {
+  // Identification (A-F)
+  nm_id: number;
+  vendor_code: string | null;
+  subject: string | null;
+  brand: string | null;
+  warehouse: string | null;
+  volume_l: number | null;
+  // Stocks (G-J)
+  stock_wb: number | null;
+  stock_fbs: number | null;
+  stock_effective: number | null;
+  days_to_stockout: number | null;
+  // Price ladder (K-T)
+  base_price: number | null;
+  discount_pct: number | null;
+  discount_wb_pct: number | null;
+  discount_match: boolean | null;
+  price_after_discount: number | null;
+  wb_club_pct: number | null;
+  price_after_wb_club: number | null;
+  spp_pct: number | null;
+  price_after_spp: number | null;
+  price_final: number | null;
+  // Commission (U-Y)
+  commission_pct: number | null;
+  acquiring_pct: number | null;
+  commission_total_pct: number | null;
+  commission_rub: number | null;
+  is_fbs: boolean | null;
+  // Logistics (Z-AH)
+  logistics_box_rub: number | null;
+  is_monopallet: boolean | null;
+  items_per_monopallet: number | null;
+  logistics_pallet_rub: number | null;
+  buyout_pct: number | null;
+  warehouse_coef_pct: number | null;
+  logistics_rub: number | null;
+  reverse_logistics_rub: number | null;
+  logistics_share: number | null;
+  // Storage (AI-AJ)
+  storage_rub: number | null;
+  storage_share: number | null;
+  // COGS (AK-AL)
+  cogs_rub: number | null;
+  cogs_share: number | null;
+  // Marketing (AM-AN)
+  marketing_rub: number | null;
+  marketing_pct: number | null;
+  // Taxes + VAT (AO-AR)
+  tax_rub: number | null;
+  tax_pct: number | null;
+  vat_rub: number | null;
+  vat_pct: number | null;
+  // Acceptance (AS-AT)
+  acceptance_rub: number | null;
+  acceptance_share: number | null;
+  // Result (AU-AW)
+  profit_rub: number | null;
+  margin_pct: number | null;
+  roi_pct: number | null;
+  // Labels (AX-AZ)
+  season_label: string | null;
+  gender_label: string | null;
+  abc_label: string | null;
+  // Snapshots (BA-BF, опционально)
+  profit_week_1?: number | null;
+  orders_period_1?: number | null;
+  sold_period_1?: number | null;
+  orders_period_2?: number | null;
+  orders_period_3?: number | null;
+  stock_forecast?: number | null;
+}
+
+export interface UnitPlanReferenceStatus {
+  box_age_days: number;
+  commission_age_days: number;
+  stale: boolean;
+}
+
+export interface UnitPlanResponse {
+  meta: {
+    on_date: string;
+    reference_status?: {
+      tariff_box_age_days: number;
+      commission_age_days: number;
+      stale: boolean;
+    };
+    config_version?: string;
+    total_rows: number;
+    filtered_rows: number;
+  };
+  items: UnitPlanRow[];
+  labels_available?: {
+    abc?: string[];
+    season?: string[];
+    gender?: string[];
+  };
+}
+
+/** Глобальные константы UNIT-плана (UNIT_PLAN.md §2). */
+export interface UnitPlanGlobalConfig {
+  id?: number;
+  effective_date: string;
+  wb_club_pct: number;
+  spp_default_pct: number;
+  spp_by_subject?: Record<string, number>;
+  wb_wallet_pct: number;
+  acquiring_pct: number;
+  il_coef: number;
+  irp_coef: number;
+  marketing_pct: number;
+  tax_pct: number;
+  vat_mode: "include" | "exclude" | "none";
+  vat_pct: number;
+  acceptance_rub_per_liter: number;
+  acceptance_multiplier: number;
+  velocity_days: number;
+  buyout_fallback_pct: number;
+  storage_days?: number;
+}
+
+export type UnitPlanGlobalConfigUpdate = Partial<
+  Omit<UnitPlanGlobalConfig, "id">
+>;
+
+/** Per-SKU override полей (UNIT_PLAN.md §3, unit_plan_override).
+ *
+ * PUT merge-семантика (UNIT-PLAN-013): отправляем только меняющиеся поля;
+ * остальное на сервере не трогается. Чтобы очистить поле — передать `null`
+ * явно (а не опустить).
+ */
+export interface UnitPlanOverrideUpdate {
+  warehouse_name?: string | null;
+  is_fbs?: boolean | null;
+  is_monopallet?: boolean | null;
+  items_per_monopallet?: number | null;
+  spp_pct?: number | null;
+  /** Per-row override литров. Если null — используется `products.volume_l`. */
+  volume_l?: number | null;
+  abc_label?: string | null;
+  season_label?: string | null;
+  gender_label?: string | null;
+  comment?: string | null;
+}
+
+// ──────────────────────────────────────────────────────────────
+// UNIT-план drill-down DTO (UNIT-PLAN-018, /api/unit-plan/{nm}/detail)
+// ──────────────────────────────────────────────────────────────
+
+export interface UnitPlanPricePoint {
+  date: string; // YYYY-MM-DD
+  base_price: number | null;
+  discount_pct: number | null;
+  price_with_disc: number | null;
+}
+
+export interface UnitPlanCogsBreakdown {
+  total: number;
+  cost_rub: number;
+  packaging_rub: number;
+  fulfillment_rub: number;
+  valid_from: string | null;
+  valid_to: string | null;
+  comment: string | null;
+}
+
+export interface UnitPlanPlanVsFact {
+  month: string; // YYYY-MM
+  orders: { plan: number; fact: number; diff_pct: number | null };
+  revenue: { plan: number; fact: number; diff_pct: number | null };
+  margin_pct: {
+    plan: number | null;
+    fact: number | null;
+    diff_pp: number | null;
+  };
+}
+
+export interface UnitPlanDetail {
+  nm_id: number;
+  vendor_code: string | null;
+  brand: string | null;
+  subject: string | null;
+  price_history: UnitPlanPricePoint[];
+  cogs_breakdown: UnitPlanCogsBreakdown | null;
+  plan_vs_fact: UnitPlanPlanVsFact;
 }

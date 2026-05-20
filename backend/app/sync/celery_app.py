@@ -7,7 +7,12 @@ celery_app = Celery(
     "rnp",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.sync.tasks", "app.sync.tasks_abtest", "app.sync.event_consumers"],
+    include=[
+        "app.sync.tasks",
+        "app.sync.tasks_abtest",
+        "app.sync.tasks_tariffs",
+        "app.sync.event_consumers",
+    ],
 )
 
 celery_app.conf.update(
@@ -59,11 +64,13 @@ celery_app.conf.update(
         "app.sync.tasks.generate_redistribution_recs": {"queue": "default"},
         "app.sync.tasks.generate_redistribution_recs_for_tenant": {"queue": "default"},
         "app.sync.tasks.publish_redistribution_windows": {"queue": "default"},
+        "app.sync.tasks.execute_window_for_tenant": {"queue": "default"},
         "app.sync.tasks.send_weekly_digest": {"queue": "default"},
         # Event-bus consumers (LEAD-004). Используют существующий
         # worker-default — добавление отдельного worker-events service
         # отложено в Этап 4 (требует ребилда docker-compose).
         "app.sync.event_consumers.consume_chargeback_telegram": {"queue": "default"},
+        "app.sync.event_consumers.consume_redistribution_window": {"queue": "default"},
         "app.sync.event_consumers.reclaim_all_pending": {"queue": "default"},
         "app.sync.event_consumers.smoke_publish_chargeback": {"queue": "default"},
         # A/B test tasks — rotation reads photo files from abtest_photos
@@ -74,6 +81,8 @@ celery_app.conf.update(
         "app.sync.tasks_abtest.poll_abtest_budgets_for_tenant": {"queue": "advert"},
         "app.sync.tasks_abtest.sync_abtest_stats_full": {"queue": "advert"},
         "app.sync.tasks_abtest.sync_abtest_stats_for_tenant": {"queue": "advert"},
+        # WB Tariffs (UNIT-PLAN-005). Один запрос в сутки — default queue.
+        "sync.tariffs": {"queue": "default"},
     },
     # Beat schedule design constraints:
     #   - WB Statistics: docs say 1 req/min sustained, but the *real* burst
@@ -169,6 +178,14 @@ celery_app.conf.update(
             "task": "app.sync.tasks.publish_redistribution_windows",
             "schedule": 60.0,
         },
+        # Consumer (LEAD-016): тик каждые 30 сек; в окне читает событие
+        # `redistribution.window.open` и enqueue'ит execute_window per tenant.
+        # Вне окна — beat тоже стучит, но publish ничего не выдал → consumer
+        # просто блокируется на 5 сек и выходит.
+        "consume-redistribution-window-30s": {
+            "task": "app.sync.event_consumers.consume_redistribution_window",
+            "schedule": 30.0,
+        },
         # Weekly digest (LEAD-012) — понедельник 10:00 МСК (07:00 UTC)
         "weekly-digest-monday": {
             "task": "app.sync.tasks.send_weekly_digest",
@@ -248,6 +265,14 @@ celery_app.conf.update(
         "abtest-sync-stats-full": {
             "task": "app.sync.tasks_abtest.sync_abtest_stats_full",
             "schedule": crontab(hour="1,7,13,19", minute=50),
+        },
+        # --- WB Tariffs reference (UNIT-PLAN-005) ---
+        # Раз в сутки 08:00 MSK — после report_detail (04:15) и paid_storage
+        # (05:30), до рабочего дня. Тарифы глобальны (без tenant_id), берём
+        # токен любого активного селлера. См. tasks_tariffs.py.
+        "sync-tariffs-daily": {
+            "task": "sync.tariffs",
+            "schedule": crontab(hour=8, minute=0),
         },
     },
 )

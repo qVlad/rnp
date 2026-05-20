@@ -16,12 +16,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logging import get_logger
 from app.db.models import Tenant
 from app.db.session import get_db
 from app.integrations.wb.client import WbApiClient, WbApiError
 from app.services.audit import audit_log
 from app.services.auth import CurrentUser, get_current_user, require_director
 from app.services.secrets_crypto import encrypt
+
+log = get_logger(__name__)
 
 router = APIRouter(prefix="/api/tenant", tags=["tenant"])
 
@@ -98,6 +101,7 @@ async def set_wb_token(
     prev_seller_id = tenant.wb_token_seller_id
     # Шифруем перед сохранением (Fernet) — если ключ настроен; иначе
     # plaintext + warning в логах.
+    was_set = bool(tenant.wb_token)
     tenant.wb_token = encrypt(token)
     tenant.wb_token_validated_at = datetime.now(timezone.utc)
     tenant.wb_token_seller_id = _decode_wb_token_sid(token)
@@ -112,10 +116,50 @@ async def set_wb_token(
         actor=user.username,
     )
     await session.commit()
+
+    # Авто-триггер первичного backfill за 90 дней при ПЕРВОЙ установке токена.
+    # Если токен меняли (was_set=True) — не дёргаем, директор сам решит.
+    # Backfill за 90 дней — компромисс: достаточно для текущей аналитики
+    # (P&L, units), не слишком долго (~5 мин на все таски).
+    auto_sync_triggered: list[str] = []
+    if not was_set:
+        try:
+            from app.sync.tasks import (
+                sync_ad_campaigns_for_tenant,
+                sync_offset_acts_for_tenant,
+                sync_orders_for_tenant,
+                sync_paid_storage_for_tenant,
+                sync_redeem_notifications_for_tenant,
+                sync_report_detail_for_tenant,
+                sync_sales_for_tenant,
+                sync_stocks_for_tenant,
+            )
+            sync_orders_for_tenant.delay(user.tenant_id)
+            auto_sync_triggered.append("orders")
+            sync_sales_for_tenant.delay(user.tenant_id)
+            auto_sync_triggered.append("sales")
+            sync_stocks_for_tenant.delay(user.tenant_id)
+            auto_sync_triggered.append("stocks")
+            sync_report_detail_for_tenant.delay(user.tenant_id, 90)
+            auto_sync_triggered.append("report_detail")
+            sync_paid_storage_for_tenant.delay(user.tenant_id)
+            auto_sync_triggered.append("paid_storage")
+            sync_redeem_notifications_for_tenant.delay(user.tenant_id, 90)
+            auto_sync_triggered.append("redeem_notifications")
+            sync_offset_acts_for_tenant.delay(user.tenant_id, 90)
+            auto_sync_triggered.append("offset_acts")
+            sync_ad_campaigns_for_tenant.delay(user.tenant_id)
+            auto_sync_triggered.append("ad_campaigns")
+        except Exception as e:
+            # Sync — best-effort: токен уже сохранён, директор может вручную
+            # пнуть sync через UI кнопками если авто-триггер не сработал.
+            log.warning("auto-sync trigger failed for tenant %s: %s", user.tenant_id, e)
+
     return {
         "set": True,
         "seller_id": tenant.wb_token_seller_id,
         "validated_at": tenant.wb_token_validated_at.isoformat(),
+        "auto_sync_triggered": auto_sync_triggered,
     }
 
 

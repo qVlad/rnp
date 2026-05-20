@@ -62,6 +62,9 @@ services:
       # A/B-test photo variants (multipart uploads from API, read by rotation
       # worker). Same volume mounted on worker-default below.
       - abtest_photos:/app/storage/photos
+      # FEATURES.md как single source of truth для UI-страницы /features.
+      # Read-only mount чтобы изменения файла подхватывались без rebuild.
+      - ./FEATURES.md:/app/FEATURES.md:ro
 
   worker-stats:
     image: rnp-app:latest

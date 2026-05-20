@@ -1,0 +1,908 @@
+"""UNIT-план: загрузчики snapshot-bundle'ов из БД для `compute_row`.
+
+Чистый I/O-слой: SELECT'ы тарифов/конфига/per-nm данных и упаковка их в
+frozen dataclasses из `services/unit_plan.py`. Не вычисляет ничего — это
+делает `compute_row` (pure function).
+
+**Конвенция по процентам:**
+
+- В БД проценты хранятся как 0-100 (`Numeric(5,2)` — привычно для UI).
+  Например, `wb_club_pct = 5` означает «скидка ВБ Клуб 5%».
+- В dataclasses `compute_row` ожидает доли 0-1 (`Decimal("0.05")`).
+- Loader выполняет деление на 100 на границе.
+
+Применимо к: `wb_club_pct, spp_default_pct, wb_wallet_pct, acquiring_pct,
+marketing_pct, tax_pct, vat_pct, buyout_fallback_pct`, а также к каждой
+ставке внутри `spp_by_subject`.
+
+`il_coef`, `irp_coef`, `acceptance_multiplier`, `acceptance_rub_per_liter` —
+не проценты, не делятся.
+"""
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
+from typing import Any, Iterable
+
+from sqlalchemy import and_, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.models import (
+    Cogs,
+    Product,
+    UnitPlanGlobalConfig,
+    UnitPlanOverride,
+    WbOrder,
+    WbSale,
+    WbStockSnapshot,
+    WbTariffBox,
+    WbTariffCommission,
+    WbTariffPallet,
+)
+from app.services.unit_plan import (
+    BoxTariffSnapshot,
+    CogsSnapshot,
+    CommissionSnapshot,
+    FunnelSnapshot,
+    GlobalConfig,
+    HistoricalSnapshot,
+    OverrideSnapshot,
+    PalletTariffSnapshot,
+    PriceSnapshot,
+    ProductSnapshot,
+    ReferenceBundle,
+    StockSnapshot,
+)
+
+D = Decimal
+D0 = Decimal("0")
+D100 = Decimal("100")
+
+
+# ---------------------------------------------------------------------------
+# Defaults — из UNIT_PLAN.md §2 (если в БД нет ни одной записи global config)
+# ---------------------------------------------------------------------------
+
+
+def _default_global_config() -> GlobalConfig:
+    """Дефолты из UNIT_PLAN.md §2 (в долях 0-1)."""
+    return GlobalConfig(
+        wb_club_pct=D("0"),
+        spp_default_pct=D("0.20"),
+        spp_by_subject={},
+        wb_wallet_pct=D("0.02"),
+        acquiring_pct=D("0.02"),
+        il_coef=D("1.16"),
+        irp_coef=D("0.017"),
+        marketing_pct=D("0.03"),
+        tax_pct=D("0.08"),
+        vat_mode="exclude",
+        vat_pct=D("0.10"),
+        acceptance_rub_per_liter=D("1.7"),
+        acceptance_multiplier=D("1.0"),
+        velocity_days=30,
+        buyout_fallback_pct=D("0.5"),
+        storage_days=60,
+    )
+
+
+def _pct_to_share(value: Any) -> Decimal:
+    """Convert 0-100 Numeric → 0-1 Decimal. None → 0."""
+    if value is None:
+        return D0
+    if isinstance(value, Decimal):
+        return value / D100
+    return Decimal(str(value)) / D100
+
+
+def _coerce_decimal(value: Any, default: Decimal) -> Decimal:
+    if value is None:
+        return default
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
+
+
+# ---------------------------------------------------------------------------
+# Reference bundle (tariffs)
+# ---------------------------------------------------------------------------
+
+
+async def _latest_box(
+    session: AsyncSession, *, warehouse: str, on_date: date
+) -> WbTariffBox | None:
+    stmt = (
+        select(WbTariffBox)
+        .where(
+            WbTariffBox.warehouse_name == warehouse,
+            WbTariffBox.effective_from <= on_date,
+        )
+        .order_by(WbTariffBox.effective_from.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def _latest_pallet(
+    session: AsyncSession, *, warehouse: str, on_date: date
+) -> WbTariffPallet | None:
+    stmt = (
+        select(WbTariffPallet)
+        .where(
+            WbTariffPallet.warehouse_name == warehouse,
+            WbTariffPallet.effective_from <= on_date,
+        )
+        .order_by(WbTariffPallet.effective_from.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def _latest_commission(
+    session: AsyncSession, *, subject: str, on_date: date
+) -> WbTariffCommission | None:
+    stmt = (
+        select(WbTariffCommission)
+        .where(
+            WbTariffCommission.subject_name == subject,
+            WbTariffCommission.effective_from <= on_date,
+        )
+        .order_by(WbTariffCommission.effective_from.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def load_reference_bundle(
+    session: AsyncSession,
+    *,
+    on_date: date,
+    warehouse: str,
+    subject: str | None,
+) -> ReferenceBundle:
+    """Latest WB tariffs per (warehouse, subject) on/before `on_date`.
+
+    Все три таблицы — SCD2 по `effective_from`. Берём «latest snapshot <= D».
+    Если subject=None → CommissionSnapshot(None, None, None) (downstream
+    подставит 0%).
+
+    Если соответствующего snapshot нет (sync ещё не запустился, новый
+    склад/предмет, etc.) — поле в bundle = None. `compute_row` это
+    переживает (logistics_box_rub=None, commission_pct=0%, etc.).
+    """
+    box_row = await _latest_box(session, warehouse=warehouse, on_date=on_date)
+    pallet_row = await _latest_pallet(session, warehouse=warehouse, on_date=on_date)
+
+    box: BoxTariffSnapshot | None = None
+    if box_row is not None:
+        box = BoxTariffSnapshot(
+            delivery_base=box_row.delivery_base,
+            delivery_liter=box_row.delivery_liter,
+            delivery_expr=box_row.delivery_expr,
+            storage_base=box_row.storage_base,
+            storage_liter=box_row.storage_liter,
+        )
+
+    pallet: PalletTariffSnapshot | None = None
+    if pallet_row is not None:
+        pallet = PalletTariffSnapshot(
+            delivery_base=pallet_row.delivery_base,
+            delivery_liter=pallet_row.delivery_liter,
+            storage_base=pallet_row.storage_base,
+            storage_liter=pallet_row.storage_liter,
+        )
+
+    commission: CommissionSnapshot | None = None
+    if subject is not None:
+        comm_row = await _latest_commission(
+            session, subject=subject, on_date=on_date
+        )
+        if comm_row is not None:
+            commission = CommissionSnapshot(
+                commission_fbo=_pct_to_share(comm_row.commission_fbo)
+                if comm_row.commission_fbo is not None
+                else None,
+                commission_fbs=_pct_to_share(comm_row.commission_fbs)
+                if comm_row.commission_fbs is not None
+                else None,
+                paid_storage_kgvp=_pct_to_share(comm_row.paid_storage_kgvp)
+                if comm_row.paid_storage_kgvp is not None
+                else None,
+            )
+
+    return ReferenceBundle(box=box, pallet=pallet, commission=commission)
+
+
+async def reference_status(
+    session: AsyncSession, *, on_date: date
+) -> dict[str, Any]:
+    """Возраст последнего snapshot'а каждой tariff-таблицы (для UI-баннера)."""
+    out: dict[str, Any] = {}
+    for label, model in (
+        ("box", WbTariffBox),
+        ("pallet", WbTariffPallet),
+        ("commission", WbTariffCommission),
+    ):
+        latest = (
+            await session.execute(
+                select(func.max(model.effective_from))
+            )
+        ).scalar()
+        if latest is None:
+            out[f"{label}_age_days"] = None
+            out[f"{label}_last_sync"] = None
+        else:
+            age = (on_date - latest).days
+            out[f"{label}_age_days"] = age
+            out[f"{label}_last_sync"] = latest.isoformat()
+    # «Stale» — любая из трёх таблиц старше 7 дней (или вообще отсутствует).
+    ages = [
+        out[f"{label}_age_days"] for label in ("box", "pallet", "commission")
+    ]
+    out["stale"] = any(a is None or a > 7 for a in ages)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Global config
+# ---------------------------------------------------------------------------
+
+
+async def load_global_config(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    on_date: date,
+) -> GlobalConfig:
+    """Latest `unit_plan_global_config` для tenant на/до `on_date`.
+
+    Если ни одной записи нет — возвращает дефолты (UNIT_PLAN.md §2).
+
+    Конвертация в loader: проценты в БД 0-100 → доли 0-1.
+    """
+    stmt = (
+        select(UnitPlanGlobalConfig)
+        .where(
+            UnitPlanGlobalConfig.tenant_id == tenant_id,
+            UnitPlanGlobalConfig.effective_date <= on_date,
+        )
+        .order_by(UnitPlanGlobalConfig.effective_date.desc())
+        .limit(1)
+    )
+    row = (await session.execute(stmt)).scalar_one_or_none()
+    if row is None:
+        return _default_global_config()
+
+    # spp_by_subject — JSONB, значения 0-100 → доли.
+    spp_map_raw = row.spp_by_subject or {}
+    spp_by_subject: dict[str, Decimal] = {}
+    if isinstance(spp_map_raw, dict):
+        for k, v in spp_map_raw.items():
+            try:
+                spp_by_subject[str(k)] = _pct_to_share(v)
+            except Exception:  # noqa: BLE001 — malformed JSON value
+                continue
+
+    return GlobalConfig(
+        wb_club_pct=_pct_to_share(row.wb_club_pct),
+        spp_default_pct=_pct_to_share(row.spp_default_pct),
+        spp_by_subject=spp_by_subject,
+        wb_wallet_pct=_pct_to_share(row.wb_wallet_pct),
+        acquiring_pct=_pct_to_share(row.acquiring_pct),
+        il_coef=_coerce_decimal(row.il_coef, D("1.16")),
+        irp_coef=_coerce_decimal(row.irp_coef, D("0.017")),
+        marketing_pct=_pct_to_share(row.marketing_pct),
+        tax_pct=_pct_to_share(row.tax_pct),
+        vat_mode=(row.vat_mode or "exclude"),
+        vat_pct=_pct_to_share(row.vat_pct),
+        acceptance_rub_per_liter=_coerce_decimal(
+            row.acceptance_rub_per_liter, D("1.7")
+        ),
+        acceptance_multiplier=_coerce_decimal(
+            row.acceptance_multiplier, D("1.0")
+        ),
+        velocity_days=int(row.velocity_days or 30),
+        buyout_fallback_pct=_pct_to_share(row.buyout_fallback_pct),
+        storage_days=int(row.storage_days or 60),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-nm snapshots
+# ---------------------------------------------------------------------------
+
+
+def _empty_override(nm_id: int) -> OverrideSnapshot:
+    return OverrideSnapshot(
+        warehouse_name=None,
+        is_fbs=None,
+        is_monopallet=None,
+        items_per_monopallet=None,
+        spp_pct=None,
+        volume_l=None,
+        abc_label=None,
+        season_label=None,
+        gender_label=None,
+    )
+
+
+async def _bulk_products(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    nm_ids: list[int] | None,
+    brands: set[str] | None,
+) -> list[Product]:
+    stmt = select(Product).where(
+        Product.tenant_id == tenant_id,
+        Product.is_archived.is_(False),
+    )
+    if nm_ids is not None:
+        stmt = stmt.where(Product.nm_id.in_(nm_ids))
+    if brands is not None:
+        # Manager-фильтр: пустой набор → ничего не возвращаем.
+        if not brands:
+            return []
+        stmt = stmt.where(Product.brand.in_(brands))
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def _latest_cogs(
+    session: AsyncSession, *, tenant_id: int, nm_ids: list[int], on_date: date
+) -> dict[int, Decimal]:
+    """Latest valid_from <= on_date cost_rub per nm_id."""
+    if not nm_ids:
+        return {}
+    # Subquery: latest valid_from per nm_id.
+    subq = (
+        select(Cogs.nm_id, func.max(Cogs.valid_from).label("max_vf"))
+        .where(
+            Cogs.tenant_id == tenant_id,
+            Cogs.nm_id.in_(nm_ids),
+            Cogs.valid_from <= on_date,
+        )
+        .group_by(Cogs.nm_id)
+        .subquery()
+    )
+    stmt = (
+        select(Cogs.nm_id, Cogs.cost_rub)
+        .join(
+            subq,
+            and_(
+                Cogs.nm_id == subq.c.nm_id,
+                Cogs.valid_from == subq.c.max_vf,
+            ),
+        )
+        .where(Cogs.tenant_id == tenant_id)
+    )
+    rows = (await session.execute(stmt)).all()
+    return {nm: Decimal(cost) if cost is not None else D0 for nm, cost in rows}
+
+
+async def _latest_stock(
+    session: AsyncSession, *, tenant_id: int, nm_ids: list[int]
+) -> dict[int, int]:
+    """Сумма quantity по последнему snapshot_dt per nm_id."""
+    if not nm_ids:
+        return {}
+    # Latest snapshot_dt per nm_id (we sum across warehouses for the latest
+    # snapshot timestamp — multiple rows per (nm, warehouse) at same dt are
+    # summed).
+    subq = (
+        select(
+            WbStockSnapshot.nm_id,
+            func.max(WbStockSnapshot.snapshot_dt).label("max_dt"),
+        )
+        .where(
+            WbStockSnapshot.tenant_id == tenant_id,
+            WbStockSnapshot.nm_id.in_(nm_ids),
+        )
+        .group_by(WbStockSnapshot.nm_id)
+        .subquery()
+    )
+    stmt = (
+        select(
+            WbStockSnapshot.nm_id,
+            func.coalesce(func.sum(WbStockSnapshot.quantity), 0),
+        )
+        .join(
+            subq,
+            and_(
+                WbStockSnapshot.nm_id == subq.c.nm_id,
+                WbStockSnapshot.snapshot_dt == subq.c.max_dt,
+            ),
+        )
+        .where(WbStockSnapshot.tenant_id == tenant_id)
+        .group_by(WbStockSnapshot.nm_id)
+    )
+    rows = (await session.execute(stmt)).all()
+    return {int(nm): int(qty or 0) for nm, qty in rows}
+
+
+async def _orders_last_30d(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    nm_ids: list[int],
+    on_date: date,
+    velocity_days: int = 30,
+) -> dict[int, int]:
+    if not nm_ids:
+        return {}
+    cutoff = datetime.combine(
+        on_date - timedelta(days=velocity_days),
+        datetime.min.time(),
+        tzinfo=timezone.utc,
+    )
+    stmt = (
+        select(WbOrder.nm_id, func.count())
+        .where(
+            WbOrder.tenant_id == tenant_id,
+            WbOrder.nm_id.in_(nm_ids),
+            WbOrder.order_dt >= cutoff,
+            WbOrder.is_cancel.is_(False),
+        )
+        .group_by(WbOrder.nm_id)
+    )
+    rows = (await session.execute(stmt)).all()
+    return {int(nm): int(cnt or 0) for nm, cnt in rows}
+
+
+async def _buyout_pct_30d(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    nm_ids: list[int],
+    on_date: date,
+    velocity_days: int = 30,
+) -> dict[int, Decimal]:
+    """% выкупа per nm_id за последние velocity_days дней.
+
+    Формула: sales (без is_return) / orders (без is_cancel). Доля 0-1.
+    Если orders=0 — nm_id отсутствует в dict (caller использует fallback).
+    """
+    if not nm_ids:
+        return {}
+    cutoff = datetime.combine(
+        on_date - timedelta(days=velocity_days),
+        datetime.min.time(),
+        tzinfo=timezone.utc,
+    )
+    orders_stmt = (
+        select(WbOrder.nm_id, func.count())
+        .where(
+            WbOrder.tenant_id == tenant_id,
+            WbOrder.nm_id.in_(nm_ids),
+            WbOrder.order_dt >= cutoff,
+            WbOrder.is_cancel.is_(False),
+        )
+        .group_by(WbOrder.nm_id)
+    )
+    orders_by_nm: dict[int, int] = {
+        int(nm): int(cnt or 0)
+        for nm, cnt in (await session.execute(orders_stmt)).all()
+    }
+
+    sales_stmt = (
+        select(WbSale.nm_id, func.count())
+        .where(
+            WbSale.tenant_id == tenant_id,
+            WbSale.nm_id.in_(nm_ids),
+            WbSale.sale_dt >= cutoff,
+            WbSale.is_return.is_(False),
+        )
+        .group_by(WbSale.nm_id)
+    )
+    sales_by_nm: dict[int, int] = {
+        int(nm): int(cnt or 0)
+        for nm, cnt in (await session.execute(sales_stmt)).all()
+    }
+
+    out: dict[int, Decimal] = {}
+    for nm, orders in orders_by_nm.items():
+        if orders <= 0:
+            continue
+        sales = sales_by_nm.get(nm, 0)
+        if sales <= 0:
+            continue
+        # Сапиэно: buyout = sales / orders. Clamp [0, 1].
+        ratio = Decimal(sales) / Decimal(orders)
+        if ratio > Decimal("1"):
+            ratio = Decimal("1")
+        out[nm] = ratio
+    return out
+
+
+async def _latest_price(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    nm_ids: list[int],
+) -> dict[int, tuple[Decimal | None, Decimal | None]]:
+    """Latest price (price_with_disc) per nm_id из `wb_sales`.
+
+    Модели `wb_prices` в текущей схеме нет — используем последнюю
+    `WbSale.price_with_disc` как best-effort для plan-расчёта. `discount_pct`
+    оставляем None (base_price ≈ price_after_discount). Если future-миграция
+    введёт wb_prices — заменить здесь.
+    """
+    if not nm_ids:
+        return {}
+    # Latest sale_dt per nm_id, pick price_with_disc.
+    subq = (
+        select(
+            WbSale.nm_id,
+            func.max(WbSale.sale_dt).label("max_dt"),
+        )
+        .where(
+            WbSale.tenant_id == tenant_id,
+            WbSale.nm_id.in_(nm_ids),
+        )
+        .group_by(WbSale.nm_id)
+        .subquery()
+    )
+    stmt = (
+        select(WbSale.nm_id, WbSale.price_with_disc, WbSale.discount_percent)
+        .join(
+            subq,
+            and_(
+                WbSale.nm_id == subq.c.nm_id,
+                WbSale.sale_dt == subq.c.max_dt,
+            ),
+        )
+        .where(WbSale.tenant_id == tenant_id)
+    )
+    out: dict[int, tuple[Decimal | None, Decimal | None]] = {}
+    for nm, price, disc in (await session.execute(stmt)).all():
+        out[int(nm)] = (
+            Decimal(price) if price is not None else None,
+            _pct_to_share(disc) if disc is not None else D0,
+        )
+    return out
+
+
+async def _overrides(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    nm_ids: list[int],
+) -> dict[int, UnitPlanOverride]:
+    if not nm_ids:
+        return {}
+    stmt = select(UnitPlanOverride).where(
+        UnitPlanOverride.tenant_id == tenant_id,
+        UnitPlanOverride.nm_id.in_(nm_ids),
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return {int(r.nm_id): r for r in rows}
+
+
+def _override_to_snapshot(ov: UnitPlanOverride | None) -> OverrideSnapshot:
+    if ov is None:
+        return OverrideSnapshot(
+            warehouse_name=None,
+            is_fbs=None,
+            is_monopallet=None,
+            items_per_monopallet=None,
+            spp_pct=None,
+            volume_l=None,
+            abc_label=None,
+            season_label=None,
+            gender_label=None,
+        )
+    return OverrideSnapshot(
+        warehouse_name=ov.warehouse_name,
+        is_fbs=ov.is_fbs,
+        is_monopallet=ov.is_monopallet,
+        items_per_monopallet=ov.items_per_monopallet,
+        spp_pct=_pct_to_share(ov.spp_pct) if ov.spp_pct is not None else None,
+        # UNIT-PLAN-013: override литров для paste-from-Excel.
+        volume_l=ov.volume_l,
+        abc_label=ov.abc_label,
+        season_label=ov.season_label,
+        gender_label=ov.gender_label,
+    )
+
+
+async def load_per_nm_snapshots(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    nm_ids: list[int] | None,
+    on_date: date,
+    brands: set[str] | None = None,
+    velocity_days: int = 30,
+) -> dict[int, dict[str, Any]]:
+    """Bulk-fetch snapshots для UNIT-плана.
+
+    Возвращает `{nm_id: {"product", "price", "cogs", "funnel", "stock",
+    "override"}}` — упаковано так, чтобы `compute_row` мог взять напрямую.
+
+    Аргумент `brands` (None | set) — manager-фильтр; если задан и пуст,
+    результат — пустой dict.
+    """
+    products = await _bulk_products(
+        session, tenant_id=tenant_id, nm_ids=nm_ids, brands=brands
+    )
+    if not products:
+        return {}
+
+    nm_ids_list = [int(p.nm_id) for p in products]
+
+    cogs_map = await _latest_cogs(
+        session, tenant_id=tenant_id, nm_ids=nm_ids_list, on_date=on_date
+    )
+    stock_map = await _latest_stock(
+        session, tenant_id=tenant_id, nm_ids=nm_ids_list
+    )
+    orders_map = await _orders_last_30d(
+        session,
+        tenant_id=tenant_id,
+        nm_ids=nm_ids_list,
+        on_date=on_date,
+        velocity_days=velocity_days,
+    )
+    buyout_map = await _buyout_pct_30d(
+        session,
+        tenant_id=tenant_id,
+        nm_ids=nm_ids_list,
+        on_date=on_date,
+        velocity_days=velocity_days,
+    )
+    price_map = await _latest_price(
+        session, tenant_id=tenant_id, nm_ids=nm_ids_list
+    )
+    override_map = await _overrides(
+        session, tenant_id=tenant_id, nm_ids=nm_ids_list
+    )
+
+    out: dict[int, dict[str, Any]] = {}
+    for p in products:
+        nm = int(p.nm_id)
+        price_with_disc, discount_share = price_map.get(nm, (None, D0))
+        # base_price ≈ price_with_disc / (1 - discount_share) если есть скидка.
+        # Если discount=0 (или мы её не знаем) — base == after-discount.
+        if (
+            price_with_disc is not None
+            and discount_share is not None
+            and discount_share > D0
+            and discount_share < Decimal("1")
+        ):
+            base_price = price_with_disc / (Decimal("1") - discount_share)
+        else:
+            base_price = price_with_disc
+
+        ov_for_volume = override_map.get(nm)
+        # UNIT-PLAN-013: override.volume_l имеет приоритет над products.volume_l.
+        # Это позволяет менеджеру вручную задать литры через paste-from-Excel,
+        # не трогая основную карточку товара.
+        effective_volume_l = (
+            ov_for_volume.volume_l
+            if ov_for_volume is not None and ov_for_volume.volume_l is not None
+            else p.volume_l
+        )
+        product_snap = ProductSnapshot(
+            nm_id=nm,
+            vendor_code=p.vendor_code,
+            brand=p.brand,
+            subject=p.subject,
+            volume_l=effective_volume_l,
+            warehouse_default=p.warehouse_default,
+            is_monopallet=bool(p.is_monopallet),
+            items_per_monopallet=p.items_per_monopallet,
+        )
+        price_snap = PriceSnapshot(
+            base_price=base_price,
+            discount_pct=discount_share,
+        )
+        cogs_snap = CogsSnapshot(cost_rub=cogs_map.get(nm))
+        funnel_snap = FunnelSnapshot(
+            orders_30d=int(orders_map.get(nm, 0)),
+            buyout_pct=buyout_map.get(nm),
+        )
+        stock_snap = StockSnapshot(
+            qty_wb=int(stock_map.get(nm, 0)),
+            qty_fbs=0,  # FBS feed пока не интегрирован
+        )
+        override_snap = _override_to_snapshot(override_map.get(nm))
+        out[nm] = {
+            "product": product_snap,
+            "price": price_snap,
+            "cogs": cogs_snap,
+            "funnel": funnel_snap,
+            "stock": stock_snap,
+            "override": override_snap,
+        }
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Historical snapshots (BA-BF из UNIT_PLAN.md §4)
+# ---------------------------------------------------------------------------
+
+
+async def _count_orders_in_period(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    nm_ids: list[int],
+    period_from: date,
+    period_to: date,
+) -> dict[int, int]:
+    """COUNT wb_orders per nm_id за период [from, to] inclusive по order_dt."""
+    if not nm_ids:
+        return {}
+    start_dt = datetime.combine(period_from, datetime.min.time(), tzinfo=timezone.utc)
+    # period_to is inclusive → exclusive boundary = next day
+    end_dt = datetime.combine(
+        period_to + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc
+    )
+    stmt = (
+        select(WbOrder.nm_id, func.count())
+        .where(
+            WbOrder.tenant_id == tenant_id,
+            WbOrder.nm_id.in_(nm_ids),
+            WbOrder.order_dt >= start_dt,
+            WbOrder.order_dt < end_dt,
+            WbOrder.is_cancel.is_(False),
+        )
+        .group_by(WbOrder.nm_id)
+    )
+    rows = (await session.execute(stmt)).all()
+    return {int(nm): int(cnt or 0) for nm, cnt in rows}
+
+
+async def _count_sold_in_period(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    nm_ids: list[int],
+    period_from: date,
+    period_to: date,
+) -> dict[int, int]:
+    """COUNT wb_sales (is_return=False) per nm_id за период [from, to] по sale_dt."""
+    if not nm_ids:
+        return {}
+    start_dt = datetime.combine(period_from, datetime.min.time(), tzinfo=timezone.utc)
+    end_dt = datetime.combine(
+        period_to + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc
+    )
+    stmt = (
+        select(WbSale.nm_id, func.count())
+        .where(
+            WbSale.tenant_id == tenant_id,
+            WbSale.nm_id.in_(nm_ids),
+            WbSale.sale_dt >= start_dt,
+            WbSale.sale_dt < end_dt,
+            WbSale.is_return.is_(False),
+        )
+        .group_by(WbSale.nm_id)
+    )
+    rows = (await session.execute(stmt)).all()
+    return {int(nm): int(cnt or 0) for nm, cnt in rows}
+
+
+async def load_historical_snapshots(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    nm_ids: list[int],
+    period_1_from: date,
+    period_1_to: date,
+    period_2_from: date | None = None,
+    period_2_to: date | None = None,
+    period_3_from: date | None = None,
+    period_3_to: date | None = None,
+    forecast_date: date | None = None,
+    today: date | None = None,
+) -> dict[int, HistoricalSnapshot]:
+    """Bulk-fetch historical orders/sold per nm + прогноз остатка.
+
+    Колонки BA-BF из UNIT_PLAN.md §4:
+      BA — `profit_week_1` пока не считается (требует daily P&L snapshot,
+           заполняется UNIT-PLAN-017). Оставляем None.
+      BB — `orders_period_1` = COUNT(wb_orders) за `period_1_*`.
+      BC — `sold_period_1`  = COUNT(wb_sales, is_return=False) за `period_1_*`.
+      BD — `orders_period_2` = COUNT(wb_orders) за `period_2_*` (если задан).
+      BE — `orders_period_3` = COUNT(wb_orders) за `period_3_*` (если задан).
+      BF — `stock_forecast` = прогноз остатка на `forecast_date`.
+
+    Формула BF (упрощённая ad-hoc, документирована в UNIT_PLAN.md §4):
+
+        days_until_forecast = forecast_date - today
+        avg_orders_per_day  = orders_period_1 / days_in_period_1
+        stock_forecast      = current_stock - avg_orders_per_day × days_until_forecast
+
+    Если данных для какого-то поля недостаточно (период не задан / 0 orders /
+    нет стока) → поле остаётся None. None в DTO → пустая ячейка в XLSX/UI.
+
+    `today` — для тестируемости; по умолчанию date.today().
+    """
+    if not nm_ids:
+        return {}
+    today = today or date.today()
+
+    # --- BB / BC (period 1: orders + sold) ---
+    orders_p1 = await _count_orders_in_period(
+        session,
+        tenant_id=tenant_id,
+        nm_ids=nm_ids,
+        period_from=period_1_from,
+        period_to=period_1_to,
+    )
+    sold_p1 = await _count_sold_in_period(
+        session,
+        tenant_id=tenant_id,
+        nm_ids=nm_ids,
+        period_from=period_1_from,
+        period_to=period_1_to,
+    )
+
+    # --- BD (period 2 orders) ---
+    orders_p2: dict[int, int] = {}
+    if period_2_from is not None and period_2_to is not None:
+        orders_p2 = await _count_orders_in_period(
+            session,
+            tenant_id=tenant_id,
+            nm_ids=nm_ids,
+            period_from=period_2_from,
+            period_to=period_2_to,
+        )
+
+    # --- BE (period 3 orders) ---
+    orders_p3: dict[int, int] = {}
+    if period_3_from is not None and period_3_to is not None:
+        orders_p3 = await _count_orders_in_period(
+            session,
+            tenant_id=tenant_id,
+            nm_ids=nm_ids,
+            period_from=period_3_from,
+            period_to=period_3_to,
+        )
+
+    # --- BF (stock forecast) ---
+    stock_forecast_by_nm: dict[int, Decimal] = {}
+    if forecast_date is not None and forecast_date > today:
+        days_until = (forecast_date - today).days
+        period_1_days = max(
+            (period_1_to - period_1_from).days + 1, 1
+        )  # inclusive count
+        current_stocks = await _latest_stock(
+            session, tenant_id=tenant_id, nm_ids=nm_ids
+        )
+        for nm in nm_ids:
+            current = current_stocks.get(nm, 0)
+            if current <= 0:
+                continue
+            ordered = orders_p1.get(nm, 0)
+            # Если за период 1 не было заказов — не можем оценить velocity,
+            # лучше пропустить (None) чем выдать current_stock as-is.
+            if ordered <= 0:
+                continue
+            avg_per_day = Decimal(ordered) / Decimal(period_1_days)
+            forecast = Decimal(current) - avg_per_day * Decimal(days_until)
+            # Clamp на 0 — отрицательный остаток семантически бессмыслен.
+            if forecast < D0:
+                forecast = D0
+            stock_forecast_by_nm[nm] = forecast
+
+    out: dict[int, HistoricalSnapshot] = {}
+    for nm in nm_ids:
+        out[int(nm)] = HistoricalSnapshot(
+            profit_week_1=None,  # UNIT-PLAN-017 заполнит реальными данными
+            orders_period_1=orders_p1.get(nm),
+            sold_period_1=sold_p1.get(nm),
+            orders_period_2=orders_p2.get(nm) if period_2_from else None,
+            orders_period_3=orders_p3.get(nm) if period_3_from else None,
+            stock_forecast=stock_forecast_by_nm.get(nm),
+        )
+    return out
+
+
+__all__ = [
+    "load_reference_bundle",
+    "load_global_config",
+    "load_per_nm_snapshots",
+    "load_historical_snapshots",
+    "reference_status",
+]

@@ -12,7 +12,16 @@ from app.integrations.wb.rate_limiter import TokenBucketLimiter
 
 log = get_logger(__name__)
 
-Category = Literal["statistics", "advert", "common", "analytics", "finance", "documents", "content"]
+Category = Literal[
+    "statistics",
+    "advert",
+    "common",
+    "analytics",
+    "finance",
+    "documents",
+    "content",
+    "tariffs",
+]
 
 
 class WbApiError(Exception):
@@ -111,6 +120,11 @@ class WbApiClient:
             # content-api: /content/v2/get/cards/list — 100/min по доке, но мы
             # используем редко (раз в сутки на 100 SKU), осторожно лимитируем 60/мин.
             "content": TokenBucketLimiter(60),
+            # tariffs (common-api /api/v1/tariffs/*): нужно 3 запроса/день
+            # (box + pallet + commission). Лимит WB по доке — 60/мин на host,
+            # но мы держим строгий потолок 6/мин с min_interval=10s — этого
+            # достаточно с большим запасом для daily sync. См. UNIT_PLAN.md §7.
+            "tariffs": TokenBucketLimiter(6, min_interval_s=10.0),
         }
         self._bases: dict[Category, str] = {
             "statistics": settings.wb_statistics_base,
@@ -120,6 +134,10 @@ class WbApiClient:
             "finance": settings.wb_finance_base,
             "documents": getattr(settings, "wb_documents_base", "https://documents-api.wildberries.ru"),
             "content": settings.wb_content_base,
+            # /api/v1/tariffs/* живут на common-api (тот же host что и `common`),
+            # но крутятся через отдельный category-лимитер чтобы daily-tariffs
+            # task не съедал бюджет других common-вызовов (ping и пр.).
+            "tariffs": settings.wb_common_base,
         }
         self._client: httpx.AsyncClient | None = None
 

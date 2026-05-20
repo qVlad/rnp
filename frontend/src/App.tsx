@@ -12,6 +12,7 @@ import TaxReport from "./pages/TaxReport";
 import TaxReportAusn from "./pages/TaxReportAusn";
 import Supplies from "./pages/Supplies";
 import Units from "./pages/Units";
+import UnitPlan from "./pages/UnitPlan";
 import Settings from "./pages/Settings";
 import RevenueCorrections from "./pages/RevenueCorrections";
 import AdsHeatmap from "./pages/AdsHeatmap";
@@ -169,6 +170,7 @@ export default function App() {
             }
           />
           <Route path="units" element={<Units />} />
+          <Route path="unit-plan" element={<UnitPlan />} />
           <Route
             path="revenue-corrections"
             element={

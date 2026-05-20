@@ -76,9 +76,12 @@ export default function Redistribution() {
       {/* Status + LK connect */}
       <LkStatusCard
         status={statusQ.data}
-        onConnect={(token) =>
+        onConnect={(authorizeV3, wbSellerLk) =>
           api
-            .redistributionConnectLk({ authorize_v3: token })
+            .redistributionConnectLk({
+              authorize_v3: authorizeV3,
+              wb_seller_lk: wbSellerLk || undefined,
+            })
             .then(() => qc.invalidateQueries({ queryKey: ["redistribution-status"] }))
         }
         onDisconnect={() =>
@@ -230,12 +233,13 @@ export default function Redistribution() {
       </div>
 
       <div className="card text-xs text-muted leading-relaxed">
-        <strong>⚠ v1 limitations:</strong> POST shifts.create (фактическое
-        бронирование в окне) — ещё не реализован, нужен HAR из LK в момент
-        нажатия «Создать перемещение». На текущем этапе сервис генерирует
-        рекомендации и складывает их в очередь — отправка делается вручную
-        через интерфейс LK WB. Точная миллисекундная синхронизация и
-        TLS-fingerprint impersonation — задачи на следующей итерации.
+        <strong>Как это работает:</strong> сервис генерирует рекомендации по
+        ROI (логистика + uplift выручки), вы одобряете → попадают в очередь.
+        В окне <strong>09:00 / 18:00 МСК</strong> Celery-консьюмер берёт
+        queued-task'и текущего tenant'а, группирует по
+        (склад-источник, склад-приёмник, nmID) и шлёт <code>POST /order</code>
+        в LK shifts API. На каждой паре (chrt_id × склад-приёмник) ставится
+        72-часовой кулдаун. При 401 — статус LK переходит в «нужен перелогин».
       </div>
     </div>
   );
@@ -247,13 +251,19 @@ function LkStatusCard({
   onDisconnect,
 }: {
   status: any;
-  onConnect: (token: string) => Promise<any>;
+  onConnect: (authorizeV3: string, wbSellerLk: string) => Promise<any>;
   onDisconnect: () => Promise<any>;
 }) {
   const [showConnect, setShowConnect] = useState(false);
-  const [token, setToken] = useState("");
+  const [tokenA3, setTokenA3] = useState("");
+  const [tokenLk, setTokenLk] = useState("");
 
   if (!status) return <div className="card text-muted">Загрузка…</div>;
+
+  const lkSec = status.wb_seller_lk_seconds_left;
+  const lkFresh = typeof lkSec === "number" && lkSec > 30;
+  const lkSoon = typeof lkSec === "number" && lkSec > 0 && lkSec <= 30;
+  const lkExpired = typeof lkSec === "number" && lkSec <= 0;
 
   return (
     <div className="card">
@@ -276,13 +286,31 @@ function LkStatusCard({
           Last success: {status.last_success_at?.slice(0, 16) || "—"}
         </div>
       )}
+      {status.lk_connected && (
+        <div className="text-xs mt-1">
+          Wb-Seller-Lk:{" "}
+          {lkFresh ? (
+            <span className="text-success">✓ свежий ({Math.floor(lkSec / 60)}мин {lkSec % 60}с до истечения)</span>
+          ) : lkSoon ? (
+            <span className="text-warn">⚠ истекает через {lkSec}с — обновите перед окном</span>
+          ) : lkExpired ? (
+            <span className="text-red-400">✗ истёк — обновите перед заявкой в окне</span>
+          ) : (
+            <span className="text-muted">— не задан (нужен перед окном)</span>
+          )}
+        </div>
+      )}
       <div className="text-xs text-muted mt-2">
         Ближайшее окно бронирования: <strong>{status.next_window_at?.slice(0, 16)}</strong> UTC
       </div>
       <div className="flex gap-2 mt-3">
-        {!status.lk_connected && (
+        {!status.lk_connected ? (
           <button className="btn text-xs" onClick={() => setShowConnect(true)}>
             + Подключить LK
+          </button>
+        ) : (
+          <button className="btn text-xs" onClick={() => setShowConnect(true)}>
+            ↻ Обновить токены
           </button>
         )}
         {status.lk_connected && (
@@ -301,32 +329,45 @@ function LkStatusCard({
       {showConnect && (
         <div className="mt-4 border-t border-border pt-3">
           <div className="text-xs text-muted mb-2 leading-relaxed">
-            Откройте <code>seller.wildberries.ru</code>, залогиньтесь, в DevTools
-            → Network найдите любой запрос к{" "}
-            <code>seller-weekly-report.wildberries.ru</code> → скопируйте
-            заголовок <code>AuthorizeV3</code> (длинный RS256 JWT) и вставьте
-            сюда:
+            <strong>Шаги:</strong> открой <code>seller.wildberries.ru</code> →
+            залогинься → F12 → Network → фильтр{" "}
+            <code>seller-weekly-report</code> → кликни на любой запрос →
+            Headers → скопируй <strong>оба</strong> заголовка.
+            <br />
+            <strong className="text-warn">⚠ Wb-Seller-Lk живёт 5 мин</strong> —
+            копируй его непосредственно перед окном (за 1-2 мин до 09:00/18:00 МСК).
+            До закрытия TASK-LEAD-019 auto-refresh не работает.
           </div>
+          <div className="text-xs text-muted mb-1">AuthorizeV3 (длинный RS256 JWT, живёт долго):</div>
+          <textarea
+            className="input w-full text-xs font-mono mb-2"
+            rows={3}
+            value={tokenA3}
+            onChange={(e) => setTokenA3(e.target.value)}
+            placeholder="eyJhbGciOiJSUzI1NiIs..."
+          />
+          <div className="text-xs text-muted mb-1">Wb-Seller-Lk (короткий EdDSA JWT, 5 мин TTL):</div>
           <textarea
             className="input w-full text-xs font-mono"
-            rows={4}
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            placeholder="eyJhbGciOiJSUzI1NiIs..."
+            rows={3}
+            value={tokenLk}
+            onChange={(e) => setTokenLk(e.target.value)}
+            placeholder="eyJhbGciOiJFZERTQSI..."
           />
           <div className="flex gap-2 mt-2">
             <button
               className="btn text-xs border-accent text-accent"
               onClick={async () => {
                 try {
-                  await onConnect(token.trim());
+                  await onConnect(tokenA3.trim(), tokenLk.trim());
                   setShowConnect(false);
-                  setToken("");
+                  setTokenA3("");
+                  setTokenLk("");
                 } catch (e: any) {
                   alert(`Ошибка: ${e.message}`);
                 }
               }}
-              disabled={!token.trim()}
+              disabled={!tokenA3.trim() || !tokenLk.trim()}
             >
               Сохранить
             </button>
@@ -334,7 +375,8 @@ function LkStatusCard({
               className="btn text-xs"
               onClick={() => {
                 setShowConnect(false);
-                setToken("");
+                setTokenA3("");
+                setTokenLk("");
               }}
             >
               Отмена

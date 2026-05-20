@@ -78,6 +78,12 @@ class Product(Base, TenantScopedMixin):
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # UNIT-PLAN fields (миграция 0041) — плановая юнит-экономика.
+    # См. `UNIT_PLAN.md` §3 (DDL), §4 (формулы Z/AC/AI/AS).
+    volume_l: Mapped[Decimal | None] = mapped_column(Numeric(8, 3))
+    warehouse_default: Mapped[str | None] = mapped_column(String(255))
+    is_monopallet: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    items_per_monopallet: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -1790,4 +1796,220 @@ class TenantModule(Base, TenantScopedMixin):
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "module_code", name="uq_tenant_module"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# UNIT-план (миграции 0040-0042) — плановая юнит-экономика.
+# См. `UNIT_PLAN.md` для полной методики, маппинга 60 колонок Excel → DTO
+# и формул price ladder / commission / logistics / storage / VAT.
+# ---------------------------------------------------------------------------
+
+
+class WbTariffBox(Base):
+    """Справочник тарифов WB FBO «короб», синхронизируется с WB Tariffs API.
+
+    БЕЗ `tenant_id` — тарифы WB одинаковы для всех селлеров. SCD Type 2:
+    при изменении WB добавляется новая запись с `effective_from = today`.
+    Расчёт на дату D: `SELECT … WHERE effective_from <= D ORDER BY
+    effective_from DESC LIMIT 1`.
+
+    Миграция 0040.
+    """
+
+    __tablename__ = "wb_tariff_box"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    warehouse_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    delivery_base: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    delivery_liter: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    delivery_expr: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    storage_base: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
+    storage_liter: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
+    dt_next: Mapped[date | None] = mapped_column(Date)
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "warehouse_name", "effective_from", name="uq_wb_tariff_box_wh_eff"
+        ),
+    )
+
+
+class WbTariffPallet(Base):
+    """Справочник тарифов WB FBO «монопаллет».
+
+    Отличие от box: дополнительное поле `storage_expr` (% коэффициент хранения).
+    Миграция 0040.
+    """
+
+    __tablename__ = "wb_tariff_pallet"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    warehouse_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    delivery_base: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    delivery_liter: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    delivery_expr: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    storage_base: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
+    storage_liter: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
+    storage_expr: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    dt_next: Mapped[date | None] = mapped_column(Date)
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "warehouse_name", "effective_from", name="uq_wb_tariff_pallet_wh_eff"
+        ),
+    )
+
+
+class WbTariffCommission(Base):
+    """Справочник комиссий WB по предмету (subject).
+
+    `commission_fbo` = kgvpMarketplace, `commission_fbs` = kgvpSupplier.
+    Выбор колонки на этапе расчёта зависит от `unit_plan_override.is_fbs`.
+    Миграция 0040.
+    """
+
+    __tablename__ = "wb_tariff_commission"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    subject_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    subject_id: Mapped[int | None] = mapped_column(Integer)
+    commission_fbo: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    commission_fbs: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    commission_express: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    paid_storage_kgvp: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    return_cost: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "subject_name", "effective_from", name="uq_wb_tariff_commission_subj_eff"
+        ),
+    )
+
+
+class UnitPlanGlobalConfig(Base, TenantScopedMixin):
+    """Версионируемый набор глобальных констант UNIT-плана.
+
+    Versioning через UNIQUE (tenant_id, effective_date). Расчёт на дату D —
+    берём «latest на/до D». Миграция 0042. См. `UNIT_PLAN.md` §2, §3.
+    """
+
+    __tablename__ = "unit_plan_global_config"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    effective_date: Mapped[date] = mapped_column(Date, nullable=False)
+    wb_club_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), default=0)
+    spp_default_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), default=20)
+    spp_by_subject: Mapped[dict | None] = mapped_column(JSONB, default=dict)
+    wb_wallet_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), default=2)
+    acquiring_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), default=2)
+    il_coef: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), default=Decimal("1.16"))
+    irp_coef: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), default=Decimal("0.017"))
+    marketing_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), default=3)
+    tax_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), default=8)
+    vat_mode: Mapped[str | None] = mapped_column(String(16), default="exclude")
+    vat_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), default=10)
+    acceptance_rub_per_liter: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 2), default=Decimal("1.7")
+    )
+    acceptance_multiplier: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 2), default=Decimal("1.0")
+    )
+    velocity_days: Mapped[int | None] = mapped_column(Integer, default=30)
+    buyout_fallback_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), default=50)
+    storage_days: Mapped[int | None] = mapped_column(Integer, default=60)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    created_by: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "effective_date", name="uq_unit_plan_global_config_eff"
+        ),
+    )
+
+
+class UnitPlanOverride(Base, TenantScopedMixin):
+    """Per-row override для UNIT-плана.
+
+    Перекрывает значения из `products` / `unit_plan_global_config` для
+    конкретного `nm_id`. Поля nullable — если NULL, берётся базовое значение.
+    Миграция 0042.
+    """
+
+    __tablename__ = "unit_plan_override"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    nm_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    warehouse_name: Mapped[str | None] = mapped_column(String(255))
+    is_fbs: Mapped[bool | None] = mapped_column(Boolean)
+    is_monopallet: Mapped[bool | None] = mapped_column(Boolean)
+    items_per_monopallet: Mapped[int | None] = mapped_column(Integer)
+    spp_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    # Override литров. Если NULL — берётся `products.volume_l`.
+    # Миграция 0043 (UNIT-PLAN-013, paste-from-Excel).
+    volume_l: Mapped[Decimal | None] = mapped_column(Numeric(8, 3))
+    abc_label: Mapped[str | None] = mapped_column(String(1))
+    season_label: Mapped[str | None] = mapped_column(String(32))
+    gender_label: Mapped[str | None] = mapped_column(String(8))
+    comment: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "nm_id", name="uq_unit_plan_override_nm"),
+    )
+
+
+class UnitPlanSnapshot(Base, TenantScopedMixin):
+    """Иммутабельная фотография UNIT-плана на конкретную дату.
+
+    Денормализованные строки (не JSON blob) — для дешёвого diff между
+    snapshots. Миграция 0042. См. `UNIT_PLAN.md` §10.
+    """
+
+    __tablename__ = "unit_plan_snapshot"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    snapshot_date: Mapped[date] = mapped_column(Date, nullable=False)
+    label: Mapped[str | None] = mapped_column(String(64))
+    period_from: Mapped[date | None] = mapped_column(Date)
+    period_to: Mapped[date | None] = mapped_column(Date)
+    nm_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    orders_qty: Mapped[int | None] = mapped_column(Integer)
+    sold_qty: Mapped[int | None] = mapped_column(Integer)
+    revenue: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    profit_rub: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    margin_pct: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    buyout_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_unit_plan_snapshot",
+            "tenant_id",
+            "snapshot_date",
+            "nm_id",
+        ),
     )

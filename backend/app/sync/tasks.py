@@ -1181,6 +1181,39 @@ def publish_redistribution_windows() -> int:
     return asyncio.run(_publish_redistribution_windows_async())
 
 
+# ─── LEAD-016: execute_window — отправка queued tasks в WB LK ──────────
+
+
+async def _execute_window_async(tenant_id: int) -> dict[str, Any]:
+    """Per-tenant: читает queued redistribution_tasks, группирует и шлёт
+    в WB через WbLkClient.create_order. См. execute_window.py.
+    """
+    from datetime import datetime, timezone
+
+    from app.db.session import task_session_scope
+    from app.services.redistribution.execute_window import (
+        execute_window_for_tenant,
+    )
+    from app.services.tenant_context import set_tenant
+
+    async with task_session_scope() as session:
+        set_tenant(session, tenant_id)
+        return await execute_window_for_tenant(
+            session,
+            tenant_id=tenant_id,
+            window_dt=datetime.now(timezone.utc),
+        )
+
+
+@celery_app.task(name="app.sync.tasks.execute_window_for_tenant")
+def execute_window_for_tenant_task(tenant_id: int) -> dict[str, Any]:
+    """Celery wrapper для execute_window. Вызывается consumer'ом
+    `consume_redistribution_window` для каждого активного tenant'а после
+    получения события `redistribution.window.open`.
+    """
+    return asyncio.run(_execute_window_async(tenant_id))
+
+
 # ─── Weekly digest для head_of_sales (LEAD-012) ─────────────────────────
 
 

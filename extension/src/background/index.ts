@@ -31,6 +31,12 @@ import {
 import { generateWbToken } from "@/lib/wb-token";
 import type { BgRequest, BgResponse } from "@/lib/bg-bridge";
 import {
+  createOrder as wbProxyCreateOrder,
+  getQuota as wbProxyGetQuota,
+  getStocks as wbProxyGetStocks,
+  searchNms as wbProxySearchNms,
+} from "@/lib/wb-shifts-proxy";
+import {
   getCachedActiveTests,
   getLastSync,
   getSeenWinnerTestIds,
@@ -558,6 +564,41 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       case "getWbTokenStatus": {
         const data = await getWbTokenStatus();
         sendResponse({ kind: "wbTokenStatus", data } as BgResponse);
+        return;
+      }
+      case "wbShiftsProxy": {
+        try {
+          console.log("[wbab-ext SW] wbShiftsProxy op=", req.op);
+          let result;
+          switch (req.op) {
+            case "quota":
+              result = await wbProxyGetQuota(req.officeId, req.kind);
+              break;
+            case "stocks":
+              result = await wbProxyGetStocks(req.nmId);
+              break;
+            case "searchNms":
+              result = await wbProxySearchNms(req.pattern);
+              break;
+            case "createOrder":
+              result = await wbProxyCreateOrder({
+                src: req.src,
+                dst: req.dst,
+                nmID: req.nmID,
+                count: req.count,
+              });
+              break;
+          }
+          console.log("[wbab-ext SW] wbShiftsProxy result=", result);
+          sendResponse({ kind: "wbShiftsProxy", result } as BgResponse);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error("[wbab-ext SW] wbShiftsProxy handler crashed:", e);
+          sendResponse({
+            kind: "wbShiftsProxy",
+            result: { ok: false, status: 0, reason: `SW handler error: ${msg}` },
+          } as BgResponse);
+        }
         return;
       }
       default: {

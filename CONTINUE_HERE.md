@@ -37,6 +37,80 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## ⭐⭐⭐ Что сделано в сессии 2026-05-19→20 (ночь) — **UNIT-план Sprint 5: drill-down + snapshot diff + history + FEATURES.md + bug-fix**
+
+**Развёрнуто на проде:** `https://rnp.sellerfriends.ru/unit-plan` (новая версия, 3-й deploy).
+
+- ✅ **Полный drill-down drawer** на `/unit-plan`: новый компонент `components/UnitPlanDrillDrawer.tsx` (640px). 3 секции — recharts AreaChart истории цены 90 дней / BarChart разбивка COGS (cost + packaging + fulfillment) / 3 KPI tiles plan vs fact текущего месяца (заказы / выручка / маржа) с цветной дельтой. ESC + overlay + ✕ закрывают. URL state `?nm=12345` для shareable.
+- ✅ **Backend endpoint `/api/unit-plan/{nm_id}/detail`**: price_history из `WbSale` per-day, cogs_breakdown из latest `Cogs`, plan_vs_fact через `sales_plans` (scope=nm) + агрегаты `wb_orders` + `compute_row` для маржи.
+- ✅ **Реальный `/snapshots/{id}/diff`**: per-nm дельты revenue/profit/margin/buyout с классификацией new_nm/removed_nm, отсортирован по abs(profit delta) desc.
+- ✅ **`/api/unit-plan/global-config/versions`** (director-only) + UI таблица истории в Settings: list versions DESC, click-to-expand с показом всех 16 полей, highlight latest.
+- ✅ **Bug-fix `services/anomaly.py:199`**: `MultipleResultsFound` на `/api/dashboard/alerts` (multi-tenant leak в SyncCheckpoint query). Добавлен явный `WHERE tenant_id` filter через `get_tenant(session)`. Теперь /api/dashboard/alerts отдаёт 401 (auth required) вместо 500.
+- ✅ **`FEATURES.md` обновлён**: новый раздел 3.5 «UNIT-план» (полный feature-set с путями, RBAC, 13 endpoints, 6 тестов) + миграции 0036-0044 + beat schedule `sync-tariffs-daily`.
+
+**Тесты добавлены:**
+- `test_unit_plan_detail.py` — 3 (structure / manager 403 / 404)
+- `test_unit_plan_snapshot_diff.py` — 5 (per-nm delta / new+removed / director-only / DESC sort / 404)
+
+**Все Sprint 1-5 endpoints UNIT-плана задеплоены и работают (smoke OK):**
+
+| Endpoint | Status |
+|---|---|
+| GET `/api/unit-plan/rows` | 401 ✓ |
+| GET `/api/unit-plan/rows.xlsx` | 401 ✓ |
+| GET `/api/unit-plan/{nm}/detail` | 401 ✓ |
+| GET `/api/unit-plan/global-config` | 401 ✓ |
+| PUT `/api/unit-plan/global-config` | director only |
+| GET `/api/unit-plan/global-config/versions` | 401 ✓ |
+| GET/PUT/DELETE `/api/unit-plan/overrides[/{nm}]` | 401 ✓ |
+| GET/POST `/api/unit-plan/snapshots` | 401 ✓ |
+| GET `/api/unit-plan/snapshots/{id}/diff` | 401 ✓ |
+| GET `/api/unit-plan/reference/status` | 401 ✓ |
+
+---
+
+## ⭐⭐ Что сделано в сессии 2026-05-19 (поздний вечер) — **UNIT-план Sprint 3-4 + ДЕПЛОЙ НА ПРОДЕ**
+
+Завершение функционала UNIT-плана. **Развёрнуто на `https://rnp.sellerfriends.ru/unit-plan`** (версия `44f0fcd-dirty`).
+
+**Реализовано в этой сессии:**
+
+- ✅ **Inline-edit overrides** на `/unit-plan` (9 полей: склад, литры, СПП, FBS, монопаллет, items_per_pallet, ABC/сезон/пол) с optimistic updates, hover-точка-индикатор, click→input, Enter/blur saves, ring-пульсация (saving/ok/error). Merge-patch PUT — single-field updates не стирают остальные поля.
+- ✅ **Paste-from-Excel**: focus на ячейке `volume_l` → Ctrl+V c TSV из Excel → модалка с парсингом (2- или 3-колонки `nm_id<tab>vendor<tab>volume`), preview 200 строк, progress-bar, bulk PUT.
+- ✅ **Миграция 0043** — `unit_plan_override.volume_l NUMERIC(8,3)`. Loader использует `override.volume_l ?? product.volume_l`.
+- ✅ **Settings UI** — новый раздел в `/settings#unit-plan`: 16 глобальных констант (Pricing ladder, ИЛ/ИРП-коэф, НДС режим, приёмка, velocity, fallback), валидация per-field, `spp_by_subject` mini-table (добавить/удалить пары «предмет → СПП %»), timeline-версионирование через date-picker «Действует с».
+- ✅ **XLSX export 1:1** — `GET /api/unit-plan/rows.xlsx` → openpyxl-генерация 58 колонок идентично эталону LeymanKids: R1 константы в фикс. ячейках, R2 русские headers, R3+ данные с правильными форматами (`0.00%` для долей, `0.00` для ₽). 5 тестов на структуру/значения.
+- ✅ **Hot-fix WB Tariffs field names** — `boxDeliveryCoefExpr` (не `AndStorageExpr`) + деление на 100. Re-sync дал правильные delivery_expr для всех 63 складов (Электросталь=1.60, Коледино=1.95).
+
+**Состояние на проде:**
+
+- Версия: `44f0fcd-dirty` от 2026-05-19 19:49 MSK
+- 9/9 контейнеров up
+- Alembic: `0044`
+- 63 склада коробов + 99 монопаллет + 7412 предметов с тарифами
+- Celery beat `sync.tariffs` ежедневно 08:00 MSK
+- Endpoints `/api/unit-plan/*` (10 шт.) — все отдают 401 без auth (роутер активен)
+
+**Скриншоты деплоя:**
+
+- pre-deploy backup: `${REMOTE_DIR}/backups/pre-deploy-*.sql.gz` (создан автоматически)
+- Все 4 миграции 0040-0043 + 0044 (abtest_position_snapshot, не наш) накатились без ошибок
+
+**Известный технический долг (не в UNIT-плане, существовал до):**
+
+- `services/anomaly.py:199` — `MultipleResultsFound` на `/api/dashboard/alerts`. **Не из UNIT-плана**, существовал до. Отдельный bug-фикс.
+
+**Остающийся scope UNIT-плана (можно отложить):**
+
+- Полный drill-down drawer (история цен 90 дн, разбивка COGS, plan vs fact) — сейчас заглушка
+- История версий global-config (UI в Settings) — backend endpoint списка ещё нет
+- Реальный snapshot diff (`/snapshots/{id}/diff` — заглушка)
+- Прогноз остатка на конкретную дату (BA-BF historical snapshot columns)
+- Excel-противоречие AF (`Z+50` vs `Z+AG` rows 4+) — см. UNIT_PLAN.md §14.5
+- Override-таблица tariffs (если бухгалтер хочет переопределить)
+
+---
+
 ## ⭐ Что сделано в сессии 2026-05-19 (вечер) — **UNIT-план** (Sprint 1 + Sprint 2 backend/frontend skeleton)
 
 Порт Excel-методики LeymanKids (`/Users/user/Downloads/LeymanKids UNIT_план WB Обновление.xlsx`) — плановая юнит-экономика для всех SKU. Отдельная страница `/unit-plan`, **не трогает** существующие `/units` (факт) и `/unit-calculator` (single-SKU).

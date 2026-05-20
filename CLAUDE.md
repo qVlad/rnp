@@ -118,7 +118,7 @@ docker-compose.yml
 .claude/settings.json   permissions для агента
 ```
 
-## Миграции БД (42 шт., 0001-0042)
+## Миграции БД (44 шт., 0001-0044)
 
 > Полный список с деталями — в [`FEATURES.md`](FEATURES.md) → «Миграции». Здесь — топ-уровневое.
 
@@ -146,6 +146,8 @@ docker-compose.yml
 | **0040** | **WB Tariffs** — wb_tariff_box / wb_tariff_pallet / wb_tariff_commission (БЕЗ tenant_id, SCD Type 2 через `effective_from`). Sync с WB Tariffs API ежедневно 08:00 MSK. |
 | **0041** | products.volume_l / warehouse_default / is_monopallet / items_per_monopallet — атрибуты для UNIT-плана |
 | **0042** | **UNIT-план** — unit_plan_global_config / unit_plan_override / unit_plan_snapshot (tenant-scoped) |
+| **0043** | unit_plan_override.volume_l — per-row override литров (paste-from-Excel bulk) |
+| 0044 | abtest_position_snapshot (Chrome-extension tracking) |
 
 ## Роли и RBAC
 

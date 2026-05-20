@@ -13,6 +13,7 @@
 1. [Дашборд и KPI](#1-дашборд-и-kpi)
 2. [P&L (управленческий отчёт)](#2-pl-управленческий-отчёт)
 3. [Юнит-экономика и SKU-аналитика](#3-юнит-экономика-и-sku-аналитика)
+3.5. [**UNIT-план** (плановая юнит-экономика, порт Excel LeymanKids 1:1)](#35-unit-план-плановая-юнит-экономика) ⭐
 4. [Себестоимость, закупки, поставщики](#4-себестоимость-закупки-поставщики)
 5. [Поставки и складская логистика](#5-поставки-и-складская-логистика)
 6. [Прогноз стокаута, сезонность, план-факт](#6-прогноз-стокаута-сезонность-план-факт)
@@ -78,6 +79,56 @@
 | Column visibility | Скрыть/показать колонки в Units | `components/ColumnVisibility.tsx` | all |
 | DnD reorder колонок | Перетаскивание колонок таблицы | `components/DraggableHeader.tsx` (@dnd-kit) | all |
 | Реальная WB-комиссия | Считается из `wb_report_detail`: `(retail_with_disc − ppvz) / retail × 100` | `unit_economics.py:commission_by_nm` | — |
+
+---
+
+## 3.5. UNIT-план (плановая юнит-экономика)
+
+> Порт Excel-методики LeymanKids 1:1. 60 колонок формулы → DTO. Полная методика в [`UNIT_PLAN.md`](UNIT_PLAN.md).
+
+| Фича | Описание | Путь в коде | Доступ |
+|---|---|---|---|
+| **Страница `/unit-plan`** | План юнит-экономики для всех SKU, 52 колонки sticky-table (frozen-left 6), color coding 4 порога маржи | `pages/UnitPlan.tsx`, `api/unit_plan.py` | brands-filter |
+| **`compute_row` pure-function** | 11 frozen dataclasses, 60 формул Excel → `UnitPlanRowDTO` | `services/unit_plan.py` | — |
+| **Loader (БД → snapshots)** | `load_reference_bundle/load_global_config/load_per_nm_snapshots` + конвенция БД (0-100%) → dataclass (0-1) | `services/unit_plan_loader.py` | — |
+| **Inline-edit overrides** | 9 полей (склад, литры, СПП, FBS, монопаллет, items_per_pallet, ABC, сезон, пол), optimistic updates, merge-patch PUT | `pages/UnitPlan.tsx:EditableCell`, `api.unitPlanOverrideUpsert` | brands-filter |
+| **Paste-from-Excel литров** | Ctrl+V из Excel в ячейку volume_l → модалка с TSV-парсингом + progress bulk-PUT | `pages/UnitPlan.tsx:PasteVolumeModal` | brands-filter |
+| **Global constants timeline** | 16 параметров (Pricing ladder, ИЛ/ИРП-коэф, НДС режим, приёмка, velocity) с date-effective версионированием | `pages/Settings.tsx:UnitPlanGlobalConfigSection`, `api/unit_plan.py:PUT /global-config` | director |
+| **СПП per-subject** | Map `{предмет → СПП %}` в global-config, перекрывает default | `unit_plan_global_config.spp_by_subject` JSONB | director |
+| **XLSX export 1:1** | 58 колонок идентично LeymanKids-эталону (R1 константы, R2 headers, R3+ данные с `0.00%` форматами) | `services/unit_plan_xlsx.py`, `GET /api/unit-plan/rows.xlsx` | brands-filter |
+| **WB Tariffs daily sync** | Box/pallet/commission с `common-api.wildberries.ru`, SCD Type 2, 08:00 MSK ежедневно | `integrations/wb/tariffs.py`, `sync/tasks_tariffs.py` | — |
+| **Snapshot diff** | `GET /api/unit-plan/snapshots/{id}/diff` сравнение со state в момент снапшота | `api/unit_plan.py:snapshot_diff` | director_or_head |
+| **Drill-down drawer** | Side-panel 480px: история цен 90 дн (recharts), разбивка COGS, план vs факт месяца | `components/UnitPlanDrillDrawer.tsx`, `GET /api/unit-plan/{nm_id}/detail` | brands-filter |
+| **History версий global-config** | Список всех timeline-записей константы + diff между ними | `GET /api/unit-plan/global-config/versions` | director |
+
+### API endpoints (12 шт.)
+
+| Method | Path | Доступ |
+|---|---|---|
+| GET | `/api/unit-plan/rows` | brands-filter |
+| GET | `/api/unit-plan/rows.xlsx` | brands-filter |
+| GET | `/api/unit-plan/{nm_id}/detail` | brands-filter |
+| GET | `/api/unit-plan/global-config` | any |
+| PUT | `/api/unit-plan/global-config` | director |
+| GET | `/api/unit-plan/global-config/versions` | director |
+| GET | `/api/unit-plan/overrides` | director_or_head |
+| PUT | `/api/unit-plan/overrides/{nm_id}` | brands-filter (manager — свои brands) |
+| DELETE | `/api/unit-plan/overrides/{nm_id}` | brands-filter |
+| GET | `/api/unit-plan/snapshots` | director_or_head |
+| POST | `/api/unit-plan/snapshots` | director_or_head |
+| GET | `/api/unit-plan/snapshots/{id}/diff` | director_or_head |
+| GET | `/api/unit-plan/reference/status` | any |
+
+### Тесты (контракт + integration)
+
+| Тест | Описание |
+|---|---|
+| `test_compute_row.py` | 17 unit-тестов pure-function (price ladder / commission / logistics / storage / VAT / acceptance / buyout fallback) |
+| `test_compute_row_excel_contract.py` | Contract против эталона LeymanKids: 45 строк × 20 полей = 900 проверок, **81% sync** (расхождения см. UNIT_PLAN.md §14.5) |
+| `test_wb_tariffs_integration.py` | 6 тестов: парсинг box/pallet/commission, фильтрация sentinel-строк |
+| `test_sync_tariffs.py` | 6 интеграционных: SCD Type 2 upsert (insert/update fetched_at/insert new period) |
+| `test_unit_plan_api.py` | 5 тестов RBAC + endpoint shapes |
+| `test_unit_plan_xlsx.py` | 5 тестов XLSX-структуры (R1, R2, R3+, cell formats) |
 
 ---
 
@@ -349,6 +400,7 @@ Daily digest через Celery beat в 09:00 MSK. TG_BOT_TOKEN в `.env`.
 | `abtest-rotate-running` | каждые 15 мин | A/B ротация |
 | `abtest-poll-budgets` | каждые 30 мин | A/B баланс РК |
 | `abtest-sync-stats-full` | 4×/день :50 | A/B статистика |
+| **`sync-tariffs-daily`** | ежедневно 08:00 MSK | **WB Tariffs** (box/pallet/commission), SCD Type 2 upsert. Источник для UNIT-плана. |
 
 ---
 
@@ -418,7 +470,7 @@ Daily digest через Celery beat в 09:00 MSK. TG_BOT_TOKEN в `.env`.
 
 ---
 
-## Миграции (0001–0035)
+## Миграции (0001–0044)
 
 | № | Что |
 |---|---|
@@ -457,6 +509,15 @@ Daily digest через Celery beat в 09:00 MSK. TG_BOT_TOKEN в `.env`.
 | 0033 | **A/B testing** — 11 таблиц (порт wbab) |
 | 0034 | tenant_modules (включение/выключение модулей per-tenant) |
 | 0035 | audit_imports (лог импортов XLSX) |
+| 0036 | chargebacks (счёт-фактуры с возвратами) |
+| 0037 | redistribution (перераспределение остатков по складам) |
+| 0038 | bookkeeper_templates (шаблоны маппинга колонок XLSX для бухгалтера) |
+| 0039 | claim_templates (шаблоны претензий) |
+| **0040** | **wb_tariff_box / wb_tariff_pallet / wb_tariff_commission** — справочники тарифов WB (БЕЗ tenant_id, SCD Type 2 через `effective_from`). Источник — WB Tariffs API, daily sync 08:00 MSK |
+| **0041** | products: +volume_l / warehouse_default / is_monopallet / items_per_monopallet — атрибуты для UNIT-плана |
+| **0042** | **unit_plan_global_config / unit_plan_override / unit_plan_snapshot** — tenant-scoped плановая юнит-экономика |
+| **0043** | unit_plan_override.volume_l — per-row override литров (paste-from-Excel bulk) |
+| 0044 | abtest_position_snapshot (Chrome-extension SEO-tracking) |
 
 ---
 

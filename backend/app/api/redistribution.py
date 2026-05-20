@@ -108,12 +108,19 @@ async def get_status(
         }
     now = datetime.now(timezone.utc)
     authorize_expired = (s.authorize_v3_exp is None) or (s.authorize_v3_exp < now)
+    lk_seconds_left = None
+    if s.wb_seller_lk_exp:
+        lk_seconds_left = int((s.wb_seller_lk_exp - now).total_seconds())
     return {
         "lk_connected": not s.needs_relogin and not authorize_expired,
         "lk_needs_relogin": s.needs_relogin,
         "authorize_v3_expires_at": s.authorize_v3_exp.isoformat()
         if s.authorize_v3_exp
         else None,
+        "wb_seller_lk_expires_at": s.wb_seller_lk_exp.isoformat()
+        if s.wb_seller_lk_exp
+        else None,
+        "wb_seller_lk_seconds_left": lk_seconds_left,
         "phone_last4": s.phone_last4,
         "supplier_fid": s.supplier_fid,
         "last_success_at": s.last_success_at.isoformat() if s.last_success_at else None,
@@ -125,6 +132,7 @@ async def get_status(
 @router.post("/lk/connect", dependencies=[Depends(require_director)])
 async def connect_lk(
     authorize_v3: str = Body(..., embed=True),
+    wb_seller_lk: str | None = Body(default=None, embed=True),
     user_agent: str | None = Body(default=None, embed=True),
     root_version: str | None = Body(default=None, embed=True),
     phone_last4: str | None = Body(default=None, embed=True),
@@ -134,14 +142,21 @@ async def connect_lk(
     """Сохранить долгоживущий AuthorizeV3 (юзер вставляет из DevTools после
     логина в seller.wildberries.ru). Только director.
 
-    Wb-Seller-Lk не нужен — он будет получен auto-refresh при первом
-    обращении к shifts API.
+    Опционально `wb_seller_lk` — короткий 5-мин токен. До закрытия
+    TASK-LEAD-019 (auto-refresh) пользователь должен передавать его
+    вручную перед каждым окном бронирования.
     """
+    # Проверяем существование до save_authorize_v3, чтобы понять
+    # create vs update для audit_log (после flush'а ленивая загрузка
+    # server_default колонок ломает async greenlet).
+    existing = await load_session(session, user.tenant_id)
+    audit_action = "update" if existing else "create"
     try:
         s = await save_authorize_v3(
             session,
             tenant_id=user.tenant_id,
             authorize_v3=authorize_v3,
+            wb_seller_lk=wb_seller_lk,
             user_agent=user_agent,
             root_version=root_version,
             phone_last4=phone_last4,
@@ -152,9 +167,13 @@ async def connect_lk(
     await audit_log(
         session,
         "wb_lk_sessions",
-        "create" if s.created_at == s.updated_at else "update",
+        audit_action,
         entity_id=str(user.tenant_id),
-        after={"phone_last4": phone_last4, "root_version": root_version},
+        after={
+            "phone_last4": phone_last4,
+            "root_version": root_version,
+            "wb_seller_lk_supplied": bool(wb_seller_lk),
+        },
         actor=user.username,
     )
     await session.commit()
@@ -162,6 +181,9 @@ async def connect_lk(
         "lk_connected": True,
         "authorize_v3_expires_at": s.authorize_v3_exp.isoformat()
         if s.authorize_v3_exp
+        else None,
+        "wb_seller_lk_expires_at": s.wb_seller_lk_exp.isoformat()
+        if s.wb_seller_lk_exp
         else None,
     }
 

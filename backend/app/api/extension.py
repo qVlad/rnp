@@ -35,18 +35,20 @@ Manager-роли видят только тесты на своих бренда
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
     AbTest,
+    AbTestDailyStat,
     AbTestPositionSnapshot,
     AbTestResult,
+    AbTestRotation,
     AbTestVariant,
     Product,
     Tenant,
@@ -179,19 +181,39 @@ def _scenario_for(test: AbTest) -> str:
     return "LEGACY"
 
 
-async def _resolve_active_variant_label(
+async def _resolve_active_variant(
     session: AsyncSession, abtest_id: int
-) -> str:
-    """Какой вариант сейчас «активен» на витрине.
+) -> tuple[str, int | None, datetime | None]:
+    """Возвращает (label, variant_id, last_rotation_at) для активного варианта.
 
-    TODO: для PHOTO-тестов с TIME-триггером — это вариант последней успешной
-    ротации (см. AbTestRotation). Сейчас возвращаем label первого
-    not-eliminated варианта по порядку (A < B < C < D). Достаточно для UI
-    badge'а, но для точного отображения нужен last-rotation-resolver.
+    Активный вариант = вариант последней успешной ротации (AbTestRotation.success=True).
+    Если ротаций ещё не было (только что запущенный тест) — возвращаем первый
+    not-eliminated вариант по алфавиту и last_rotation_at=None.
+
+    Используется и для отображения active label, и для расчёта прогресса
+    (от какого момента считать views/spend/time).
     """
+    # 1) Пробуем найти последнюю успешную ротацию.
+    rot_row = (
+        await session.execute(
+            select(AbTestRotation.applied_at, AbTestVariant.label, AbTestVariant.id)
+            .join(AbTestVariant, AbTestVariant.id == AbTestRotation.variant_id)
+            .where(
+                AbTestRotation.abtest_id == abtest_id,
+                AbTestRotation.success.is_(True),
+            )
+            .order_by(desc(AbTestRotation.applied_at))
+            .limit(1)
+        )
+    ).first()
+    if rot_row is not None:
+        applied_at, label, variant_id = rot_row
+        return label, variant_id, applied_at
+
+    # 2) Ротаций не было — берём первый not-eliminated вариант.
     row = (
         await session.execute(
-            select(AbTestVariant.label)
+            select(AbTestVariant.label, AbTestVariant.id)
             .where(
                 AbTestVariant.abtest_id == abtest_id,
                 AbTestVariant.eliminated_at.is_(None),
@@ -199,8 +221,11 @@ async def _resolve_active_variant_label(
             .order_by(AbTestVariant.label)
             .limit(1)
         )
-    ).scalar()
-    return row or "A"
+    ).first()
+    if row is None:
+        return "A", None, None
+    label, variant_id = row
+    return label, variant_id, None
 
 
 async def _winner_label_for(
@@ -218,19 +243,88 @@ async def _winner_label_for(
     return res
 
 
-def _sample_progress_pct(test: AbTest) -> int:
-    """Грубая оценка прогресса 0..100 для UI badge'а.
+async def _compute_progress_and_next_rotation(
+    session: AsyncSession,
+    test: AbTest,
+    active_variant_id: int | None,
+    last_rotation_at: datetime | None,
+) -> tuple[int, str | None]:
+    """Считаем прогресс выборки (%) и ISO timestamp следующей ротации.
 
-    TODO: пока возвращаем 0 — для точной оценки нужны live-stats из
-    AbTestDailyStat / AbTestVariantPlatformSnap (по trigger_mode VIEWS/
-    TIME/BUDGET агрегаты считаются по-разному). Сделать в отдельной фиче
-    «прогресс выборки в badge'е».
+    Логика зависит от `trigger_mode`:
+
+    **TIME** — самое предсказуемое. anchor = last_rotation_at OR started_at;
+    next_rotation_at = anchor + trigger_value*60 sec;
+    progress = (now - anchor) / (trigger_value*60) × 100.
+
+    **VIEWS** — прогресс по показам **текущего активного варианта** с момента
+    последней ротации (или старта теста). AbTestDailyStat хранит дневные
+    агрегаты — складываем impressions всех записей с stat_date >= anchor_date.
+    Гранулярность 1 день — это даёт ±1 день погрешности, для badge'а ОК.
+    next_rotation_at = null (нельзя предсказать velocity показов).
+
+    **BUDGET** — сумма ad_spend всех вариантов теста с момента anchor.
+    next_rotation_at = null (нельзя предсказать velocity трат).
+
+    Все ошибки → (0, None) — badge просто покажет 0% без таймера.
     """
-    return 0
+    if test.trigger_value <= 0:
+        return 0, None
+
+    # Anchor — от какого момента считаем прогресс.
+    anchor = last_rotation_at or test.started_at
+    if anchor is None:
+        return 0, None
+
+    now = datetime.now(timezone.utc)
+
+    mode = test.trigger_mode
+    if mode == "TIME":
+        period_sec = test.trigger_value * 60
+        elapsed_sec = (now - anchor).total_seconds()
+        pct = max(0, min(100, int(elapsed_sec / period_sec * 100)))
+        next_at = anchor + timedelta(seconds=period_sec)
+        return pct, next_at.isoformat()
+
+    if mode == "VIEWS":
+        if active_variant_id is None:
+            return 0, None
+        # Sum impressions активного варианта с anchor_date по сегодня.
+        # Используем `>=` по stat_date чтобы захватить день anchor целиком.
+        result = await session.execute(
+            select(func.coalesce(func.sum(AbTestDailyStat.impressions), 0))
+            .where(
+                AbTestDailyStat.variant_id == active_variant_id,
+                AbTestDailyStat.stat_date >= anchor.date(),
+            )
+        )
+        impressions = int(result.scalar() or 0)
+        pct = max(0, min(100, int(impressions / test.trigger_value * 100)))
+        return pct, None
+
+    if mode == "BUDGET":
+        # Сумма ad_spend всех вариантов теста с anchor_date.
+        result = await session.execute(
+            select(func.coalesce(func.sum(AbTestDailyStat.ad_spend), 0))
+            .join(AbTestVariant, AbTestVariant.id == AbTestDailyStat.variant_id)
+            .where(
+                AbTestVariant.abtest_id == test.id,
+                AbTestDailyStat.stat_date >= anchor.date(),
+            )
+        )
+        spent = float(result.scalar() or 0)
+        pct = max(0, min(100, int(spent / test.trigger_value * 100)))
+        return pct, None
+
+    return 0, None
 
 
 def _serialize_active(
-    test: AbTest, active_label: str, winner_label: str | None
+    test: AbTest,
+    active_label: str,
+    winner_label: str | None,
+    progress_pct: int,
+    next_rotation_at: str | None,
 ) -> dict[str, Any]:
     return ActiveTestOut(
         id=str(test.id),
@@ -238,13 +332,10 @@ def _serialize_active(
         status=test.status,
         nmId=test.nm_id,
         activeVariantLabel=active_label,
-        # TODO: next_rotation_at — для TIME-триггера хранится в Celery beat;
-        # для VIEWS/BUDGET вычисляется динамически. Сейчас null — extension
-        # просто не показывает таймер.
-        nextRotationAt=None,
+        nextRotationAt=next_rotation_at,
         scenario=_scenario_for(test),
         winnerVariantLabel=winner_label,
-        sampleProgressPct=_sample_progress_pct(test),
+        sampleProgressPct=progress_pct,
     ).model_dump()
 
 
@@ -294,9 +385,14 @@ async def list_active_tests(
     tests = (await session.execute(stmt)).scalars().all()
     out: list[dict[str, Any]] = []
     for t in tests:
-        active = await _resolve_active_variant_label(session, t.id)
+        active_label, active_variant_id, last_rotation_at = (
+            await _resolve_active_variant(session, t.id)
+        )
         winner = await _winner_label_for(session, t.id)
-        out.append(_serialize_active(t, active, winner))
+        pct, next_at = await _compute_progress_and_next_rotation(
+            session, t, active_variant_id, last_rotation_at
+        )
+        out.append(_serialize_active(t, active_label, winner, pct, next_at))
     return out
 
 

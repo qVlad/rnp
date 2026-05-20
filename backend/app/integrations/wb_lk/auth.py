@@ -70,12 +70,24 @@ def _decode_jwt_payload(token: str) -> dict[str, Any]:
 
 
 def extract_exp(token: str) -> datetime:
-    """exp из JWT payload как aware datetime (UTC)."""
+    """exp из JWT payload как aware datetime (UTC).
+
+    AuthorizeV3 WB (RS256, выдаётся seller-portal) **не содержит exp** —
+    только `iat`. WB управляет сроком session-id серверно. Fallback:
+    `iat + 365 дней` как эвристическая оценка. Wb-Seller-Lk (EdDSA) — там
+    есть строгий `exp` через 5 минут от выпуска (но он refresh'ится сам).
+    """
     payload = _decode_jwt_payload(token)
     exp = payload.get("exp")
-    if not isinstance(exp, (int, float)):
-        raise LkAuthError("JWT has no numeric exp")
-    return datetime.fromtimestamp(int(exp), tz=timezone.utc)
+    if isinstance(exp, (int, float)):
+        return datetime.fromtimestamp(int(exp), tz=timezone.utc)
+    iat = payload.get("iat")
+    if isinstance(iat, (int, float)):
+        # Эвристика для AuthorizeV3: считаем что 1 год от issued-at —
+        # на UI покажется примерная дата истечения, на бэке мы всё равно
+        # ловим 401 и помечаем needs_relogin.
+        return datetime.fromtimestamp(int(iat) + 365 * 86400, tz=timezone.utc)
+    raise LkAuthError("JWT has neither numeric exp nor iat")
 
 
 def extract_seller_lk_context(token: str) -> dict[str, str]:

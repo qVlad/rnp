@@ -328,17 +328,23 @@ Lead использует этот файл как master-view: сюда скл�
 - **Исполнитель:** Lead + пользователь
 - **Приоритет:** P0 (последний блокер LEAD-008)
 - **Оценка:** ~1-2 нед после получения HAR
-- **Описание:** **Инструкция готова** — `agents/references/HAR_INSTRUCTIONS_redistribution.md`. Пользователь снимает 3 HAR (create-shift, window-open, shifts-report), кладёт в `tmp/redistribution_har/`, я анализирую и реализую POST endpoint.
+- **Описание:** **HAR получен 2026-05-19** (`tmp/redistribution_har/2seller.wildberries.ru.har` — реальная одна заявка). Расшифрован endpoint: `POST /ns/shifts/analytics-back/api/v1/order` с body `{order: {src, dst, nmID, count: [{chrtID, count}]}}`. Возвращает `{data: {success: true}, error: false}`. Минимум qty = 1 (не 5, как предполагали).
 - **Критерии готовности:**
   - [x] Инструкция для пользователя оформлена (HAR_INSTRUCTIONS_redistribution.md, 10 разделов)
-  - [ ] Пользователь снимает HAR A (POST create) — **ЖДЁМ**
-  - [ ] Пользователь снимает HAR B (окно 09:00 или 18:00 МСК) — **ЖДЁМ**
-  - [ ] Пользователь снимает HAR C (отчёт о перемещениях) — **ЖДЁМ**
-  - [ ] Реализация `WbLkClient.create_shift()` + `list_shifts()` (placeholder уже в коде)
-  - [ ] Celery `execute_window` task с миллисекундной точностью (NTP-sync)
-  - [ ] End-to-end smoke на тестовом окне с 1 маленькой заявкой
-- **Зависимости:** TASK-LEAD-009 ✅, пользователь снимает HAR
-- **Статус:** Открыта (ЖДЁТ HAR от пользователя — см. `HAR_INSTRUCTIONS_redistribution.md`)
+  - [x] HAR A (POST create) — получен 2026-05-19
+  - [x] Реализация `WbLkClient.create_order()` — `backend/app/integrations/wb_lk/client.py`
+  - [x] Сервис `execute_window_for_tenant()` — `backend/app/services/redistribution/execute_window.py` (группировка по src/dst/nmID, dst-quota check, cap по quota, cooldown 72ч, 401 → mark_needs_relogin)
+  - [x] Celery task wrapper `app.sync.tasks.execute_window_for_tenant`
+  - [x] Event-bus consumer `consume_redistribution_window` (30s tick, REDISTRIBUTION_WINDOW_OPEN → enqueue task)
+  - [x] Beat schedule + routing + reclaim watchdog для нового stream
+  - [x] Фикс JWT-парсера: AuthorizeV3 не имеет `exp` claim (только `iat`) → fallback `iat+365d`
+  - [x] Добавлен `httpx[http2]` extra (требуется для HTTP/2 connection к shifts API)
+  - [x] Circuit breaker в `_ensure_fresh_lk_token` — при 401 на refresh клиент перестаёт повторять попытки в рамках одной session (иначе spam "refreshing…" в логах при батч-обработке SKU)
+  - [x] Включён `tenant_modules.redistribution=true` для tenant=1
+  - [x] Деплой 2026-05-19
+  - [ ] **End-to-end smoke** — заблокирован TASK-LEAD-019 (refresh endpoint TBD)
+- **Зависимости:** TASK-LEAD-009 ✅, HAR получен ✅
+- **Статус:** Код задеплоен 2026-05-19, **частично закрыт**. Остался blocker: наш refresh-endpoint `/ns/suppliers-auth/.../auth/token` возвращает 401 — реальный refresh-flow в HAR не зафиксирован (HAR span 2 мин < 5-мин TTL). Создан TASK-LEAD-019 на reverse-engineering правильного refresh-endpoint'а. До его закрытия E2E smoke невозможен.
 
 ---
 
@@ -373,6 +379,534 @@ Lead использует этот файл как master-view: сюда скл�
   - [ ] При выборе любого варианта — TASK-DES-NNN / TASK-LEAD-NNN отдельной задачей
 - **Зависимости:** нет
 - **Статус:** Research готов — 2026-05-19. Ждём решение собственника.
+
+---
+
+### TASK-LEAD-019: Найти правильный Wb-Seller-Lk refresh endpoint
+
+- **Исполнитель:** Lead + пользователь (новый HAR)
+- **Приоритет:** P0 (блокирует E2E smoke LEAD-016)
+- **Оценка:** 0.5-1 день после получения HAR
+- **Описание:** Наш `refresh_wb_seller_lk()` бьёт в `/ns/suppliers-auth/suppliers-portal-core/auth/token` (JSON-RPC) и получает 401 на реальном AuthorizeV3. В HAR 2026-05-19 (2 мин активности, 50 запросов) refresh-запрос не зафиксирован — Wb-Seller-Lk не успел истечь (TTL ровно 5 мин). Нужен новый HAR с активностью ≥6 мин чтобы поймать момент refresh.
+- **Что нужно от пользователя:**
+  1. Открыть `seller.wildberries.ru`, F12 → Network → ✓ **Preserve log**, фильтр Network = «All» (не только XHR/Fetch)
+  2. Залогиниться, активничать в кабинете **≥6 минут** (кликать по разделам каждые 30 сек), особенно через 4 мин — там должен быть авто-refresh со стороны JS / Service Worker
+  3. Сохранить HAR (`Save all as HAR with content`) → положить в `tmp/redistribution_har/`
+  4. Доп. fallback если в HAR refresh так и не виден: снять отдельный HAR именно с момента когда вкладка простояла открытой ~5 мин и потом сделан клик (Wb-Seller-Lk должен быть обновлён к этому моменту)
+- **Критерии готовности:**
+  - [ ] HAR ≥6 мин получен и положен в `tmp/redistribution_har/`
+  - [ ] Найден URL + body + headers refresh-запроса
+  - [ ] `refresh_wb_seller_lk()` в `backend/app/integrations/wb_lk/auth.py` обновлён, smoke-тест `refresh()` в backend shell возвращает свежий 5-мин токен
+  - [ ] E2E smoke: 1 маленькая заявка отправлена в окно 09:00 или 18:00 МСК → response `success: true` → row в `redistribution_tasks` status=accepted + `RedistributionCooldown` 72ч
+  - [ ] LEAD-016 закрыт полностью
+- **Зависимости:** —
+- **Статус:** Открыта, ждём HAR от пользователя.
+
+---
+
+---
+
+## Инициатива: UNIT-план WB (порт Excel LeymanKids 1:1)
+
+**Дата открытия:** 2026-05-19
+**Owner:** Lead → Developer + Designer + QA
+**Эталон:** `/Users/user/Downloads/LeymanKids UNIT_план WB Обновление.xlsx` (2026-05-13, 1506 строк × 59 колонок)
+
+### Why
+
+Селлер прислал референсный Excel — золотой стандарт планирования юнит-экономики на WB. У текущей системы нет страницы план-расчёта: `/units` — это **factual** аналитика из `wb_report_detail`, `/unit-calculator` — ad-hoc single-SKU калькулятор. Нужен полноценный **plan-режим** на всём ассортименте сразу: видеть всю матрицу маржи / прогноза остатка / ROI по каждому nm_id одним экраном, как в Excel — но с авто-обновляемыми тарифами WB, версионированными константами, snapshot-исторями периодов и per-row overrides.
+
+### Scope
+
+- **Полный 1:1 порт Excel** (60 колонок, формулы зафиксированы в memory `project_unit_plan_initiative.md`)
+- **Новая страница `/unit-plan`** (НЕ трогаем `/units` и `/unit-calculator`)
+- **WB Tariffs API integration** — 3 endpoint'а (`/api/v1/tariffs/box`, `/tariffs/pallet`, `/tariffs/commission`), daily sync
+- **Settings → раздел «UNIT-план»** — глобальные timeline-versioned константы (СПП %, WB Wallet %, налог %, эквайринг %, etc.)
+- **Per-row overrides** — склад/FBS/монопаллет/СПП %/ABC/сезон/пол → ручные правки сохраняются
+- **3-4 спринта**, общая оценка ~6-8 недель
+
+### Чего у нас нет (фронт работ)
+
+1. Price ladder: Base → −Скидка → −ВБ Клуб → −СПП(28%) → −WB Wallet(2%)
+2. Литры (volume_l) на nm_id, склад по умолчанию, монопаллет yes/no + items_per_monopallet — нет полей в `products`
+3. WB Tariffs API — 3 эндпоинта + reference-таблицы `wb_tariff_box`, `wb_tariff_pallet`, `wb_tariff_commission` + Celery beat daily sync + модуль `integrations/wb/tariffs.py`
+4. Сервис `services/unit_plan.py` с формулами 1:1 из Excel
+5. Settings → раздел «UNIT-план параметры» с глобальными константами (timeline-versioned)
+6. Снапшоты заказов в период (3 исторических периода для сравнения)
+7. Прогноз остатка на дату X
+8. Per-row overrides: склад, FBS toggle, монопаллет, СПП %, ABC/сезон/пол вручную
+9. API: GET /api/unit-plan (таблица), GET /api/unit-plan/export.xlsx, PUT /api/unit-plan/{nm}/overrides, GET/POST /api/unit-plan/snapshots
+10. Frontend: `/unit-plan` страница (sticky-header table 60 колонок, фильтры, цвет-маркировка маржи, drill-down)
+11. Документация: `UNIT_PLAN.md` (methodology), обновить `FEATURES.md` / `CLAUDE.md` / `ROADMAP.md`
+12. QA: cell-by-cell сверка 50 SKU vs Excel (Δ≤1₽)
+
+### Sprint roadmap
+
+- **Sprint 1 (фундамент)** — WB Tariffs API + миграция БД + расширение `products` + Settings UI для tariff-таблиц
+- **Sprint 2 (расчётное ядро)** — `services/unit_plan.py` со всеми формулами + global constants timeline + API endpoint
+- **Sprint 3 (UI)** — страница `/unit-plan` (table, фильтры, overrides, top-panel, drill-down, color coding)
+- **Sprint 4 (полировка + QA)** — XLSX export, snapshots, прогноз остатка на дату, документация, cell-by-cell сверка
+
+---
+
+### TASK-LEAD-018: Архитектурный документ UNIT-план (`UNIT_PLAN.md`)
+
+- **Исполнитель:** Lead
+- **Приоритет:** P0
+- **Оценка:** 4ч
+- **Описание:** Написать `UNIT_PLAN.md` — методика 1:1 для порта Excel LeymanKids. Должен содержать: mapping всех 59 колонок Excel → наших полей (БД / runtime-вычисление / global const / per-row override); все формулы Excel → Python pseudocode; список global constants со значениями по умолчанию; описание timeline-логики для констант; политика per-row overrides; алгоритм прогноза остатка на дату; алгоритм snapshot-сравнения периодов; матрица RBAC (директор/head/manager — что видит, что может править); диаграмму data-flow (WB Tariffs API → reference-таблицы → unit_plan service → API → UI).
+- **Критерии готовности:**
+  - [ ] `UNIT_PLAN.md` создан в корне репозитория
+  - [ ] Mapping-таблица 59 колонок Excel → поля (Excel col name | type | source | формула)
+  - [ ] Все формулы записаны как Python pseudocode
+  - [ ] Список global constants с default-значениями (СПП %, WB Wallet %, налог %, эквайринг %, безвозвратный возврат %, страховка %, минимальный таргет маржи %, и т.д.)
+  - [ ] Описано как работает timeline для констант (как `setting_timeline`)
+  - [ ] Описан алгоритм прогноза остатка (с учётом supplies / средней скорости / горизонта)
+  - [ ] Описан алгоритм snapshot-сравнения 3 исторических периодов
+  - [ ] RBAC-матрица для `/unit-plan` (director CRUD, head CRUD, manager — только свои бренды read-only)
+  - [ ] Data-flow диаграмма (mermaid или ASCII)
+  - [ ] Ссылка добавлена в `CLAUDE.md` § «Где искать что»
+- **Зависимости:** нет
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-001: WB Tariffs API — модуль `integrations/wb/tariffs.py`
+
+- **Исполнитель:** Developer
+- **Приоритет:** P0
+- **Оценка:** 8ч
+- **Описание:** Реализовать клиент для трёх WB Tariffs endpoint'ов: `GET /api/v1/tariffs/box?date=YYYY-MM-DD`, `GET /api/v1/tariffs/pallet?date=YYYY-MM-DD`, `GET /api/v1/tariffs/commission?locale=ru`. Документация в `WB_API_REFERENCE.md` (если нет — добавить). Использовать существующий `WbApiClient` с rate-limiter (категория `common` или новая `tariffs` — определить по фактическим лимитам).
+- **Критерии готовности:**
+  - [ ] `backend/app/integrations/wb/tariffs.py` создан
+  - [ ] 3 функции: `fetch_box_tariffs(date)`, `fetch_pallet_tariffs(date)`, `fetch_commission_tariffs()`
+  - [ ] Категория в `WbApiClient` (если нужна новая) + rate-limit
+  - [ ] Нормализация ответов: warehouse_name, geo_name, box_delivery_base, box_delivery_liter, box_storage_base, box_storage_liter (для box), pallet_delivery, pallet_storage (для pallet), parent_id, subject_id, kgvp_marketplace, kgvp_supplier, kgvp_supplier_express, paid_storage_kgvp (для commission)
+  - [ ] Обработка money-as-string (через Decimal)
+  - [ ] Обработка пустых полей («-» / null)
+  - [ ] Sync-обёртки в `backend/app/sync/tasks.py`
+  - [ ] Юнит-тест парсинга response → нормализованная структура
+- **Зависимости:** TASK-LEAD-018
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-002: Миграция БД — справочники тарифов WB
+
+- **Исполнитель:** Developer
+- **Приоритет:** P0
+- **Оценка:** 4ч
+- **Описание:** Alembic-миграция (`0040_wb_tariffs`) для трёх reference-таблиц: `wb_tariff_box`, `wb_tariff_pallet`, `wb_tariff_commission`. Композитный PK с `effective_date` для версионирования (тарифы WB меняются — храним историю). Tenant-scoped (composite PK с `tenant_id` если применимо, либо global — определить по природе данных: тарифы WB одинаковые для всех).
+- **Критерии готовности:**
+  - [ ] `0040_wb_tariffs` ревизия создана (up + down)
+  - [ ] `wb_tariff_box(effective_date, warehouse_name, geo_name, box_delivery_base, box_delivery_liter, box_storage_base, box_storage_liter, raw_json, synced_at, PK=(effective_date, warehouse_name))`
+  - [ ] `wb_tariff_pallet(effective_date, warehouse_name, geo_name, pallet_delivery, pallet_storage, raw_json, synced_at, PK=(effective_date, warehouse_name))`
+  - [ ] `wb_tariff_commission(parent_id, subject_id, kgvp_marketplace, kgvp_supplier, kgvp_supplier_express, paid_storage_kgvp, synced_at, PK=(parent_id, subject_id))`
+  - [ ] Бэкап БД сделан перед миграцией
+  - [ ] Модели в `db/models.py`
+  - [ ] up/down тестированы локально (alembic upgrade / downgrade)
+- **Зависимости:** UNIT-PLAN-001
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-003: Миграция БД — расширение `products` для UNIT-плана
+
+- **Исполнитель:** Developer
+- **Приоритет:** P0
+- **Оценка:** 3ч
+- **Описание:** Alembic-миграция (`0041_products_unit_plan_fields`) добавить поля: `volume_l NUMERIC(10,3)` (объём упаковки), `warehouse_default TEXT` (склад по умолчанию для FBO), `is_monopallet BOOLEAN DEFAULT FALSE`, `items_per_monopallet INTEGER`. Бэкап обязателен.
+- **Критерии готовности:**
+  - [ ] `0041_products_unit_plan_fields` ревизия (up + down)
+  - [ ] Бэкап БД сделан
+  - [ ] Поля nullable (заполняются вручную через Settings или импорт)
+  - [ ] Модель `Product` в `db/models.py` обновлена
+  - [ ] up/down тестированы локально
+- **Зависимости:** TASK-LEAD-018
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-004: Миграция БД — `unit_plan_overrides` + `unit_plan_constants_timeline` + `unit_plan_snapshots`
+
+- **Исполнитель:** Developer
+- **Приоритет:** P0
+- **Оценка:** 5ч
+- **Описание:** Alembic-миграция (`0042_unit_plan_core`):
+  - `unit_plan_overrides(tenant_id, nm_id, warehouse_override, fbs_override, monopallet_override, items_per_monopallet_override, spp_pct_override, abc_override, season_override, gender_override, notes, updated_by_user_id, updated_at, PK=(tenant_id, nm_id))`
+  - `unit_plan_constants_timeline(tenant_id, effective_date, key, value_numeric, value_text, updated_by_user_id, updated_at, PK=(tenant_id, effective_date, key))` — аналогично `setting_timeline`
+  - `unit_plan_snapshots(tenant_id, id, label, period_start, period_end, created_at, created_by_user_id, payload_json)` — храним JSON-снимок aggregated данных
+- **Критерии готовности:**
+  - [ ] Миграция (up + down)
+  - [ ] Бэкап БД сделан
+  - [ ] Модели в `db/models.py`
+  - [ ] up/down тестированы локально
+  - [ ] audit_log подключён на изменения overrides + constants_timeline
+- **Зависимости:** TASK-LEAD-018
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-005: Daily sync WB Tariffs через Celery beat
+
+- **Исполнитель:** Developer
+- **Приоритет:** P0
+- **Оценка:** 4ч
+- **Описание:** Celery beat task `sync_wb_tariffs_daily` — запуск 1×/день (например, 05:00 МСК), UPSERT в `wb_tariff_box`/`wb_tariff_pallet`/`wb_tariff_commission`. По коммиссиям — только если есть изменения (diff с предыдущей записью). Routing на `worker-default`.
+- **Критерии готовности:**
+  - [ ] `sync_wb_tariffs_daily` task в `sync/tasks.py`
+  - [ ] Beat schedule в `sync/celery_app.py` (05:00 МСК = 02:00 UTC)
+  - [ ] Routing `queue=default`
+  - [ ] UPSERT через `_bulk_upsert` (chunk_size=1000)
+  - [ ] Idempotency: если данные за сегодня уже синканы — skip / overwrite
+  - [ ] Запись в `sync_checkpoints` (новые keys: `wb_tariff_box`, `wb_tariff_pallet`, `wb_tariff_commission`)
+  - [ ] Smoke-запуск локально → таблицы заполнены
+- **Зависимости:** UNIT-PLAN-001, UNIT-PLAN-002
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-006: Settings UI — управление tariff-таблицами и view
+
+- **Исполнитель:** Designer + Developer
+- **Приоритет:** P1
+- **Оценка:** 6ч
+- **Описание:** В `/settings` добавить раздел «WB Tariffs» — таблицы box/pallet/commission read-only с фильтром по дате, поиском по складу/категории. Кнопка «Sync now» для ручного запуска `sync_wb_tariffs_daily`. Доступ — director.
+- **Критерии готовности:**
+  - [ ] API `GET /api/wb-tariffs/box?date=...`, `/pallet?date=...`, `/commission`
+  - [ ] API `POST /api/wb-tariffs/sync` (director only)
+  - [ ] UI-секция в `Settings.tsx` с тремя вкладками (Box / Pallet / Commission)
+  - [ ] DateRangePicker / single date picker для выбора effective_date
+  - [ ] Поиск по warehouse_name / subject_name
+  - [ ] Кнопка «Sync now» с прогрессом
+  - [ ] RBAC: director only (mutation), director+head (view)
+- **Зависимости:** UNIT-PLAN-002, UNIT-PLAN-005
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-007: Settings UI — раздел «UNIT-план параметры» (global constants)
+
+- **Исполнитель:** Designer + Developer
+- **Приоритет:** P0
+- **Оценка:** 5ч
+- **Описание:** В `/settings` добавить раздел «UNIT-план параметры» — управление timeline-versioned константами: СПП %, WB Wallet %, налог % (от revenue), эквайринг %, безвозвратный возврат %, страховка %, минимальный таргет маржи %, средняя длина логистики (км / км×₽), и т.д. (точный список — из `UNIT_PLAN.md`). UI: таблица с эффективными датами (аналог `setting_timeline` UI).
+- **Критерии готовности:**
+  - [ ] API `GET /api/unit-plan/constants?on_date=YYYY-MM-DD` (выбирает actual)
+  - [ ] API `GET /api/unit-plan/constants/timeline` (вся история)
+  - [ ] API `POST /api/unit-plan/constants/timeline` (добавить запись на effective_date)
+  - [ ] API `DELETE /api/unit-plan/constants/timeline/{id}`
+  - [ ] UI-секция в `Settings.tsx` с таблицей timeline + кнопка «Добавить»
+  - [ ] audit_log на CUD
+  - [ ] RBAC: director only (mutation), director+head (view)
+- **Зависимости:** UNIT-PLAN-004
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-008: Сервис `services/unit_plan.py` — расчётное ядро
+
+- **Исполнитель:** Developer
+- **Приоритет:** P0
+- **Оценка:** 16ч
+- **Описание:** Главный сервис расчёта UNIT-плана. Принимает `tenant_id`, период (для snapshot заказов), on_date (для тарифов и констант). Возвращает таблицу 60 колонок per nm_id. Использует:
+  - `products` (base data + volume_l / warehouse_default / is_monopallet / items_per_monopallet)
+  - `cogs_weighted` (для COGS)
+  - `wb_tariff_box / pallet / commission` (logistics + storage + commission)
+  - `unit_plan_constants_timeline` (global constants)
+  - `unit_plan_overrides` (per-row overrides — приоритет над всеми источниками)
+  - `wb_orders / wb_sales` (для snapshot заказов в период)
+- **Критерии готовности:**
+  - [ ] `services/unit_plan.py` создан
+  - [ ] Функция `build_unit_plan(tenant_id, on_date, period_start, period_end, brand_filter, ...) -> list[UnitPlanRow]`
+  - [ ] Все 60 колонок Excel реализованы (см. mapping в `UNIT_PLAN.md`)
+  - [ ] Price ladder: Base → −Скидка → −ВБ Клуб → −СПП(N%) → −WB Wallet(2%)
+  - [ ] Расчёт logistics: base + liter × volume_l (с учётом монопаллета — если is_monopallet, делим cost на items_per_monopallet)
+  - [ ] Расчёт storage: base + liter × volume_l × days
+  - [ ] Расчёт commission: через `wb_tariff_commission` по subject_id (или fallback на factual из `wb_report_detail`)
+  - [ ] Margin %, Markup %, ROI %, Payback
+  - [ ] Snapshot заказов в period_start..period_end
+  - [ ] Прогноз остатка на on_date + N дней (на основе текущего stock + средней скорости заказов)
+  - [ ] Юнит-тесты: 5+ кейсов (с overrides и без, монопаллет / штучный, разные склады)
+- **Зависимости:** UNIT-PLAN-002, UNIT-PLAN-003, UNIT-PLAN-004, TASK-LEAD-018
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-009: API endpoint `GET /api/unit-plan`
+
+- **Исполнитель:** Developer
+- **Приоритет:** P0
+- **Оценка:** 6ч
+- **Описание:** REST endpoint для таблицы UNIT-плана. Query-params: `on_date`, `period_start`, `period_end`, `brand`, `warehouse`, `abc`, `season`, `gender`, `is_monopallet`, `margin_min`, `margin_max`, `sort`, `page`, `page_size`. Brand-filter через `current_brands_filter` (manager видит только свои). Pagination через offset/limit или cursor.
+- **Критерии готовности:**
+  - [ ] `api/unit_plan.py` создан
+  - [ ] `GET /api/unit-plan` с pydantic-схемой response
+  - [ ] Все query-params реализованы
+  - [ ] Brand-filter для manager (через `current_brands_filter`)
+  - [ ] Pagination
+  - [ ] RBAC: director + head + manager (manager — только свои бренды)
+  - [ ] Smoke в `tests/test_unit_plan_api.py`
+- **Зависимости:** UNIT-PLAN-008
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-010: API endpoints overrides + snapshots
+
+- **Исполнитель:** Developer
+- **Приоритет:** P0
+- **Оценка:** 5ч
+- **Описание:**
+  - `PUT /api/unit-plan/{nm_id}/overrides` — частичное обновление overrides (только переданные поля). Audit_log.
+  - `DELETE /api/unit-plan/{nm_id}/overrides` — сброс всех overrides
+  - `GET /api/unit-plan/snapshots` — список snapshot'ов
+  - `POST /api/unit-plan/snapshots` — создать новый snapshot (передаёт label, period_start, period_end)
+  - `GET /api/unit-plan/snapshots/{id}` — детали snapshot'а
+  - `DELETE /api/unit-plan/snapshots/{id}` — удалить
+- **Критерии готовности:**
+  - [ ] 6 endpoint'ов реализованы в `api/unit_plan.py`
+  - [ ] RBAC: director + head (mutation), manager — read overrides своих брендов + snapshots
+  - [ ] audit_log на overrides CUD + snapshot CUD
+  - [ ] Pydantic-схемы для request/response
+- **Зависимости:** UNIT-PLAN-008
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-011: Дизайн страницы `/unit-plan` (mockup + token specs)
+
+- **Исполнитель:** Designer
+- **Приоритет:** P0
+- **Оценка:** 8ч
+- **Описание:** UX-дизайн страницы `/unit-plan`: sticky-header таблица 60 колонок, фильтры (warehouse / abc / season / gender / brand / margin range), color coding маржи (зелёный/жёлтый/красный по threshold), drill-down при клике на row → правая панель с разбивкой формул, top-panel с глобальными константами (СПП %, WB Wallet % и т.д.), кнопки «Snapshot» / «Export XLSX» / «Сбросить overrides». Учесть mobile (responsive — таблица скроллится горизонтально).
+- **Критерии готовности:**
+  - [ ] Mockup (Figma или ASCII в `agents/references/design-unit-plan.md`)
+  - [ ] Список 60 колонок с шириной / форматом (₽/% / int / Decimal)
+  - [ ] Цвет-маркировка по марже (threshold из global constant «минимальный таргет маржи %»)
+  - [ ] Drill-down дизайн: правая панель с формулой по выбранному nm_id
+  - [ ] Per-row overrides: inline-editing (для текстовых полей — input, для toggle — checkbox, для select — dropdown)
+  - [ ] Top-panel с глобальными константами (read-only, click → ссылка на Settings)
+  - [ ] Фильтры sticky сверху
+  - [ ] Mobile/tablet adaptation
+- **Зависимости:** TASK-LEAD-018, UNIT-PLAN-009
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-012: Frontend — страница `/unit-plan` (skeleton + table)
+
+- **Исполнитель:** Developer
+- **Приоритет:** P0
+- **Оценка:** 10ч
+- **Описание:** React страница `frontend/src/pages/UnitPlan.tsx`. Sticky-header table с виртуализацией (react-window или tanstack-table — 1500+ строк × 60 колонок). API: `GET /api/unit-plan` через TanStack Query. Top-panel с global constants. Фильтры. Color coding по марже.
+- **Критерии готовности:**
+  - [ ] `UnitPlan.tsx` создан, маршрут добавлен в Layout
+  - [ ] Sticky header (CSS position: sticky; top: 0; z-index)
+  - [ ] Виртуализация (опционально для v1 — если без неё лагает > 500 строк → внедрить)
+  - [ ] TanStack Query для `/api/unit-plan` с keepPreviousData
+  - [ ] Top-panel с константами (из `/api/unit-plan/constants`)
+  - [ ] Фильтры: brand, warehouse, abc, season, gender, margin range, is_monopallet toggle
+  - [ ] Color coding margin column (зелёный/жёлтый/красный)
+  - [ ] Меню-пункт «UNIT-план» с RBAC (директор+head — все, manager — свои бренды)
+  - [ ] TypeScript типы для UnitPlanRow
+- **Зависимости:** UNIT-PLAN-009, UNIT-PLAN-011
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-013: Frontend — per-row overrides + drill-down
+
+- **Исполнитель:** Developer
+- **Приоритет:** P0
+- **Оценка:** 8ч
+- **Описание:** В таблице `/unit-plan` — inline edit для overrides (warehouse, FBS, monopallet, СПП %, ABC, season, gender). Drill-down: клик на row → правая панель с разбивкой формул (как row рассчитан: price ladder + logistics breakdown + commission + storage + COGS + tax + margin → final).
+- **Критерии готовности:**
+  - [ ] Inline-editing с дебаунсом → `PUT /api/unit-plan/{nm_id}/overrides`
+  - [ ] Optimistic updates через TanStack Query
+  - [ ] Кнопка «Сбросить overrides» per-row → `DELETE /api/unit-plan/{nm_id}/overrides`
+  - [ ] Drill-down правая панель (slide-in) с разбивкой формул
+  - [ ] Закрытие drill-down: Esc / ✕
+  - [ ] Анимация slide-in/out
+  - [ ] Для manager: overrides доступны (он управляет своими брендами)
+- **Зависимости:** UNIT-PLAN-010, UNIT-PLAN-012
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-014: XLSX export 1:1 с эталонным Excel
+
+- **Исполнитель:** Developer
+- **Приоритет:** P1
+- **Оценка:** 8ч
+- **Описание:** `GET /api/unit-plan/export.xlsx` — экспорт текущего view (с применёнными фильтрами и overrides) в XLSX с теми же 59 колонками что эталонный Excel LeymanKids. Заголовки, форматирование (₽ / % / int), цвет-маркировка маржи через openpyxl conditional formatting. Учесть `current_brands_filter` для manager.
+- **Критерии готовности:**
+  - [ ] `services/unit_plan_export.py` — XLSX через openpyxl
+  - [ ] Endpoint `GET /api/unit-plan/export.xlsx` с теми же query-params что list
+  - [ ] Layout 1:1 эталонному Excel (порядок колонок, ширины, заголовки)
+  - [ ] Conditional formatting по марже
+  - [ ] Кнопка «📥 Экспорт XLSX» на странице `/unit-plan`
+  - [ ] Brand-filter для manager
+  - [ ] Audit_log записывается (export = read, можно опционально)
+- **Зависимости:** UNIT-PLAN-009
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-015: Snapshots — UI и API
+
+- **Исполнитель:** Developer + Designer
+- **Приоритет:** P1
+- **Оценка:** 6ч
+- **Описание:** UI для управления snapshot'ами: кнопка «📸 Сохранить snapshot» (label + auto-fill period), список snapshot'ов в боковом drawer, кнопка «Сравнить» (2 snapshot'а side-by-side с дельтами по марже / ROI / прогнозу остатка), удаление.
+- **Критерии готовности:**
+  - [ ] UI: кнопка «Сохранить snapshot» в header `/unit-plan`
+  - [ ] UI: drawer с списком snapshot'ов (label, period, created_at, кнопки «Load», «Compare», «Delete»)
+  - [ ] UI: режим сравнения 2 snapshot'ов (side-by-side таблица с цвет-дельтами)
+  - [ ] API уже готов (UNIT-PLAN-010)
+  - [ ] RBAC: director + head (CUD), manager — read своих
+- **Зависимости:** UNIT-PLAN-010, UNIT-PLAN-012
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-016: Прогноз остатка на дату X — UI и логика
+
+- **Исполнитель:** Developer + Designer
+- **Приоритет:** P1
+- **Оценка:** 6ч
+- **Описание:** На странице `/unit-plan` — top-panel поле «Прогноз на дату» (DateRangePicker single date). При изменении — пересчёт колонок «Остаток на дату X» и «Дней до Out-of-stock». Логика: текущий stock + входящие supplies − средняя скорость заказов × дней. Если получается отрицательный → 0 + флаг «out of stock на YYYY-MM-DD».
+- **Критерии готовности:**
+  - [ ] Logic в `services/unit_plan.py` (forecast_stock_on_date)
+  - [ ] API: query-param `forecast_date=YYYY-MM-DD` в `GET /api/unit-plan`
+  - [ ] UI: DateRangePicker (single date) в top-panel
+  - [ ] Колонки «Остаток на дату X» и «Дней до OOS» в таблице
+  - [ ] Цвет-маркировка: красный если OOS, жёлтый если < 14 дней
+  - [ ] Юнит-тесты на forecast_stock_on_date
+- **Зависимости:** UNIT-PLAN-008, UNIT-PLAN-012
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-017: Snapshot заказов в период (3 исторических периода)
+
+- **Исполнитель:** Developer
+- **Приоритет:** P1
+- **Оценка:** 5ч
+- **Описание:** В Excel-эталоне есть колонки «Заказы за 7д / 30д / 90д» (или похожие — точный список в `UNIT_PLAN.md`). Логика: для каждого nm_id посчитать SUM(qty) в `wb_orders` за окно. Окна настраиваются через top-panel («Период 1 / 2 / 3 — N дней»). По умолчанию 7/30/90.
+- **Критерии готовности:**
+  - [ ] Logic в `services/unit_plan.py` (orders_in_window)
+  - [ ] 3 колонки в UnitPlanRow («orders_window_1», «orders_window_2», «orders_window_3»)
+  - [ ] Query-params `window_1_days`, `window_2_days`, `window_3_days` (default 7/30/90)
+  - [ ] UI: input'ы в top-panel для настройки окон
+  - [ ] Юнит-тесты
+- **Зависимости:** UNIT-PLAN-008, UNIT-PLAN-012
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-018: Документация `UNIT_PLAN.md` обновление после реализации
+
+- **Исполнитель:** Lead + Developer
+- **Приоритет:** P1
+- **Оценка:** 3ч
+- **Описание:** После реализации Sprint 1-2 — обновить `UNIT_PLAN.md` с реальной mapping-таблицей (как получилось vs как планировали), списком фактических global constants и формул в коде, ссылками на код (`services/unit_plan.py:build_unit_plan`).
+- **Критерии готовности:**
+  - [ ] `UNIT_PLAN.md` обновлён с финальным state
+  - [ ] Diff vs Excel задокументирован (если что-то намеренно не портировано)
+  - [ ] Ссылки на code в `services/unit_plan.py` / `api/unit_plan.py`
+  - [ ] `CLAUDE.md` § «Где искать что» содержит ссылку
+  - [ ] `FEATURES.md` обновлён (новая страница `/unit-plan` + API группа + миграции 0040/0041/0042)
+  - [ ] `ROADMAP.md` — пункт «UNIT-план» помечен выполненным
+  - [ ] `CONTINUE_HERE.md` — топовая запись о завершении инициативы
+- **Зависимости:** UNIT-PLAN-008..017
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-019: QA — cell-by-cell сверка 50 SKU vs Excel (Δ≤1₽)
+
+- **Исполнитель:** QA
+- **Приоритет:** P0
+- **Оценка:** 8ч
+- **Описание:** Взять 50 случайных SKU из эталонного Excel `LeymanKids UNIT_план WB Обновление.xlsx`, скопировать все 59 значений per row, сравнить с нашим API output (`GET /api/unit-plan?nm_id=...`). Допуск Δ≤1₽ (для %-полей Δ≤0.1%). Все расхождения задокументировать в отчёте, открыть BUG-DEV-* для каждого.
+- **Критерии готовности:**
+  - [ ] Отчёт `agents/references/qa-unit-plan-reconciliation-YYYY-MM-DD.md`
+  - [ ] 50 SKU проверены, табличка «Колонка | Excel | RNP | Δ | OK/FAIL»
+  - [ ] Если FAIL > 0 → BUG-DEV-* открыт для каждого
+  - [ ] Сводка по типам отклонений (формула / округление / источник данных)
+  - [ ] Финальный verdict: «1:1 / приемлемые отклонения / требуется доработка»
+- **Зависимости:** UNIT-PLAN-008..017
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-020: QA — RBAC smoke `/unit-plan` (director / head / manager)
+
+- **Исполнитель:** QA
+- **Приоритет:** P0
+- **Оценка:** 3ч
+- **Описание:** Прогон UI и API под тремя ролями. Director — видит всё, может править overrides + constants_timeline. Head — видит всё, может править overrides, НЕ может править constants_timeline (director only). Manager — видит только свои бренды (через brand_assignments), может править overrides своих, НЕ видит constants_timeline mutation.
+- **Критерии готовности:**
+  - [ ] Director: full access — все CUD endpoints работают
+  - [ ] Head: read all, mutation overrides ✅, constants_timeline 403 ❌
+  - [ ] Manager: read только свои бренды (через brand_assignments), overrides своих ✅, чужих 403 ❌, constants_timeline 403 ❌
+  - [ ] Меню `/unit-plan` показывается для всех трёх ролей (видимость определяется наличием доступа)
+  - [ ] XLSX export уважает brand-filter для manager
+  - [ ] Отчёт в `agents/references/qa-unit-plan-rbac-YYYY-MM-DD.md`
+- **Зависимости:** UNIT-PLAN-009, UNIT-PLAN-010, UNIT-PLAN-012, UNIT-PLAN-014
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-021: QA — sync WB Tariffs smoke (1 неделя observation)
+
+- **Исполнитель:** QA
+- **Приоритет:** P1
+- **Оценка:** 2ч (setup) + 7 дней пассивного наблюдения
+- **Описание:** Проверить что `sync_wb_tariffs_daily` стабильно работает 7 дней на проде: записи в `sync_checkpoints` обновляются ежедневно, новые `effective_date` появляются в `wb_tariff_box/pallet`, нет ошибок в Celery логах, rate-limit не пробивается.
+- **Критерии готовности:**
+  - [ ] После деплоя — 7 запусков успешны (по checkpoints)
+  - [ ] Нет ошибок в logs (`docker compose logs worker-default | grep -i tariff`)
+  - [ ] Нет 429 от WB по tariffs endpoints
+  - [ ] `wb_tariff_box` имеет 7 записей с разными effective_date (или 1 запись если тарифы не менялись — норма)
+  - [ ] Отчёт в `agents/references/qa-unit-plan-tariffs-sync-YYYY-MM-DD.md`
+- **Зависимости:** UNIT-PLAN-005 (deployed)
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-022: Designer — Art Director ревью цвет-маркировок и токенов
+
+- **Исполнитель:** Art Director
+- **Приоритет:** P1
+- **Оценка:** 3ч
+- **Описание:** Цвет-маркировка маржи (зелёный/жёлтый/красный) должна быть согласована с palette проекта. Threshold между зонами — обсудить с собственником (или взять из global constant «минимальный таргет маржи %» + N%). Drill-down правая панель — typography и spacing tokens.
+- **Критерии готовности:**
+  - [ ] Палитра margin-маркировок согласована (3 цвета + значения thresholds)
+  - [ ] Записано в `UI_UX_AUDIT.md` или `agents/references/art-unit-plan-tokens.md`
+  - [ ] Применено в `UnitPlan.tsx` (через Tailwind tokens)
+  - [ ] Visual smoke — выглядит консистентно с другими страницами
+- **Зависимости:** UNIT-PLAN-011, UNIT-PLAN-012
+- **Статус:** Открыта
+
+---
+
+### UNIT-PLAN-023: Lead — финальный code review + деплой
+
+- **Исполнитель:** Lead
+- **Приоритет:** P0
+- **Оценка:** 3ч
+- **Описание:** Code review всей инициативы (миграции, services, api, frontend) по чек-листу из `agents/lead.md` §«При code review»: границы слоёв, tenant isolation, RBAC, audit_log, WB API лимиты, DB chunk_size, frontend TS clean. Затем — деплой на прод через `./scripts/remote.sh deploy` (с pre-deploy бэкапом БД).
+- **Критерии готовности:**
+  - [ ] Code review пройден по 8 пунктам чек-листа
+  - [ ] Все P0 баги (BUG-DEV-* из UNIT-PLAN-019/020) закрыты
+  - [ ] Pre-deploy бэкап БД сделан (автоматически через deploy)
+  - [ ] Migrations 0040/0041/0042 применены на проде
+  - [ ] Smoke на проде: `/unit-plan` рендерится, API отвечает, XLSX-export работает
+  - [ ] `CONTINUE_HERE.md` обновлён с финальным state
+- **Зависимости:** UNIT-PLAN-018, UNIT-PLAN-019, UNIT-PLAN-020, UNIT-PLAN-021, UNIT-PLAN-022
+- **Статус:** Открыта
 
 ---
 

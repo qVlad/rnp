@@ -40,6 +40,7 @@ from app.api import (
     tax_report,
     tenant_modules,
     tenant_settings,
+    unit_plan,
     units,
     users,
     view_presets,
@@ -183,6 +184,7 @@ async def whoami() -> dict[str, object]:
 app.include_router(dashboard.router)
 app.include_router(pnl.router)
 app.include_router(units.router)
+app.include_router(unit_plan.router)
 app.include_router(ads.router)
 app.include_router(view_presets.router)
 app.include_router(notifications.router)

@@ -73,6 +73,12 @@ class WbLkClient:
         self._timeout = timeout_s
         self._client: httpx.AsyncClient | None = None
         self._on_token_refreshed = on_token_refreshed
+        # Circuit breaker: если refresh-endpoint вернул 401 — все следующие
+        # запросы в рамках этого client'а сразу отдают ту же ошибку без
+        # повторных попыток (иначе в логи летит спам "refreshing..."
+        # десятки раз подряд при batch-обработке SKU'шек в recommender).
+        # См. LEAD-016 follow-up: refresh endpoint TBD.
+        self._refresh_broken: LkClientError | None = None
 
     async def __aenter__(self) -> "WbLkClient":
         self._client = httpx.AsyncClient(
@@ -89,7 +95,15 @@ class WbLkClient:
         self._client = None
 
     async def _ensure_fresh_lk_token(self) -> None:
-        """Refresh Wb-Seller-Lk если до истечения < 60 сек."""
+        """Refresh Wb-Seller-Lk если до истечения < 60 сек.
+
+        Circuit breaker: при первом fail все следующие вызовы сразу
+        перевыбрасывают ту же ошибку без обращения к WB. Это нужно
+        потому что recommender вызывает get_stocks для каждой SKU и
+        без breaker мы получили бы 50 одинаковых refresh-запросов в логи.
+        """
+        if self._refresh_broken is not None:
+            raise self._refresh_broken
         if not is_expired(self.tokens.wb_seller_lk):
             return
         log.info("wb_lk: refreshing Wb-Seller-Lk (5min TTL expiring)")
@@ -99,7 +113,9 @@ class WbLkClient:
                 user_agent=self.tokens.user_agent,
             )
         except LkAuthError as e:
-            raise LkClientError(f"token refresh failed: {e}", status=401) from e
+            err = LkClientError(f"token refresh failed: {e}", status=401)
+            self._refresh_broken = err
+            raise err from e
         self.tokens.wb_seller_lk = new_token
         if self._client is not None:
             self._client.headers["Wb-Seller-Lk"] = new_token
@@ -167,15 +183,66 @@ class WbLkClient:
         result = await self._get("/quota", params={"officeID": office_id, "type": kind})
         return int((result or {}).get("quota", 0))
 
-    # ─── POST create_shift — TODO ────────────────────────────────────
-    # Path и body неизвестны (нет HAR с актом создания заявки). См.
-    # REDISTRIBUTION_PLAN.md §6.1 «Endpoints которых НЕТ в HAR».
-    # Snapshot нужен на момент клика «Создать перемещение» в LK WB.
-    #
-    # Ожидаемая сигнатура:
-    #   async def create_shift(
-    #       self, *, chrt_id: int, from_office_id: int,
-    #       to_office_id: int, qty: int,
-    #   ) -> dict
-    #
-    # Пока возвращаем NotImplementedError — это сигнал что нужен HAR.
+    # ─── POST /order — создание заявки на перемещение ────────────────
+    # Endpoint и формат расшифрованы из HAR 2026-05-19 (см.
+    # tmp/redistribution_har/2seller.wildberries.ru.har).
+
+    async def create_order(
+        self,
+        *,
+        src_office_id: int,
+        dst_office_id: int,
+        nm_id: int,
+        items: list[tuple[int, int]],
+    ) -> dict[str, Any]:
+        """POST /ns/shifts/analytics-back/api/v1/order — создать заявку.
+
+        `items` — список (chrt_id, qty). Можно отправить несколько chrtID
+        одной заявкой для пары (src, dst, nmID) — это требование WB
+        (одна заявка = один nmID, но разные характеристики/размеры
+        внутри).
+
+        Возвращает `{"success": true}` при удаче. LkClientError при
+        логической ошибке WB (например, лимит исчерпан) — поскольку WB
+        запаковывает их в response.error=true, наш _get переводит в
+        исключение автоматически.
+
+        Минимум qty: 1 единица (проверено на реальной заявке).
+        """
+        assert self._client is not None, "use as async context manager"
+        await self._ensure_fresh_lk_token()
+        body = {
+            "order": {
+                "src": int(src_office_id),
+                "dst": int(dst_office_id),
+                "nmID": int(nm_id),
+                "count": [
+                    {"chrtID": int(chrt_id), "count": int(qty)}
+                    for chrt_id, qty in items
+                ],
+            }
+        }
+        try:
+            resp = await self._client.post("/order", json=body)
+        except httpx.HTTPError as e:
+            raise LkClientError(f"network error: {e}") from e
+        if resp.status_code == 401:
+            raise LkClientError(
+                "401 from shifts API — token invalid",
+                status=401,
+                body=resp.text[:500],
+            )
+        if resp.status_code >= 400:
+            raise LkClientError(
+                f"shifts API {resp.status_code}",
+                status=resp.status_code,
+                body=resp.text[:500],
+            )
+        data = resp.json()
+        if isinstance(data, dict) and data.get("error"):
+            raise LkClientError(
+                f"WB-logical error: {data.get('errorText')!r}",
+                status=resp.status_code,
+                body=resp.text[:500],
+            )
+        return (data or {}).get("data") if isinstance(data, dict) else data

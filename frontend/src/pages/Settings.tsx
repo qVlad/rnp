@@ -1,10 +1,17 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 
 export default function Settings() {
   const qc = useQueryClient();
-  const settingsQ = useQuery({ queryKey: ["settings"], queryFn: () => api.getSettings() as Promise<any> });
+  const settingsQ = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => api.getSettings() as Promise<any>,
+    // Авто-обновление таблицы «Последние синхронизации» — каждые 5 сек.
+    // Чтобы пользователь видел изменения статусов sync без F5.
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: false,
+  });
   const whoQ = useQuery({ queryKey: ["whoami"], queryFn: () => api.whoami() });
   const cooldownQ = useQuery({
     queryKey: ["cooldown"],
@@ -114,13 +121,25 @@ export default function Settings() {
     error: string | null;
     seller_id: string | null;
   } | null>(null);
+  const [autoSyncMsg, setAutoSyncMsg] = useState<string | null>(null);
   const setTokenMut = useMutation({
     mutationFn: (t: string) => api.setWbToken(t),
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       qc.invalidateQueries({ queryKey: ["wb-token-status"] });
       qc.invalidateQueries({ queryKey: ["whoami"] });
+      qc.invalidateQueries({ queryKey: ["sync-status"] });
       setNewWbToken("");
       setTestResult(null);
+      const triggered: string[] = data?.auto_sync_triggered ?? [];
+      if (triggered.length > 0) {
+        setAutoSyncMsg(
+          `✓ Запущен первичный sync за 90 дней: ${triggered.join(
+            ", ",
+          )}. Прогресс — внизу sidebar'а или в таблице ниже.`,
+        );
+      } else {
+        setAutoSyncMsg(null);
+      }
     },
   });
   const testTokenMut = useMutation({
@@ -244,6 +263,12 @@ export default function Settings() {
         {setTokenMut.isError && (
           <div className="mt-2 text-danger text-sm">
             {(setTokenMut.error as any)?.message || "ошибка сохранения"}
+          </div>
+        )}
+
+        {autoSyncMsg && (
+          <div className="mt-2 rounded-md bg-success/10 border border-success/30 px-3 py-2 text-sm text-success">
+            {autoSyncMsg}
           </div>
         )}
       </section>
@@ -704,37 +729,110 @@ export default function Settings() {
 
       <TimelineSection />
 
+      <UnitPlanGlobalConfigSection />
+
       <ExcelSection />
 
       <section className="card">
         <h2 className="font-medium mb-3">Синхронизация</h2>
+
+        {/* Первичный backfill — большая яркая кнопка для нового кабинета.
+            Запускает per-tenant таски для report_detail / orders / sales /
+            stocks / paid_storage / redeem / offset_acts / ad_* с указанным
+            окном в днях. */}
+        <div className="rounded-lg bg-accent/10 border border-accent/30 p-3 mb-4">
+          <div className="font-medium mb-1">Первичная выгрузка (для нового кабинета)</div>
+          <div className="text-sm text-muted mb-3">
+            Запустит фоновый sync всех видов данных за выбранный период. Можно
+            закрыть страницу — задачи продолжат идти. Прогресс виден внизу
+            sidebar'а (точка-индикатор) и в таблице ниже. Полная выгрузка
+            года: ~40-60 минут (finance-api 1 req/мин).
+          </div>
+          <div className="flex flex-wrap gap-2 items-center">
+            {[
+              [30, "30 дней"],
+              [90, "90 дней"],
+              [180, "6 месяцев"],
+              [365, "1 год"],
+              [505, "С 01.01.2025"],
+              [1825, "Вся история (5 лет)"],
+            ].map(([days, label]) => (
+              <button
+                key={String(days)}
+                className="btn"
+                onClick={() =>
+                  syncMut.mutate({ entity: "all", daysBack: Number(days) })
+                }
+                disabled={syncMut.isPending}
+                title={
+                  Number(days) > 365
+                    ? "WB не у всех кабинетов хранит так глубоко — успешные периоды появятся, остальное вернётся пусто без ошибки"
+                    : undefined
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="text-xs uppercase tracking-wider text-faint mb-2">
+          Обычный sync (свежие данные кабинета)
+        </div>
+        <div className="text-tiny text-muted mb-2">
+          Подтянуть свежие данные одной сущности. Только для текущего кабинета.
+          Для глубокой выгрузки → секция «Первичная выгрузка» сверху или «Отчёт
+          реализации» ниже.
+        </div>
         <div className="flex flex-wrap gap-2 mb-4">
           {[
-            ["all", "Запустить всё"],
-            ["orders", "Заказы"],
-            ["sales", "Продажи"],
-            ["stocks", "Остатки"],
-            ["ad_campaigns", "Реклама: кампании"],
-            ["ad_stats", "Реклама: стат-ка"],
-            ["report_detail", "Отчёт реализации"],
-          ].map(([key, label]) => (
+            ["orders", "Заказы", "Заказы с WB (по retention 90 дней)"],
+            ["sales", "Продажи", "Продажи с WB"],
+            ["stocks", "Остатки", "Снэпшот остатков на складах"],
+            ["paid_storage", "Платное хранение", "Расходы на хранение, последние 7 дней"],
+            ["ad_campaigns", "Реклама: кампании", "Обновить список рекламных кампаний"],
+            ["ad_stats", "Реклама: стат-ка", "Расходы и клики по кампаниям, ~60 дней"],
+          ].map(([key, label, tooltip]) => (
             <button
               key={key}
               className="btn"
               onClick={() => syncMut.mutate({ entity: key })}
               disabled={syncMut.isPending}
+              title={tooltip}
             >
               {label}
             </button>
           ))}
-          <button
-            className="btn"
-            onClick={() => syncMut.mutate({ entity: "report_detail", daysBack: 90 })}
-            disabled={syncMut.isPending}
-            title="Догрузить отчёт реализации за 12 недель для сверки с WB"
-          >
-            Отчёт реализации: 12 недель
-          </button>
+        </div>
+
+        <div className="text-xs uppercase tracking-wider text-faint mb-2">
+          Отчёт реализации — выбор глубины
+        </div>
+        <div className="text-tiny text-muted mb-2">
+          Финансовый отчёт WB (P&L / Reconciliation / налоги). Глубже → дольше
+          (finance-api 1 запрос/минуту).
+        </div>
+        <div className="flex flex-wrap gap-2 mb-4">
+          {[
+            [14, "2 недели"],
+            [90, "12 недель"],
+            [180, "6 месяцев"],
+            [365, "1 год"],
+            [505, "С 01.01.2025"],
+            [1825, "Вся история"],
+          ].map(([days, label]) => (
+            <button
+              key={String(days)}
+              className="btn"
+              onClick={() =>
+                syncMut.mutate({ entity: "report_detail", daysBack: Number(days) })
+              }
+              disabled={syncMut.isPending}
+              title={`Отчёт реализации за ${days} дней назад (только текущий кабинет)`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
         {syncResult && <div className="text-sm mb-3">{syncResult}</div>}
 
@@ -759,7 +857,18 @@ export default function Settings() {
             {sync.map((s: any) => (
               <tr key={s.entity} className="border-t border-border">
                 <td className="p-2 font-mono">{s.entity}</td>
-                <td className="p-2">{s.last_synced_at?.replace("T", " ")?.slice(0, 19) ?? "—"}</td>
+                <td className="p-2" title={s.last_synced_at ?? ""}>
+                  {s.last_synced_at
+                    ? new Date(s.last_synced_at).toLocaleString("ru-RU", {
+                        year: "numeric",
+                        month: "2-digit",
+                        day: "2-digit",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit",
+                      })
+                    : "—"}
+                </td>
                 <td className="p-2">
                   <span
                     className={
@@ -1051,6 +1160,819 @@ type ImportResult = {
   skipped: number;
   errors: string[];
 };
+
+// ─────────────────────────────────────────────────────────────────────────
+// UNIT-PLAN-007 — глобальные константы UNIT-плана (UNIT_PLAN.md §2).
+// Только директор (страница уже под directorOnly в App.tsx).
+// PUT создаёт НОВУЮ запись в unit_plan_global_config (timeline-версионирование),
+// текущая остаётся в истории. UI читает latest через GET.
+// ─────────────────────────────────────────────────────────────────────────
+
+type UnitPlanConfigDraft = {
+  effective_date: string;
+  wb_club_pct: string;
+  spp_default_pct: string;
+  wb_wallet_pct: string;
+  acquiring_pct: string;
+  il_coef: string;
+  irp_coef: string;
+  marketing_pct: string;
+  tax_pct: string;
+  vat_mode: "include" | "exclude" | "none";
+  vat_pct: string;
+  acceptance_rub_per_liter: string;
+  acceptance_multiplier: string;
+  velocity_days: string;
+  buyout_fallback_pct: string;
+  storage_days: string;
+  spp_by_subject: Array<{ subject: string; pct: string }>;
+};
+
+const EMPTY_DRAFT: UnitPlanConfigDraft = {
+  effective_date: "",
+  wb_club_pct: "",
+  spp_default_pct: "",
+  wb_wallet_pct: "",
+  acquiring_pct: "",
+  il_coef: "",
+  irp_coef: "",
+  marketing_pct: "",
+  tax_pct: "",
+  vat_mode: "exclude",
+  vat_pct: "",
+  acceptance_rub_per_liter: "",
+  acceptance_multiplier: "",
+  velocity_days: "",
+  buyout_fallback_pct: "",
+  storage_days: "",
+  spp_by_subject: [],
+};
+
+function tomorrowISO(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+function draftFromConfig(c: any): UnitPlanConfigDraft {
+  const sbs = c?.spp_by_subject ?? {};
+  return {
+    effective_date: c?.effective_date ?? "",
+    wb_club_pct: c?.wb_club_pct?.toString() ?? "",
+    spp_default_pct: c?.spp_default_pct?.toString() ?? "",
+    wb_wallet_pct: c?.wb_wallet_pct?.toString() ?? "",
+    acquiring_pct: c?.acquiring_pct?.toString() ?? "",
+    il_coef: c?.il_coef?.toString() ?? "",
+    irp_coef: c?.irp_coef?.toString() ?? "",
+    marketing_pct: c?.marketing_pct?.toString() ?? "",
+    tax_pct: c?.tax_pct?.toString() ?? "",
+    vat_mode: (c?.vat_mode as any) ?? "exclude",
+    vat_pct: c?.vat_pct?.toString() ?? "",
+    acceptance_rub_per_liter: c?.acceptance_rub_per_liter?.toString() ?? "",
+    acceptance_multiplier: c?.acceptance_multiplier?.toString() ?? "",
+    velocity_days: c?.velocity_days?.toString() ?? "",
+    buyout_fallback_pct: c?.buyout_fallback_pct?.toString() ?? "",
+    storage_days: c?.storage_days?.toString() ?? "",
+    spp_by_subject: Object.entries(sbs).map(([subject, pct]) => ({
+      subject,
+      pct: String(pct),
+    })),
+  };
+}
+
+function UnitPlanGlobalConfigSection() {
+  const qc = useQueryClient();
+  const cfgQ = useQuery({
+    queryKey: ["unit-plan-global-config"],
+    queryFn: () => api.unitPlanGlobalConfig(),
+  });
+
+  const [draft, setDraft] = useState<UnitPlanConfigDraft>(EMPTY_DRAFT);
+  const [newEffDate, setNewEffDate] = useState<string>("");
+  const [errors, setErrors] = useState<string[]>([]);
+  const [okMsg, setOkMsg] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  useEffect(() => {
+    if (cfgQ.data) setDraft(draftFromConfig(cfgQ.data));
+  }, [cfgQ.data]);
+
+  useEffect(() => {
+    if (!newEffDate) setNewEffDate(tomorrowISO());
+  }, [newEffDate]);
+
+  const validate = (): string[] => {
+    const errs: string[] = [];
+    const pct = (label: string, v: string, min = 0, max = 100) => {
+      const n = Number(v);
+      if (!isFinite(n)) errs.push(`${label}: не число`);
+      else if (n < min || n > max) errs.push(`${label}: вне диапазона ${min}-${max}%`);
+    };
+    pct("WB Клуб %", draft.wb_club_pct);
+    pct("СПП default %", draft.spp_default_pct);
+    pct("WB Wallet %", draft.wb_wallet_pct);
+    pct("Эквайринг %", draft.acquiring_pct);
+    pct("Реклама %", draft.marketing_pct);
+    pct("Налог %", draft.tax_pct);
+    pct("НДС %", draft.vat_pct);
+    pct("Fallback % выкупа", draft.buyout_fallback_pct);
+    // ИЛ-коэф 0.5-3.0
+    const il = Number(draft.il_coef);
+    if (!isFinite(il) || il < 0.5 || il > 3.0)
+      errs.push("ИЛ-коэф: вне диапазона 0.5-3.0");
+    // ИРП-коэф 0-0.1 (доля)
+    const irp = Number(draft.irp_coef);
+    if (!isFinite(irp) || irp < 0 || irp > 0.1)
+      errs.push("ИРП-коэф: вне диапазона 0-0.1 (как доля, напр. 0.017 = 1.7%)");
+    // int > 0
+    const intPositive = (label: string, v: string) => {
+      const n = Number(v);
+      if (!Number.isInteger(n) || n <= 0)
+        errs.push(`${label}: целое число > 0`);
+    };
+    intPositive("velocity_days", draft.velocity_days);
+    intPositive("storage_days", draft.storage_days);
+    // acceptance — >= 0
+    const acc = Number(draft.acceptance_rub_per_liter);
+    if (!isFinite(acc) || acc < 0) errs.push("Платная приёмка ₽/л: >= 0");
+    const accMul = Number(draft.acceptance_multiplier);
+    if (!isFinite(accMul) || accMul <= 0)
+      errs.push("Множитель приёмки: > 0");
+    // spp_by_subject
+    draft.spp_by_subject.forEach((row, i) => {
+      if (!row.subject.trim())
+        errs.push(`СПП по предметам #${i + 1}: пустой предмет`);
+      const n = Number(row.pct);
+      if (!isFinite(n) || n < 0 || n > 100)
+        errs.push(`СПП по предметам "${row.subject}": % вне 0-100`);
+    });
+    // effective_date
+    if (!newEffDate) errs.push("Не указана дата вступления в силу");
+    return errs;
+  };
+
+  const saveMut = useMutation({
+    mutationFn: () => {
+      const sbs: Record<string, number> = {};
+      for (const r of draft.spp_by_subject) {
+        sbs[r.subject.trim()] = Number(r.pct);
+      }
+      return api.unitPlanSetGlobalConfig({
+        effective_date: newEffDate,
+        wb_club_pct: Number(draft.wb_club_pct),
+        spp_default_pct: Number(draft.spp_default_pct),
+        spp_by_subject: sbs,
+        wb_wallet_pct: Number(draft.wb_wallet_pct),
+        acquiring_pct: Number(draft.acquiring_pct),
+        il_coef: Number(draft.il_coef),
+        irp_coef: Number(draft.irp_coef),
+        marketing_pct: Number(draft.marketing_pct),
+        tax_pct: Number(draft.tax_pct),
+        vat_mode: draft.vat_mode,
+        vat_pct: Number(draft.vat_pct),
+        acceptance_rub_per_liter: Number(draft.acceptance_rub_per_liter),
+        acceptance_multiplier: Number(draft.acceptance_multiplier),
+        velocity_days: Number(draft.velocity_days),
+        buyout_fallback_pct: Number(draft.buyout_fallback_pct),
+        storage_days: Number(draft.storage_days),
+      });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["unit-plan-global-config"] });
+      qc.invalidateQueries({ queryKey: ["unit-plan-rows"] });
+      setOkMsg(`✓ Сохранено. Новая версия действует с ${newEffDate}.`);
+      setNewEffDate(tomorrowISO());
+      setTimeout(() => setOkMsg(null), 5000);
+    },
+    onError: (e: any) => setErrors([e.message || "Ошибка сохранения"]),
+  });
+
+  const onSave = () => {
+    const errs = validate();
+    setErrors(errs);
+    if (errs.length === 0) saveMut.mutate();
+  };
+
+  const onReset = () => {
+    if (cfgQ.data) setDraft(draftFromConfig(cfgQ.data));
+    setErrors([]);
+    setOkMsg(null);
+  };
+
+  const addSubjectRow = () =>
+    setDraft((d) => ({
+      ...d,
+      spp_by_subject: [...d.spp_by_subject, { subject: "", pct: "" }],
+    }));
+
+  const updateSubjectRow = (
+    i: number,
+    patch: Partial<{ subject: string; pct: string }>,
+  ) =>
+    setDraft((d) => ({
+      ...d,
+      spp_by_subject: d.spp_by_subject.map((row, j) =>
+        j === i ? { ...row, ...patch } : row,
+      ),
+    }));
+
+  const removeSubjectRow = (i: number) =>
+    setDraft((d) => ({
+      ...d,
+      spp_by_subject: d.spp_by_subject.filter((_, j) => j !== i),
+    }));
+
+  return (
+    <section id="unit-plan" className="card">
+      <div className="flex items-baseline justify-between flex-wrap gap-2 mb-1">
+        <h2 className="font-medium">UNIT-план — параметры расчёта</h2>
+        <button
+          type="button"
+          className="btn text-xs"
+          onClick={() => setHistoryOpen((v) => !v)}
+        >
+          {historyOpen ? "Скрыть историю" : "История версий ▾"}
+        </button>
+      </div>
+      <div className="text-xs text-muted mb-4">
+        Глобальные константы расчёта UNIT-плана: pricing ladder, ИЛ/ИРП-коэфы,
+        % рекламы, налогов, НДС, приёмки и скорость распродажи. Сохранение
+        создаёт <strong>новую версию</strong> с указанной датой вступления в
+        силу — текущие настройки остаются в истории. См.{" "}
+        <code className="text-white">UNIT_PLAN.md §2</code>.
+      </div>
+
+      {cfgQ.isLoading && (
+        <div className="text-sm text-muted">Загрузка…</div>
+      )}
+      {cfgQ.isError && (
+        <div className="text-sm text-danger">
+          Не удалось загрузить конфиг: {(cfgQ.error as Error)?.message}
+        </div>
+      )}
+
+      {cfgQ.data && (
+        <>
+          <div className="text-sm mb-3">
+            Текущая версия: effective_date ={" "}
+            <strong>{cfgQ.data.effective_date}</strong>
+            {cfgQ.data.id !== undefined && (
+              <span className="text-muted"> · id {cfgQ.data.id}</span>
+            )}
+          </div>
+
+          {historyOpen && (
+            <UnitPlanGlobalConfigHistory currentId={cfgQ.data?.id} />
+          )}
+
+          {/* Group 1: Price ladder */}
+          <h3 className="font-medium mt-2 mb-3 text-muted text-sm uppercase tracking-wide">
+            Pricing ladder
+          </h3>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="WB Клуб, %">
+              <input
+                type="number"
+                className="input"
+                step="0.01"
+                min="0"
+                max="100"
+                value={draft.wb_club_pct}
+                onChange={(e: any) =>
+                  setDraft((d) => ({ ...d, wb_club_pct: e.target.value }))
+                }
+              />
+            </Field>
+            <Field label="СПП default, %">
+              <input
+                type="number"
+                className="input"
+                step="0.01"
+                min="0"
+                max="100"
+                value={draft.spp_default_pct}
+                onChange={(e: any) =>
+                  setDraft((d) => ({ ...d, spp_default_pct: e.target.value }))
+                }
+              />
+            </Field>
+            <Field label="WB Wallet, %">
+              <input
+                type="number"
+                className="input"
+                step="0.01"
+                min="0"
+                max="100"
+                value={draft.wb_wallet_pct}
+                onChange={(e: any) =>
+                  setDraft((d) => ({ ...d, wb_wallet_pct: e.target.value }))
+                }
+              />
+            </Field>
+            <Field label="Эквайринг, %">
+              <input
+                type="number"
+                className="input"
+                step="0.01"
+                min="0"
+                max="100"
+                value={draft.acquiring_pct}
+                onChange={(e: any) =>
+                  setDraft((d) => ({ ...d, acquiring_pct: e.target.value }))
+                }
+              />
+            </Field>
+          </div>
+
+          {/* SPP by subject (mini-table) */}
+          <div className="mt-4">
+            <div className="text-xs text-muted uppercase tracking-wide mb-2">
+              СПП по предметам (опционально, перекрывает default)
+            </div>
+            <div className="text-xs text-muted mb-2">
+              Приоритет: per-row override → per-subject (здесь) → global
+              default. Например, «Пижамы» → 28%.
+            </div>
+            {draft.spp_by_subject.length === 0 && (
+              <div className="text-xs text-muted mb-2">
+                Пока нет переопределений. Все предметы используют СПП default.
+              </div>
+            )}
+            {draft.spp_by_subject.map((row, i) => (
+              <div
+                key={i}
+                className="flex gap-2 items-center mb-2"
+              >
+                <input
+                  type="text"
+                  className="input flex-1 max-w-sm"
+                  placeholder="Название предмета (напр. Пижамы)"
+                  value={row.subject}
+                  onChange={(e: any) =>
+                    updateSubjectRow(i, { subject: e.target.value })
+                  }
+                />
+                <input
+                  type="number"
+                  className="input w-24"
+                  step="0.01"
+                  min="0"
+                  max="100"
+                  placeholder="%"
+                  value={row.pct}
+                  onChange={(e: any) =>
+                    updateSubjectRow(i, { pct: e.target.value })
+                  }
+                />
+                <button
+                  type="button"
+                  className="btn text-xs text-danger"
+                  onClick={() => removeSubjectRow(i)}
+                  title="Удалить строку"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              className="btn text-xs"
+              onClick={addSubjectRow}
+            >
+              + Добавить предмет
+            </button>
+          </div>
+
+          {/* Group 2: Coefs */}
+          <h3 className="font-medium mt-6 mb-3 text-muted text-sm uppercase tracking-wide">
+            Coefs
+          </h3>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="ИЛ-коэф (логистика, 1.16)">
+              <input
+                type="number"
+                className="input"
+                step="0.01"
+                min="0.5"
+                max="3.0"
+                value={draft.il_coef}
+                onChange={(e: any) =>
+                  setDraft((d) => ({ ...d, il_coef: e.target.value }))
+                }
+              />
+            </Field>
+            <Field label="ИРП-коэф (% от цены, как доля 0.017 = 1.7%)">
+              <input
+                type="number"
+                className="input"
+                step="0.001"
+                min="0"
+                max="0.1"
+                value={draft.irp_coef}
+                onChange={(e: any) =>
+                  setDraft((d) => ({ ...d, irp_coef: e.target.value }))
+                }
+              />
+            </Field>
+          </div>
+
+          {/* Group 3: Cost percentages */}
+          <h3 className="font-medium mt-6 mb-3 text-muted text-sm uppercase tracking-wide">
+            Cost percentages
+          </h3>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Реклама, %">
+              <input
+                type="number"
+                className="input"
+                step="0.01"
+                min="0"
+                max="100"
+                value={draft.marketing_pct}
+                onChange={(e: any) =>
+                  setDraft((d) => ({ ...d, marketing_pct: e.target.value }))
+                }
+              />
+            </Field>
+            <Field label="Налог, %">
+              <input
+                type="number"
+                className="input"
+                step="0.01"
+                min="0"
+                max="100"
+                value={draft.tax_pct}
+                onChange={(e: any) =>
+                  setDraft((d) => ({ ...d, tax_pct: e.target.value }))
+                }
+              />
+            </Field>
+            <Field label="НДС режим">
+              <select
+                className="input"
+                value={draft.vat_mode}
+                onChange={(e) =>
+                  setDraft((d) => ({
+                    ...d,
+                    vat_mode: e.target.value as
+                      | "include"
+                      | "exclude"
+                      | "none",
+                  }))
+                }
+              >
+                <option value="include">include (в цене)</option>
+                <option value="exclude">exclude (сверху)</option>
+                <option value="none">none (не считаем)</option>
+              </select>
+            </Field>
+            <Field label="НДС ставка, %">
+              <input
+                type="number"
+                className="input"
+                step="0.01"
+                min="0"
+                max="100"
+                value={draft.vat_pct}
+                onChange={(e: any) =>
+                  setDraft((d) => ({ ...d, vat_pct: e.target.value }))
+                }
+              />
+            </Field>
+          </div>
+
+          {/* Group 4: Acceptance + velocity */}
+          <h3 className="font-medium mt-6 mb-3 text-muted text-sm uppercase tracking-wide">
+            Приёмка и скорость
+          </h3>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Платная приёмка, ₽/л">
+              <input
+                type="number"
+                className="input"
+                step="0.01"
+                min="0"
+                value={draft.acceptance_rub_per_liter}
+                onChange={(e: any) =>
+                  setDraft((d) => ({
+                    ...d,
+                    acceptance_rub_per_liter: e.target.value,
+                  }))
+                }
+              />
+            </Field>
+            <Field label="Множитель приёмки">
+              <input
+                type="number"
+                className="input"
+                step="0.01"
+                min="0"
+                value={draft.acceptance_multiplier}
+                onChange={(e: any) =>
+                  setDraft((d) => ({
+                    ...d,
+                    acceptance_multiplier: e.target.value,
+                  }))
+                }
+              />
+            </Field>
+            <Field label="velocity_days (окно расчёта days_to_stockout)">
+              <input
+                type="number"
+                className="input"
+                step="1"
+                min="1"
+                value={draft.velocity_days}
+                onChange={(e: any) =>
+                  setDraft((d) => ({ ...d, velocity_days: e.target.value }))
+                }
+              />
+            </Field>
+            <Field label="buyout_fallback, % (если в Воронке = 0)">
+              <input
+                type="number"
+                className="input"
+                step="0.01"
+                min="0"
+                max="100"
+                value={draft.buyout_fallback_pct}
+                onChange={(e: any) =>
+                  setDraft((d) => ({
+                    ...d,
+                    buyout_fallback_pct: e.target.value,
+                  }))
+                }
+              />
+            </Field>
+            <Field label="storage_days (горизонт хранения для расчёта)">
+              <input
+                type="number"
+                className="input"
+                step="1"
+                min="1"
+                value={draft.storage_days}
+                onChange={(e: any) =>
+                  setDraft((d) => ({ ...d, storage_days: e.target.value }))
+                }
+              />
+            </Field>
+          </div>
+
+          {/* Validation errors */}
+          {errors.length > 0 && (
+            <div className="mt-4 rounded-md bg-danger/10 border border-danger/30 px-3 py-2 text-sm text-danger">
+              <div className="font-medium mb-1">Ошибки валидации:</div>
+              <ul className="list-disc list-inside text-xs">
+                {errors.map((e, i) => (
+                  <li key={i}>{e}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {okMsg && (
+            <div className="mt-4 rounded-md bg-success/10 border border-success/30 px-3 py-2 text-sm text-success">
+              {okMsg}
+            </div>
+          )}
+
+          {/* Save bar */}
+          <div className="mt-5 flex flex-wrap items-end gap-3">
+            <Field label="Действует с (effective_date)">
+              <input
+                type="date"
+                className="input"
+                value={newEffDate}
+                onChange={(e: any) => setNewEffDate(e.target.value)}
+              />
+            </Field>
+            <button
+              type="button"
+              className="btn"
+              onClick={onReset}
+              disabled={saveMut.isPending}
+            >
+              Сбросить
+            </button>
+            <button
+              type="button"
+              className="btn border-accent text-accent"
+              onClick={onSave}
+              disabled={saveMut.isPending}
+            >
+              {saveMut.isPending
+                ? "Сохраняю…"
+                : "Сохранить как новую версию →"}
+            </button>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+/**
+ * История версий UNIT-plan global_config.
+ *
+ * Загружает `/api/unit-plan/global-config/versions`, рендерит таблицу с
+ * датой эфф., автором и ключевыми параметрами (СПП, НДС, налог, marketing).
+ * Каждая строка clickable — expand с полным шейпом (все 16 полей).
+ * Latest по effective_date — подсвечена «(текущая)».
+ */
+function UnitPlanGlobalConfigHistory({ currentId }: { currentId?: number }) {
+  const versionsQ = useQuery({
+    queryKey: ["unit-plan-global-config-versions"],
+    queryFn: () => api.unitPlanGlobalConfigVersions(),
+  });
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+
+  if (versionsQ.isLoading) {
+    return (
+      <div className="rounded-md border border-border bg-bg p-3 mb-4 text-xs text-muted">
+        Загрузка истории…
+      </div>
+    );
+  }
+  if (versionsQ.isError) {
+    return (
+      <div className="rounded-md border border-border bg-bg p-3 mb-4 text-xs text-danger">
+        Не удалось загрузить историю:{" "}
+        {(versionsQ.error as Error)?.message}
+      </div>
+    );
+  }
+  const items = versionsQ.data?.items ?? [];
+  if (items.length === 0) {
+    return (
+      <div className="rounded-md border border-border bg-bg p-3 mb-4 text-xs text-muted">
+        Версий ещё нет — текущая (latest) ещё не сохранена. Сохраните
+        форму ниже как первую версию.
+      </div>
+    );
+  }
+
+  // Latest = первая (DESC backend-сортировка); подсвечиваем явно по id если есть.
+  const latestId = items[0].id;
+
+  const fmtPct = (n: number | null | undefined) =>
+    n == null ? "—" : `${Number(n).toFixed(2)}%`;
+  const fmtNum = (n: number | null | undefined, suffix = "") =>
+    n == null ? "—" : `${n}${suffix}`;
+  const fmtVat = (mode: string | undefined, pct: number | undefined) => {
+    if (!mode) return "—";
+    if (mode === "none") return "none 0%";
+    return `${mode} ${pct ?? 0}%`;
+  };
+
+  return (
+    <div className="rounded-md border border-border bg-bg mb-4 overflow-x-auto">
+      <table className="text-xs w-full">
+        <thead>
+          <tr className="border-b border-border text-muted">
+            <th className="text-left p-2 font-medium">Дата эфф.</th>
+            <th className="text-left p-2 font-medium">id</th>
+            <th className="text-right p-2 font-medium">WB Клуб</th>
+            <th className="text-right p-2 font-medium">СПП</th>
+            <th className="text-right p-2 font-medium">НДС</th>
+            <th className="text-right p-2 font-medium">Налог</th>
+            <th className="text-right p-2 font-medium">Реклама</th>
+            <th className="text-right p-2 font-medium">Velocity</th>
+            <th className="p-2"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((v) => {
+            const isLatest = v.id === latestId || v.id === currentId;
+            const isExpanded = expandedId === v.id;
+            return (
+              <React.Fragment key={v.id ?? v.effective_date}>
+                <tr
+                  className={`border-b border-border cursor-pointer hover:bg-card ${
+                    isLatest ? "bg-card/50" : ""
+                  }`}
+                  onClick={() =>
+                    setExpandedId(isExpanded ? null : v.id ?? null)
+                  }
+                >
+                  <td className="p-2">
+                    {v.effective_date}
+                    {isLatest && (
+                      <span className="ml-2 text-success font-medium">
+                        (текущая)
+                      </span>
+                    )}
+                  </td>
+                  <td className="p-2 text-muted">{v.id ?? "—"}</td>
+                  <td className="p-2 text-right">{fmtPct(v.wb_club_pct)}</td>
+                  <td className="p-2 text-right">
+                    {fmtPct(v.spp_default_pct)}
+                  </td>
+                  <td className="p-2 text-right">
+                    {fmtVat(v.vat_mode, v.vat_pct)}
+                  </td>
+                  <td className="p-2 text-right">{fmtPct(v.tax_pct)}</td>
+                  <td className="p-2 text-right">
+                    {fmtPct(v.marketing_pct)}
+                  </td>
+                  <td className="p-2 text-right">
+                    {fmtNum(v.velocity_days, "д")}
+                  </td>
+                  <td className="p-2 text-muted">{isExpanded ? "▾" : "▸"}</td>
+                </tr>
+                {isExpanded && (
+                  <tr className="border-b border-border bg-bg/60">
+                    <td colSpan={9} className="p-3">
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
+                        <KV k="effective_date" v={v.effective_date} />
+                        <KV k="wb_club_pct" v={fmtPct(v.wb_club_pct)} />
+                        <KV
+                          k="spp_default_pct"
+                          v={fmtPct(v.spp_default_pct)}
+                        />
+                        <KV k="wb_wallet_pct" v={fmtPct(v.wb_wallet_pct)} />
+                        <KV k="acquiring_pct" v={fmtPct(v.acquiring_pct)} />
+                        <KV k="il_coef" v={fmtNum(v.il_coef)} />
+                        <KV k="irp_coef" v={fmtNum(v.irp_coef)} />
+                        <KV k="marketing_pct" v={fmtPct(v.marketing_pct)} />
+                        <KV k="tax_pct" v={fmtPct(v.tax_pct)} />
+                        <KV
+                          k="vat"
+                          v={fmtVat(v.vat_mode, v.vat_pct)}
+                        />
+                        <KV
+                          k="acceptance_rub_per_liter"
+                          v={fmtNum(v.acceptance_rub_per_liter, " ₽/л")}
+                        />
+                        <KV
+                          k="acceptance_multiplier"
+                          v={fmtNum(v.acceptance_multiplier, "×")}
+                        />
+                        <KV
+                          k="velocity_days"
+                          v={fmtNum(v.velocity_days, " д")}
+                        />
+                        <KV
+                          k="buyout_fallback_pct"
+                          v={fmtPct(v.buyout_fallback_pct)}
+                        />
+                        <KV
+                          k="storage_days"
+                          v={fmtNum(v.storage_days, " д")}
+                        />
+                        {(v as any).spp_by_subject &&
+                          Object.keys((v as any).spp_by_subject).length >
+                            0 && (
+                            <div className="col-span-full">
+                              <div className="text-muted mb-1">
+                                spp_by_subject:
+                              </div>
+                              <div className="pl-2 grid grid-cols-2 md:grid-cols-3 gap-1">
+                                {Object.entries(
+                                  (v as any).spp_by_subject as Record<
+                                    string,
+                                    number
+                                  >,
+                                ).map(([subj, pct]) => (
+                                  <div key={subj}>
+                                    <span className="text-muted">{subj}:</span>{" "}
+                                    {pct}%
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        {(v as any).created_at && (
+                          <KV
+                            k="created_at"
+                            v={String((v as any).created_at)}
+                          />
+                        )}
+                        {(v as any).created_by != null && (
+                          <KV
+                            k="created_by"
+                            v={String((v as any).created_by)}
+                          />
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function KV({ k, v }: { k: string; v: React.ReactNode }) {
+  return (
+    <div className="flex justify-between gap-2 border border-border rounded px-2 py-1">
+      <span className="text-muted">{k}</span>
+      <span>{v}</span>
+    </div>
+  );
+}
 
 function ExcelSection() {
   const entitiesQ = useQuery({

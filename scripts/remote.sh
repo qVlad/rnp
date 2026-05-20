@@ -124,6 +124,76 @@ cmd_deploy() {
     echo "  Postgres ещё не запущен (первый деплой) — бэкап не требуется."
   fi
 
+  # 1.7. Pre-flight: активные celery-таски.
+  # Деплой пересоздаёт worker-контейнеры → SIGTERM → warm shutdown
+  # (до stop_grace_period=1800s = 30 мин). Если задача не успеет, она
+  # вернётся в очередь благодаря acks_late+reject_on_worker_lost, но
+  # пользователь должен видеть, что задержит деплой.
+  # FORCE=1 / FAST=1 пропускают ожидание; WAIT_MAX_SEC ограничивает таймаут.
+  if [ "${FORCE:-0}" != "1" ] && [ "${FAST:-0}" != "1" ]; then
+    echo "→ Проверяю активные celery-таски…"
+    local active_count
+    active_count="$(ssh_cmd "cd ${REMOTE_DIR} && \
+      docker compose ps --status running --services 2>/dev/null | grep -q '^worker' && \
+      docker compose exec -T worker-default celery -A app.sync.celery_app inspect active --timeout=3 2>/dev/null \
+        | grep -cE '^\s*\* ' || true" 2>/dev/null || echo 0)"
+    active_count="${active_count//[!0-9]/}"
+    active_count="${active_count:-0}"
+    if [ "${active_count}" -gt 0 ]; then
+      echo
+      echo "  ⚠️  Сейчас выполняется активных задач: ${active_count}"
+      ssh_cmd "cd ${REMOTE_DIR} && docker compose exec -T worker-default \
+        celery -A app.sync.celery_app inspect active --timeout=3 2>/dev/null \
+        | grep -E 'name|args|time_start' | head -20" 2>/dev/null || true
+      echo
+      echo "  Варианты:"
+      echo "    [w]ait    — подождать завершения (опрос каждые 30 сек, max ${WAIT_MAX_SEC:-1800} сек)"
+      echo "    [f]orce   — деплоить сейчас (worker'ы будут warm-shutdown до 30 мин,"
+      echo "                незавершённые задачи вернутся в очередь автоматически)"
+      echo "    [c]ancel  — отменить деплой"
+      read -r -p "  Выбор [w/f/c, default w]: " choice
+      choice="${choice:-w}"
+      case "${choice}" in
+        w|W)
+          local waited=0 max="${WAIT_MAX_SEC:-1800}"
+          while [ "${waited}" -lt "${max}" ]; do
+            sleep 30
+            waited=$((waited + 30))
+            active_count="$(ssh_cmd "cd ${REMOTE_DIR} && \
+              docker compose exec -T worker-default celery -A app.sync.celery_app inspect active --timeout=3 2>/dev/null \
+                | grep -cE '^\s*\* ' || true" 2>/dev/null || echo 0)"
+            active_count="${active_count//[!0-9]/}"
+            active_count="${active_count:-0}"
+            echo "  [${waited}s/${max}s] активных задач: ${active_count}"
+            if [ "${active_count}" -eq 0 ]; then
+              echo "  ✓ Все задачи завершены."
+              break
+            fi
+          done
+          if [ "${active_count}" -gt 0 ]; then
+            echo "  ⚠️  Таймаут (${max} сек) — задачи всё ещё идут. Продолжаю деплой;"
+            echo "      незавершённые задачи вернутся в очередь."
+          fi
+          ;;
+        f|F)
+          echo "  → Деплой с force. Незавершённые задачи вернутся в очередь."
+          ;;
+        c|C)
+          echo "  Деплой отменён."
+          exit 0
+          ;;
+        *)
+          echo "  Неизвестный выбор '${choice}' — деплой отменён."
+          exit 1
+          ;;
+      esac
+    else
+      echo "  Активных задач нет."
+    fi
+  else
+    echo "→ FORCE=1: пропускаю pre-flight проверку задач."
+  fi
+
   # 1.5 Версия: git short hash + ISO build time → в .env на сервере.
   # Backend exposes их через /api/version, UI показывает в шапке.
   local version build_time
@@ -154,6 +224,14 @@ cmd_deploy() {
     ./ "${SERVER}:${REMOTE_DIR}/"
 
   # 3. up -d --build (миграции прокатятся внутри backend).
+  # FAST=1 → не ждём warm shutdown воркеров (stop_grace_period=1800s),
+  # шлём SIGKILL через 10 сек. Активные таски вернутся в очередь благодаря
+  # task_acks_late + task_reject_on_worker_lost, новый worker их подхватит.
+  # Без FAST=1 — стандартный graceful shutdown до 30 мин.
+  if [ "${FAST:-0}" = "1" ]; then
+    echo "→ FAST=1: предварительный stop --timeout=10 для воркеров (SIGKILL через 10s)"
+    ssh_cmd "cd ${REMOTE_DIR} && docker compose stop --timeout=10 worker-stats worker-advert worker-default beat || true"
+  fi
   echo "→ docker compose up -d --build…"
   ssh_cmd "cd ${REMOTE_DIR} && docker compose up -d --build"
 
@@ -304,6 +382,20 @@ remote.sh — управление сервером РНП с локальной
   (если postgres запущен). Бэкапы лежат в ${REMOTE_DIR}/backups/ и
   не удаляются автоматически. Для ручного бэкапа — './scripts/remote.sh backup'.
   Перед командой 'restore' тоже делается бэкап текущего состояния.
+
+ФЛАГИ ДЕПЛОЯ:
+  FORCE=1 ./scripts/remote.sh deploy
+      Пропускает диалог о активных celery-задачах. Деплой пойдёт сразу
+      (но всё равно с warm shutdown до 30 мин).
+
+  FAST=1 ./scripts/remote.sh deploy
+      Быстрый деплой без warm shutdown воркеров. Шлёт SIGKILL через 10 сек.
+      Активные задачи вернутся в очередь автоматически (acks_late+
+      reject_on_worker_lost) и подхватятся новым воркером. Подходит когда
+      нужно срочно задеплоить (UI-фиксы и т.п.).
+
+  WAIT_MAX_SEC=N ./scripts/remote.sh deploy
+      Максимальное время ожидания активных задач в pre-flight (default 1800).
 HELP
 }
 

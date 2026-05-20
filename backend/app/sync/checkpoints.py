@@ -7,18 +7,42 @@ from app.core.config import settings
 from app.db.models import SyncCheckpoint
 
 
+def _session_tenant_id(session: AsyncSession) -> int | None:
+    """Достаёт tenant_id из session.info (выставляется set_tenant() —
+    см. tenant_sync_context). Без него работа с SyncCheckpoint небезопасна
+    в multi-tenant: PK = (tenant_id, entity), и без фильтра по tenant_id
+    в SELECT'е мы перезапишем чужой checkpoint."""
+    return session.sync_session.info.get("tenant_id")
+
+
 async def get_checkpoint(session: AsyncSession, entity: str) -> SyncCheckpoint | None:
-    result = await session.execute(select(SyncCheckpoint).where(SyncCheckpoint.entity == entity))
+    """Получить checkpoint для ТЕКУЩЕГО tenant'а (из session.info).
+
+    SyncCheckpoint composite PK = (tenant_id, entity); НЕ наследует
+    TenantScopedMixin → do_orm_execute event listener его не фильтрует.
+    Без явного `WHERE tenant_id = :tid` мы получим первый попавшийся
+    checkpoint с нужным entity (часто чужой) и перезапишем его — это
+    приводит к тому что у новых tenant'ов «никогда» во всех строках,
+    а у первого tenant'а — путаница со статусами разных tenant'ов.
+    """
+    tenant_id = _session_tenant_id(session)
+    if tenant_id is None:
+        # Admin/dispatcher mode без tenant_id — не должно случаться в
+        # реальных sync-тасках, но безопасности ради возвращаем None.
+        return None
+    result = await session.execute(
+        select(SyncCheckpoint).where(
+            SyncCheckpoint.tenant_id == tenant_id,
+            SyncCheckpoint.entity == entity,
+        )
+    )
     return result.scalar_one_or_none()
 
 
 async def get_or_create(session: AsyncSession, entity: str) -> SyncCheckpoint:
     cp = await get_checkpoint(session, entity)
     if cp is None:
-        # SyncCheckpoint composite PK = (tenant_id, entity). НЕ наследует
-        # TenantScopedMixin, поэтому before_flush auto-stamp не работает.
-        # Берём tenant_id из session.info (set_tenant — см. tenant_sync_context).
-        tenant_id = session.sync_session.info.get("tenant_id")
+        tenant_id = _session_tenant_id(session)
         cp = SyncCheckpoint(entity=entity, tenant_id=tenant_id)
         session.add(cp)
         await session.flush()

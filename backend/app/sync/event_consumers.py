@@ -113,6 +113,31 @@ async def _handle_chargeback_telegram(event: dict[str, Any]) -> None:
         raise  # триггерит retry watchdog (не ACK'ается)
 
 
+async def _handle_redistribution_window(event: dict[str, Any]) -> None:
+    """Получено событие `redistribution.window.open` — запустить
+    execute_window для tenant'а через Celery (не блокируем event-loop
+    consumer'а реальной отправкой).
+
+    Идемпотентность: execute_window сам берёт `queued` tasks; повторный
+    вызов в одно окно ничего не сломает — после accepted статус меняется
+    на `accepted`, и второй вызов их не возьмёт.
+    """
+    tenant_id = int(event.get("tenant_id", 0))
+    if not tenant_id:
+        log.warning("redistribution.window event with no tenant_id — skip")
+        return
+    # Импорт здесь — иначе циклическая (tasks.py импортит celery_app).
+    from app.sync.tasks import execute_window_for_tenant_task
+
+    execute_window_for_tenant_task.apply_async(
+        args=[tenant_id], queue="default"
+    )
+    log.info(
+        "redistribution.window.open → enqueued execute_window for tenant=%d",
+        tenant_id,
+    )
+
+
 # ─── Celery beat tasks ─────────────────────────────────────────────────
 
 
@@ -136,6 +161,26 @@ def consume_chargeback_telegram() -> dict[str, int]:
     )
 
 
+@celery_app.task(name="app.sync.event_consumers.consume_redistribution_window")
+def consume_redistribution_window() -> dict[str, int]:
+    """Consumer group `cg:execute-redistribution` для REDISTRIBUTION_WINDOW_OPEN.
+
+    Запускается из beat каждые 30 сек. На каждое событие enqueue'ит
+    Celery-task `execute_window_for_tenant`. block_ms=5_000 — короткий
+    блок чтобы beat-ticks не накапливались.
+    """
+    return asyncio.run(
+        consume_batch(
+            stream=EventType.REDISTRIBUTION_WINDOW_OPEN,
+            group="cg:execute-redistribution",
+            consumer=_consumer_name("redist"),
+            handler=_handle_redistribution_window,
+            max_messages=50,
+            block_ms=5_000,
+        )
+    )
+
+
 @celery_app.task(name="app.sync.event_consumers.reclaim_all_pending")
 def reclaim_all_pending() -> dict[str, dict[str, int]]:
     """Watchdog: для каждого активного stream'а проверяет pending list,
@@ -147,6 +192,7 @@ def reclaim_all_pending() -> dict[str, dict[str, int]]:
         out: dict[str, dict[str, int]] = {}
         for event_type, group in (
             (EventType.CHARGEBACK_DETECTED, "cg:telegram-chargeback"),
+            (EventType.REDISTRIBUTION_WINDOW_OPEN, "cg:execute-redistribution"),
         ):
             out[f"{event_type.value}:{group}"] = await reclaim_pending(
                 stream=event_type,

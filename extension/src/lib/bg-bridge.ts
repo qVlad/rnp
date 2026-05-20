@@ -45,7 +45,26 @@ export type BgRequest =
    * Content script использует чтобы решить: нужно ли вызывать
    * generateWbToken прямо сейчас, или текущий ещё свежий.
    */
-  | { type: "getWbTokenStatus" };
+  | { type: "getWbTokenStatus" }
+  /**
+   * WB Shifts API proxy (LEAD-016 fallback): SW делает fetch к
+   * seller-weekly-report.wildberries.ru с credentials:'include' — куки
+   * пользовательской сессии прикрепляются автоматически, IP браузерный.
+   * Это обход того что backend РНП с другого IP получает 401 от WB.
+   *
+   * Поддерживаемые операции: see `wb-shifts-proxy.ts`.
+   */
+  | { type: "wbShiftsProxy"; op: "quota"; officeId: number; kind: "src" | "dst" }
+  | { type: "wbShiftsProxy"; op: "stocks"; nmId: number }
+  | { type: "wbShiftsProxy"; op: "searchNms"; pattern: string }
+  | {
+      type: "wbShiftsProxy";
+      op: "createOrder";
+      src: number;
+      dst: number;
+      nmID: number;
+      count: Array<{ chrtID: number; count: number }>;
+    };
 
 /** Статус токена с backend wbab (см. /api/extension/wb-token/status). */
 export type WbTokenStatus = {
@@ -62,6 +81,12 @@ export type BgResponse =
   | { kind: "winners"; data: WinnerEvent[] }
   | { kind: "ok"; recorded?: boolean }
   | { kind: "wbTokenStatus"; data: WbTokenStatus | null }
+  | {
+      kind: "wbShiftsProxy";
+      result:
+        | { ok: true; status: number; data: unknown }
+        | { ok: false; status: number; reason: string; body?: string };
+    }
   | { kind: "error"; error: string };
 
 /**

@@ -924,6 +924,159 @@ Body: {"settings":{"cursor":{"limit":100},"filter":{"withPhoto":-1}}}
 
 ---
 
+## 13. LK Shifts API — reverse-engineered (NOT official, для модуля перераспределения)
+
+> ⚠️ Это **внутренний backend-for-frontend API** seller.wildberries.ru, не публичный developer API. Reverse-engineered из HAR 2026-05-18. **Не упоминается в** [dev.wildberries.ru](https://dev.wildberries.ru), нет в [wildberries-sdk](https://github.com/eslazarev/wildberries-sdk). Используется только в модуле «Перераспределение остатков» — см. [`REDISTRIBUTION_PLAN.md`](REDISTRIBUTION_PLAN.md).
+>
+> **Stability:** WB может изменить или закрыть в любой момент. Резервный план — graceful degrade модуля до «только рекомендации, исполнение вручную».
+
+### Host & Base
+
+```
+Host:    seller-weekly-report.wildberries.ru
+Base:    /ns/shifts/analytics-back/api/v1/
+HTTP/2,  JSON
+Server:  Angie (russian nginx fork) + Envoy
+```
+
+«Shifts» — внутреннее имя WB для механизма перераспределения остатков (буквально «сдвиги»).
+
+### Auth — два JWT в headers (не cookies, не `Authorization: <token>`)
+
+В отличие от публичного API WB (`Authorization: <bare_token>`), LK shifts использует **два JWT через кастомные headers**:
+
+| Header | Алгоритм | TTL | Как получить |
+|---|---|---|---|
+| `AuthorizeV3` | RS256 | долгий (часы–дни) | После SMS-логина на `seller.wildberries.ru` |
+| `Wb-Seller-Lk` | EdDSA | **300 сек** (5 мин) | `POST https://seller.wildberries.ru/ns/suppliers-auth/suppliers-portal-core/auth/token` (JSON-RPC 2.0) |
+| `Root-Version` | строка | — | Версия фронта WB, например `v1.93.1`. Может проверяться сервером. |
+
+`Wb-Seller-Lk` payload (декодированный):
+```json
+{
+  "data": {
+    "Z-Sccode": "ru",
+    "Z-Scurr": "RUB",
+    "Z-Sfid": "867165",    // supplier_id
+    "Z-Soid": "867165",    // organization_id
+    "Z-Sid":  "549ff7a0-…", // session UUID
+    "Z-Slfid": "11"
+  },
+  "iat": 1779135327,
+  "exp": 1779135627   // ровно +300 секунд
+}
+```
+
+**Refresh короткого токена** (вызывать каждые ~4 минуты):
+
+```http
+POST /ns/suppliers-auth/suppliers-portal-core/auth/token HTTP/2
+Host: seller.wildberries.ru
+Content-Type: application/json
+
+{"params":{},"jsonrpc":"2.0","id":"json-rpc_10"}
+```
+
+Возвращает новый `Wb-Seller-Lk` JWT в `result.data.token`.
+
+**Список кабинетов** (для подключения multi-tenant LK):
+
+```http
+POST /ns/suppliers/suppliers-portal-core/suppliers HTTP/2
+Host: seller.wildberries.ru
+Content-Type: application/json
+
+[
+  {"method":"getUserSuppliers","params":{},"id":"json-rpc_12","jsonrpc":"2.0"},
+  {"method":"listCountries","params":{},"id":"json-rpc_13","jsonrpc":"2.0"}
+]
+```
+(JSON-RPC 2.0 batch.)
+
+### Endpoints
+
+#### Поиск артикулов
+
+```
+GET /ns/shifts/analytics-back/api/v1/nms?pattern=<string>
+```
+
+Ответ: `{"data":{"nms":[{"nmID":231830095,"subjectName":"Пижамы"}]}}`
+
+#### Остатки по складам с chrt_id
+
+```
+GET /ns/shifts/analytics-back/api/v1/stocks?nmID=<nm_id>
+```
+
+Ответ:
+```json
+{
+  "data": {
+    "src": [
+      {
+        "officeName": "Пенза",
+        "officeID": 50045809,
+        "inStock": [
+          {"chrtID": 385310436, "count": 21, "techSize": "48-50"},
+          {"chrtID": 385310437, "count": 15, "techSize": "50-52"}
+        ]
+      }
+    ]
+  }
+}
+```
+
+⚠️ **Заявка на перемещение создаётся по `chrtID`** (характеристика товара = nmID × размер), не по `nmID`. Это критично — наш `products` table работает с `nm_id`, нужно мапить через `chrtID` справочник.
+
+#### Квота на склад (главный polling endpoint в окнах)
+
+```
+GET /ns/shifts/analytics-back/api/v1/quota?officeID=<office>&type=<src|dst>
+```
+
+Ответ: `{"data":{"officeID":130744,"quota":0}}`
+
+- `quota = 0` → **окно закрыто, перемещение невозможно**
+- `quota > 0` → **окно открыто, можно создать заявку до этого количества единиц**
+
+**Это и есть точка polling в 09:00/18:00 МСК.** WB открывает окна → quota становится положительным → за 4–60 секунд другие селлеры всё разбирают → quota обратно к 0.
+
+### Известные officeID (расширять справочник по мере встречи)
+
+| officeID | Склад |
+|---|---|
+| 130744 | Краснодар |
+| 50045809 | Пенза |
+| 120762 | Электросталь |
+| 301805 | Самара (Новосемейкино) |
+| 208277 | ? |
+
+### Производительность и стратегия
+
+- **Серверный latency:** `x-envoy-upstream-service-time: 51ms` (для `/quota`)
+- **Network latency из Москвы:** оценочно 30–80ms
+- **Итого:** ~80–130ms на запрос
+- **HTTP/2 multiplex:** 5 параллельных квотных запросов = 130ms на все
+- **Реалистичная частота polling:** 5–10 req/sec на TCP keep-alive соединении
+
+**Стратегия в окне 09:00 МСК** (детально в [`REDISTRIBUTION_PLAN.md § 6.1.1`](REDISTRIBUTION_PLAN.md)):
+1. T-15 мин: обновить `Wb-Seller-Lk`, загрузить `/stocks` для всех целевых nmID, открыть persistent HTTP/2 connection
+2. T-1 сек: polling `/quota` с интервалом 200ms
+3. T+0 .. T+5s: polling каждые 80-100ms
+4. При `quota > 0`: мгновенно POST заранее подготовленной заявки
+5. T+60s: возврат в обычный режим
+
+### Полный template HTTP-запроса
+
+См. [`REDISTRIBUTION_PLAN.md § 6.1.1`](REDISTRIBUTION_PLAN.md) — production-ready пример со всеми обязательными headers (`AuthorizeV3`, `Wb-Seller-Lk`, `Root-Version`, `Origin`, `Referer`, sec-ch-ua-*).
+
+### Что неизвестно — TODO HAR
+
+POST endpoint создания заявки, `type=dst` quota, список доступных направлений, отчёт о перемещениях, отмена заявки. См. чеклист в [`REDISTRIBUTION_PLAN.md § Roadmap → Неделя 0`](REDISTRIBUTION_PLAN.md).
+
+---
+
 ## Quick Reference
 
 ```

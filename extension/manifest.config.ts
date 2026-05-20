@@ -96,6 +96,11 @@ export default defineManifest({
     // tokensjrpc для auto-token. Без явного host_permissions SW-fetch с
     // credentials:'include' блокируется CORB.
     "https://seller-content.wildberries.ru/*",
+    // seller-weekly-report — host для shifts API (перераспределение
+    // остатков). Нужен чтобы SW мог fetch с credentials:'include' и
+    // куки пользователя автоматически прикреплялись (proxy для backend
+    // РНП, который не может авторизоваться сам — WB пинит сессию к IP).
+    "https://seller-weekly-report.wildberries.ru/*",
     "https://www.wildberries.ru/*",
     // Продакшен-инстансы РНП (добавлять домены по мере деплоев).
     "https://rnp.sellerfriends.ru/*",

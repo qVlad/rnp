@@ -192,11 +192,16 @@ async def collect_alerts(
             })
 
     # 3) ad_stats stale (last sync > 24h ago AND last_status != 'ok')
-    ad_stats_cp = (
-        await session.execute(
-            select(SyncCheckpoint).where(SyncCheckpoint.entity == "ad_stats")
-        )
-    ).scalar_one_or_none()
+    # SyncCheckpoint has composite PK (tenant_id, entity) — без TenantScopedMixin,
+    # поэтому ContextVar-фильтр не применяется автоматически. Без явного
+    # tenant-фильтра запрос возвращал бы строки всех тенантов и падал
+    # `MultipleResultsFound` на multi-tenant проде.
+    from app.services.tenant_context import get_tenant  # noqa: WPS433
+    tenant_id = get_tenant(session)
+    ad_stats_stmt = select(SyncCheckpoint).where(SyncCheckpoint.entity == "ad_stats")
+    if tenant_id is not None:
+        ad_stats_stmt = ad_stats_stmt.where(SyncCheckpoint.tenant_id == tenant_id)
+    ad_stats_cp = (await session.execute(ad_stats_stmt)).scalar_one_or_none()
     if ad_stats_cp:
         if ad_stats_cp.last_synced_at and ad_stats_cp.last_synced_at < (
             datetime.now(timezone.utc) - timedelta(hours=24)
