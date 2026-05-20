@@ -8,9 +8,14 @@ Host: `seller-weekly-report.wildberries.ru`, базовый путь
 Auth: два JWT через `LkTokens` (см. `auth.py`). Wb-Seller-Lk обновляется
 автоматически когда до истечения < 60 сек.
 
-В этом клиенте — только GET endpoints из HAR (nms, stocks, quota).
-POST shifts.create требует отдельного HAR (см. REDISTRIBUTION_PLAN §6.1
-TODO) и будет добавлен после.
+Endpoints: GET /nms, /stocks, /quota и POST /order (создание заявки на
+перемещение). Спецификации расшифрованы из HAR (см. REDISTRIBUTION_PLAN
+§6.1.1 + tmp/redistribution_har/2seller.wildberries.ru.har).
+
+В production execute_window ходит в WB не через этот клиент напрямую
+(IP-binding + JWT in-memory у WB-фронта блокируют server-side вызовы),
+а через Chrome-extension proxy (`services/redistribution/extension_jobs.py`).
+Этот клиент используется для оффлайн-разбора HAR и интеграционных тестов.
 """
 from __future__ import annotations
 

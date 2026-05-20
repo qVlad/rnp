@@ -2,10 +2,10 @@
  * RPC-мост: content script → service worker.
  *
  * MV3: content scripts работают в контексте страницы (origin страницы),
- * поэтому cross-origin fetch к wbab.sellerfriends.ru блокируется CORS,
- * если wbab не вернёт Access-Control-Allow-Origin: https://seller.wildberries.ru.
+ * поэтому cross-origin fetch к rnp.sellerfriends.ru блокируется CORS,
+ * если backend не вернёт Access-Control-Allow-Origin: https://seller.wildberries.ru.
  *
- * Решение: все запросы к wbab делает **service worker** (там origin =
+ * Решение: все запросы к РНП делает **service worker** (там origin =
  * chrome-extension://<id>, и host_permissions работают как whitelist
  * без CORS). Content scripts шлют типизированные сообщения SW.
  *
@@ -36,7 +36,7 @@ export type BgRequest =
    * Auto-token (Часть 1 ветки feature/cycles-schedule):
    * content script на seller.wildberries.ru вызывает generateWbToken
    * (см. lib/wb-token.ts), получает JWT и шлёт сюда — SW делает
-   * POST /api/extension/wb-token/save на wbab backend.
+   * POST /api/extension/wb-token/save на backend РНП.
    */
   | { type: "saveWbToken"; jwt: string; expiresAt: number | null }
   /**

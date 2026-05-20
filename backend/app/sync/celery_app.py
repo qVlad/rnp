@@ -59,9 +59,11 @@ celery_app.conf.update(
         "app.sync.tasks.evaluate_notifications": {"queue": "default"},
         "app.sync.tasks.sync_chargebacks": {"queue": "default"},
         "app.sync.tasks.sync_chargebacks_for_tenant": {"queue": "default"},
-        # Redistribution (LEAD-008). Все task'и на default queue в v1 —
-        # отдельный worker-redistribution с миллисекундной точностью
-        # реализуется когда будет POST shifts.create endpoint.
+        # Redistribution (LEAD-008). Все task'и на default queue.
+        # POST shifts.create реализован через Chrome-extension proxy
+        # (см. services/redistribution/execute_window.py). Концепция
+        # «окон 09/18 МСК» заменена на 2-минутный polling (LEAD-022) —
+        # отдельный worker-redistribution не требуется.
         "app.sync.tasks.generate_redistribution_recs": {"queue": "default"},
         "app.sync.tasks.generate_redistribution_recs_for_tenant": {"queue": "default"},
         "app.sync.tasks.publish_redistribution_windows": {"queue": "default"},

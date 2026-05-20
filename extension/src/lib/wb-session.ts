@@ -2,7 +2,7 @@
  * Фаза 2: token-less mode через сессионную куку seller.wildberries.ru.
  *
  * Идея: расширение читает куку `WBToken` / `wbx-token` / другие auth-куки
- * пользователя на seller-кабинете WB и шлёт их в backend wbab. Backend
+ * пользователя на seller-кабинете WB и шлёт их в backend РНП. Backend
  * через эти куки дёргает внутренние эндпоинты кабинета WB (которые не
  * выдаются в публичном WB API).
  *
@@ -16,7 +16,7 @@
  * Реализация в фазе 2 (TBD):
  *   1. UI-флаг в options «использовать сессионную куку» (включается отдельно)
  *   2. Endpoint /api/extension/session-credentials — приём куки, валидация
- *   3. WbClient в backend wbab переключается на куки-режим (отдельный clients/seller-cabinet)
+ *   3. WbClient в backend РНП переключается на куки-режим (отдельный clients/seller-cabinet)
  *
  * Этот файл сейчас просто **разведывает что вообще видно**, без отправки
  * куда-либо. Используется в options page как «Проверить подключение».

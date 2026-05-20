@@ -122,8 +122,38 @@ Excel-contract test ~81% pass (известный gap, UNIT_PLAN.md §14.5). API
 
 **Состояние:** миграции 0046 + 0047 применены локально. Backend rebuild +
 restart. Pre-migration backups: `pgdata-pre-0046-2026-05-20-1742.sql.gz`,
-`pgdata-pre-0047-2026-05-20-1802.sql.gz`. Локально, не задеплоено, не
-закоммичено.
+`pgdata-pre-0047-2026-05-20-1802.sql.gz`. Задеплоено на прод (`c8f6609-dirty`,
+2026-05-20 ~18:08 MSK).
+
+## 2026-05-20 (ночь, 3) — **UNIT-план Sprint 8: snapshot UI + Excel-contract 99.6%**
+
+Закрыты последние пункты UNIT-плана из backlog.
+
+- **UNIT-PLAN-015 Snapshot UI** (`components/UnitPlanSnapshotsDrawer.tsx`,
+  540px drawer). Открывается через кнопку «📸 Снимок» в toolbar `/unit-plan`.
+  - Список всех snapshot'ов (date/label/rows count) + кнопка «📸 Создать» с
+    инлайн-формой (label / period_from / period_to).
+  - Diff-view: секция config_diff (frozen-cfg vs current с changed_keys или
+    зелёный баннер «константы не менялись»), top-20 per-SKU дельт по
+    |Δ profit| с цветной маркировкой ↑/↓ для profit/margin/buyout.
+  - ESC = backstack (diff → list → close), overlay-click = close.
+- **Excel-contract 99.6%** (было 81%, теперь 4 расхождения из 945 проверок).
+  - Storage formula: добавлен `ceil(V)` для V<1 в `_storage_rub` (как у
+    acceptance — биллабельный литр). Это объясняло ~80 расхождений
+    `storage_rub` 3.60 vs 4.80.
+  - Logistics: добавлен `reverse_logistics_mode="flat_50"` в config
+    contract-теста (rows 4+ Excel-эталона используют flat 50 ₽ — это в
+    методике UNIT_PLAN.md §14.5 задокументировано).
+  - Остатки 4 расхождения на row 27 — per-row override `marketing_pct=8%`
+    (per-row override marketing моделью не поддерживается, отдельная фича).
+
+**Изменённые файлы:**
+- `backend/app/services/unit_plan.py` — ceil(V) в `_storage_rub`
+- `backend/tests/unit_plan/test_compute_row_excel_contract.py` — flat_50 в config
+- `frontend/src/api/client.ts` — методы snapshots (list/create/diff) + типы
+- `frontend/src/components/UnitPlanSnapshotsDrawer.tsx` (new, ~360 LOC)
+- `frontend/src/pages/UnitPlan.tsx` — кнопка «📸 Снимок» → drawer
+- `FEATURES.md`, `CONTINUE_HERE.md`
 
 ## 2026-05-20 (вечер) — **Redistribution: «Отменить» + age-индикатор + авто-резолв office_id**
 
@@ -297,7 +327,7 @@ docker compose exec backend python -c "from app.sync.tasks_tariffs import sync_t
 - **Reverse-engineered endpoints:** [`WB_API_REFERENCE.md § 13. LK Shifts API`](WB_API_REFERENCE.md) — внутренние endpoints `/ns/shifts/analytics-back/api/v1/` (host `seller-weekly-report.wildberries.ru`), auth через два JWT (`AuthorizeV3` + `Wb-Seller-Lk` TTL 5 мин)
 - **HAR-snapshot:** `tmp/redistribution_har/seller.wildberries.ru-2026-05-18.har` (не в git)
 - **Готовность:** план составлен, реальные endpoints разобраны частично. **Не хватает:** HAR на момент создания заявки (POST endpoint), HAR в открытом окне 09:00/18:00 МСК. Список TODO в начале [`REDISTRIBUTION_PLAN.md`](REDISTRIBUTION_PLAN.md) и в [`ROADMAP.md § P1`](ROADMAP.md).
-- **Когда начинать:** после закрытия P0 sunset-миграций stocks (23.06.2026) и report_detail (15.07.2026), либо параллельно если стек хочется.
+- **Когда начинать:** P0 sunset (stocks 23.06 / report_detail 15.07) уже закрыт graceful-fallback'ом в `statistics.py` — модуль разблокирован.
 - **TL;DR ниши:** услуга WB +0.5% от всех продаж, окна 09:00/18:00 МСК, лимиты разбираются за 4–60 сек. Публичного API нет — все боты (QuotaBot, WBCON, А-КОРП, Супербот) через session-capture LK. Наш дифференциатор: ROI-дашборд в рублях (никто не показывает) + связка прогноз→план→автобронь (никто не делает).
 
 ---
@@ -327,7 +357,7 @@ docker compose exec backend python -c "from app.sync.tasks_tariffs import sync_t
 |---|---|
 | GET `/api/extension/tests/active[?nmId=]` | реализован (читает AbTest, manager-brand-filter через products.brand) |
 | GET `/api/extension/winners/since?cursor=ms` | реализован (через `AbTestResult.computed_at`) |
-| POST `/api/extension/positions` | stub (логирует, не сохраняет — нужна таблица) |
+| POST `/api/extension/positions` | реализован (пишет в `AbTestPositionSnapshot`, мигр. 0044, sanity checks position 1..100000 / page 1..1000) |
 | POST `/api/extension/wb-token/save` | 400 (auto-token deprecated) |
 | GET `/api/extension/wb-token/status` | реализован (декодирует tenant.wb_token JWT) |
 

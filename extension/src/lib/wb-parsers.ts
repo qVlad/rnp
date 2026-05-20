@@ -56,7 +56,7 @@ export function isProductListPage(url: string = window.location.href): boolean {
  *   https://seller.wildberries.ru/product-card-a-b
  *   https://seller.wildberries.ru/product-card-a-b/...
  *
- * На этой странице мы показываем **overview-виджет** всех running wbab-тестов —
+ * На этой странице мы показываем **overview-виджет** всех running тестов РНП —
  * это глобальный список A/B, не привязанный к конкретной карточке.
  */
 const AB_TEST_PAGE_PATTERN = /\/product-card-a-b(?:\/|$|\?)/i;

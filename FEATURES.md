@@ -102,8 +102,9 @@
 | **History версий global-config** | Список всех timeline-записей константы + diff между ними | `GET /api/unit-plan/global-config/versions` | director |
 | **`reverse_logistics_mode` флаг** | `tariff` (AG из WB-тарифа, default) или `flat_50` (фикс 50 ₽ — как в Excel-эталоне rows 4+, см. UNIT_PLAN.md §14.5). Поле в `unit_plan_global_config`, селектор в Settings → UNIT-план параметры | `services/unit_plan.py:_logistics_weighted`, миграция 0046 | director |
 | **WB Tariffs Settings view** | `/settings` → раздел «WB Tariffs»: 3 вкладки (Короб/Монопаллет/Комиссии), фильтр по дате + search по складу/предмету, кнопка «↻ Sync now» | `pages/Settings.tsx:WbTariffsSection`, `GET /api/tariffs/list`, `POST /api/tariffs/sync` | director_or_head view, director sync |
-| **Immutable snapshot config** | При POST `/snapshots` freeze'ит копию `unit_plan_global_config` в `unit_plan_snapshot_config`. Diff отдаёт `config_diff: {snapshot, current, changed_keys, frozen_available}` — UI может показать «изменено: tax_pct, marketing_pct» отдельно от per-nm дельт | миграция 0047, `api/unit_plan.py:create_snapshot/diff_snapshot` | director_or_head |
-| **Bug-fix `_storage_rub`** | Линейная формула `box_storage_base × литры × storage_days` (как в Excel-эталоне UNIT_PLAN.md §4). Раньше использовал WB-tariff форму `base + (V−1)×liter` → расхождение с эталоном | `services/unit_plan.py:_storage_rub` | — |
+| **Immutable snapshot config** | При POST `/snapshots` freeze'ит копию `unit_plan_global_config` в `unit_plan_snapshot_config`. Diff отдаёт `config_diff: {snapshot, current, changed_keys, frozen_available}` — UI показывает «изменено: tax_pct, marketing_pct» отдельно от per-nm дельт | миграция 0047, `api/unit_plan.py:create_snapshot/diff_snapshot` | director_or_head |
+| **Bug-fix `_storage_rub`** | `box_storage_base × ceil(V) × storage_days` (Excel-методика, §4). Round-up для V<1 как у acceptance. Раньше использовал WB-tariff форму `base + (V−1)×liter` — расхождение с эталоном | `services/unit_plan.py:_storage_rub` | — |
+| **Snapshot UI** | Drawer 540px в `/unit-plan` (кнопка «📸 Снимок»): список snapshot'ов + создание (label/period) + diff-view с config_diff (frozen vs current changed_keys) + top-20 per-SKU дельт (profit / margin / buyout) | `components/UnitPlanSnapshotsDrawer.tsx`, `GET/POST /api/unit-plan/snapshots`, `GET /snapshots/{id}/diff` | director_or_head |
 
 ### API endpoints (12 шт.)
 
@@ -128,7 +129,7 @@
 | Тест | Описание |
 |---|---|
 | `test_compute_row.py` | 17 unit-тестов pure-function (price ladder / commission / logistics / storage / VAT / acceptance / buyout fallback) |
-| `test_compute_row_excel_contract.py` | Contract против эталона LeymanKids: 45 строк × 20 полей = 900 проверок, **81% sync** (расхождения см. UNIT_PLAN.md §14.5) |
+| `test_compute_row_excel_contract.py` | Contract против эталона LeymanKids: 45 строк × 21 поля = 945 проверок, **99.6% sync** (4 расхождения на row 27 — per-row override `marketing_pct=8%` не моделируется). После Sprint 7 fix: storage_rub использует `ceil(V)` для V<1, logistics_rub учитывает `reverse_logistics_mode='flat_50'` (с конфигом эталона) |
 | `test_wb_tariffs_integration.py` | 6 тестов: парсинг box/pallet/commission, фильтрация sentinel-строк |
 | `test_sync_tariffs.py` | 6 интеграционных: SCD Type 2 upsert (insert/update fetched_at/insert new period) |
 | `test_unit_plan_api.py` | 5 тестов RBAC + endpoint shapes |
@@ -212,11 +213,18 @@
 |---|---|---|
 | GET | `/api/extension/tests/active[?nmId=]` | running тесты tenant'а (опц. фильтр по nm_id), для badge'а в seller-кабинете |
 | GET | `/api/extension/winners/since?cursor=ms` | новые winner-события для polling SW |
-| POST | `/api/extension/positions` | приём позиций карточек из выдачи WB (TODO storage) |
+| POST | `/api/extension/positions` | приём позиций карточек из выдачи WB → запись в `AbTestPositionSnapshot` (мигр. 0044) |
 | POST | `/api/extension/wb-token/save` | auto-token save — deprecated (tokensjrpc отдаёт cabinet-session, не Personal API) |
 | GET | `/api/extension/wb-token/status` | статус WB-токена tenant'а (есть/нет, expiresAt, needsRefresh) |
+| POST | `/api/extension/api-tokens` | создать long-lived токен `rnpext_<32-hex>` (мигр. 0048). Body: `{label, expiresInDays?}`. Возвращает token ОДИН раз. Cookie-auth (UI /settings). |
+| GET | `/api/extension/api-tokens` | список токенов текущего пользователя (без самих токенов, только prefix). Cookie-auth. |
+| DELETE | `/api/extension/api-tokens/{id}` | revoke токен (set revoked_at). Cookie-auth. |
 
-**Auth**: `Authorization: Bearer <jwt>` — JWT тот же, что в cookie `rnp_session`. Расширение хранит токен в `chrome.storage.sync`.
+**Auth**: `Authorization: Bearer <token>` — два формата:
+- `rnpext_<32-hex>` — long-lived токен (мигр. 0048), бессрочный или с TTL, можно revoke (см. UI `/settings` → «Токены для Chrome-расширения»).
+- JWT — тот же что в cookie `rnp_session` (TTL 12h, legacy fallback).
+
+Расширение хранит токен в `chrome.storage.sync`.
 
 **Расположение**: `extension/` в корне репо. Сборка: `cd extension && npm install && npm run build` → `dist/` load unpacked в Chrome. CWS publish — после стабилизации.
 

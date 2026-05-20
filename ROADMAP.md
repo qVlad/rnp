@@ -22,48 +22,43 @@
 
 ---
 
-## P0 · Дедлайны WB (критично)
+## ✅ Сделано — P0 sunset миграции WB API
 
-| Дата | Что отключают | Замена | Что делать |
-|------|---------------|--------|------------|
-| **2026-06-23** | `GET /supplier/stocks` | `POST /api/analytics/v1/stocks-report/wb-warehouses` (host `seller-analytics-api`, scope **Analytics**) | Новая категория в `WbApiClient`, новый rate-limiter, новый flow в `sync_stocks` task |
-| **2026-07-15** | `GET /supplier/reportDetailByPeriod` | `POST /api/finance/v1/sales-reports/detailed` (host `finance-api`, scope **Finance**, async create→status→download) | Серьёзный рефактор `sync_report_detail` — async polling, camelCase response, money как string |
+| Дата sunset | Endpoint | Реализация |
+|---|---|---|
+| 2026-06-23 | `GET /supplier/stocks` → `POST /api/analytics/v1/stocks-report/wb-warehouses` | `integrations/wb/statistics.py:fetch_stocks_v2` + `fetch_stocks_with_fallback` (legacy → v2 при 410/404). Подключено в `sync/tasks.py` под именем `fetch_stocks`. Тесты `tests/test_wb_sunset_fallback.py`. |
+| 2026-07-15 | `GET /supplier/reportDetailByPeriod` → `POST /api/finance/v1/sales-reports/detailed` | `integrations/wb/statistics.py:fetch_report_detail_v2` + `fetch_report_detail_with_fallback`. CamelCase→snake_case mapping для legacy совместимости. Подключено в `sync/tasks.py`. |
 
-Без миграции после deadline — `stocks` и `report_detail` перестанут получать данные → дашборд / P&L / reconciliation сломаются.
+После dedline'ов legacy перестанет работать — fallback автоматически переключится на v2.
 
 ---
 
-## P1 · Новый модуль «Перераспределение остатков» (план готов, не начато)
+## P1 · Модуль «Перераспределение остатков» (в работе)
 
-📋 **Полный план:** [`REDISTRIBUTION_PLAN.md`](REDISTRIBUTION_PLAN.md) — 12 разделов, 8-недельный MVP roadmap, спецификация реальных endpoints LK из HAR.
+📋 **Полный план:** [`REDISTRIBUTION_PLAN.md`](REDISTRIBUTION_PLAN.md) — 12 разделов, 8-недельный MVP roadmap.
 
 **TL;DR.** Услуга WB «Перераспределение остатков» (+0.5% от всех продаж в Конструкторе тарифов) — публичного API нет, все боты на рынке (QuotaBot, WBCON, WBchamp, Супербот, А-КОРП) работают через session-capture LK. Окна **09:00 и 18:00 МСК**, лимиты разбираются за 4–60 секунд. **Дифференциация:** ROI-дашборд в рублях (никто не показывает) + связка прогноз→план→автобронь (никто не делает).
 
-**Что уже сделано в подготовке (2026-05-18):**
+**Что сделано:**
 
-- Снят первый HAR на `seller.wildberries.ru/analytics-reports/warehouse-remains` → найдены реальные endpoints (`/ns/shifts/analytics-back/api/v1/`), auth-схема (два JWT в headers: `AuthorizeV3` долгий + `Wb-Seller-Lk` 5-мин), endpoint квот `quota?officeID=…&type=src` (int 0 = окно закрыто, >0 = открыто). См. [`REDISTRIBUTION_PLAN.md § 6.1.1`](REDISTRIBUTION_PLAN.md).
-- HAR-файл: `tmp/redistribution_har/seller.wildberries.ru-2026-05-18.har` (не в git).
-- В [`WB_API_REFERENCE.md`](WB_API_REFERENCE.md) добавлена секция **«§ LK Shifts API (reverse-engineered)»**.
+- ✅ `backend/app/integrations/wb_lk/` — session-capture клиент (auth, client)
+- ✅ `backend/app/services/redistribution/` — recommender, economics, scheduler, session_store, execute_window, extension_jobs
+- ✅ `backend/app/api/redistribution.py` — REST endpoints (LK connect/disconnect, recommendations, tasks/{id}/cancel)
+- ✅ Миграция **0045** `wb_lk_jobs` (op='create_order' и др.)
+- ✅ LK auto-connect через Chrome-расширение (interceptor AuthorizeV3 + Wb-Seller-Lk из живых fetch'ей seller.wildberries.ru)
+- ✅ Frontend `/redistribution` — LkStatusCard, queue, cancel, age-индикатор, auto-resolve office_id
+- ✅ HAR'ы для основных endpoints + **POST shifts.create найден** (HAR `2seller.wildberries.ru.har`):
+  `POST /ns/shifts/analytics-back/api/v1/order` body `{"order":{"src":<office_id>,"dst":<office_id>,"nmID":<int>,"count":[{"chrtID":<int>,"count":<int>}]}}` headers `authorizev3` + `wb-seller-lk` + `content-type: application/json`; 200 → `{"data":{"success":true},"error":false,"errorText":"","additionalErrors":null}`
 
-**Что нужно перед стартом разработки:**
+**Архитектура (важно):** в production execute_window ходит в WB **не напрямую**, а через Chrome-extension proxy (`services/redistribution/extension_jobs.py`) — IP-binding + JWT in-memory у WB-фронта блокируют server-side вызовы. Концепция «окон 09:00/18:00 МСК» **отменена** после LEAD-022 smoke (2026-05-20): WB открывает dst-квоты непрерывно. Сейчас — 2-минутный polling `try_execute_queued_redistribution_tasks` 24/7.
 
-- [ ] Снять HAR на момент создания заявки (главный пробел — POST endpoint неизвестен)
-- [ ] Снять HAR в окно 09:00 или 18:00 МСК (увидеть переход quota из 0 в >0)
-- [ ] Снять HAR на «Отчёт о перемещениях» и при выборе склада-приёмника (type=dst)
-- [ ] Подключить опцию в Конструкторе тарифов (90-дневный коммит, +0.5%)
-- [ ] Юридическая модель — disclaimer пользователю что credentials предоставлены добровольно
+**Что осталось:**
 
-**Какие части кода появятся:**
+- [ ] Юридическая модель — disclaimer пользователю что credentials предоставлены добровольно (использование LK extension proxy = grey-area, как у конкурентов)
+- [ ] UI для ROI-дашборда в рублях (наш дифференциатор vs QuotaBot/WBCON — никто не показывает)
+- [ ] Telegram-команды (`/redist`, `/recs`, `/il`, `/roi`, `/connect_lk`) — упомянуты в плане, не реализованы
 
-- `backend/app/integrations/wb_lk/` — session-capture клиент (auth, client, endpoints, captcha, session_store)
-- `backend/app/services/redistribution/` — recommender, demand_forecast, economics, scheduler, execution
-- `backend/app/sync/tasks/redistribution_window.py` — Celery task на окна 09:00 и 18:00 МСК
-- `backend/app/api/routers/redistribution.py` — REST для дашборда
-- `backend/app/bot/handlers/redistribution.py` — Telegram-команды (/redist, /recs, /il, /roi, /connect_lk)
-- `frontend/src/pages/Redistribution/` — Dashboard, Recommendations, Queue, Settings
-- `db/models.py` — +5 таблиц (`wb_lk_sessions`, `redistribution_recommendations`, `redistribution_tasks`, `redistribution_cooldowns`, `redistribution_roi_snapshots`), все с `tenant_id` (multi-tenant с 11.05.2026)
-
-**Зависимости:** до старта модуля должны быть закрыты P0 sunset-миграции `stocks` (23.06.2026) и `report_detail` (15.07.2026) — модуль использует те же данные для расчёта ИЛ и прогноза спроса.
+**Зависимости:** ~~P0 sunset~~ — оба закрыты, разблокировано.
 
 ---
 

@@ -118,7 +118,7 @@ docker-compose.yml
 .claude/settings.json   permissions для агента
 ```
 
-## Миграции БД (47 шт., 0001-0047)
+## Миграции БД (48 шт., 0001-0048)
 
 > Полный список с деталями — в [`FEATURES.md`](FEATURES.md) → «Миграции». Здесь — топ-уровневое.
 
@@ -151,6 +151,7 @@ docker-compose.yml
 | 0045 | wb_lk_jobs (LK shifts async jobs для /redistribution) |
 | **0046** | unit_plan_global_config.reverse_logistics_mode (`tariff` \| `flat_50`) — флаг режима обратной логистики (UNIT_PLAN.md §14.5) |
 | **0047** | unit_plan_snapshot_config — freeze global_config в момент snapshot'а (UNIT_PLAN.md §10), чтобы diff не показывал false-positive при изменении констант после snapshot'а |
+| **0048** | extension_api_tokens — long-lived токены `rnpext_<32-hex>` для Chrome-расширения (вместо 12-часового JWT в cookie). UI в /settings → «Токены для Chrome-расширения». |
 
 ## Роли и RBAC
 
@@ -282,9 +283,9 @@ exclusive `end` — даст лишний день рекламы в Units (бы
 - **Backend**: `GET /api/sync/status` (`api/sync_status.py`) — checkpoints +
   Redis `wb:cooldown:*` + Celery `inspect.active`. Поллится с фронта.
 
-**Sunset deadlines:**
-- 2026-06-23 — `/supplier/stocks` → `/api/analytics/v1/stocks-report/wb-warehouses`
-- 2026-07-15 — `/reportDetailByPeriod` → `/api/finance/v1/sales-reports/detailed` (async)
+**Sunset deadlines — закрыто (graceful fallback):**
+- 2026-06-23 — `/supplier/stocks` → `/api/analytics/v1/stocks-report/wb-warehouses`. См. `statistics.py:fetch_stocks_with_fallback` (410/404 → v2).
+- 2026-07-15 — `/reportDetailByPeriod` → `/api/finance/v1/sales-reports/detailed` (async). См. `statistics.py:fetch_report_detail_with_fallback` + camelCase→snake_case aliases.
 
 ## A/B testing карточек (порт wbab)
 
@@ -393,19 +394,12 @@ fallback на `Authorization: Bearer <jwt>` если cookie не валидна.
   не сработал (юзер не залогинен / нестандартный URL).
 
 **TODO (нереализовано в этом порте, держим в roadmap):**
-- `POST /api/extension/positions` — пока no-op + лог. Нужна таблица
-  `abtest_position_snapshot`.
-- `GET /api/extension/winners/since` — выборка из `AbTestResult`; для
-  больших данных нужен индекс по `computed_at`.
-- `sampleProgressPct` всегда возвращает 0 — агрегация из
-  `AbTestDailyStat` / `AbTestVariantPlatformSnap`.
-- Long-lived API-токен с привязкой к user_id (сейчас срок жизни =
-  `cfg.jwt_expires_hours`, default 12h — пользователь должен периодически
-  обновлять токен в options).
-- `nextRotationAt` в response — null (нужно подтянуть из Celery beat
-  для TIME-триггера).
-- Полное переименование `wbabUrl`/`wbabToken` → `rnpUrl`/`rnpToken` в
-  `chrome.storage.sync` с миграцией старых ключей.
+- ~~`POST /api/extension/positions`~~ — реализовано, пишет в `AbTestPositionSnapshot` (миграция 0044) с sanity checks.
+- ~~`GET /api/extension/winners/since`~~ — реализовано через `AbTestResult.computed_at`. Для больших данных индекс пока не добавлен — следить за query plan.
+- ~~`sampleProgressPct`~~ — реализовано: TIME-триггер считает elapsed/period, VIEWS — сумма impressions активного варианта с anchor, BUDGET — сумма ad_spend (см. `_compute_progress_and_next_rotation`).
+- ~~`nextRotationAt`~~ — реализовано для TIME-триггера (anchor + trigger_value\*60). Для VIEWS/BUDGET остаётся null (нельзя предсказать velocity).
+- ~~Long-lived API-токен~~ — реализован в миграции 0048 (`extension_api_tokens`). Формат `rnpext_<32-hex>`, бессрочный или TTL до 10 лет, можно revoke. UI в `/settings` → «Токены для Chrome-расширения». `api/extension.py:_user_from_bearer` поддерживает оба формата (rnpext_ → table lookup, else JWT). См. `POST/GET/DELETE /api/extension/api-tokens`.
+- ~~Переименование `wbabUrl`/`wbabToken` → `rnpUrl`/`rnpToken`~~ — реализовано в `extension/src/lib/storage.ts`. Lazy migration на первом `getSettings()`: читаем оба ключа, мерджим, пишем под новым, удаляем старый. Runtime message types все `rnp:*`. Legacy `wbab.*` storage keys + поля `wbabUrl/wbabToken` оставлены ТОЛЬКО для миграции — удалять нельзя, иначе сломается апгрейд у уже установленных расширений.
 
 ## Telegram-бот
 

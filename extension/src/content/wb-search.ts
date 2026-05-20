@@ -1,7 +1,7 @@
 /**
  * Content script на www.wildberries.ru/catalog/*.
  *
- * Задача: трекинг позиций карточек, участвующих в активных wbab-тестах,
+ * Задача: трекинг позиций карточек, участвующих в активных A/B-тестах РНП,
  * по ключевикам поиска. Это позволит на странице теста показать селлеру:
  * «Вариант A был на 3-й странице → 1230 показов. Вариант B на 1-й странице
  * → 9800 показов». Большая разница в показах между вариантами при ротации
@@ -12,9 +12,9 @@
  *      service worker.
  *   2. Парсим выдачу через wb-parsers.findSearchCards.
  *   3. Для каждой найденной карточки которая есть в активных тестах —
- *      отправляем событие в SW: { type: "wbab:position-found", nmId, query,
- *      position, page, collectedAt }.
- *   4. SW передаёт в wbab-api.postPositions().
+ *      отправляем событие в SW через bg-bridge: { type: "postPositions",
+ *      payload: { nmId, query, position, page, collectedAt } }.
+ *   4. SW шлёт POST /api/extension/positions на backend РНП.
  *
  * Что мы НЕ делаем (важно):
  *   • Не парсим чужие карточки (не наши SKU) — не делаем спай-функционал.
@@ -42,7 +42,7 @@ async function collectPositions(): Promise<void> {
   if (!isSearchPage() && !isCatalogPage()) return;
 
   // Узнаём какие тесты сейчас активны — чтобы не слать данные про чужие SKU.
-  // Если пользователь не настроил wbab или ничего не активно — выходим.
+  // Если пользователь не настроил РНП или ничего не активно — выходим.
   const activeTests = await getCachedActiveTests();
   if (activeTests.length === 0) return;
   const trackedNmIds = new Set(activeTests.map((t) => t.nmId));
@@ -91,7 +91,7 @@ async function collectPositions(): Promise<void> {
     }
 
     // Опционально подсвечиваем карточку, чтобы пользователь видел что
-    // wbab «знает» про эту позицию.
+    // РНП «знает» про эту позицию.
     highlightTrackedCard(c.element);
   }
 }

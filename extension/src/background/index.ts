@@ -2,11 +2,12 @@
  * Service Worker — entry point background-логики MV3.
  *
  * Ответственности:
- *   1. Периодический polling wbab API: тянем активные тесты + новые
+ *   1. Периодический polling API РНП: тянем активные тесты + новые
  *      winner-события. Используем chrome.alarms (минимум 30 сек интервал
  *      для production-расширений, для unpacked dev — 1 минута). Service
  *      worker засыпает после ~30 сек idle, но alarm пробуждает его.
- *   2. Обработка сообщений от content scripts (wbab:position-found и т.п.).
+ *   2. Обработка сообщений от content scripts (rnp:position-found,
+ *      rnp:lk-autoconnect, rnp:detected и т.п.).
  *   3. Показ chrome.notifications при обнаружении winner-события.
  *   4. (Опционально) дублирование notification'ов в Telegram через bot API
  *      если пользователь настроил token+chatId в options.
@@ -121,7 +122,7 @@ async function ensureAlarms(): Promise<void> {
     delayInMinutes: 0.1,
   });
   // RNP cookie sync — раз в 30 мин проверяем актуальный rnp_session cookie
-  // на сконфигурированном URL и обновляем wbabToken если изменился.
+  // на сконфигурированном URL и обновляем rnpToken если изменился.
   // Это страхует на случай если юзер залогинился в РНП в фоновой вкладке
   // (без визита) — content script `rnp-detector.ts` тогда не сработал.
   chrome.alarms.create(ALARM_RNP_COOKIE_SYNC, {
@@ -190,8 +191,8 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
  * Алгоритм:
  *   1. chrome.cookies.get({url, name: 'rnp_session'}) — HttpOnly cookie
  *      видна расширению при `permissions: ["cookies"]` + host_permissions.
- *   2. Если cookie есть и отличается от текущего wbabToken — сохраняем
- *      в settings (wbabUrl + wbabToken).
+ *   2. Если cookie есть и отличается от текущего rnpToken — сохраняем
+ *      в settings (rnpUrl + rnpToken).
  *   3. Показываем chrome.notifications «РНП подключено» один раз на токен
  *      (дедуп через хеш последних 12 символов токена в storage.local).
  *   4. Дёргаем pollOnce() с новым токеном чтобы UI сразу увидел тесты.
@@ -290,7 +291,7 @@ async function refreshTokenFromRnpCookies(): Promise<void> {
  * когда:
  *   • Юзер залогинился (cookie появилась) → auto-connect
  *   • Юзер relogin'ится (cookie value сменилась) → токен обновлён
- *   • Юзер вышел из РНП (cookie удалена) → НЕ сбрасываем wbabToken
+ *   • Юзер вышел из РНП (cookie удалена) → НЕ сбрасываем rnpToken
  *     (расширение продолжает работать со старым токеном до истечения JWT;
  *     иначе случайный logout в одной вкладке убил бы badge на seller-
  *     кабинете в другой).
@@ -325,7 +326,7 @@ chrome.cookies.onChanged.addListener((info) => {
  *   3. Если получили JWT — POST на /api/extension/wb-token/save.
  *
  * Тихо завершается без ошибок если:
- *   • расширение не настроено (нет wbabUrl/wbabToken)
+ *   • расширение не настроено (нет rnpUrl/rnpToken)
  *   • enableAutoToken=false
  *   • нет сессии WB (tokensjrpc вернул 401)
  *   • backend недоступен
@@ -369,7 +370,7 @@ async function maybeRefreshWbToken(): Promise<void> {
 
 /**
  * Фаза 2 token-less mode: читаем сессионные куки seller.wildberries.ru
- * и шлём snapshot на backend wbab.
+ * и шлём snapshot на backend РНП.
  *
  * Тихо пропускает refresh если:
  *   • расширение не настроено (URL/токен)

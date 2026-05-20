@@ -3,8 +3,8 @@
  *
  * Задачи:
  *   1. Launcher — на странице редактирования карточки добавить кнопку
- *      «Запустить A/B-тест в wbab», открывающую wbab с pre-fill nmId.
- *   2. Badge — если для этой карточки уже идёт тест в wbab, показать его
+ *      «Запустить A/B-тест в РНП», открывающую РНП с pre-fill nmId.
+ *   2. Badge — если для этой карточки уже идёт тест в РНП, показать его
  *      состояние (активный вариант, прогресс выборки, обнаружен ли winner).
  *
  * Особенности SPA seller-кабинета:
@@ -37,7 +37,7 @@ const MODE_OVERVIEW = "overview";
  *   1. nmId-режим: страница редактирования карточки (URL содержит nmID).
  *      Показывает статус ОДНОГО теста для этой карточки + кнопку «Запустить».
  *   2. overview-режим: страница /product-card-a-b (встроенный Джем A/B).
- *      Показывает СПИСОК всех running wbab-тестов.
+ *      Показывает СПИСОК всех running тестов РНП.
  */
 /**
  * Записать в DOM debug-meta — видно из page world через
@@ -180,7 +180,7 @@ function removeWidget(): void {
 
 /**
  * Auto-token: получаем Personal API token через cabinet tokensjrpc
- * и шлём на backend wbab. Вызывается из run() при заходе/SPA-навигации.
+ * и шлём на backend РНП. Вызывается из run() при заходе/SPA-навигации.
  *
  * Логика fail-safe:
  *   1. Если enableAutoToken=false — silent skip.
@@ -559,9 +559,9 @@ function updateWidget(host: HTMLElement, nmId: number, test: ActiveTest | null):
 
 /**
  * Раскрывает/сворачивает iframe с embed-виджетом теста под виджетом-badge.
- * iframe.src = <wbabUrl>/embed/tests/<id> — отдельный route в wbab.
+ * iframe.src = <rnpUrl>/embed/tests/<id> — отдельный route в РНП.
  *
- * Если iframe не загрузился (production wbab без новой ветки extension /
+ * Если iframe не загрузился (production РНП без ветки extension /
  * X-Frame-Options блокирует) — fall-back на ссылку «Открыть в новой вкладке».
  */
 async function toggleEmbedIframe(host: HTMLElement, testId: string): Promise<void> {
@@ -582,7 +582,7 @@ async function toggleEmbedIframe(host: HTMLElement, testId: string): Promise<voi
   const base = (settings.rnpUrl || "https://rnp.sellerfriends.ru").replace(/\/$/, "");
   const fullUrl = `${base}/abtest/${testId}`;
   // iframe в third-party context (seller.wildberries.ru) не получает cookies
-  // wbab (SameSite=Lax). Поэтому прокидываем extension token в query — backend
+  // РНП (SameSite=Lax). Поэтому прокидываем extension token в query — backend
   // делает dual auth: session ИЛИ ?token=... (см. src/lib/embed-auth.ts).
   const tokenParam = settings.rnpToken
     ? `?token=${encodeURIComponent(settings.rnpToken)}`
@@ -646,7 +646,7 @@ function formatTimeUntil(iso: string): string {
 
 // ====================================================================
 // Overview-режим: виджет на странице /product-card-a-b (Джем).
-// Не привязан к одному nmId — показывает список всех running wbab-тестов.
+// Не привязан к одному nmId — показывает список всех running тестов РНП.
 // ====================================================================
 
 function renderOverviewWidget(): HTMLElement {
@@ -808,7 +808,7 @@ function renderOverviewWidget(): HTMLElement {
     };
   }
 
-  // Открыть основной wbab — пробрасываем через SW потому что нужен chrome.tabs.create.
+  // Открыть основной интерфейс РНП — пробрасываем через SW потому что нужен chrome.tabs.create.
   const openRnpLink = shadow.querySelector<HTMLAnchorElement>("#rnp-ext-open-rnp");
   if (openRnpLink) {
     openRnpLink.onclick = async (e) => {

@@ -1,13 +1,17 @@
 """Scheduler перераспределения: окна 09:00/18:00 МСК.
 
-Beat-task `publish_redistribution_windows` (раз в минуту в пиковых часах)
-проверяет — наступило ли окно. Если да — публикует event
-`redistribution.window.open` через event_bus. Consumer `execute_window`
-подбирает task'и из `redistribution_tasks` и пытается забронировать слот.
+⚠️ DEPRECATED после LEAD-022 — концепция «окон 09/18 МСК» заменена на
+непрерывный 2-минутный polling `try_execute_queued_redistribution_tasks`
+(см. `sync/celery_app.py:beat_schedule`). Smoke 2026-05-20 показал что WB
+открывает dst-квоты непрерывно (Электросталь = 19350+ в 08:47 МСК) — окон
+как таковых нет, закрыты бывают только отдельные src-склады.
 
-В v1 точная миллисекундная синхронизация и подготовленные POST-payloads
-(REDISTRIBUTION_PLAN §6.5) — НЕ реализованы. Реализуется когда будет
-HAR для POST shifts.create + NTP-точность на сервере.
+POST shifts.create реализован через Chrome-extension proxy (см.
+`execute_window.py`), HAR разобран (2seller.har 2026-05-19).
+
+Модуль оставлен для отката если потребуется. Beat-task'и
+`publish_redistribution_windows` / `consume_redistribution_window`
+закомментированы в celery_app.py.
 """
 from __future__ import annotations
 

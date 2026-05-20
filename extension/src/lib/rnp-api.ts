@@ -1,21 +1,20 @@
 /**
- * Клиент wbab API. Все запросы идут через service worker — content scripts
+ * Клиент РНП API. Все запросы идут через service worker — content scripts
  * не имеют доверенного cross-origin fetch для произвольных хостов
  * (см. Chromium content-script-fetches policy), поэтому из content script'ов
- * мы шлём сообщения в SW: { type: "wbab:fetch", path, init }.
+ * мы шлём сообщения в SW через bg-bridge.
  *
  * SW отвечает за добавление токена авторизации и базового URL.
  *
- * Эндпоинты (НЕ существуют пока на backend wbab — нужно будет добавить):
- *   GET  /api/extension/tests/active                    — список всех running тестов
- *   GET  /api/extension/tests/active?nmId=<n>           — фильтр по артикулу
- *   GET  /api/extension/winners/since?cursor=<ts>       — новые winner-события для polling
- *   POST /api/extension/positions                       — приём данных о позициях
- *   POST /api/extension/launch                          — создать черновик теста (pre-fill)
+ * Эндпоинты (реализованы в backend/app/api/extension.py):
+ *   GET    /api/extension/tests/active                    — список всех running тестов
+ *   GET    /api/extension/tests/active?nmId=<n>           — фильтр по артикулу
+ *   GET    /api/extension/winners/since?cursor=<ts>       — новые winner-события для polling
+ *   POST   /api/extension/positions                       — приём данных о позициях
+ *   POST   /api/extension/api-tokens                      — выдача long-lived токена (миграция 0048)
  *
- * Аутентификация — Bearer token из settings.rnpToken. Пока что
- * extension-эндпоинты НЕ реализованы в основном wbab — этот клиент
- * сейчас работает в MOCK-режиме (см. флаг useMock).
+ * Аутентификация — Bearer token из settings.rnpToken. Поддерживаются два
+ * формата: long-lived `rnpext_<32-hex>` (предпочтительно) или JWT из cookie.
  */
 
 import { getSettings } from "./storage";
@@ -29,7 +28,7 @@ import type { ActiveTest, WinnerEvent } from "./types";
  * 20260516_chrome_extension_support) USE_MOCK = false по умолчанию —
  * расширение работает с реальным API.
  *
- * Если wbab-сервер недоступен или токен не настроен — методы автоматически
+ * Если backend РНП недоступен или токен не настроен — методы автоматически
  * возвращают пустые массивы (fail-soft), а не падают. Это позволяет
  * расширению быть установленным без настройки и не ломать UX.
  */
@@ -195,7 +194,7 @@ export async function getWbTokenStatus(): Promise<
 
 /**
  * Открыть форму создания теста с pre-fill артикулом.
- * Не идёт через API — открывает страницу wbab в новой вкладке.
+ * Не идёт через API — открывает страницу РНП в новой вкладке.
  */
 export async function openRnpLauncher(nmId: number): Promise<void> {
   const settings = await getSettings();

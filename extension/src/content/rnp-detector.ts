@@ -6,7 +6,7 @@
  * текущим URL. SW проверяет `chrome.cookies.get({url, name: 'rnp_session'})`
  * (cookie HttpOnly, но cookies API расширения её видит при наличии
  * `permissions: ["cookies"]` и host_permissions) и сохраняет JWT в
- * `chrome.storage.sync` как `wbabToken`. Юзеру не нужно копировать токен
+ * `chrome.storage.sync` как `rnpToken`. Юзеру не нужно копировать токен
  * руками.
  *
  * Edge cases:
