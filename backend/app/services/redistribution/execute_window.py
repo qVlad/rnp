@@ -55,28 +55,99 @@ JOB_TIMEOUT_S = 45
 # failed сразу — ретраить их бессмысленно, входные данные не изменятся.
 
 
-def _office_id_lookup(office_name: str) -> int | None:
-    """Резолв office_name → office_id (fallback для legacy tasks без to_office_id)."""
-    KNOWN: dict[str, int] = {
-        "Казань": 117986,
-        "Краснодар": 130744,
-        "Электросталь": 120762,
-        "Пенза": 50045809,
-        "Самара (Новосемейкино)": 301805,
-        "Екатеринбург - Перспективная 14": 300571,
-        "Котовск": 301809,
-        # ─── added 2026-05-20 из stocks responses ───
-        "СПБ Шушары": 50045246,
-        "Шушары": 50045246,  # некоторые fronts используют короткое имя
-        "Владимир": 301981,
-        "Волгоград": 301983,
-        "Коледино": 507,
-        "Невинномысск": 208277,
-        "Рязань (Тюшевское)": 301760,
-        "Сарапул": 301987,
-        "Тула": 206348,
-    }
-    return KNOWN.get(office_name)
+# Хардкод-fallback. Используется только если в БД tenant'а ни разу не
+# проходил task/recommendation с этим office_id. Расширение возвращает
+# реальные office_id в src-stocks → каждое имя, всплывавшее хотя бы раз,
+# попадает в _build_office_lookup автоматически.
+_HARDCODED_OFFICES: dict[str, int] = {
+    "Казань": 117986,
+    "Краснодар": 130744,
+    "Электросталь": 120762,
+    "Пенза": 50045809,
+    "Самара (Новосемейкино)": 301805,
+    "Екатеринбург - Перспективная 14": 300571,
+    "Котовск": 301809,
+    "СПБ Шушары": 50045246,
+    "Шушары": 50045246,
+    "Владимир": 301981,
+    "Волгоград": 301983,
+    "Коледино": 507,
+    "Невинномысск": 208277,
+    "Рязань (Тюшевское)": 301760,
+    "Сарапул": 301987,
+    "Тула": 206348,
+}
+
+
+async def _build_office_lookup(
+    session: AsyncSession, *, tenant_id: int
+) -> dict[str, int]:
+    """Собрать словарь office_name → office_id из накопленных данных.
+
+    Приоритет (низший → высший, последний выигрывает):
+      1. Хардкод-fallback `_HARDCODED_OFFICES` — стартовое покрытие
+      2. RedistributionRecommendation.from_office_id (свежие данные из
+         src-stocks через extension)
+      3. RedistributionTask.from_office_id (то же, но из tasks)
+      4. RedistributionTask.to_office_id (только если != 0 — есть accepted
+         task на этот склад, значит id точно валиден)
+
+    Возвращает плоский dict. NULL/0 значения пропускаются.
+    """
+    lookup: dict[str, int] = dict(_HARDCODED_OFFICES)
+
+    rec_rows = (
+        await session.execute(
+            select(
+                RedistributionRecommendation.from_office_name,
+                RedistributionRecommendation.from_office_id,
+            )
+            .where(
+                RedistributionRecommendation.tenant_id == tenant_id,
+                RedistributionRecommendation.from_office_id.is_not(None),
+            )
+            .distinct()
+        )
+    ).all()
+    for name, oid in rec_rows:
+        if name and oid:
+            lookup[name] = int(oid)
+
+    task_src_rows = (
+        await session.execute(
+            select(
+                RedistributionTask.from_office_name,
+                RedistributionTask.from_office_id,
+            )
+            .where(
+                RedistributionTask.tenant_id == tenant_id,
+                RedistributionTask.from_office_id.is_not(None),
+            )
+            .distinct()
+        )
+    ).all()
+    for name, oid in task_src_rows:
+        if name and oid:
+            lookup[name] = int(oid)
+
+    task_dst_rows = (
+        await session.execute(
+            select(
+                RedistributionTask.to_office_name,
+                RedistributionTask.to_office_id,
+            )
+            .where(
+                RedistributionTask.tenant_id == tenant_id,
+                RedistributionTask.to_office_id != 0,
+            )
+            .distinct()
+        )
+    ).all()
+    for name, oid in task_dst_rows:
+        if name and oid:
+            lookup[name] = int(oid)
+
+    return lookup
 
 
 async def execute_window_for_tenant(
@@ -121,13 +192,17 @@ async def execute_window_for_tenant(
         ).all()
         nm_by_rec = {int(r[0]): int(r[1]) for r in rows}
 
+    # Резолв office_name → office_id: один проход по БД per tenant перед
+    # циклом (вместо N вызовов хардкод-словаря в горячем пути).
+    office_lookup = await _build_office_lookup(session, tenant_id=tenant_id)
+
     # Группировка по (src, dst, nm_id)
     grouped: dict[tuple[int, int, int], list[RedistributionTask]] = defaultdict(list)
     no_office: list[RedistributionTask] = []
     no_nm: list[RedistributionTask] = []
     for t in tasks:
-        src = t.from_office_id or _office_id_lookup(t.from_office_name)
-        dst = t.to_office_id or _office_id_lookup(t.to_office_name)
+        src = t.from_office_id or office_lookup.get(t.from_office_name)
+        dst = t.to_office_id or office_lookup.get(t.to_office_name)
         if not src or not dst:
             no_office.append(t)
             continue
@@ -143,22 +218,25 @@ async def execute_window_for_tenant(
     skipped_no_office = len(no_office)
     skipped_no_extension = 0
 
-    # No-office tasks → failed
+    # No-office: транзитная ошибка. Оставляем queued — следующий запуск
+    # recommender'а через extension может вернуть новые офисы из src-stocks,
+    # office_lookup пополнится, и в следующем polling-цикле дёрнем.
     for t in no_office:
-        t.status = "failed"
         t.last_attempt_at = datetime.now(timezone.utc)
         t.last_response = (
-            f"office_id not resolved: src={t.from_office_name!r} dst={t.to_office_name!r}"
+            f"office_id not resolved (ждём пополнения lookup): "
+            f"src={t.from_office_name!r} dst={t.to_office_name!r}"
         )
         t.attempt_count = (t.attempt_count or 0) + 1
 
-    # No-nmID tasks → failed (recommendation orphaned или удалена)
+    # No-nmID tasks → failed (recommendation удалена или orphaned —
+    # nm_id неоткуда взять, retry бессмысленен).
     for t in no_nm:
         t.status = "failed"
         t.last_attempt_at = datetime.now(timezone.utc)
         t.last_response = f"nm_id not resolved (recommendation_id={t.recommendation_id})"
         t.attempt_count = (t.attempt_count or 0) + 1
-        skipped_no_office += 1  # bucket в общую корзину
+        failed += 1
 
     for (src, dst, nm_id), group_tasks in grouped.items():
         # === 1. Quota check via extension ===

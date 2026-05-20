@@ -48,6 +48,14 @@ export default function Redistribution() {
     mutationFn: (id: number) => api.redistributionDismiss(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["redistribution-recs"] }),
   });
+  const cancelMut = useMutation({
+    mutationFn: (id: number) => api.redistributionCancelTask(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["redistribution-tasks"] });
+      qc.invalidateQueries({ queryKey: ["redistribution-recs"] });
+    },
+    onError: (e: any) => alert(`Не удалось отменить: ${e.message}`),
+  });
 
   return (
     <div className="flex flex-col gap-4">
@@ -208,10 +216,12 @@ export default function Redistribution() {
           Бэкенд опрашивает очередь каждые 2 мин (LEAD-022). Заявка остаётся в{" "}
           <code>queued</code> и ретраится бесконечно пока WB не отдаст success —
           для всех транзитных ошибок (расширение оффлайн, dst-квота=0,
-          exceeded-quota на srcOffice, 401/токены LK истекли). Permanent
-          ошибки (не резолвится office_id или nm_id) → <code>failed</code>{" "}
-          сразу. После accepted ставится 72-часовой кулдаун на пару (chrt_id ×
-          склад-приёмник).
+          exceeded-quota на srcOffice, 401/токены LK истекли, не резолвится
+          office_id). Permanent <code>failed</code> только если потерян{" "}
+          <code>nm_id</code> (recommendation удалена). Зависшую заявку можно
+          снять кнопкой ✕. После accepted ставится 72-часовой кулдаун на пару
+          (chrt_id × склад-приёмник). В колонке «В очереди» цвет: жёлтый
+          &gt;12ч, красный &gt;24ч.
         </div>
         {tasksQ.isLoading && <div className="text-muted">Загрузка…</div>}
         {tasksQ.data && tasksQ.data.items.length === 0 && (
@@ -222,12 +232,14 @@ export default function Redistribution() {
             <thead className="text-muted text-xs uppercase">
               <tr className="border-b border-border">
                 <th className="text-left p-2">Создана</th>
+                <th className="text-left p-2">В очереди</th>
                 <th className="text-left p-2">chrt</th>
                 <th className="text-left p-2">Откуда → Куда</th>
                 <th className="text-right p-2">Qty</th>
                 <th className="text-left p-2">Статус</th>
                 <th className="text-right p-2">Попыток<br/><span className="text-[10px] normal-case">посл.</span></th>
                 <th className="text-left p-2">Последний ответ</th>
+                <th className="p-2"></th>
               </tr>
             </thead>
             <tbody>
@@ -235,6 +247,9 @@ export default function Redistribution() {
                 <tr key={t.id} className="border-t border-border align-top">
                   <td className="p-2 font-mono text-xs">
                     {fmtLocalDt(t.created_at || t.target_window_at)}
+                  </td>
+                  <td className="p-2 text-xs">
+                    <QueueAgeBadge createdAt={t.created_at} status={t.status} />
                   </td>
                   <td className="p-2 font-mono text-xs">{t.chrt_id}</td>
                   <td className="p-2 text-xs">
@@ -272,6 +287,25 @@ export default function Redistribution() {
                       </span>
                     ) : (
                       <span className="text-muted">—</span>
+                    )}
+                  </td>
+                  <td className="p-2 text-right">
+                    {(t.status === "queued" || t.status === "failed") && (
+                      <button
+                        className="btn text-xs text-muted hover:text-red-400"
+                        onClick={() => {
+                          if (
+                            confirm(
+                              `Отменить задачу #${t.id} (${t.from_office_name} → ${t.to_office_name}, ${t.qty} шт.)?`,
+                            )
+                          )
+                            cancelMut.mutate(t.id);
+                        }}
+                        disabled={cancelMut.isPending}
+                        title="Снять с polling. Заявка не будет отправлена в WB."
+                      >
+                        ✕
+                      </button>
                     )}
                   </td>
                 </tr>
@@ -462,7 +496,9 @@ function TaskStatusBadge({
         ? "text-red-400"
         : status === "queued"
           ? "text-accent"
-          : "text-muted";
+          : status === "cancelled"
+            ? "text-muted line-through"
+            : "text-muted";
   const label =
     status === "queued"
       ? "в очереди"
@@ -470,7 +506,9 @@ function TaskStatusBadge({
         ? "✓ принята"
         : status === "failed"
           ? "✗ ошибка"
-          : status;
+          : status === "cancelled"
+            ? "отменена"
+            : status;
   return (
     <div>
       <span className={`text-xs ${tone}`}>{label}</span>
@@ -481,6 +519,33 @@ function TaskStatusBadge({
       )}
     </div>
   );
+}
+
+function QueueAgeBadge({
+  createdAt,
+  status,
+}: {
+  createdAt: string | null;
+  status: string;
+}) {
+  // Возраст показываем только для активных задач — accepted/cancelled
+  // зафиксированы и age уже не информативен.
+  if (!createdAt || (status !== "queued" && status !== "failed")) {
+    return <span className="text-muted">—</span>;
+  }
+  const ageMs = Date.now() - new Date(createdAt).getTime();
+  const ageHours = ageMs / 3_600_000;
+  const ageMin = Math.floor((ageMs / 60_000) % 60);
+  const ageH = Math.floor(ageHours);
+  const text =
+    ageH > 0 ? `${ageH}ч ${ageMin}м` : `${ageMin}м`;
+  const tone =
+    ageHours > 24
+      ? "text-red-400 font-medium"
+      : ageHours > 12
+        ? "text-yellow-400"
+        : "text-muted";
+  return <span className={`font-mono ${tone}`}>{text}</span>;
 }
 
 function RoiCard({ roi, loading }: { roi: any; loading: boolean }) {

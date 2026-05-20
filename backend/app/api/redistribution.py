@@ -363,6 +363,59 @@ async def list_tasks(
     return {"items": [_serialize_task(t) for t in rows]}
 
 
+@router.post("/tasks/{tid}/cancel", dependencies=[Depends(require_director_or_head)])
+async def cancel_task(
+    tid: int,
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Отменить queued/failed-task — статус → cancelled. execute_window
+    выбирает только status='queued', поэтому cancelled task больше не
+    попадёт в polling. Применимо когда заявка зависла (склад-приёмник
+    закрыт надолго, recommendation устарела и т.п.).
+
+    Также возвращает связанную recommendation из 'queued' обратно в
+    'pending' — чтобы юзер увидел её снова в списке (или явно dismiss).
+    """
+    t = (
+        await session.execute(
+            select(RedistributionTask).where(RedistributionTask.id == tid)
+        )
+    ).scalar_one_or_none()
+    if t is None:
+        raise HTTPException(404, "task not found")
+    if t.status not in ("queued", "failed"):
+        raise HTTPException(
+            400, f"only queued/failed tasks can be cancelled (current: {t.status})"
+        )
+    prev_status = t.status
+    t.status = "cancelled"
+    t.last_attempt_at = datetime.now(timezone.utc)
+    t.last_response = f"cancelled by {user.username}"
+    if t.recommendation_id:
+        from sqlalchemy import update as sql_update
+
+        await session.execute(
+            sql_update(RedistributionRecommendation)
+            .where(
+                RedistributionRecommendation.id == t.recommendation_id,
+                RedistributionRecommendation.status == "queued",
+            )
+            .values(status="pending")
+        )
+    await audit_log(
+        session,
+        "redistribution_tasks",
+        "update",
+        entity_id=str(tid),
+        before={"status": prev_status},
+        after={"status": "cancelled"},
+        actor=user.username,
+    )
+    await session.commit()
+    return {"id": tid, "status": "cancelled"}
+
+
 @router.get("/by-manager")
 async def get_by_manager(
     date_from: date | None = None,

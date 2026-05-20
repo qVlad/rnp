@@ -37,6 +37,28 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## 2026-05-20 (вечер) — **Redistribution: «Отменить» + age-индикатор + авто-резолв office_id**
+
+Три параллельные доработки страницы `/redistribution`:
+
+- **Cancel** — `POST /api/redistribution/tasks/{id}/cancel` (director_or_head),
+  queued/failed → cancelled, связанную recommendation возвращает из queued в
+  pending. UI: красный «✕» в новой колонке справа с confirm. Срезает зависшие
+  навсегда заявки (склад-приёмник закрыт, цикл бесконечного ретрая).
+- **Age в очереди** — новая колонка «В очереди» с `<hours>ч <min>м` от
+  `created_at`. Цвет: muted &lt;12ч, жёлтый 12-24ч, красный &gt;24ч.
+  Показывается только для активных (queued/failed) — accepted/cancelled
+  скрыты («—»).
+- **Auto-resolve `office_id`** — `_office_id_lookup` (sync хардкод-словарь)
+  заменён на async `_build_office_lookup` (один SELECT DISTINCT по
+  recommendations+tasks per tenant перед циклом, fallback хардкод). Каждый
+  warehouse которое расширение хоть раз вернуло в src-stocks → попадает в
+  lookup автоматически. **no_office перестал быть permanent failed** —
+  переведён в транзитную retry (queued + bump attempt_count). nm_id
+  остаётся permanent failed (recommendation удалена → nm неоткуда взять).
+
+Без миграций БД.
+
 ## 2026-05-20 — **Redistribution LK auto-connect: убрана ручная вставка токенов**
 
 `/redistribution` подключается к LK WB автоматически через Chrome-расширение.
