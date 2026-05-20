@@ -213,15 +213,17 @@ export default function Redistribution() {
       <div className="card">
         <h2 className="font-medium mb-3">Очередь и история бронирований</h2>
         <div className="text-xs text-muted mb-3 leading-relaxed">
-          Бэкенд опрашивает очередь каждые 2 мин (LEAD-022). Заявка остаётся в{" "}
-          <code>queued</code> и ретраится бесконечно пока WB не отдаст success —
-          для всех транзитных ошибок (расширение оффлайн, dst-квота=0,
-          exceeded-quota на srcOffice, 401/токены LK истекли, не резолвится
-          office_id). Permanent <code>failed</code> только если потерян{" "}
-          <code>nm_id</code> (recommendation удалена). Зависшую заявку можно
-          снять кнопкой ✕. После accepted ставится 72-часовой кулдаун на пару
-          (chrt_id × склад-приёмник). В колонке «В очереди» цвет: жёлтый
-          &gt;12ч, красный &gt;24ч.
+          Бэкенд опрашивает очередь каждые 2 мин (LEAD-022). Перед отправкой
+          проверяется и квота склада-источника (dst тоже), реальная
+          отправка кэп'ируется по <code>min(src, dst)</code>. Заявка
+          остаётся в <code>queued</code> и ретраится бесконечно пока WB не
+          отдаст success — для всех транзитных ошибок (расширение оффлайн,
+          dst-квота=0, src дневной лимит исчерпан, 401/токены LK истекли,
+          не резолвится office_id). Permanent <code>failed</code> только
+          если потерян <code>nm_id</code> (recommendation удалена).
+          Зависшую заявку можно снять кнопкой ✕. После accepted ставится
+          72-часовой кулдаун на пару (chrt_id × склад-приёмник). В колонке
+          «В очереди» цвет: жёлтый &gt;12ч, красный &gt;24ч.
         </div>
         {tasksQ.isLoading && <div className="text-muted">Загрузка…</div>}
         {tasksQ.data && tasksQ.data.items.length === 0 && (

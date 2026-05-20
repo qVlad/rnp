@@ -144,6 +144,36 @@ async function doShiftsCall(
   clearTimeout(timer);
 
   const text = await resp.text();
+  // Сначала пробуем разобрать JSON-тело — WB на 4xx тоже возвращает
+  // структурированный {error:true, errorText, additionalErrors:{placement:[…]}}.
+  // Без этого reason оказывается просто "Bad Request" и юзер не понимает
+  // что у склада-источника квота исчерпана.
+  let parsed: unknown = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    /* not JSON — обработаем ниже */
+  }
+  const isWbErrorBody =
+    parsed !== null &&
+    typeof parsed === "object" &&
+    (parsed as { error?: boolean }).error === true;
+
+  if (isWbErrorBody) {
+    const p = parsed as {
+      errorText?: string;
+      additionalErrors?: { placement?: string[] } & Record<string, unknown>;
+    };
+    const placement = p.additionalErrors?.placement;
+    const extra =
+      placement && placement.length > 0 ? ` [${placement.join(",")}]` : "";
+    return {
+      ok: false,
+      status: resp.status,
+      reason: `WB-logical error: ${p.errorText ?? "unknown"}${extra}`,
+      body: text.slice(0, 500),
+    };
+  }
   if (!resp.ok) {
     return {
       ok: false,
@@ -152,29 +182,19 @@ async function doShiftsCall(
       body: text.slice(0, 500),
     };
   }
-  try {
-    const parsed = JSON.parse(text);
-    if (parsed && typeof parsed === "object" && (parsed as { error?: boolean }).error === true) {
-      return {
-        ok: false,
-        status: resp.status,
-        reason: `WB-logical error: ${(parsed as { errorText?: string }).errorText ?? "unknown"}`,
-        body: text.slice(0, 500),
-      };
-    }
-    const data =
-      parsed && typeof parsed === "object" && "data" in (parsed as object)
-        ? (parsed as { data: unknown }).data
-        : parsed;
-    return { ok: true, status: resp.status, data };
-  } catch (e) {
+  if (parsed === null) {
     return {
       ok: false,
       status: resp.status,
-      reason: `JSON parse failed: ${e instanceof Error ? e.message : String(e)}`,
+      reason: "JSON parse failed",
       body: text.slice(0, 500),
     };
   }
+  const data =
+    typeof parsed === "object" && parsed !== null && "data" in (parsed as object)
+      ? (parsed as { data: unknown }).data
+      : parsed;
+  return { ok: true, status: resp.status, data };
 }
 
 chrome.runtime.onMessage.addListener((msg: ProxyMsg, _sender, sendResponse) => {

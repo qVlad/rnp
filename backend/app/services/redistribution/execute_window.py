@@ -5,15 +5,17 @@ WB API напрямую (server-side WB-вызовы блокируются: IP-
 in-memory у WB-фронта). Вместо этого:
 
   1. Group queued tasks по (src, dst, nmID)
-  2. Для каждой группы создаём WbLkJob(op='quota') → wait_for_job → читаем dst quota
-  3. Cap qty по quota
-  4. Создаём WbLkJob(op='create_order') → wait_for_job → читаем success
-  5. Update RedistributionTask.status + RedistributionCooldown
+  2. Для каждой группы pre-check src quota (kind=src) — отправляющий склад
+     имеет дневной лимит на исходящие. Если 0 → group skip, иначе кешируем.
+  3. Pre-check dst quota (kind=dst) — приёмник.
+  4. Cap qty по min(src_quota, dst_quota) с пропорциональным масштабом.
+  5. Создаём WbLkJob(op='create_order') → wait_for_job → читаем success.
+  6. На success: декрементируем src_quota_cache на отправленное qty, ставим
+     72h cooldown и update RedistributionTask.
 
 Если extension оффлайн (timeout):
-  - dst quota check не вернулся → group skip, tasks остаются queued
-  - create_order не вернулся → tasks помечаем 'failed_no_extension', в next
-    окне executor попробует снова
+  - quota check не вернулся → group skip, tasks остаются queued
+  - create_order не вернулся → tasks остаются queued, polling попробует снова
 
 Trigger: beat-task `publish_redistribution_windows` → event-bus
 `redistribution.window.open` → consumer enqueue execute_window task per tenant.
@@ -238,8 +240,86 @@ async def execute_window_for_tenant(
         t.attempt_count = (t.attempt_count or 0) + 1
         failed += 1
 
+    # Кеш src quota per execute_window call: один офис может фигурировать
+    # как source в нескольких группах (разные nm_id) — без кеша мы бы
+    # делали лишние extension round-trip'ы.
+    #   int >= 0  — реальная квота
+    #   -1        — extension вернул error (offline / 401 / etc.), group
+    #               остаётся queued
+    src_quota_cache: dict[int, int] = {}
+
     for (src, dst, nm_id), group_tasks in grouped.items():
-        # === 1. Quota check via extension ===
+        # === 0. Src quota pre-check ===
+        # WB отбрасывает create_order с `exceeded-quota / placement:srcOffice`
+        # если на отправляющем складе исчерпан дневной лимит. Без этой
+        # проверки мы тратим create_order round-trip только чтобы получить
+        # ту же ошибку. Квота src восстанавливается обычно к началу нового
+        # дня по МСК — task остаётся queued, polling подхватит позже.
+        if src not in src_quota_cache:
+            sq_job_id = await create_job(
+                session,
+                tenant_id=tenant_id,
+                op="quota",
+                params={"office_id": src, "kind": "src"},
+                originator=f"execute_window:{window_dt.isoformat()}",
+            )
+            await session.commit()
+            sq_res = await wait_for_job(
+                session,
+                job_id=sq_job_id,
+                tenant_id=tenant_id,
+                timeout_s=JOB_TIMEOUT_S,
+            )
+            if sq_res is None:
+                src_quota_cache[src] = -1
+            elif not sq_res["ok"]:
+                src_quota_cache[src] = -1
+                if sq_res["http_status"] == 401:
+                    from app.services.redistribution.session_store import (
+                        mark_needs_relogin,
+                    )
+
+                    await mark_needs_relogin(
+                        session, tenant_id, "401 от src quota"
+                    )
+            else:
+                src_quota_cache[src] = int(
+                    (sq_res["data"] or {}).get("quota", 0)
+                )
+
+        src_quota = src_quota_cache[src]
+        if src_quota < 0:
+            log.warning(
+                "execute_window: src=%d quota check failed/offline — skip group",
+                src,
+            )
+            for t in group_tasks:
+                t.last_attempt_at = datetime.now(timezone.utc)
+                t.last_response = (
+                    f"src quota check unavailable (extension offline?) для "
+                    f"{t.from_office_name}"
+                )
+                t.attempt_count = (t.attempt_count or 0) + 1
+                skipped_no_extension += 1
+            continue
+        if src_quota < MIN_DST_QUOTA:
+            log.info(
+                "execute_window: src=%d quota=%d — отправляющий склад закрыт, skip group",
+                src,
+                src_quota,
+            )
+            for t in group_tasks:
+                t.last_attempt_at = datetime.now(timezone.utc)
+                t.last_status_code = None
+                t.last_response = (
+                    f"src quota = {src_quota} (склад-источник "
+                    f"{t.from_office_name!r} исчерпал дневной лимит на отправку)"
+                )
+                t.attempt_count = (t.attempt_count or 0) + 1
+                skipped_quota += 1
+            continue
+
+        # === 1. Dst quota check via extension ===
         quota_job_id = await create_job(
             session,
             tenant_id=tenant_id,
@@ -302,18 +382,22 @@ async def execute_window_for_tenant(
                 skipped_quota += 1
             continue
 
-        # === 2. Cap by quota ===
+        # === 2. Cap by quota (min(src, dst)) ===
         by_chrt: dict[int, int] = defaultdict(int)
         for t in group_tasks:
             by_chrt[int(t.chrt_id)] += int(t.qty)
         total_requested = sum(by_chrt.values())
-        if total_requested > dst_quota:
+        effective_quota = min(dst_quota, src_quota)
+        if total_requested > effective_quota:
             log.info(
-                "execute_window: requested=%d > dst_quota=%d — proportional cap",
+                "execute_window: requested=%d > effective_quota=%d "
+                "(dst=%d src=%d) — proportional cap",
                 total_requested,
+                effective_quota,
                 dst_quota,
+                src_quota,
             )
-            scale = dst_quota / total_requested
+            scale = effective_quota / total_requested
             by_chrt = {c: max(1, int(q * scale)) for c, q in by_chrt.items()}
 
         items = [{"chrtID": int(c), "count": int(q)} for c, q in by_chrt.items()]
@@ -399,13 +483,21 @@ async def execute_window_for_tenant(
                     .where(RedistributionRecommendation.id.in_(accepted_rec_ids))
                     .values(status="executed")
                 )
+            # Декрементируем src_quota_cache на сумму отправленного — следующая
+            # группа с этим же src увидит реальный остаток (без этого две
+            # группы с одним src могли совокупно превысить дневной лимит).
+            shipped_qty = sum(int(it["count"]) for it in items)
+            src_quota_cache[src] = max(0, src_quota_cache[src] - shipped_qty)
             log.info(
-                "execute_window: ✓ accepted tenant=%d src=%d dst=%d nm=%d items=%d",
+                "execute_window: ✓ accepted tenant=%d src=%d dst=%d nm=%d items=%d "
+                "shipped=%d src_quota_left=%d",
                 tenant_id,
                 src,
                 dst,
                 nm_id,
                 len(items),
+                shipped_qty,
+                src_quota_cache[src],
             )
         else:
             log.warning("execute_window: unexpected response: %r", data)
