@@ -26,6 +26,7 @@ from app.api import (
     external_ad_costs,
     features_doc,
     jam,
+    managers_kpi,
     notifications,
     off_platform,
     opex,
@@ -225,3 +226,4 @@ app.include_router(abtest.router)
 app.include_router(abtest_uploads.router)
 app.include_router(extension.router)
 app.include_router(extension_lk_jobs.router)
+app.include_router(managers_kpi.router)

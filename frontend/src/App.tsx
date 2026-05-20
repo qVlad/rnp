@@ -46,6 +46,7 @@ import NewProducts from "./pages/NewProducts";
 import AbTestList from "./pages/AbTestList";
 import AbTestNew from "./pages/AbTestNew";
 import AbTestDetail from "./pages/AbTestDetail";
+import ManagersKpi from "./pages/ManagersKpi";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, needsBootstrap } = useAuth();
@@ -121,6 +122,14 @@ export default function App() {
             }
           />
           <Route path="chargebacks" element={<Chargebacks />} />
+          <Route
+            path="managers-kpi"
+            element={
+              <DirectorOrHead>
+                <ManagersKpi />
+              </DirectorOrHead>
+            }
+          />
           <Route path="redistribution" element={<Redistribution />} />
           <Route
             path="tax-report"

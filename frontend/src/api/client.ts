@@ -1149,6 +1149,34 @@ paymentOrderDelete: (payment_order_id: string) =>
       };
     }>(`/api/cash-flow?from=${from}&to=${to}`),
 
+  // ── Managers KPI (TASK-DEV-001) ──
+  managersKpi: (
+    year: number,
+    month: number,
+    mode: "preliminary" | "final" | "hybrid" = "hybrid",
+  ) =>
+    request<{
+      year: number;
+      month: number;
+      mode: string;
+      period: { from: string; to: string };
+      items: Array<{
+        user_id: number;
+        username: string;
+        full_name: string | null;
+        brands: string[];
+        no_brands: boolean;
+        revenue_net_rub: number;
+        margin_rub: number;
+        margin_pct: number;
+        drr_pct: number;
+        drr_sales_pct: number;
+        orders: number;
+        ad_cost_rub: number;
+        buyout_pct: number;
+      }>;
+    }>(`/api/managers-kpi?year=${year}&month=${month}&mode=${mode}`),
+
   // ── Plans (План-Факт) ──
   listPlans: (params: { year?: number; month?: number; scope_type?: string } = {}) => {
     const qs = new URLSearchParams();

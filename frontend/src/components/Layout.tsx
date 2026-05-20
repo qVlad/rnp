@@ -87,6 +87,7 @@ const GROUPS: Group[] = [
   {
     label: "Контроль",
     items: [
+      { to: "/managers-kpi", label: "KPI менеджеров", directorOrHead: true },
       { to: "/notifications", label: "Уведомления", directorOrHead: true },
       { to: "/checklist", label: "Чек-лист" },
     ],

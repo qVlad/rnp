@@ -320,6 +320,8 @@
 | Brand assignments | Один бренд → один manager | `pages/Brands.tsx`, `api/brands.py`, миграция 0013 | director, head |
 | Brand-scoped filter | Helper `current_brands_filter()` → `set[str] | None` | `services/auth.py:current_brands_filter` | — |
 | Tenant modules | Включение/выключение модулей per-tenant | миграция 0034, `api/tenant_modules.py` | director |
+| Manager brands banner | Баннер на каждой странице для роли manager — «Показаны данные только по брендам: X, Y» | `components/ManagerBrandsBanner.tsx`, `Layout.tsx`, `api/auth.py:/me.brands` | manager (видит только manager) |
+| Managers KPI | Сводка KPI каждого менеджера за месяц (бренды, выручка, маржа, ДРР, заказы, реклама) | `pages/ManagersKpi.tsx`, `api/managers_kpi.py` | director, head |
 
 ---
 
