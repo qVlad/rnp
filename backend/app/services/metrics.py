@@ -1069,6 +1069,7 @@ async def top_skus(
     limit: int = 5,
     brands: set[str] | None = None,
     mode: Mode = "preliminary",
+    order: str = "desc",
 ) -> list[dict[str, Any]]:
     period = (
         period_or_key if isinstance(period_or_key, Period) else get_period(period_or_key)
@@ -1145,8 +1146,9 @@ async def top_skus(
                 "margin_estimate": margin,
             }
         )
+    reverse = order != "asc"
     if by == "margin":
-        items.sort(key=lambda x: x["margin_estimate"], reverse=True)
+        items.sort(key=lambda x: x["margin_estimate"], reverse=reverse)
     else:
-        items.sort(key=lambda x: x["revenue"], reverse=True)
+        items.sort(key=lambda x: x["revenue"], reverse=reverse)
     return items[:limit]

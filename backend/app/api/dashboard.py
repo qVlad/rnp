@@ -71,15 +71,20 @@ async def get_top_skus(
     start_date: Annotated[date | None, Query()] = None,
     end_date: Annotated[date | None, Query()] = None,
     by: Literal["revenue", "margin"] = "revenue",
+    order: Literal["desc", "asc"] = "desc",
     limit: Annotated[int, Query(ge=1, le=50)] = 5,
     mode: Literal["preliminary", "final", "hybrid"] = "preliminary",
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
+    """Top SKUs. `order=asc` + `by=margin` даёт worst-margin SKUs (TASK-DEV
+    quick-win 3): топ-5 проблемных карточек, которые теряют деньги."""
     p = _resolve_period(period, start_date, end_date)
     return {
         "mode": mode,
-        "items": await top_skus(session, p, by=by, limit=limit, brands=brands, mode=mode),
+        "items": await top_skus(
+            session, p, by=by, limit=limit, brands=brands, mode=mode, order=order,
+        ),
     }
 
 

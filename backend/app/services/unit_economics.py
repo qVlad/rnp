@@ -170,6 +170,10 @@ async def build_unit_economics(
             func.coalesce(func.sum(WbReportDetail.delivery_rub), 0).label("delivery"),
             func.coalesce(func.sum(WbReportDetail.storage_fee), 0).label("storage"),
             func.coalesce(func.sum(WbReportDetail.penalty), 0).label("penalty"),
+            # WB cashback — выплачивается WB-маркетингом из своего баланса
+            # покупателю как скрытый промо-инструмент. Влияет на маржу как
+            # ещё один маркетинг-расход селлера. Quick-win из ревью c8f6609.
+            func.coalesce(func.sum(WbReportDetail.cashback_amount), 0).label("cashback"),
             func.coalesce(
                 func.sum(case((rd_is_acceptance, WbReportDetail.delivery_rub), else_=0))
                 + func.sum(case((rd_is_acceptance, WbReportDetail.deduction), else_=0)),
@@ -283,6 +287,7 @@ async def build_unit_economics(
         delivery = _f(r.delivery)
         storage = _f(r.storage)
         penalty = _f(r.penalty)
+        cashback = _f(r.cashback)
         acceptance_fee = _f(r.acceptance_fee)
         loyalty_writeoff = _f(r.loyalty_writeoff)
         acquiring_correction = _f(r.acquiring_correction)
@@ -304,6 +309,7 @@ async def build_unit_economics(
             "delivery": delivery,
             "storage": storage,
             "penalty": penalty,
+            "cashback": cashback,
             "acceptance_fee": acceptance_fee,
             "loyalty_writeoff": loyalty_writeoff,
             "acquiring_correction": acquiring_correction,
@@ -648,7 +654,11 @@ async def build_unit_economics(
         ext_per_sku = ext_ad_by_nm.get(nm, 0.0)
         ext_brand = brand_share_for(nm)
         ext_total = ext_per_sku + ext_brand
-        marketing_total = ad_cost + ext_total + other_deductions
+        # cashback из report_detail.cashback_amount per nm — WB-маркетинг
+        # выплачивает покупателю, но это скрытый промо-расход селлера.
+        # Влияет на drr / marketing_total / expenses_for_tax.
+        cashback_rd = rd_metrics_by_nm.get(nm, {}).get("cashback", 0.0)
+        marketing_total = ad_cost + ext_total + other_deductions + cashback_rd
         per_order_marketing = marketing_total / orders if orders > 0 else 0.0
 
         unit_cogs = cost_for_date(cogs_lookup, nm, midpoint)
@@ -818,6 +828,7 @@ async def build_unit_economics(
                 # Marketing
                 "ad_cost": round(ad_cost, 2),
                 "external_ad_cost": round(ext_total, 2),
+                "cashback": round(cashback_rd, 2),
                 "ad_per_order": round(per_order_marketing, 2),
                 "drr_pct": round(drr_pct, 2),
                 # COGS / margin

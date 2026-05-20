@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtNum } from "@/lib/format";
@@ -31,12 +31,17 @@ interface Cluster {
   sizes: SizeRow[];
 }
 
+const BRAND_FILTER_KEY = "supply.brand-filter.v1";
+
 export default function Supply() {
   const [velWin, setVelWin] = useState(14);
   const [target, setTarget] = useState(30);
   const [warning, setWarning] = useState(7);
   const [irpWin, setIrpWin] = useState(30);
   const [filter, setFilter] = useState<string>("");
+  const [brandFilter, setBrandFilter] = useState<string>(() => {
+    try { return localStorage.getItem(BRAND_FILTER_KEY) ?? ""; } catch { return ""; }
+  });
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   // key = `${nm_id}:${cluster_code}` — какие кластеры раскрыты по размерам.
   const [expandedClusters, setExpandedClusters] = useState<Set<string>>(new Set());
@@ -58,16 +63,63 @@ export default function Supply() {
     return m;
   }, [distQ.data]);
 
+  // Уникальные бренды для tabs — из текущей выборки (manager увидит только свои).
+  // SKU без бренда (brand=null) попадают в отдельный псевдо-таб "__no_brand__",
+  // чтобы manager не путался почему «Все» ≠ сумма брендов.
+  const NO_BRAND = "__no_brand__";
+  const brands = useMemo(() => {
+    const set = new Set<string>();
+    let hasNoBrand = false;
+    for (const it of (q.data?.items ?? []) as any[]) {
+      if (it.brand) set.add(String(it.brand));
+      else hasNoBrand = true;
+    }
+    const list = Array.from(set).sort((a, b) => a.localeCompare(b, "ru"));
+    if (hasNoBrand) list.push(NO_BRAND);
+    return list;
+  }, [q.data]);
+
+  // Persist brand-filter в localStorage. Сбрасываем если выбранный бренд
+  // пропал из выборки (например, manager потерял назначение).
+  useEffect(() => {
+    try { localStorage.setItem(BRAND_FILTER_KEY, brandFilter); } catch {}
+  }, [brandFilter]);
+  useEffect(() => {
+    if (brandFilter && brands.length > 0 && !brands.includes(brandFilter)) {
+      setBrandFilter("");
+    }
+  }, [brands, brandFilter]);
+
+  const brandMatches = (it: any, b: string) =>
+    b === NO_BRAND ? !it.brand : it.brand === b;
+
   const items = (q.data?.items ?? []).filter(
-    (it: any) => !filter || it.urgency === filter,
+    (it: any) =>
+      (!filter || it.urgency === filter) &&
+      (!brandFilter || brandMatches(it, brandFilter)),
   );
-  const summary = q.data?.summary ?? {
-    critical: 0,
-    warning: 0,
-    ok: 0,
-    no_sales: 0,
-    total_recommended_qty: 0,
-  };
+  // Если выбран бренд — пересчитываем сводку client-side из brand-only items
+  // (без учёта urgency-фильтра, чтобы карточки урагентности оставались точными).
+  const brandScopedItems = brandFilter
+    ? (q.data?.items ?? []).filter((it: any) => brandMatches(it, brandFilter))
+    : null;
+  const summary = brandScopedItems
+    ? brandScopedItems.reduce(
+        (s: any, it: any) => {
+          const u = (it.urgency || "no_sales") as keyof typeof s;
+          if (u in s) s[u] = (s[u] || 0) + 1;
+          s.total_recommended_qty += Number(it.recommended_total || 0);
+          return s;
+        },
+        { critical: 0, warning: 0, ok: 0, no_sales: 0, total_recommended_qty: 0 },
+      )
+    : q.data?.summary ?? {
+        critical: 0,
+        warning: 0,
+        ok: 0,
+        no_sales: 0,
+        total_recommended_qty: 0,
+      };
 
   const toggle = (nm: number) => {
     const next = new Set(expanded);
@@ -216,6 +268,30 @@ export default function Supply() {
           <strong>ИЛ</strong> — индекс локализации (доля продаж, отгруженных со склада того же кластера, что и покупатель). Чем выше ИЛ, тем быстрее доставка и лучше ранжирование WB. Кликни строку SKU чтобы развернуть распределение по кластерам.
         </div>
       </div>
+
+      {brands.length > 1 && (
+        <div className="flex items-center gap-2 flex-wrap text-sm">
+          <span className="text-xs text-muted">Бренд:</span>
+          <button
+            type="button"
+            className={`btn text-xs ${brandFilter === "" ? "border-accent text-accent" : ""}`}
+            onClick={() => setBrandFilter("")}
+          >
+            Все ({brands.length})
+          </button>
+          {brands.map((b) => (
+            <button
+              key={b}
+              type="button"
+              className={`btn text-xs ${brandFilter === b ? "border-accent text-accent" : ""}`}
+              onClick={() => setBrandFilter(brandFilter === b ? "" : b)}
+              title={b === NO_BRAND ? "SKU без проставленного бренда в карточке" : b}
+            >
+              {b === NO_BRAND ? "Без бренда" : b}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         {(["critical", "warning", "ok", "no_sales"] as const).map((k) => {

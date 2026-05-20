@@ -56,7 +56,7 @@ export default function Dashboard() {
   const [tsDays, setTsDays] = useState(30);
   const [showRevenue, setShowRevenue] = useState(true);
   const [showOrders, setShowOrders] = useState(true);
-  const [topBy, setTopBy] = useState<"revenue" | "margin">("revenue");
+  const [topBy, setTopBy] = useState<"revenue" | "margin" | "worst_margin">("revenue");
 
   const range =
     mode.kind === "preset"
@@ -75,7 +75,14 @@ export default function Dashboard() {
   });
   const topQ = useQuery({
     queryKey: ["top", rangeKey, topBy, dataMode],
-    queryFn: () => api.topSkus(range, topBy, 5, dataMode) as Promise<any>,
+    queryFn: () => {
+      // worst_margin = по марже + сортировка asc (худшие сверху). Quick-win 3
+      // из ревью c8f6609: «Top-5 проблемных SKU» — кандидаты на удаление /
+      // ребренд / снижение закупки.
+      const by = topBy === "worst_margin" ? "margin" : topBy;
+      const order = topBy === "worst_margin" ? "asc" : "desc";
+      return api.topSkus(range, by, 5, dataMode, order) as Promise<any>;
+    },
   });
   const alertsQ = useQuery({ queryKey: ["alerts"], queryFn: () => api.alerts() });
 
@@ -341,9 +348,11 @@ export default function Dashboard() {
         </div>
 
         <div className="card">
-          <div className="flex items-center justify-between mb-3">
-            <div className="font-medium">Топ SKU</div>
-            <div className="flex gap-1">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <div className="font-medium">
+              {topBy === "worst_margin" ? "Худшие SKU" : "Топ SKU"}
+            </div>
+            <div className="flex gap-1 flex-wrap">
               <button
                 className={`btn text-xs ${topBy === "revenue" ? "border-accent text-accent" : ""}`}
                 onClick={() => setTopBy("revenue")}
@@ -356,29 +365,54 @@ export default function Dashboard() {
               >
                 по марже
               </button>
+              <button
+                className={`btn text-xs ${topBy === "worst_margin" ? "border-accent text-accent" : ""}`}
+                onClick={() => setTopBy("worst_margin")}
+                title="Топ-5 худших по марже — кандидаты на ребренд / удаление / снижение закупки"
+              >
+                худшие
+              </button>
             </div>
           </div>
           <div className="flex flex-col gap-2">
             {topQ.data?.items?.length ? (
-              topQ.data.items.map((it: any) => (
-                <div
-                  key={it.nm_id}
-                  className="flex items-center justify-between border-b border-border pb-2 last:border-0"
-                >
-                  <div className="text-sm">
-                    <div className="font-mono text-xs text-muted">#{it.nm_id}</div>
-                    <div>{it.vendor_code || it.subject || "—"}</div>
+              topQ.data.items.map((it: any) => {
+                const isMarginView = topBy !== "revenue";
+                const isLoss = isMarginView && Number(it.margin_estimate) < 0;
+                return (
+                  <div
+                    key={it.nm_id}
+                    className="flex items-center justify-between border-b border-border pb-2 last:border-0"
+                  >
+                    <div className="text-sm">
+                      <div className="font-mono text-xs text-muted">#{it.nm_id}</div>
+                      <div>{it.vendor_code || it.subject || "—"}</div>
+                    </div>
+                    <div className="text-right text-sm">
+                      {isMarginView ? (
+                        <div className={isLoss ? "text-red-400" : "text-success"}>
+                          {fmtRub(it.margin_estimate)}
+                        </div>
+                      ) : (
+                        <div>{fmtRub(it.revenue)}</div>
+                      )}
+                      <div className="text-muted text-xs">
+                        {fmtNum(it.orders)} зак. · выр. {fmtRub(it.revenue)}
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-right text-sm">
-                    <div>{fmtRub(it.revenue)}</div>
-                    <div className="text-muted text-xs">{fmtNum(it.orders)} зак.</div>
-                  </div>
-                </div>
-              ))
+                );
+              })
             ) : (
               <div className="text-muted text-sm">Нет данных</div>
             )}
           </div>
+          {topBy === "worst_margin" && topQ.data?.items?.length ? (
+            <div className="text-xs text-muted mt-2">
+              Это SKU с самой низкой/отрицательной маржинальной прибылью.
+              Кандидаты на ребренд, снижение закупки или удаление.
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

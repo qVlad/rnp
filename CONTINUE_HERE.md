@@ -37,6 +37,74 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## 2026-05-20 (вечер) — **Cashback в marketing_total + TASK-DEV-013 фильтр по бренду + Worst-SKU на дашборде + 15 новых задач из ревью**
+
+Версии бампнуты до **0.3.0** (backend / frontend / extension) по новому
+правилу из CLAUDE.md §1 (SemVer-bump в одном коммите с фичей). Два feature-блока
+в одном коммите → minor-bump.
+
+- **Cashback quick-win (ревью c8f6609):** `wb_report_detail.cashback_amount`
+  per nm теперь идёт в `marketing_total` → drr% / margin / expenses_for_tax.
+  WB-маркетинг платит покупателю из своего баланса, но это скрытый
+  промо-расход селлера — без него `drr_pct` был занижен. Не вычитается
+  из `payout` (WB не списывает с селлера). Файл: `services/unit_economics.py`
+  (4 строки: SELECT + локальная переменная + dict + использование в loop) +
+  отдельное поле `cashback` в response.
+- **Units.tsx:** добавлен `cashback: number` в `UnitRow`, в `NUM_COLS`, в
+  accessor колонки «Реклама» и в `aggPct` для totals-row — чтобы
+  total marketing на UI совпадал с backend'ным `drr_pct`.
+- **TASK-DEV-013 фильтр по бренду в `/supply` и `/units`:**
+  - Supply.tsx: chip-tabs «Все / Бренд A / … / Без бренда». Brand-scoped
+    summary (urgency-карточки + total_recommended_qty) пересчитывается
+    client-side при выбранном бренде.
+  - Units.tsx: dropdown `<select>` рядом с поиском (компактнее tabs при
+    >2 брендах). filter учитывает brand вместе с поиском по nm/vendor.
+  - Persist в localStorage `supply.brand-filter.v1` / `units.brand-filter.v1`,
+    auto-reset если выбранный бренд пропал из выборки.
+  - Tabs/dropdown скрыты если ≤1 бренда.
+- **Worst-SKU на дашборде (quick-win 3 из ревью c8f6609):** на карточке
+  «Топ SKU» добавлен третий toggle «худшие». Backend `top_skus` теперь
+  принимает `order=desc|asc` (default `desc`), endpoint `/api/dashboard/top-skus`
+  пробрасывает параметр в API. На фронте `topBy: "revenue" | "margin" | "worst_margin"`
+  — `worst_margin` → `by=margin&order=asc`, отрицательные маржи подсвечены
+  красным, текст карточки меняется на «Худшие SKU» + подсказка «кандидаты
+  на ребренд / снижение закупки / удаление». В правой колонке теперь
+  одновременно показывается и маржа, и выручка (`выр. ₽`) — раньше выручка
+  скрывалась при переключении на маржу.
+- **15 новых задач TASK-DEV-008..022** в `agents/tasks-developer.md` после
+  ревью трёх персон (Owner / Manager / РОП) от 2026-05-20:
+  - P1: 008 Owner cockpit, 009 Δ+sparkline в /managers-kpi, 011 recon-alert,
+    013 brand-filter (закрыта в этом коммите), 018 drill-down /managers-kpi
+    → P&L, 020 серверный alerts_ack (cross-device, миграция 0049).
+  - P2: 010 DateRangePicker в by-brand, 012 weekly-changes feed, 014 supply
+    → TG-заявка, 015 sort+all-mode в plan-card, 017 read-only /plans
+    с «предложить правку», 019 колонка «менеджер» + filter, 021 supply CSV
+    с COGS₽/бренд/менеджер, 022 OR-комбинатор в unit-plan фильтрах.
+  - P3: 016 dismiss-empty-state карточки планов.
+
+**Изменённые файлы:**
+- `backend/app/services/unit_economics.py` — cashback в pipeline + response
+- `backend/app/services/metrics.py` — `order` параметр в `top_skus`
+- `backend/app/api/dashboard.py` — `order` query param в `/top-skus`
+- `frontend/src/api/client.ts` — `order` параметр в `api.topSkus`
+- `frontend/src/pages/Dashboard.tsx` — toggle «худшие» + worst-margin режим
+- `frontend/src/pages/Units.tsx` — cashback в типе/тоталах + brand dropdown
+- `frontend/src/pages/Supply.tsx` — brand chip-tabs + brand-scoped summary
+- `backend/pyproject.toml`, `frontend/package.json`, `extension/package.json`
+  — bump 0.1.0 → 0.3.0
+- `FEATURES.md` — строки в Юнит-экономике + Dashboard
+- `agents/tasks-developer.md` — TASK-DEV-008..022 + TASK-DEV-013 закрыта
+- `CONTINUE_HERE.md` (этот файл) — топовая запись
+
+**Что в следующих сессиях (выбор приоритетов P1):**
+- TASK-DEV-008 — Owner cockpit на `/` (toggle, 4 виджета)
+- TASK-DEV-009 — Δ vs прошлый месяц + sparkline в `/managers-kpi`
+- TASK-DEV-011 — recon-alert в AlertsBar при Δ>1%
+- TASK-DEV-018 — drill-down строки `/managers-kpi` → P&L с `?brands=...`
+- TASK-DEV-020 — серверный alerts_ack (миграция 0049 + cross-device sync)
+
+---
+
 ## 2026-05-20 (день) — **P&L drill-down по брендам (TASK-DEV-002)**
 
 Закрыли TASK-DEV-002 из `agents/tasks-developer.md` (P1, источник — ревью c8f6609).

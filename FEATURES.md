@@ -47,7 +47,7 @@
 | Today vs Yesterday strip | Сравнение KPI текущего дня с вчерашним | `components/TodayVsYesterdayStrip.tsx`, `api.dashboardTodayVsYesterday` | brands-filter |
 | Glossary | Единый словарь всех формул и метрик | `pages/Glossary.tsx` | all |
 | Timeseries | Графики revenue / orders / margin по дням | `Dashboard.tsx` + recharts | brands-filter |
-| Top-SKU | Топ-10 SKU по выручке / марже | `Dashboard.tsx` | brands-filter |
+| Top-SKU | Топ-5 SKU по выручке / марже / **худшие** (worst-margin, кандидаты на ребренд). `order=asc\|desc` query-param в `/api/dashboard/top-skus` | `Dashboard.tsx`, `metrics.py:top_skus(order=...)` | brands-filter |
 | Alerts bar | Шапка дашборда с активными правилами уведомлений | `components/AlertsBar.tsx` | brands-filter |
 
 ---
@@ -72,6 +72,8 @@
 | Фича | Описание | Путь в коде | Доступ |
 |---|---|---|---|
 | Units таблица | Per-SKU revenue, COGS, commission, logistics, storage, маржа, ROI | `pages/Units.tsx`, `services/unit_economics.py`, `api/units.py` | brands-filter |
+| Cashback в marketing_total | `wb_report_detail.cashback_amount` per nm включён в drr% / margin / expenses_for_tax. WB-маркетинг платит покупателю, но это скрытый промо-расход селлера (drr / маржа падают) | `services/unit_economics.py:cashback_rd` | brands-filter |
+| Фильтр по бренду в /supply, /units | Tabs/dropdown «Все / Бренд A / Без бренда» — клиентский фильтр, persist в localStorage. Manager увидит только свои бренды | `pages/Supply.tsx`, `pages/Units.tsx` (UNITS_BRAND_FILTER_KEY, BRAND_FILTER_KEY) | brands-filter |
 | ABC-анализ | ABC-классификация по выручке / марже / маржинальности | `pages/AbcAnalysis.tsx`, `services/abc_xyz.py` | brands-filter |
 | Прогноз стокаута | Velocity per-SKU + days_to_stockout | `pages/Supply.tsx`, `services/forecast.py` | brands-filter |
 | Размерная сетка | Анализ по размерам (chrt_id, tech_size) — buyout_pct capped 100% | `services/size_breakdown.py`, `api.unitSizes` | brands-filter |

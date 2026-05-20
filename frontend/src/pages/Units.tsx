@@ -72,6 +72,7 @@ interface UnitRow {
   // Marketing
   ad_cost: number;
   external_ad_cost: number;
+  cashback: number;
   ad_per_order: number;
   drr_pct: number;
   // COGS / margin
@@ -108,6 +109,7 @@ const NUM_COLS: (keyof UnitRow)[] = [
   "ppvz_return",
   "ad_cost",
   "external_ad_cost",
+  "cashback",
   "storage",
   "tax",
   "penalty",
@@ -120,6 +122,9 @@ const NUM_COLS: (keyof UnitRow)[] = [
   "vat",
 ];
 
+const UNITS_BRAND_FILTER_KEY = "units.brand-filter.v1";
+const UNITS_NO_BRAND = "__no_brand__";
+
 export default function Units() {
   const qc = useQueryClient();
   const [mode, setMode] = useState<Mode>({ kind: "preset", period: "month" });
@@ -128,6 +133,9 @@ export default function Units() {
   const [includeArchived, setIncludeArchived] = useState(false);
   const [sorting, setSorting] = useState<SortingState>([{ id: "rev_sale", desc: true }]);
   const [filter, setFilter] = useState("");
+  const [brandFilter, setBrandFilter] = useState<string>(() => {
+    try { return localStorage.getItem(UNITS_BRAND_FILTER_KEY) ?? ""; } catch { return ""; }
+  });
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 50,
@@ -286,17 +294,42 @@ export default function Units() {
       "ДРР (доля рекламных расходов) = реклама / выручка-по-orders × 100.",
   };
 
+  // Список брендов из текущей выборки (manager увидит только свои назначенные).
+  const brands = useMemo(() => {
+    if (!d) return [] as string[];
+    const set = new Set<string>();
+    let hasNoBrand = false;
+    for (const r of d.items) {
+      if (r.brand) set.add(r.brand);
+      else hasNoBrand = true;
+    }
+    const list = Array.from(set).sort((a, b) => a.localeCompare(b, "ru"));
+    if (hasNoBrand) list.push(UNITS_NO_BRAND);
+    return list;
+  }, [d]);
+
+  useEffect(() => {
+    try { localStorage.setItem(UNITS_BRAND_FILTER_KEY, brandFilter); } catch {}
+  }, [brandFilter]);
+  useEffect(() => {
+    if (brandFilter && brands.length > 0 && !brands.includes(brandFilter)) {
+      setBrandFilter("");
+    }
+  }, [brands, brandFilter]);
+
   const filtered = useMemo(() => {
     if (!d) return [];
     const s = filter.trim().toLowerCase();
-    if (!s) return d.items;
-    return d.items.filter(
-      (r) =>
-        String(r.nm_id).includes(s) ||
-        (r.vendor_code || "").toLowerCase().includes(s) ||
-        (r.subject || "").toLowerCase().includes(s),
-    );
-  }, [d, filter]);
+    const matchSearch = (r: UnitRow) =>
+      !s ||
+      String(r.nm_id).includes(s) ||
+      (r.vendor_code || "").toLowerCase().includes(s) ||
+      (r.subject || "").toLowerCase().includes(s);
+    const matchBrand = (r: UnitRow) =>
+      !brandFilter ||
+      (brandFilter === UNITS_NO_BRAND ? !r.brand : r.brand === brandFilter);
+    return d.items.filter((r) => matchSearch(r) && matchBrand(r));
+  }, [d, filter, brandFilter]);
 
   // ИТОГО — по отфильтрованным.
   const totals = useMemo(() => {
@@ -410,12 +443,47 @@ export default function Units() {
       {
         header: "Реклама",
         id: "ad_total",
-        accessorFn: (r) => (r.ad_cost || 0) + (r.external_ad_cost || 0),
+        accessorFn: (r) => (r.ad_cost || 0) + (r.external_ad_cost || 0) + (r.cashback || 0),
         cell: (c) => fmtRub(c.getValue<number>()),
       },
       { header: "Хранение", accessorKey: "storage", cell: (c) => fmtRub(c.getValue<number>()) },
       { header: "Налог", accessorKey: "tax", cell: (c) => fmtRub(c.getValue<number>()) },
       { header: "Штрафы", accessorKey: "penalty", cell: (c) => fmtRub(c.getValue<number>()) },
+      {
+        // Quick-win 1 (ревью c8f6609 → отчёт аналитика): средний штраф в день.
+        // Помогает заметить хронические штрафы — флажок >50 ₽/день обычно
+        // означает повторяющуюся проблему (брак / задержка / неверная упаковка).
+        header: "Штраф/день",
+        id: "penalty_per_day",
+        accessorFn: (r) => {
+          const days = d?.days_back || 1;
+          return (r.penalty || 0) / days;
+        },
+        cell: (c) => {
+          const v = c.getValue<number>();
+          const cls = v > 50 ? "text-warn" : "";
+          return (
+            <span
+              className={cls}
+              title="Средний штраф в день. >50 ₽/день — обычно хронический (брак/упаковка/задержка)."
+            >
+              {fmtRub(v)}
+            </span>
+          );
+        },
+      },
+      {
+        // Quick-win 2 (ревью c8f6609): WB-cashback per SKU из cashback_amount.
+        // Уже включён в общую колонку «Реклама», но отдельная колонка показывает
+        // долю — иногда cashback съедает 20% маржи на промо-периодах.
+        header: "Кэшбек WB",
+        accessorKey: "cashback",
+        cell: (c) => (
+          <span title="Cashback от WB покупателю — скрытый промо-расход. Уже учтён в общей «Реклама».">
+            {fmtRub(c.getValue<number>())}
+          </span>
+        ),
+      },
       {
         header: "Платн. приёмка",
         accessorKey: "acceptance_fee",
@@ -619,7 +687,7 @@ export default function Units() {
   // странице после сужения выборки.
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [filter, includeArchived, rangeKey]);
+  }, [filter, includeArchived, rangeKey, brandFilter]);
 
   // Лейблы колонок для меню — берутся из header definition.
   const columnMenuItems = table.getAllLeafColumns().filter((c) => c.id !== "actions" && c.id !== "photo");
@@ -635,6 +703,21 @@ export default function Units() {
             onChange={(e) => setFilter(e.target.value)}
             className="bg-surface border border-border rounded-md p-2 text-sm w-72"
           />
+          {brands.length > 1 && (
+            <select
+              value={brandFilter}
+              onChange={(e) => setBrandFilter(e.target.value)}
+              className="bg-surface border border-border rounded-md p-2 text-sm"
+              title="Фильтр по бренду"
+            >
+              <option value="">Все бренды ({brands.length})</option>
+              {brands.map((b) => (
+                <option key={b} value={b}>
+                  {b === UNITS_NO_BRAND ? "Без бренда" : b}
+                </option>
+              ))}
+            </select>
+          )}
           <label className="flex items-center gap-2 text-xs text-muted self-center">
             <input
               type="checkbox"
@@ -875,7 +958,7 @@ export default function Units() {
                       content = fmtRub(totals.ppvz_return);
                     } else if (id === "ad_total") {
                       content = fmtRub(
-                        (totals.ad_cost || 0) + (totals.external_ad_cost || 0),
+                        (totals.ad_cost || 0) + (totals.external_ad_cost || 0) + (totals.cashback || 0),
                       );
                     } else if (id === "storage") {
                       content = fmtRub(totals.storage);
@@ -913,7 +996,8 @@ export default function Units() {
                         totals.rev_sale > 0
                           ? ((totals.rev_sale - totals.commission_wb - totals.delivery
                             - totals.storage - totals.penalty - totals.cogs_total
-                            - (totals.ad_cost || 0) - (totals.external_ad_cost || 0)) /
+                            - (totals.ad_cost || 0) - (totals.external_ad_cost || 0)
+                            - (totals.cashback || 0)) /
                               totals.rev_sale) *
                             100
                           : 0;

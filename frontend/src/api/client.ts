@@ -591,12 +591,15 @@ export const api = {
     by: "revenue" | "margin",
     limit = 5,
     mode: "preliminary" | "final" | "hybrid" = "preliminary",
+    order: "desc" | "asc" = "desc",
   ) => {
     const qs =
       "period" in range
         ? `period=${range.period}`
         : `start_date=${range.start}&end_date=${range.end}`;
-    return request(`/api/dashboard/top-skus?${qs}&by=${by}&limit=${limit}&mode=${mode}`);
+    return request(
+      `/api/dashboard/top-skus?${qs}&by=${by}&order=${order}&limit=${limit}&mode=${mode}`,
+    );
   },
   alerts: () => request<{ alerts: any[] }>("/api/dashboard/alerts"),
 
