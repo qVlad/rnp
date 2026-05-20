@@ -48,11 +48,6 @@ export default function Redistribution() {
     mutationFn: (id: number) => api.redistributionDismiss(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["redistribution-recs"] }),
   });
-  const retryTaskMut = useMutation({
-    mutationFn: (id: number) => api.redistributionRetryTask(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["redistribution-tasks"] }),
-    onError: (e: any) => alert(`Ошибка: ${e.message}`),
-  });
 
   return (
     <div className="flex flex-col gap-4">
@@ -211,11 +206,12 @@ export default function Redistribution() {
         <h2 className="font-medium mb-3">Очередь и история бронирований</h2>
         <div className="text-xs text-muted mb-3 leading-relaxed">
           Бэкенд опрашивает очередь каждые 2 мин (LEAD-022). Заявка остаётся в{" "}
-          <code>queued</code> и ретраится автоматически если: расширение оффлайн,
-          dst-квота=0, WB-ошибка (включая 401 — токены LK обновятся при следующем
-          визите в seller.wb.ru). После 15 неудачных попыток (~30 мин) →
-          <code>failed</code>, кнопка «↻ Повторить» вернёт в очередь. После
-          accepted ставится 72-часовой кулдаун на пару (chrt_id × склад-приёмник).
+          <code>queued</code> и ретраится бесконечно пока WB не отдаст success —
+          для всех транзитных ошибок (расширение оффлайн, dst-квота=0,
+          exceeded-quota на srcOffice, 401/токены LK истекли). Permanent
+          ошибки (не резолвится office_id или nm_id) → <code>failed</code>{" "}
+          сразу. После accepted ставится 72-часовой кулдаун на пару (chrt_id ×
+          склад-приёмник).
         </div>
         {tasksQ.isLoading && <div className="text-muted">Загрузка…</div>}
         {tasksQ.data && tasksQ.data.items.length === 0 && (
@@ -232,7 +228,6 @@ export default function Redistribution() {
                 <th className="text-left p-2">Статус</th>
                 <th className="text-right p-2">Попыток<br/><span className="text-[10px] normal-case">посл.</span></th>
                 <th className="text-left p-2">Последний ответ</th>
-                <th className="p-2"></th>
               </tr>
             </thead>
             <tbody>
@@ -277,18 +272,6 @@ export default function Redistribution() {
                       </span>
                     ) : (
                       <span className="text-muted">—</span>
-                    )}
-                  </td>
-                  <td className="p-2 text-right">
-                    {t.status === "failed" && (
-                      <button
-                        className="btn text-xs"
-                        onClick={() => retryTaskMut.mutate(t.id)}
-                        disabled={retryTaskMut.isPending}
-                        title="Вернуть в очередь для повторной попытки"
-                      >
-                        ↻ Повторить
-                      </button>
                     )}
                   </td>
                 </tr>

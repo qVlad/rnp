@@ -363,59 +363,6 @@ async def list_tasks(
     return {"items": [_serialize_task(t) for t in rows]}
 
 
-@router.post("/tasks/{tid}/retry", dependencies=[Depends(require_director_or_head)])
-async def retry_task(
-    tid: int,
-    user: CurrentUser = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db_tenant_scoped),
-) -> dict[str, Any]:
-    """Вернуть failed task в очередь (сбрасывает attempt_count). После
-    MAX_RETRY_ATTEMPTS execute_window помечает task permanent-failed; эта
-    ручка даёт перезапустить вручную после устранения причины (расширение
-    переподключено, LK relogin, и т.п.).
-
-    Также сбрасывает связанную recommendation в 'queued' если она была
-    'failed' — иначе by-manager analytics не подхватит retry.
-    """
-    t = (
-        await session.execute(
-            select(RedistributionTask).where(RedistributionTask.id == tid)
-        )
-    ).scalar_one_or_none()
-    if t is None:
-        raise HTTPException(404, "task not found")
-    if t.status != "failed":
-        raise HTTPException(
-            400, f"only failed tasks can be retried (current: {t.status})"
-        )
-    t.status = "queued"
-    t.attempt_count = 0
-    t.last_attempt_at = None
-    t.last_status_code = None
-    t.last_response = "manual retry"
-    if t.recommendation_id:
-        from sqlalchemy import update as sql_update
-
-        await session.execute(
-            sql_update(RedistributionRecommendation)
-            .where(
-                RedistributionRecommendation.id == t.recommendation_id,
-                RedistributionRecommendation.status == "failed",
-            )
-            .values(status="queued")
-        )
-    await audit_log(
-        session,
-        "redistribution_tasks",
-        "update",
-        entity_id=str(tid),
-        after={"status": "queued", "attempt_count": 0},
-        actor=user.username,
-    )
-    await session.commit()
-    return {"id": tid, "status": "queued"}
-
-
 @router.get("/by-manager")
 async def get_by_manager(
     date_from: date | None = None,
