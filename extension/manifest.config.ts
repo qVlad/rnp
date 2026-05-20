@@ -70,21 +70,35 @@ export default defineManifest({
       // Shifts API proxy (LEAD-016): SW не может fetch напрямую к
       // seller-weekly-report (cookies третьей стороны не прикрепляются).
       // Этот content script (ISOLATED world) ловит messages от SW и
-      // делает fetch ИЗ контекста страницы seller.wildberries.ru — там
-      // cookies нативные. JWT-токены он получает через postMessage от
-      // MAIN-world interceptor'а (следующая запись).
-      matches: ["https://seller.wildberries.ru/*"],
+      // делает fetch ИЗ контекста страницы — там cookies нативные.
+      // JWT-токены получаются через postMessage от MAIN-world
+      // interceptor'а (следующая запись).
+      //
+      // Висим на обоих доменах: на seller.wildberries.ru (если юзер
+      // зашёл на главную) И на seller-weekly-report (если юзер открыл
+      // страницу перераспределения напрямую — частый случай).
+      matches: [
+        "https://seller.wildberries.ru/*",
+        "https://seller-weekly-report.wildberries.ru/*",
+      ],
       js: ["src/content/wb-shifts-content.ts"],
       run_at: "document_start",
     },
     {
       // MAIN-world interceptor (Chrome 111+): подменяет window.fetch и
-      // XMLHttpRequest на странице seller.wildberries.ru, ловит каждый
-      // запрос WB-фронта с заголовками AuthorizeV3/Wb-Seller-Lk и шлёт
-      // их через postMessage в ISOLATED world. Без MAIN мы не видим
-      // window.fetch страницы и не можем достать JWT — они in-memory
-      // в WB-фронте, нет ни в localStorage, ни в cookies.
-      matches: ["https://seller.wildberries.ru/*"],
+      // XMLHttpRequest, ловит каждый запрос WB-фронта с заголовками
+      // AuthorizeV3/Wb-Seller-Lk и шлёт их через postMessage в ISOLATED
+      // world. Без MAIN мы не видим window.fetch страницы и не можем
+      // достать JWT — они in-memory в WB-фронте, нет ни в localStorage,
+      // ни в cookies.
+      //
+      // Расширили на seller-weekly-report (отдельный домен): без этого
+      // юзер на странице перераспределения не присылал свежие токены
+      // → backend терял сессию через 5 минут и требовал перелогин.
+      matches: [
+        "https://seller.wildberries.ru/*",
+        "https://seller-weekly-report.wildberries.ru/*",
+      ],
       js: ["src/content/wb-shifts-interceptor-main.ts"],
       run_at: "document_start",
       world: "MAIN",

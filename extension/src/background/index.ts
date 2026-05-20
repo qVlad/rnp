@@ -29,7 +29,6 @@ import {
   postPositions,
   saveWbToken,
 } from "@/lib/rnp-api";
-import { generateWbToken } from "@/lib/wb-token";
 import type { BgRequest, BgResponse } from "@/lib/bg-bridge";
 import {
   createOrder as wbProxyCreateOrder,
@@ -69,14 +68,6 @@ const RNP_ORIGINS = [
   "https://rnp.sellerfriends.ru",
 ];
 
-/**
- * Минимальный интервал auto-token refresh (минут). JWT от cabinet живёт
- * обычно 30-60 мин, обновляем заранее с запасом. Реальное обновление
- * выполняется только если status.needsRefresh=true, поэтому можем
- * безопасно тикать раз в 5 минут — лишних запросов не будет.
- */
-const TOKEN_REFRESH_INTERVAL_MINUTES = 5;
-
 // ---- Install / activate hooks ----
 
 chrome.runtime.onInstalled.addListener(async (details) => {
@@ -106,16 +97,22 @@ chrome.runtime.onStartup.addListener(async () => {
 
 async function ensureAlarms(): Promise<void> {
   let settings = await getSettings();
-  // АВТО-МИГРАЦИЯ: auto-token deprecated (tokensjrpc возвращает cabinet-session,
-  // не Personal API token). Если в storage остался enableAutoToken=true с
-  // предыдущей версии — принудительно сбрасываем. Без этого SW alarm будет
-  // вечно дёргать tokensjrpc + получать 400 от backend save endpoint.
-  if (settings.enableAutoToken) {
-    console.log("[rnp-ext SW] миграция: enableAutoToken=true → false (фича deprecated)");
+  // CLEANUP: deprecated фичи (auto-token через tokensjrpc и session-sync).
+  // Сбрасываем флаги в storage чтобы старые alarms из предыдущих версий
+  // расширения перестали тригериться, и чистим сами alarms на всякий случай.
+  const legacy = settings as unknown as {
+    enableAutoToken?: boolean;
+    enableSessionSync?: boolean;
+  };
+  if (legacy.enableAutoToken === true || legacy.enableSessionSync === true) {
+    console.log("[rnp-ext SW] cleanup: enableAutoToken/enableSessionSync → false (deprecated)");
     const { saveSettings } = await import("@/lib/storage");
-    await saveSettings({ enableAutoToken: false });
-    settings = { ...settings, enableAutoToken: false };
+    await saveSettings({ enableAutoToken: false, enableSessionSync: false });
+    settings = { ...settings, enableAutoToken: false, enableSessionSync: false };
   }
+  await chrome.alarms.clear(ALARM_SESSION_SYNC);
+  await chrome.alarms.clear(ALARM_TOKEN_REFRESH);
+
   // Polling tests/winners — всегда активен (нужен для core-функций)
   chrome.alarms.create(ALARM_POLL, {
     periodInMinutes: Math.max(1, settings.pollIntervalMinutes),
@@ -129,29 +126,6 @@ async function ensureAlarms(): Promise<void> {
     periodInMinutes: 30,
     delayInMinutes: 0.5,
   });
-  // Session sync — только если юзер дал согласие в options
-  if (settings.enableSessionSync) {
-    chrome.alarms.create(ALARM_SESSION_SYNC, {
-      periodInMinutes: Math.max(15, settings.sessionRefreshIntervalMinutes),
-      delayInMinutes: 0.2,
-    });
-  } else {
-    await chrome.alarms.clear(ALARM_SESSION_SYNC);
-  }
-  // Auto-token refresh — только если юзер дал согласие. SW сам пытается
-  // дёрнуть tokensjrpc с куками из shared cookie jar (host_permissions
-  // покрывает seller-content.wildberries.ru). Если в SW-контексте куки
-  // не виден (бывает в некоторых конфигурациях Chrome), fallback —
-  // content script на seller.wildberries.ru делает то же самое при
-  // следующем визите юзера в кабинет.
-  if (settings.enableAutoToken) {
-    chrome.alarms.create(ALARM_TOKEN_REFRESH, {
-      periodInMinutes: TOKEN_REFRESH_INTERVAL_MINUTES,
-      delayInMinutes: 0.3,
-    });
-  } else {
-    await chrome.alarms.clear(ALARM_TOKEN_REFRESH);
-  }
   // LK jobs poll (LEAD-016 Phase 3): каждые ~25 сек тянем queued WB-job'ы
   // от backend РНП, выполняем через seller.wildberries.ru content script.
   // Chrome alarms minimum interval = 1 minute (для production). Чтобы
@@ -167,15 +141,12 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   try {
     if (alarm.name === ALARM_POLL) {
       await pollOnce();
-    } else if (alarm.name === ALARM_SESSION_SYNC) {
-      await syncSessionCookies();
-    } else if (alarm.name === ALARM_TOKEN_REFRESH) {
-      await maybeRefreshWbToken();
     } else if (alarm.name === ALARM_RNP_COOKIE_SYNC) {
       await refreshTokenFromRnpCookies();
     } else if (alarm.name === ALARM_LK_JOBS_POLL) {
       await pollLkJobsOnce();
     }
+    // ALARM_SESSION_SYNC и ALARM_TOKEN_REFRESH — deprecated, см. ensureAlarms.
   } catch (e) {
     console.warn(`[rnp-ext SW] alarm ${alarm.name} failed:`, e);
   }
@@ -314,117 +285,6 @@ chrome.cookies.onChanged.addListener((info) => {
     console.warn("[rnp-ext SW] cookie.onChanged auto-connect failed:", e),
   );
 });
-
-/**
- * Auto-token refresh из service worker'а.
- *
- * Логика:
- *   1. Спрашиваем backend: hasToken? needsRefresh?
- *   2. Если backend говорит «нужен refresh» (или токена нет) — пытаемся
- *      дёрнуть tokensjrpc из SW. Куки уходят автоматически если
- *      host_permissions покрывает домен.
- *   3. Если получили JWT — POST на /api/extension/wb-token/save.
- *
- * Тихо завершается без ошибок если:
- *   • расширение не настроено (нет rnpUrl/rnpToken)
- *   • enableAutoToken=false
- *   • нет сессии WB (tokensjrpc вернул 401)
- *   • backend недоступен
- *
- * Это «безопасный no-op» паттерн — пользователь не видит ошибок в браузере,
- * fallback на content script при следующем визите на seller.wildberries.ru.
- */
-async function maybeRefreshWbToken(): Promise<void> {
-  const settings = await getSettings();
-  if (!settings.enableAutoToken) return;
-  if (!settings.rnpUrl || !settings.rnpToken) return;
-
-  const status = await getWbTokenStatus();
-  if (!status) {
-    console.warn("[rnp-ext SW] auto-refresh: backend РНП недоступен (нет ответа на /status)");
-    return;
-  }
-  // ВАЖНО: НЕ выходим если source='manual'. enableAutoToken=true означает
-  // что юзер явно хочет переключиться с manual на auto при первой возможности.
-  if (status.source === "auto" && status.hasToken && !status.needsRefresh) {
-    console.log(
-      `[rnp-ext SW] auto-token свежий, expires=${status.expiresAt}, skip`,
-    );
-    return;
-  }
-
-  const result = await generateWbToken();
-  if (!result) {
-    // tokensjrpc не отдал JWT — скорее всего нет сессии WB в SW-контексте.
-    // Не страшно: content script на seller.wildberries.ru попробует
-    // при следующем визите юзера в кабинет.
-    return;
-  }
-  const ok = await saveWbToken(result.jwt, result.expiresAt);
-  if (ok) {
-    console.log(
-      `[rnp-ext SW] auto-token refreshed, expires=${result.expiresAt ? new Date(result.expiresAt).toISOString() : "unknown"}`,
-    );
-  }
-}
-
-/**
- * Фаза 2 token-less mode: читаем сессионные куки seller.wildberries.ru
- * и шлём snapshot на backend РНП.
- *
- * Тихо пропускает refresh если:
- *   • расширение не настроено (URL/токен)
- *   • юзер не давал согласие (enableSessionSync = false)
- *   • в браузере нет сессии WB (юзер не залогинен)
- *
- * Это **безопасный no-op** в любом из этих случаев — никаких ошибок в UI.
- */
-async function syncSessionCookies(): Promise<void> {
-  const settings = await getSettings();
-  if (!settings.enableSessionSync) return;
-  if (!settings.rnpUrl || !settings.rnpToken) return;
-
-  const { getSellerCabinetCookies } = await import("@/lib/wb-session");
-  const cookies = await getSellerCabinetCookies();
-  if (cookies.length === 0) {
-    console.debug("[rnp-ext SW] no WB session cookies — skipping refresh");
-    return;
-  }
-
-  const payload = {
-    cookies: cookies.map((c) => ({
-      name: c.name,
-      value: c.value,
-      domain: c.domain,
-      path: c.path,
-      secure: c.secure,
-      httpOnly: c.httpOnly,
-      sameSite: c.sameSite,
-      expirationDate: c.expirationDate,
-    })),
-  };
-
-  try {
-    const res = await fetch(
-      `${settings.rnpUrl.replace(/\/$/, "")}/api/extension/session/refresh`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${settings.rnpToken}`,
-        },
-        body: JSON.stringify(payload),
-      },
-    );
-    if (!res.ok) {
-      console.warn("[rnp-ext SW] session refresh failed:", res.status);
-      return;
-    }
-    console.log(`[rnp-ext SW] session refreshed (${cookies.length} cookies)`);
-  } catch (e) {
-    console.warn("[rnp-ext SW] session refresh request failed:", e);
-  }
-}
 
 async function pollOnce(): Promise<void> {
   // 1. Обновляем кеш активных тестов — он нужен content script'у
@@ -743,44 +603,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 // Реакция на изменения настроек — пере-создаём alarm с новым интервалом.
-// Дополнительно: если юзер выключил enableSessionSync — шлём backend
-// DELETE /api/extension/session чтобы пометить session revoked.
-chrome.storage.onChanged.addListener(async (changes, area) => {
+// При изменении настроек — пересоздаём alarms (например юзер поменял
+// pollIntervalMinutes). Legacy `enableSessionSync`/`enableAutoToken` —
+// фичи удалены (см. cleanup в ensureAlarms).
+chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "sync") return;
   if (!("rnp.settings" in changes)) return;
-
-  const oldVal = changes["rnp.settings"].oldValue as
-    | { enableSessionSync?: boolean; enableAutoToken?: boolean }
-    | undefined;
-  const newVal = changes["rnp.settings"].newValue as
-    | { enableSessionSync?: boolean; enableAutoToken?: boolean }
-    | undefined;
-
-  await ensureAlarms();
-
-  // Юзер только что включил auto-token → дёргаем refresh сразу, не ждём alarm.
-  if (oldVal?.enableAutoToken !== true && newVal?.enableAutoToken === true) {
-    void maybeRefreshWbToken();
-  }
-
-  // Юзер выключил session sync → отзываем сессию на backend.
-  if (oldVal?.enableSessionSync === true && newVal?.enableSessionSync === false) {
-    const settings = await getSettings();
-    if (settings.rnpUrl && settings.rnpToken) {
-      try {
-        await fetch(
-          `${settings.rnpUrl.replace(/\/$/, "")}/api/extension/session`,
-          {
-            method: "DELETE",
-            headers: { Authorization: `Bearer ${settings.rnpToken}` },
-          },
-        );
-        console.log("[rnp-ext SW] session revoked on backend");
-      } catch (e) {
-        console.warn("[rnp-ext SW] session revoke failed:", e);
-      }
-    }
-  }
+  void ensureAlarms().catch((e) =>
+    console.warn("[rnp-ext SW] ensureAlarms failed:", e),
+  );
 });
 
 console.log("[rnp-ext SW] loaded");

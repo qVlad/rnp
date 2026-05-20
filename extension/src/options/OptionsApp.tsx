@@ -9,15 +9,21 @@ export function OptionsApp() {
 
   useEffect(() => {
     getSettings().then(async (s) => {
-      // АВТО-МИГРАЦИЯ: auto-token (BETA) сейчас deprecated — tokensjrpc отдаёт
-      // cabinet-session token, не Personal API token. Если у юзера в
-      // chrome.storage остался enableAutoToken=true с предыдущей версии —
-      // принудительно сбрасываем в false. Иначе SW alarm спам'ит /save endpoint
-      // каждые 5 мин (backend сейчас отвергает с 400, но в логах остаётся мусор).
-      if (s.enableAutoToken) {
-        console.log("[rnp-ext options] миграция: enableAutoToken=true → false (фича deprecated)");
-        await saveSettings({ enableAutoToken: false });
-        s = { ...s, enableAutoToken: false };
+      // Legacy auto-migration: фичи enableAutoToken и enableSessionSync
+      // удалены из UI как deprecated (tokensjrpc отдавал cabinet-session, не
+      // Personal API token; session-sync backend endpoints никогда не были
+      // реализованы). Принудительный reset в storage чтобы SW alarms,
+      // повешенные предыдущими версиями, перестали зря дёргаться.
+      const needsReset =
+        (s as Record<string, unknown>).enableAutoToken === true ||
+        (s as Record<string, unknown>).enableSessionSync === true;
+      if (needsReset) {
+        console.log("[rnp-ext options] cleanup: enableAutoToken/enableSessionSync → false (deprecated)");
+        await saveSettings({
+          enableAutoToken: false,
+          enableSessionSync: false,
+        });
+        s = { ...s, enableAutoToken: false, enableSessionSync: false };
       }
       setSettings(s);
       setLoaded(true);
@@ -151,95 +157,6 @@ export function OptionsApp() {
           активных тестах. Чужие карточки не отслеживаются. Никакие данные не
           отправляются никуда, кроме вашего собственного РНП-инстанса.
         </p>
-      </div>
-
-      <div className="card" style={{ opacity: 0.7 }}>
-        <h2>🔑 Auto-token (НЕДОСТУПНО)</h2>
-        <p className="desc" style={{ color: "#c2410c" }}>
-          <strong>⚠ Эта функция временно не работает.</strong> Проверка в
-          проде показала: WB cabinet endpoint <code>tokensjrpc</code> возвращает
-          opaque <em>cabinet-session token</em>, а не Personal API token
-          (то что лежит в кабинете → «Доступ к API» → JWT с 3 сегментами).
-          Cabinet-token годится только для seller-content.wildberries.ru,
-          а основные WB API (api-content / advert-api / analytics) его
-          отвергают с «<code>token is malformed: invalid number of segments</code>».
-        </p>
-        <p className="desc">
-          На бэкенде РНП включена защита: даже если включить чекбокс ниже,
-          сервер откажется записать non-JWT поверх вашего рабочего Personal
-          API token. Это для совместимости с уже настроенными аккаунтами.
-        </p>
-        <div className="checkbox-row">
-          <input
-            id="enableAutoToken"
-            type="checkbox"
-            checked={settings.enableAutoToken}
-            onChange={(e) => update("enableAutoToken", e.target.checked)}
-            disabled
-          />
-          <label htmlFor="enableAutoToken" style={{ color: "#9ca3af" }}>
-            (отключено) Auto-token через tokensjrpc
-          </label>
-        </div>
-        <p className="hint">
-          Personal API token нужно создать вручную в личном кабинете WB →
-          Профиль → Настройки → Доступ к API. Скопировать в форму
-          <strong> «API-токен Wildberries» </strong> на странице РНП
-          <strong> /settings</strong>.
-        </p>
-      </div>
-
-      <div className="card">
-        <h2>🍪 Token-less mode (BETA)</h2>
-        <p className="desc">
-          Альтернатива Personal API token: расширение отправляет на ваш РНП
-          сессионные куки seller.wildberries.ru, и backend использует их
-          вместо Bearer-токена. Не нужно ротировать Personal token раз в 180
-          дней. <strong>Требует явного согласия — по умолчанию выключено.</strong>
-        </p>
-        <div className="checkbox-row">
-          <input
-            id="enableSess"
-            type="checkbox"
-            checked={settings.enableSessionSync}
-            onChange={(e) => update("enableSessionSync", e.target.checked)}
-          />
-          <label htmlFor="enableSess">
-            Разрешить отправку сессионных кук seller.wildberries.ru на мой РНП
-          </label>
-        </div>
-        <p className="hint">
-          Куки шифруются (AES-256-GCM) и хранятся только в БД вашего собственного
-          РНП-инстанса. В логи не пишутся. При выключении этой опции — расширение
-          вызывает DELETE /api/extension/session и backend помечает запись revoked.
-          После включения нужно зайти на seller.wildberries.ru в этом же браузере
-          один раз, чтобы расширение увидело куки.
-        </p>
-
-        {settings.enableSessionSync && (
-          <>
-            <label htmlFor="sessRefresh">Частота обновления (минут)</label>
-            <input
-              id="sessRefresh"
-              type="number"
-              min={15}
-              max={1440}
-              value={settings.sessionRefreshIntervalMinutes}
-              onChange={(e) =>
-                update(
-                  "sessionRefreshIntervalMinutes",
-                  Math.max(15, Number(e.target.value) || 60),
-                )
-              }
-            />
-            <p className="hint">
-              Куки seller-кабинета обычно живут несколько дней. Обновлять чаще
-              60 минут не имеет смысла — это просто перезаписывает те же куки.
-              Если активной сессии нет (юзер не заходил в кабинет давно) —
-              расширение тихо пропускает refresh.
-            </p>
-          </>
-        )}
       </div>
 
       <div className="warn">
