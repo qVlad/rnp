@@ -452,7 +452,8 @@ async def collect_alerts(
             ),
         })
 
-    # 6) Reconciliation drift — TASK-DEV-011.
+    # 6) Reconciliation drift — TASK-DEV-023 (изначально 011, перенум. из-за
+    #    конфликта с custom-метриками в коммите 49e8c16).
     # WB cabinet ↔ наша P&L по выручке должны сходиться 1:1. Если на одной из
     # последних 4 закрытых недель |Δ revenue_gross %| > 1% — это значит либо
     # WB не дослал часть строк, либо в нашей агрегации ошибка. Owner иначе

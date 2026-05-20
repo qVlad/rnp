@@ -75,9 +75,15 @@ docker compose exec -T postgres psql -U app -d rnp -c \
 
 ---
 
-## 2026-05-20 — **TASK-DEV-011: recon-drift алерт в AlertsBar**
+## 2026-05-20 — **TASK-DEV-023 (перенум. с 011): recon-drift алерт в AlertsBar**
 
 Версии **0.6.1 → 0.7.0** (feat → minor).
+
+> **Перенумерована** из TASK-DEV-011 в TASK-DEV-023: параллельная сессия в
+> коммите `49e8c16 feat(sprint+1)` тоже использовала номер 011 (для custom-
+> метрик через формулы). Чтобы не было дубля в истории — номер 011 остаётся
+> за custom-метриками, recon-drift сюда. Код в проде не менялся, только
+> переименована запись в `agents/tasks-developer.md` / `FEATURES.md` / `ROADMAP.md`.
 
 Owner раньше узнавал о расхождении WB-кабинет ↔ наша P&L только зайдя в
 `/pnl-reconciliation` руками. Теперь — auto-warning в AlertsBar на дашборде.
