@@ -51,27 +51,32 @@ Workflow коротко (детали — [`agents/RULES.md`](agents/RULES.md) �
 
 ---
 
-## ⚠️ ОБЯЗАТЕЛЬНОЕ ПРАВИЛО: deploy lock перед `./scripts/remote.sh deploy`
+## ⚠️ ОБЯЗАТЕЛЬНОЕ ПРАВИЛО: release-lock через git-branch + bump.sh
 
-**Перед любым деплоем на прод — проверь [`DEPLOY_LOCK.md`](DEPLOY_LOCK.md) и
-поставь замок.** После завершения — сними замок. Детали —
+**Замок mutex'а лежит в git-ветке `release-lock`** (атомарный push, TTL 30мин).
+Файл `DEPLOY_LOCK.md` — теперь UI-индикатор/cheatsheet, не mutex. Детали —
 [`agents/RULES.md`](agents/RULES.md) § Правило 2.6.
 
 Кратко:
 
-1. Открыть `DEPLOY_LOCK.md` ДО запуска `./scripts/remote.sh deploy`.
-2. Если `🟢 Свободно` → заменить блок «Статус» на `🔴 Занято` (кто / время MSK /
-   что катит / версия / длительность), коммит `chore(deploy): lock — vX.Y.Z`,
-   push. Только потом — деплой.
-3. Если `🔴 Занято` → НЕ деплоить молча. Спросить пользователя:
-   «`DEPLOY_LOCK.md` занят (кто=X, с=Y) — реально нужно перебить?».
-   Только после явного «да» — обновить замок и продолжать.
-4. После деплоя — вернуть `🟢 Свободно`, опционально дописать строку в журнал
-   внизу файла, коммит `chore(deploy): unlock — vX.Y.Z OK`, push.
+1. **Deploy сам захватывает замок.** `./scripts/remote.sh deploy` в начале
+   делает `lock.sh acquire` атомарным push'ом в ветку `release-lock`, в
+   конце снимает через `trap EXIT`. Если замок занят (свежий) — деплой
+   abort'ится с указанием кто/чем/как давно держит.
+2. **Bump версии — через `./scripts/bump.sh patch|minor|major|X.Y.Z`.**
+   Не редактировать `pyproject.toml` / `package.json` руками — скрипт
+   синхронно обновляет все 4 файла (`/VERSION` + backend + frontend +
+   extension) с sanity-check.
+3. **Stale-lock (>30мин):** `./scripts/lock.sh break-stale` снимает.
+   Перебивает только пользователь/оператор явной командой — не молча.
+4. **Pre-deploy import check:** перед `docker compose up` стартует
+   `python -c 'from app.main import app'` в свежем образе. Если упало
+   (NameError/ImportError) — деплой aborts, текущие контейнеры живут.
+5. **Bypass на крайний случай:**
+   - `NO_LOCK=1 ./scripts/remote.sh deploy` — пропустить замок
+   - `SKIP_IMPORT_CHECK=1 ./scripts/remote.sh deploy` — пропустить sanity
 
-Замок защищает только этап выкатки на прод (pre-deploy `pg_dump` + rsync +
-docker build + warm shutdown Celery до 30 мин). Коммитить и пушить можно
-когда угодно — деплоить параллельно нельзя.
+Замок защищает выкатку на прод; пушить в `main` можно когда угодно.
 
 ---
 
@@ -83,10 +88,11 @@ docker build + warm shutdown Celery до 30 мин). Коммитить и пу�
 > ⚠️ **Шаги 2 и 3 (bump + commit/push/deploy) выполняет ТОЛЬКО роль
 > Release Manager** (см. [`agents/release-manager.md`](agents/release-manager.md)
 > и [`agents/RULES.md`](agents/RULES.md) § Правило 2.7). Single-instance —
-> через `DEPLOY_LOCK.md`. Developer/Designer/ArtDir/QA/Lead/Strategist/Analyst
-> сами **НЕ бампают версии и НЕ запускают `./scripts/remote.sh deploy`**.
-> В однопользовательской сессии Claude'а это «смена шляпы» — закончил
-> Developer'ом, дальше та же сессия действует как Release Manager.
+> через git-branch `release-lock` (см. `scripts/lock.sh`).
+> Developer/Designer/ArtDir/QA/Lead/Strategist/Analyst сами **НЕ бампают
+> версии и НЕ запускают `./scripts/remote.sh deploy`**. В однопользовательской
+> сессии Claude'а это «смена шляпы» — закончил Developer'ом, дальше та же
+> сессия действует как Release Manager.
 
 ### 1. Обновить документацию
 
@@ -101,24 +107,24 @@ docker build + warm shutdown Celery до 30 мин). Коммитить и пу�
 6. **`CONTINUE_HERE.md`** — топовая запись в начале файла «Что сделано в текущей
    сессии» (короткий чек-лист новых миграций / эндпоинтов / страниц).
 
-### 2. Бампнуть версию сервиса (SemVer)
+### 2. Бампнуть версию сервиса (SemVer) — через `scripts/bump.sh`
 
-Бамп **в одном коммите с фичей**, до push'а:
+**Не редактируй version поля руками.** `/VERSION` в корне = source of truth,
+`./scripts/bump.sh` синхронно обновляет все 4 файла (`/VERSION` +
+`backend/pyproject.toml` + `frontend/package.json` + `extension/package.json`)
++ sanity-check. Бамп **в одном коммите с фичей**, до push'а:
 
-- `feat(...)` / новая функциональность → **minor**: `0.1.0 → 0.2.0`
-- `fix(...)` / `chore(...)` / `docs(...)` → **patch**: `0.1.0 → 0.1.1`
-- Breaking change (несовместимое API / миграция без back-compat) → **major**: `0.1.0 → 1.0.0`
+```bash
+./scripts/bump.sh patch    # 0.10.0 → 0.10.1   (fix/chore/docs)
+./scripts/bump.sh minor    # 0.10.0 → 0.11.0   (feat — новая функциональность)
+./scripts/bump.sh major    # 0.10.0 → 1.0.0    (breaking — incompat API/миграция без back-compat)
+./scripts/bump.sh 0.12.3   # явная версия (downgrade требует BUMP_ALLOW_DOWNGRADE=1)
+```
 
-Бампать одновременно:
-- `backend/pyproject.toml` — `version = "X.Y.Z"`
-- `frontend/package.json` — `"version": "X.Y.Z"`
-- `extension/package.json` — `"version": "X.Y.Z"` (бампать всегда вместе с остальными,
-  даже если фича не затронула extension — держим версии в синхроне)
-
-Все три файла должны быть на **одной и той же версии** после бампа.
 `/api/version` (endpoint, читает `cfg.app_version` из `backend/app/core/config.py`)
-показывает версию рантайма — обновлять не нужно, она пробрасывается через env
-при деплое или остаётся `"dev"` локально.
+показывает версию рантайма — она пробрасывается через env при деплое
+(commit hash + build time) или остаётся `"dev"` локально. Не путать с
+`/VERSION` (SemVer, что катим).
 
 ### 3. Закоммитить, запушить, выкатить
 
@@ -542,17 +548,18 @@ fallback на `Authorization: Bearer <jwt>` если cookie не валидна.
   жди или переспроси пользователя (правила 2.6 / 2.7).
   Цикл:
   1. Обновить документацию (см. правило выше, раздел 1). — любая роль
-  2. **[Release Manager]** Поставить замок в `DEPLOY_LOCK.md` (🟢 → 🔴).
-  3. **[Release Manager]** Бампнуть версию в `backend/pyproject.toml` + `frontend/package.json` +
-     `extension/package.json` (SemVer: feat → minor, fix/chore/docs → patch,
-     breaking → major). Все три файла на одну и ту же версию.
-  4. **[Release Manager]** `git add` затронутые файлы + 3 файла с версиями (не `git add -A` — может
-     попасть .env/секреты).
-  5. **[Release Manager]** `git commit -m "feat|fix|docs|chore(<scope>): <что сделано> (vX.Y.Z)"` (conventional-commits).
-  6. **[Release Manager]** `git push` в `qVlad/rnp` main.
-  7. **[Release Manager]** `./scripts/remote.sh deploy` (FORCE=1 если нет активных celery-тасков).
-     Pre-deploy `pg_dump` делается автоматически.
-  8. **[Release Manager]** Снять замок в `DEPLOY_LOCK.md` (🔴 → 🟢) + опционально строка в журнал.
+  2. **[Release Manager]** `./scripts/bump.sh patch|minor|major` — атомарно
+     бампает `/VERSION` + 3 файла версий (backend/frontend/extension).
+     SemVer: feat → minor, fix/chore/docs → patch, breaking → major.
+  3. **[Release Manager]** `git add` затронутые файлы + 4 файла версий
+     (`/VERSION`, `backend/pyproject.toml`, `frontend/package.json`,
+     `extension/package.json`). Не `git add -A` — может попасть .env/секреты.
+  4. **[Release Manager]** `git commit -m "feat|fix|docs|chore(<scope>): <что сделано> (vX.Y.Z)"`.
+  5. **[Release Manager]** `git push` в `qVlad/rnp` main.
+  6. **[Release Manager]** `./scripts/remote.sh deploy` (FORCE=1 если нет
+     активных celery-тасков). Скрипт **сам** захватывает `release-lock`
+     (git-ветка) в начале, делает pre-deploy `pg_dump` + import-check
+     + rsync + build + up, в конце отпускает замок через `trap EXIT`.
   Исключения (НЕ коммитим / НЕ бампаем): когда юзер сказал «не коммить», когда
   работа явно WIP/черновик, когда меняем `.env` или секреты. Чистый рефакторинг
   без user-facing изменений — patch-бамп опционален, на усмотрение.

@@ -102,7 +102,31 @@ cmd_deploy() {
     exit 1
   fi
 
-  # 0. Если на сервере нет .env — накатываем шаблон и просим заполнить.
+  # 0. Git-branch lock — атомарный mutex от параллельных Claude-сессий.
+  # Подробности про дизайн — см. scripts/lock.sh. NO_LOCK=1 для emergency
+  # hotfix'ов (когда замок stale но break-stale не сделать).
+  local lock_hash=""
+  if [ "${NO_LOCK:-0}" = "1" ]; then
+    echo "→ NO_LOCK=1: пропускаю acquire замка"
+  else
+    local lock_reason
+    lock_reason="$(git rev-parse --short HEAD 2>/dev/null || echo deploy) by $(whoami)@$(hostname -s)"
+    echo "→ Захватываю release-lock (TTL 30мин)…"
+    if ! lock_hash="$(./scripts/lock.sh acquire "remote.sh" "${lock_reason}" 2>/dev/null)"; then
+      echo "❌ Не удалось захватить replace-lock. Подробности:" >&2
+      ./scripts/lock.sh status >&2 || true
+      echo "" >&2
+      echo "  Если замок stale (старше 30мин): ./scripts/lock.sh break-stale" >&2
+      echo "  Аварийный bypass: NO_LOCK=1 ./scripts/remote.sh deploy" >&2
+      exit 1
+    fi
+    echo "  ✓ acquired ${lock_hash:0:7}"
+    # Гарантированно отпускаем замок при выходе из cmd_deploy (любым путём).
+    # shellcheck disable=SC2064 — нужно расширить $lock_hash сейчас, не при trap.
+    trap "echo '→ Освобождаю release-lock…'; ./scripts/lock.sh release '${lock_hash}' || true" EXIT
+  fi
+
+  # 0.5. Если на сервере нет .env — накатываем шаблон и просим заполнить.
   if ! ssh_cmd "test -f ${REMOTE_DIR}/.env" 2>/dev/null; then
     echo "→ .env на сервере не найден. Создаю из шаблона."
     rsync -avz .env.production.example "${SERVER}:${REMOTE_DIR}/.env"
@@ -222,6 +246,34 @@ cmd_deploy() {
     --exclude '.DS_Store' \
     --exclude '*.pyc' \
     ./ "${SERVER}:${REMOTE_DIR}/"
+
+  # 2.5. PRE-DEPLOY IMPORT CHECK.
+  # Цель: поймать NameError / ImportError / SyntaxError в backend до того
+  # как мы убъём текущие контейнеры. Раньше параллельные сессии пушили
+  # `app.include_router(metric_templates.router)` без import — прод ложился
+  # на старте лесом и юзеры видели 502 на /api/version. Теперь:
+  #   1. собираем новый образ backend (`docker compose build backend`)
+  #   2. одноразово стартуем `python -c "from app.main import app"` в нём
+  #      БЕЗ зависимостей (--no-deps: postgres/redis не нужны для импорта)
+  #   3. если импорт упал — abort до docker compose up, текущие контейнеры
+  #      остаются жить на старой версии. Лок снимется через trap.
+  # SKIP_IMPORT_CHECK=1 — для emergency hotfix'ов где надо «надо сейчас».
+  if [ "${SKIP_IMPORT_CHECK:-0}" != "1" ]; then
+    echo "→ Pre-deploy import check: собираю backend образ…"
+    if ! ssh_cmd "cd ${REMOTE_DIR} && docker compose build backend 2>&1 | tail -3"; then
+      echo "❌ docker compose build backend упал. Деплой отменён." >&2
+      exit 1
+    fi
+    echo "→ Pre-deploy import check: from app.main import app…"
+    if ! ssh_cmd "cd ${REMOTE_DIR} && docker compose run --rm --no-deps -e DATABASE_URL=postgresql+asyncpg://noop:noop@127.0.0.1/noop -e JWT_SECRET_KEY=ci-noop -e SECRETS_ENCRYPTION_KEY= backend python -c 'from app.main import app; print(\"import OK\")'" 2>&1 | tail -5; then
+      echo "❌ Import check FAILED. Не катим — текущий прод остаётся живым." >&2
+      echo "  Проверь: ssh ${SERVER} 'cd ${REMOTE_DIR} && docker compose run --rm backend python -c \"from app.main import app\"'" >&2
+      exit 1
+    fi
+    echo "  ✓ Импорт прошёл успешно."
+  else
+    echo "→ SKIP_IMPORT_CHECK=1: пропускаю sanity check"
+  fi
 
   # 3. up -d --build (миграции прокатятся внутри backend).
   # FAST=1 → не ждём warm shutdown воркеров (stop_grace_period=1800s),
