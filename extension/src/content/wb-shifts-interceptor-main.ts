@@ -17,6 +17,8 @@
 
 (() => {
   const TAG = "[rnp-ext MAIN]";
+  // Видимо в page-console (F12 на странице WB), не в SW-console.
+  console.log(`${TAG} interceptor loaded on ${location.href}`);
 
   /** Извлечь все headers из fetch init или Request. Ключи в lowercase. */
   function extractHeaders(
@@ -46,15 +48,15 @@
     return out;
   }
 
-  function isWbApiUrl(u: string): boolean {
-    return (
-      u.includes("seller-weekly-report.wildberries.ru") ||
-      u.includes("seller.wildberries.ru/ns/")
-    );
-  }
-
   function maybePost(url: string, headers: Record<string, string>): void {
-    if (!isWbApiUrl(url)) return;
+    // BUG-DEV-006 follow-up: убран URL-фильтр (раньше ловил только
+    // seller-weekly-report.wildberries.ru + seller.wildberries.ru/ns/).
+    // На странице /supplies-management/all-supplies WB-фронт шлёт fetch
+    // на другие subdomain'ы (seller-supplies.wildberries.ru и т.д.) с
+    // теми же AuthorizeV3/Wb-Seller-Lk headers — это глобальные cabinet-
+    // токены. Узкий URL-фильтр отбрасывал их, interceptCount был 0.
+    // Достаточно проверки headers: они идут только в WB-fetch'ах
+    // (на чужие хосты браузер не отправит cabinet headers).
     if (!headers["authorizev3"] && !headers["wb-seller-lk"]) return;
     window.postMessage({ __rnp: "wb-headers", url, headers }, "*");
   }
