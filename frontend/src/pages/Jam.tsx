@@ -140,19 +140,69 @@ export default function Jam() {
           <h2 className="font-medium mb-3">
             Подключение WB Jam (синхронизация по API)
           </h2>
+
+          {/* TASK-DEV-008: краткая инструкция как найти endpoint самостоятельно.
+              Все 3 наших дефолтных кандидата отдают 404 (WB не публикует path),
+              но юзер сам может найти его за 30 секунд в DevTools. */}
+          <details className="text-xs text-muted mb-3">
+            <summary className="cursor-pointer text-accent hover:underline">
+              Как найти точный URL endpoint (если дефолтные кандидаты 404)
+            </summary>
+            <ol className="list-decimal list-inside space-y-1 mt-2 leading-relaxed">
+              <li>
+                Открой в браузере{" "}
+                <a
+                  href="https://seller.wildberries.ru"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-accent underline"
+                >
+                  seller.wildberries.ru
+                </a>{" "}
+                и залогинься.
+              </li>
+              <li>
+                Открой <strong>F12</strong> → вкладка <strong>Network</strong>{" "}
+                → фильтр <code>search-report</code>.
+              </li>
+              <li>
+                Перейди в раздел{" "}
+                <em>«Аналитика → Сравнение карточек»</em> и выбери любой
+                свой SKU.
+              </li>
+              <li>
+                В Network появится один или несколько запросов к{" "}
+                <code>seller-analytics-api.wildberries.ru</code> — клик по
+                первому 200-ответу.
+              </li>
+              <li>
+                Скопируй <strong>Request URL</strong>, удали схему/хост, оставь
+                только path и любые query-параметры (например{" "}
+                <code>/api/v2/search-report/products?nmId=...</code>).
+              </li>
+              <li>
+                Вставь в поле ниже → «Сохранить URL» → «Синхронизировать».
+              </li>
+            </ol>
+            <div className="mt-2 text-warn">
+              ⚠ Этот endpoint WB не публикует официально. Может поменяться
+              без предупреждения — если перестанет работать, повтори поиск.
+            </div>
+          </details>
+
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 mb-3">
             <Field label="WB Jam URL (опционально, оставьте пусто для авто)">
               <input
                 className="bg-surface border border-border rounded-md p-1.5 text-sm text-white w-full font-mono"
                 value={urlInput}
                 onChange={(e) => setUrlInput(e.target.value)}
-                placeholder="/api/v2/search-report/products"
+                placeholder="/api/v2/search-report/products?nmId=..."
               />
               <div className="text-[11px] text-muted mt-1 leading-snug">
                 Оставьте пустым — система попробует дефолтные кандидаты
-                (`/api/v2/search-report/products` и др.). Если знаете точный
-                путь — впишите. Хост подставится автоматически
-                (seller-analytics-api).
+                (<code>/api/v2/search-report/products</code> и др.). Если
+                знаете точный путь — впишите. Хост подставится автоматически
+                (<code>seller-analytics-api.wildberries.ru</code>).
               </div>
             </Field>
             <div className="flex items-end gap-2">

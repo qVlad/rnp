@@ -1,8 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { fmtRub, fmtLocalDt, fmtLocalTime } from "@/lib/format";
+import LkDisclaimerModal, {
+  hasAgreedDisclaimer,
+} from "@/components/LkDisclaimerModal";
 
 export default function Redistribution() {
   const qc = useQueryClient();
@@ -10,11 +13,33 @@ export default function Redistribution() {
   const seesAllBrands = user?.role === "director" || user?.role === "head_of_sales";
   const [recsTab, setRecsTab] = useState<"pending" | "queued" | "executed">("pending");
 
+  // TASK-DEV-009: модалка с согласием до первого подключения LK WB через
+  // extension proxy. Показывается если юзер ещё не согласился И ещё не
+  // подключён (после подключения смысла спрашивать нет — он уже принял).
+  const [disclaimerOpen, setDisclaimerOpen] = useState(false);
+  const [disclaimerAgreed, setDisclaimerAgreed] = useState(() =>
+    hasAgreedDisclaimer(),
+  );
+
   const statusQ = useQuery({
     queryKey: ["redistribution-status"],
     queryFn: () => api.redistributionStatus(),
     refetchInterval: 30_000,
   });
+
+  // Открываем disclaimer modal автоматически при первом визите когда LK
+  // ещё не подключен и согласие не дано. Если юзер уже соглашался ранее
+  // (на другом устройстве) — модалка не появится повторно тут, но LK
+  // тоже не подключится автоматически без extension.
+  useEffect(() => {
+    if (
+      !disclaimerAgreed &&
+      statusQ.data &&
+      statusQ.data.lk_connected === false
+    ) {
+      setDisclaimerOpen(true);
+    }
+  }, [disclaimerAgreed, statusQ.data]);
   const recsQ = useQuery({
     queryKey: ["redistribution-recs", recsTab],
     queryFn: () => api.redistributionRecs(recsTab),
@@ -59,6 +84,32 @@ export default function Redistribution() {
 
   return (
     <div className="flex flex-col gap-4">
+      <LkDisclaimerModal
+        open={disclaimerOpen}
+        onAgree={() => {
+          setDisclaimerAgreed(true);
+          setDisclaimerOpen(false);
+        }}
+        onCancel={() => setDisclaimerOpen(false)}
+      />
+
+      {!disclaimerAgreed && !statusQ.data?.lk_connected && (
+        <div className="card border-warning/30 bg-warning/10 text-sm">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <span>
+              Перед подключением LK WB нужно принять условия согласия.
+            </span>
+            <button
+              type="button"
+              className="btn-primary text-xs"
+              onClick={() => setDisclaimerOpen(true)}
+            >
+              Открыть согласие
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-baseline justify-between flex-wrap gap-3">
         <h1 className="text-xl font-semibold">
           Перераспределение остатков WB

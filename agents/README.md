@@ -30,13 +30,14 @@
 | **Art Director** | [`art-director.md`](art-director.md) | [`tasks-art.md`](tasks-art.md) | — | Бренд, design tokens, иконки, визуальная согласованность |
 | **QA** | [`qa.md`](qa.md) | [`tasks-qa.md`](tasks-qa.md) | (заводит в bugs-dev/des) | Smoke на проде, сверка цифр, RBAC, регресс. **Промежуточный слой между Persona и продуктовой командой** |
 
-### Класс 2 — Стратег (думает про рынок)
+### Класс 2 — Стратег и Аналитик (думают про рынок и продукт)
 
 | Роль | Файл | Задачи | Output |
 |---|---|---|---|
 | **Business Strategist** | [`strategist.md`](strategist.md) | [`tasks-strategist.md`](tasks-strategist.md) | Документы в [`references/market/`](references/market/) |
+| **Product / Data Analyst** | [`analyst.md`](analyst.md) | [`tasks-analyst.md`](tasks-analyst.md) | [`references/feedback-reviews/`](references/feedback-reviews/) + [`references/hypotheses/`](references/hypotheses/) |
 
-Стратег НЕ делает разработку. Output — стратегические документы (competitive landscape, GTM, pricing) → обсуждаются с собственником → принятые решения уходят в `tasks-lead.md`.
+Стратег смотрит **наружу** (рынок, конкуренты, GTM, ICP, pricing). Аналитик смотрит **внутрь** (как используется продукт, цифры на проде, разбор feedback'а от QA и персон в гипотезы). Оба НЕ делают разработку — их output идёт через Lead'а в `tasks-lead.md` / `tasks-developer.md` / `tasks-designer.md`.
 
 ### Класс 3 — Юзер-персоны (валидируют продукт)
 
@@ -62,12 +63,12 @@
               business   │                 │ technical
               level      │                 │ level
                          ▼                 ▼
-            ┌────────────────────┐  ┌──────────────┐
-            │  STRATEGIST        │  │     LEAD     │
-            │  (рынок, GTM,      │  │   (скоуп,    │
-            │   конкуренты,      │  │   приоритеты,│
-            │   ICP, pricing)    │  │   архитектура│
-            └────────────────────┘  └──────┬───────┘
+       ┌──────────────────────────┐  ┌──────────────┐
+       │  STRATEGIST    ANALYST   │  │     LEAD     │
+       │  (рынок,       (продукт, │  │   (скоуп,    │
+       │   GTM,          гипотезы,│◄─┤   приоритеты,│
+       │   ICP)          метрики) │  │   архитектура│
+       └──────────────────────────┘  └──────┬───────┘
                          │                 │
                          │ TASK-LEAD-NNN   │ TASK-{DEV,DES,ART,QA}-NNN
                          └────────────┬────┘
@@ -80,16 +81,34 @@
                                  │ deploy → prod
                                  ▼
                   ┌────────────────────────────────────┐
-                  │           ПРОД-СЕРВИС              │
-                  └─────┬──────────────────────────────┘
-                        │
-                        │ read-only validation
-                        │
-       ┌────────────────┴─────────────────────────┐
-       │            JR. PERSONAS                  │
-       │  Accountant │ Seller │ Manager │ ROP     │
-       │  (играют роль реальных клиентов)         │
-       └────────────────┬─────────────────────────┘
+                  │           ФИЧА В ПРОДЕ             │
+                  └──────────────┬─────────────────────┘
+                                 │
+                                 │ post-feature review (правило 3 в RULES.md)
+                                 ▼
+                  ┌────────────────────────────────────┐
+                  │  QA + Owner + РОП + Manager        │
+                  │  → feedback                        │
+                  └──────────────┬─────────────────────┘
+                                 │
+                                 │ raw feedback
+                                 ▼
+                  ┌────────────────────────────────────┐
+                  │  Lead + Strategist + Analyst       │
+                  │  → гипотезы и задачи на исполнение │  ──┐
+                  └────────────────────────────────────┘    │
+                                                            │ feedback loop:
+                                                            │ новые TASK-LEAD-NNN
+                                                            │ возвращаются наверх
+                  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘
+
+       Параллельно — read-only валидация продукта персонами:
+
+       ┌────────────────────────────────────────────┐
+       │            JR. PERSONAS                    │
+       │  Accountant │ Seller │ Manager │ ROP       │
+       │  (играют роль реальных клиентов)           │
+       └────────────────┬───────────────────────────┘
                         │
                         │ observation reports
                         ▼
