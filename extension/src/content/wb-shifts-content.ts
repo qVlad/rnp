@@ -51,6 +51,34 @@ let cachedWbSellerLk: string | null = null;
 let cachedRootVersion: string | null = null;
 let interceptCount = 0;
 
+// Дедуп для auto-connect: in-memory hash последнего отправленного AuthV3.
+// Содержит last-12 chars (тот же формат что в SW storage). Это убирает
+// шум сообщений когда MAIN-world перехватывает один и тот же токен на
+// каждом fetch'е WB-фронта. SW делает ещё один уровень дедупа поверх.
+let lastSentAuthV3Hash: string | null = null;
+
+function maybeForwardLkAutoConnect(): void {
+  if (!cachedAuthV3 || cachedAuthV3.length < 32) return;
+  const hash = cachedAuthV3.slice(-12);
+  if (hash === lastSentAuthV3Hash) return;
+  lastSentAuthV3Hash = hash;
+  chrome.runtime
+    .sendMessage({
+      type: "rnp:lk-autoconnect",
+      authorize_v3: cachedAuthV3,
+      wb_seller_lk: cachedWbSellerLk,
+      root_version: cachedRootVersion,
+    })
+    .then((r) => {
+      console.log("[rnp-ext content] lk-autoconnect →", r);
+    })
+    .catch((e) => {
+      // SW мог проснуться/уснуть — сбрасываем hash чтобы повторить на след. tick'е
+      console.warn("[rnp-ext content] lk-autoconnect failed:", e);
+      lastSentAuthV3Hash = null;
+    });
+}
+
 window.addEventListener("message", (e: MessageEvent) => {
   if (e.source !== window) return;
   if (e.data?.__rnp !== "wb-headers") return;
@@ -65,6 +93,7 @@ window.addEventListener("message", (e: MessageEvent) => {
       wbSellerLk: !!cachedWbSellerLk,
     });
   }
+  maybeForwardLkAutoConnect();
 });
 
 // MAIN-world interceptor живёт в отдельном файле

@@ -37,6 +37,27 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## 2026-05-20 — **Redistribution LK auto-connect: убрана ручная вставка токенов**
+
+`/redistribution` подключается к LK WB автоматически через Chrome-расширение.
+Юзеру достаточно открыть `seller.wildberries.ru` и залогиниться — interceptor
+поймает `AuthorizeV3` (+ опц. `Wb-Seller-Lk`) из живого fetch'а WB-фронта и
+backend РНП сохранит токены. UI на странице упрощён: при подключённой LK
+показывается только статус + «Отвязать», ручная вставка осталась в expander
+«Подключить вручную (если нет расширения)».
+
+- `extension/src/background/index.ts` — handler `rnp:lk-autoconnect`,
+  `maybeAutoConnectLk()` с дедупом по last-12 chars AuthV3 в
+  `chrome.storage.local`, notification «LK WB подключено» один раз на токен.
+- `extension/src/content/wb-shifts-content.ts` — пересылает токены в SW при
+  каждом изменении (in-memory hash дедуп). MAIN-world interceptor без изменений.
+- `frontend/src/pages/Redistribution.tsx` — `LkStatusCard` переписан.
+- `CLAUDE.md` § «Chrome-расширение» — секция «LK WB auto-connect для /redistribution».
+
+Без миграций БД. Backend endpoint `/api/redistribution/lk/connect` не менялся —
+он уже UPSERT'ит. Только director может подключать LK (Bearer rnpToken
+авторизуется тем же пользователем, что в cookie `rnp_session`).
+
 ## ⭐⭐⭐ Что сделано в сессии 2026-05-19→20 (ночь) — **UNIT-план Sprint 5: drill-down + snapshot diff + history + FEATURES.md + bug-fix**
 
 **Развёрнуто на проде:** `https://rnp.sellerfriends.ru/unit-plan` (новая версия, 3-й deploy).

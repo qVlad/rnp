@@ -354,7 +354,23 @@ fallback на `Authorization: Bearer <jwt>` если cookie не валидна.
 **Сборка:** `cd extension && npm install && npm run build`. Load unpacked
 `extension/dist/` через `chrome://extensions`.
 
-**Auto-connect через cookies API** (без ручного копирования JWT):
+**LK WB auto-connect для /redistribution** (без ручной вставки токенов):
+- MAIN-world fetch+XHR interceptor (`src/content/wb-shifts-interceptor-main.ts`)
+  перехватывает заголовки `AuthorizeV3` + `Wb-Seller-Lk` из живых запросов
+  WB-фронта на `seller-weekly-report.wildberries.ru` и постит их через
+  `window.postMessage` в ISOLATED world (`wb-shifts-content.ts`).
+- ISOLATED content script дедупит по last-12 chars от AuthV3 (in-memory) и
+  шлёт `chrome.runtime.sendMessage({type:"rnp:lk-autoconnect", ...})` в SW.
+- SW handler `maybeAutoConnectLk()` (background/index.ts): дополнительный
+  дедуп через `chrome.storage.local["rnp.lk.lastAuthV3Hash"]`, затем
+  POST `/api/redistribution/lk/connect` с Bearer rnpToken. На 403 (не
+  director) — записывает hash чтобы не ретраить, на 200 — notification
+  «LK WB подключено» один раз на токен.
+- UI Redistribution.tsx: при `lk_connected=false` показывает инструкцию
+  «открой seller.wildberries.ru», ручная вставка убрана за expander как
+  fallback. При connected — только статус + «Отвязать».
+
+**Auto-connect РНП через cookies API** (без ручного копирования JWT):
 - Третий content script `src/content/rnp-detector.ts` запускается на
   `localhost:4098/*` и `rnp.sellerfriends.ru/*` (см. manifest →
   content_scripts[2]). При загрузке страницы шлёт SW сообщение

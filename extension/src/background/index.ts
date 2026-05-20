@@ -54,6 +54,9 @@ const ALARM_TOKEN_REFRESH = "rnp.tokenRefresh";
 const ALARM_RNP_COOKIE_SYNC = "rnp.cookieSync";
 const ALARM_LK_JOBS_POLL = "rnp.lkJobsPoll";
 
+const STORAGE_LK_LAST_HASH = "rnp.lk.lastAuthV3Hash";
+const STORAGE_LK_NOTIFIED = "rnp.lk.notified";
+
 /**
  * Домены РНП, на которых пытаемся auto-connect. Содержит origin'ы без
  * trailing slash. Должно соответствовать `matches` для rnp-detector.ts
@@ -499,6 +502,99 @@ async function maybeForwardToTelegram(w: WinnerEvent): Promise<void> {
   }
 }
 
+// ───────────────────────────────────────────────────────────────────────
+// Auto-connect LK WB через interceptor
+// ───────────────────────────────────────────────────────────────────────
+
+/**
+ * Принимает AuthorizeV3 (+опционально Wb-Seller-Lk) перехваченные MAIN-world
+ * fetch-интерсептором на seller.wildberries.ru и сохраняет их в backend
+ * РНП через POST /api/redistribution/lk/connect.
+ *
+ * Дедуп: last-12 chars от AuthorizeV3 в chrome.storage.local — не шлём
+ * один и тот же токен повторно. Notification «LK подключено» показывается
+ * один раз на первый успешный коннект (chrome.storage.local флаг).
+ *
+ * Skip cases (silent no-op):
+ *   - settings.rnpUrl / rnpToken не настроены
+ *   - токен не изменился относительно последнего отправленного
+ *   - backend вернул 403 (юзер не director — LK подключает другой акк)
+ *     → пишем hash чтобы не ретраить пустоту
+ */
+type LkAutoConnectResult =
+  | { status: "no-rnp-token" }
+  | { status: "unchanged" }
+  | { status: "ok" }
+  | { status: "forbidden" }
+  | { status: "http-error"; code: number }
+  | { status: "network-error"; error: string };
+
+async function maybeAutoConnectLk(payload: {
+  authorize_v3: string;
+  wb_seller_lk?: string | null;
+  root_version?: string | null;
+}): Promise<LkAutoConnectResult> {
+  const settings = await getSettings();
+  if (!settings.rnpUrl || !settings.rnpToken) return { status: "no-rnp-token" };
+
+  if (!payload.authorize_v3 || payload.authorize_v3.length < 32) {
+    return { status: "no-rnp-token" }; // токен невалиден — silently skip
+  }
+  const hash = payload.authorize_v3.slice(-12);
+  const stored = await chrome.storage.local.get(STORAGE_LK_LAST_HASH);
+  if (stored[STORAGE_LK_LAST_HASH] === hash) {
+    return { status: "unchanged" };
+  }
+
+  try {
+    const r = await fetch(
+      `${settings.rnpUrl.replace(/\/$/, "")}/api/redistribution/lk/connect`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${settings.rnpToken}`,
+        },
+        body: JSON.stringify({
+          authorize_v3: payload.authorize_v3,
+          wb_seller_lk: payload.wb_seller_lk || undefined,
+          root_version: payload.root_version || undefined,
+        }),
+      },
+    );
+    if (r.status === 403) {
+      // Не director — LK подключается другим аккаунтом этого же tenant'а.
+      // Зашьём hash чтобы не ретраить — следующий новый токен снова попробует.
+      await chrome.storage.local.set({ [STORAGE_LK_LAST_HASH]: hash });
+      return { status: "forbidden" };
+    }
+    if (!r.ok) {
+      console.warn(`[rnp-ext SW] LK auto-connect: HTTP ${r.status}`);
+      return { status: "http-error", code: r.status };
+    }
+    await chrome.storage.local.set({ [STORAGE_LK_LAST_HASH]: hash });
+    console.log(`[rnp-ext SW] LK auto-connected (token=${hash})`);
+
+    const wasNotified = await chrome.storage.local.get(STORAGE_LK_NOTIFIED);
+    if (!wasNotified[STORAGE_LK_NOTIFIED]) {
+      chrome.notifications.create("rnp.lk.connect", {
+        type: "basic",
+        iconUrl: chrome.runtime.getURL("icons/icon-128.png"),
+        title: "LK WB подключено",
+        message:
+          "Перераспределение остатков активировано. Токены LK будут обновляться автоматически пока открыта вкладка seller.wildberries.ru.",
+        priority: 1,
+      });
+      await chrome.storage.local.set({ [STORAGE_LK_NOTIFIED]: true });
+    }
+    return { status: "ok" };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn("[rnp-ext SW] LK auto-connect failed:", e);
+    return { status: "network-error", error: msg };
+  }
+}
+
 // ---- Message handlers from content scripts ----
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -509,6 +605,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     //      (HttpOnly, видна cookies API) и сохраняет в settings. ----
     if (msg?.type === "rnp:detected" && typeof msg.url === "string") {
       const result = await tryAutoConnect(msg.url);
+      sendResponse(result);
+      return;
+    }
+    // ---- LK auto-connect: content script `wb-shifts-content.ts` шлёт это
+    //      когда MAIN-world fetch-интерсептор поймал свежий AuthorizeV3 в
+    //      запросах seller.wildberries.ru. SW сохраняет токены в backend
+    //      РНП через /api/redistribution/lk/connect (Bearer rnpToken). ----
+    if (
+      msg?.type === "rnp:lk-autoconnect" &&
+      typeof msg.authorize_v3 === "string"
+    ) {
+      const result = await maybeAutoConnectLk({
+        authorize_v3: msg.authorize_v3,
+        wb_seller_lk: msg.wb_seller_lk ?? null,
+        root_version: msg.root_version ?? null,
+      });
       sendResponse(result);
       return;
     }

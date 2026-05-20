@@ -59,7 +59,11 @@ export default function Redistribution() {
           className="btn text-xs"
           onClick={() => generateMut.mutate()}
           disabled={generateMut.isPending || !statusQ.data?.lk_connected}
-          title={!statusQ.data?.lk_connected ? "Сначала подключите LK" : ""}
+          title={
+            !statusQ.data?.lk_connected
+              ? "Нужно подключение LK. Откройте seller.wildberries.ru в браузере с установленным расширением — LK подключится автоматически."
+              : ""
+          }
         >
           {generateMut.isPending ? "Считаю…" : "↻ Пересчитать рекомендации"}
         </button>
@@ -67,10 +71,14 @@ export default function Redistribution() {
 
       <div className="card text-xs text-muted leading-relaxed">
         Связка прогноз → план → автобронь для услуги WB «Перераспределение
-        остатков» (+0.5% от оборота за услугу). Окна бронирования:
-        <strong> 09:00 и 18:00 МСК</strong>. Заявка идёт по chrt_id
-        (характеристика, не nm_id). Кулдаун 72 часа на пару (chrt_id ×
-        склад-приёмник).
+        остатков» (+0.5% от оборота за услугу). Заявки идут по
+        <strong> chrt_id</strong> (характеристика, не nm_id). Кулдаун 72ч
+        на пару (chrt_id × склад-приёмник). После LEAD-022 заявки
+        отправляются <strong>непрерывно</strong> (раз в 2 мин) — никаких
+        «окон 09:00/18:00» больше нет: WB открывает квоты непрерывно,
+        отдельные склады могут быть закрыты в моменте, тогда заявка
+        ретраится автоматически. Условие: открыта вкладка
+        <code> seller.wildberries.ru</code> с активной сессией.
       </div>
 
       {/* Status + LK connect */}
@@ -204,7 +212,7 @@ export default function Redistribution() {
           <table className="w-full text-sm">
             <thead className="text-muted text-xs uppercase">
               <tr className="border-b border-border">
-                <th className="text-left p-2">Окно</th>
+                <th className="text-left p-2">Создана</th>
                 <th className="text-left p-2">chrt</th>
                 <th className="text-left p-2">Откуда → Куда</th>
                 <th className="text-right p-2">Qty</th>
@@ -216,7 +224,7 @@ export default function Redistribution() {
               {tasksQ.data.items.map((t) => (
                 <tr key={t.id} className="border-t border-border">
                   <td className="p-2 font-mono text-xs">
-                    {t.target_window_at?.slice(0, 16) || "—"}
+                    {(t.created_at || t.target_window_at)?.slice(0, 16) || "—"}
                   </td>
                   <td className="p-2 font-mono text-xs">{t.chrt_id}</td>
                   <td className="p-2 text-xs">
@@ -235,11 +243,12 @@ export default function Redistribution() {
       <div className="card text-xs text-muted leading-relaxed">
         <strong>Как это работает:</strong> сервис генерирует рекомендации по
         ROI (логистика + uplift выручки), вы одобряете → попадают в очередь.
-        В окне <strong>09:00 / 18:00 МСК</strong> Celery-консьюмер берёт
-        queued-task'и текущего tenant'а, группирует по
-        (склад-источник, склад-приёмник, nmID) и шлёт <code>POST /order</code>
-        в LK shifts API. На каждой паре (chrt_id × склад-приёмник) ставится
-        72-часовой кулдаун. При 401 — статус LK переходит в «нужен перелогин».
+        Каждые ~2 мин Celery-консьюмер берёт queued-task'и tenant'а,
+        группирует по (склад-источник, склад-приёмник, nmID) и через
+        расширение шлёт <code>POST /order</code> в LK shifts API. На каждой
+        паре (chrt_id × склад-приёмник) ставится 72-часовой кулдаун. При
+        401 — статус LK переходит в «нужен перелогин» (откройте seller.wb.ru
+        и переавторизуйтесь — расширение обновит токены автоматически).
       </div>
     </div>
   );
@@ -254,14 +263,11 @@ function LkStatusCard({
   onConnect: (authorizeV3: string, wbSellerLk: string) => Promise<any>;
   onDisconnect: () => Promise<any>;
 }) {
-  const [showConnect, setShowConnect] = useState(false);
+  const [showManual, setShowManual] = useState(false);
   const [tokenA3, setTokenA3] = useState("");
   const [tokenLk, setTokenLk] = useState("");
 
   if (!status) return <div className="card text-muted">Загрузка…</div>;
-
-  // (после LEAD-019/020 wb_seller_lk_seconds_left больше не используется
-  // для предупреждений — JWT берётся из MAIN-world interceptor расширения)
 
   return (
     <div className="card">
@@ -271,65 +277,87 @@ function LkStatusCard({
           {status.lk_connected ? (
             <span className="text-success">✓ Подключено</span>
           ) : status.lk_needs_relogin ? (
-            <span className="text-warn">⚠ Нужен перелогин</span>
+            <span className="text-warn">⚠ Нужен перелогин в WB</span>
           ) : (
             <span className="text-muted">Не подключено</span>
           )}
         </div>
       </div>
-      {status.lk_connected && (
-        <div className="text-xs text-muted">
-          Supplier {status.supplier_fid} · Phone ***{status.phone_last4 || "??"} ·
-          AuthorizeV3 истекает: {status.authorize_v3_expires_at?.slice(0, 16) || "—"} ·
-          Last success: {status.last_success_at?.slice(0, 16) || "—"}
-        </div>
-      )}
-      {status.lk_connected && (
-        <div className="text-xs mt-1 text-muted">
-          После LEAD-019/020 JWT-токены вытаскиваются автоматически
-          Chrome-расширением (MAIN-world fetch interceptor на seller.wb.ru).
-          Сохранённый Wb-Seller-Lk больше не используется в бэкенде.
-        </div>
-      )}
-      <div className="text-xs text-muted mt-2">
-        Ближайшее окно бронирования: <strong>{status.next_window_at?.slice(0, 16)}</strong> UTC
-      </div>
-      <div className="flex gap-2 mt-3">
-        {!status.lk_connected ? (
-          <button className="btn text-xs" onClick={() => setShowConnect(true)}>
-            + Подключить LK
-          </button>
-        ) : (
-          <button className="btn text-xs" onClick={() => setShowConnect(true)}>
-            ↻ Обновить токены
-          </button>
-        )}
-        {status.lk_connected && (
-          <button
-            className="btn text-xs text-red-400"
-            onClick={() =>
-              window.confirm("Отвязать LK-сессию? Бронирования остановятся.") &&
-              onDisconnect()
-            }
-          >
-            Отвязать
-          </button>
-        )}
-      </div>
 
-      {showConnect && (
-        <div className="mt-4 border-t border-border pt-3">
-          <div className="text-xs text-muted mb-2 leading-relaxed">
-            <strong>Шаги:</strong> открой <code>seller.wildberries.ru</code> →
-            залогинься → F12 → Network → фильтр{" "}
-            <code>seller-weekly-report</code> → кликни на любой запрос →
-            Headers → скопируй <strong>оба</strong> заголовка.
-            <br />
-            <strong className="text-warn">⚠ Wb-Seller-Lk живёт 5 мин</strong> —
-            копируй его непосредственно перед окном (за 1-2 мин до 09:00/18:00 МСК).
-            До закрытия TASK-LEAD-019 auto-refresh не работает.
+      {status.lk_connected ? (
+        <>
+          <div className="text-xs text-muted leading-relaxed">
+            {status.supplier_fid && <>Supplier {status.supplier_fid} · </>}
+            {status.phone_last4 && <>Phone ***{status.phone_last4} · </>}
+            AuthorizeV3 до: {status.authorize_v3_expires_at?.slice(0, 16) || "—"}
+            {status.last_success_at && (
+              <> · last success {status.last_success_at.slice(0, 16)}</>
+            )}
           </div>
-          <div className="text-xs text-muted mb-1">AuthorizeV3 (длинный RS256 JWT, живёт долго):</div>
+          <div className="text-xs text-muted mt-2 leading-relaxed">
+            Токены LK обновляются автоматически расширением, пока открыта
+            вкладка <code>seller.wildberries.ru</code>. Бэкенд опрашивает
+            очередь заявок каждые 2 мин.
+          </div>
+          <div className="flex gap-2 mt-3">
+            <button
+              className="btn text-xs text-red-400"
+              onClick={() =>
+                window.confirm("Отвязать LK-сессию? Бронирования остановятся.") &&
+                onDisconnect()
+              }
+            >
+              Отвязать
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="text-xs text-muted leading-relaxed">
+            <strong>Как подключить:</strong>
+            <ol className="list-decimal list-inside mt-1 space-y-1">
+              <li>
+                Установите Chrome-расширение РНП (если ещё нет).
+              </li>
+              <li>
+                Откройте{" "}
+                <a
+                  href="https://seller.wildberries.ru"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-accent underline"
+                >
+                  seller.wildberries.ru
+                </a>{" "}
+                и залогиньтесь.
+              </li>
+              <li>
+                Подключение произойдёт автоматически в течение 10-30 сек —
+                страница обновится сама.
+              </li>
+            </ol>
+          </div>
+          <button
+            className="text-xs text-muted underline mt-3"
+            onClick={() => setShowManual((v) => !v)}
+          >
+            {showManual ? "Скрыть" : "Подключить вручную (если нет расширения)"}
+          </button>
+        </>
+      )}
+
+      {showManual && !status.lk_connected && (
+        <div className="mt-3 border-t border-border pt-3">
+          <div className="text-xs text-muted mb-2 leading-relaxed">
+            Открой <code>seller.wildberries.ru</code> → F12 → Network →
+            фильтр <code>seller-weekly-report</code> → Headers → скопируй{" "}
+            <strong>оба</strong> заголовка.
+            <br />
+            <span className="text-warn">⚠</span> <code>Wb-Seller-Lk</code>{" "}
+            живёт 5 мин — нужен только для первого окна. Дальше расширение
+            обновляет его само (если оно установлено).
+          </div>
+          <div className="text-xs text-muted mb-1">AuthorizeV3:</div>
           <textarea
             className="input w-full text-xs font-mono mb-2"
             rows={3}
@@ -337,10 +365,10 @@ function LkStatusCard({
             onChange={(e) => setTokenA3(e.target.value)}
             placeholder="eyJhbGciOiJSUzI1NiIs..."
           />
-          <div className="text-xs text-muted mb-1">Wb-Seller-Lk (короткий EdDSA JWT, 5 мин TTL):</div>
+          <div className="text-xs text-muted mb-1">Wb-Seller-Lk (опц.):</div>
           <textarea
             className="input w-full text-xs font-mono"
-            rows={3}
+            rows={2}
             value={tokenLk}
             onChange={(e) => setTokenLk(e.target.value)}
             placeholder="eyJhbGciOiJFZERTQSI..."
@@ -351,21 +379,21 @@ function LkStatusCard({
               onClick={async () => {
                 try {
                   await onConnect(tokenA3.trim(), tokenLk.trim());
-                  setShowConnect(false);
+                  setShowManual(false);
                   setTokenA3("");
                   setTokenLk("");
                 } catch (e: any) {
                   alert(`Ошибка: ${e.message}`);
                 }
               }}
-              disabled={!tokenA3.trim() || !tokenLk.trim()}
+              disabled={!tokenA3.trim()}
             >
               Сохранить
             </button>
             <button
               className="btn text-xs"
               onClick={() => {
-                setShowConnect(false);
+                setShowManual(false);
                 setTokenA3("");
                 setTokenLk("");
               }}
