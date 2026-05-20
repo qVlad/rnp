@@ -511,7 +511,11 @@ async def get_roi(
     date_to: date | None = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
-    """ROI-дашборд: суммы за период из snapshots + сводка по tasks."""
+    """ROI-дашборд: суммы за период + monthly bar-chart + top-10 SKU.
+
+    Расширено: помесячная динамика + топ-10 SKU по экономии логистики
+    (через JOIN с recommendations, отсортированными по сумме saving).
+    """
     stmt = select(
         func.coalesce(func.sum(RedistributionRoiSnapshot.revenue_total_rub), 0).label("revenue"),
         func.coalesce(func.sum(RedistributionRoiSnapshot.redistribution_fee_rub), 0).label("fee"),
@@ -532,6 +536,85 @@ async def get_roi(
     roi_pct = None
     if fee > 0:
         roi_pct = round(saving / fee * 100, 1)
+
+    # ── Monthly breakdown для bar-chart (TASK-DEV-012 доводка) ──
+    month_label = func.to_char(RedistributionRoiSnapshot.snapshot_date, "YYYY-MM")
+    monthly_stmt = select(
+        month_label.label("month"),
+        func.coalesce(func.sum(RedistributionRoiSnapshot.revenue_total_rub), 0).label("revenue"),
+        func.coalesce(func.sum(RedistributionRoiSnapshot.redistribution_fee_rub), 0).label("fee"),
+        func.coalesce(func.sum(RedistributionRoiSnapshot.logistics_saving_rub), 0).label("saving"),
+        func.coalesce(func.sum(RedistributionRoiSnapshot.successful_tasks_count), 0).label("ok"),
+    ).group_by(month_label).order_by(month_label)
+    if date_from:
+        monthly_stmt = monthly_stmt.where(RedistributionRoiSnapshot.snapshot_date >= date_from)
+    if date_to:
+        monthly_stmt = monthly_stmt.where(RedistributionRoiSnapshot.snapshot_date <= date_to)
+    monthly_rows = (await session.execute(monthly_stmt)).all()
+    monthly = [
+        {
+            "month": r.month,
+            "revenue_rub": float(r.revenue or 0),
+            "fee_rub": float(r.fee or 0),
+            "saving_rub": float(r.saving or 0),
+            "net_profit_rub": float(r.saving or 0) - float(r.fee or 0),
+            "tasks_count": int(r.ok or 0),
+        }
+        for r in monthly_rows
+    ]
+
+    # ── Top-10 SKU по экономии логистики (TASK-DEV-012 доводка) ──
+    # Берём только executed tasks → их recommendations → группировка по nm_id.
+    # Если у task'а нет recommendation_id (cancelled / generated manually), скип.
+    top_skus_stmt = (
+        select(
+            RedistributionRecommendation.nm_id,
+            Product.vendor_code,
+            Product.brand,
+            func.count(RedistributionTask.id).label("tasks_count"),
+            func.coalesce(
+                func.sum(RedistributionRecommendation.expected_logistics_saving_rub), 0
+            ).label("total_saving"),
+            func.coalesce(
+                func.sum(RedistributionTask.qty), 0
+            ).label("total_qty"),
+        )
+        .select_from(RedistributionTask)
+        .join(
+            RedistributionRecommendation,
+            RedistributionRecommendation.id == RedistributionTask.recommendation_id,
+        )
+        .join(Product, Product.nm_id == RedistributionRecommendation.nm_id, isouter=True)
+        .where(RedistributionTask.status.in_(["accepted", "arrived", "transit_started"]))
+    )
+    if date_from:
+        top_skus_stmt = top_skus_stmt.where(
+            RedistributionTask.accepted_at >= datetime.combine(date_from, datetime.min.time(), tzinfo=timezone.utc)
+        )
+    if date_to:
+        top_skus_stmt = top_skus_stmt.where(
+            RedistributionTask.accepted_at <= datetime.combine(date_to, datetime.max.time(), tzinfo=timezone.utc)
+        )
+    top_skus_stmt = (
+        top_skus_stmt.group_by(
+            RedistributionRecommendation.nm_id, Product.vendor_code, Product.brand
+        )
+        .order_by(func.sum(RedistributionRecommendation.expected_logistics_saving_rub).desc())
+        .limit(10)
+    )
+    top_skus_rows = (await session.execute(top_skus_stmt)).all()
+    top_skus = [
+        {
+            "nm_id": int(r.nm_id),
+            "vendor_code": r.vendor_code,
+            "brand": r.brand,
+            "tasks_count": int(r.tasks_count or 0),
+            "total_saving_rub": float(r.total_saving or 0),
+            "total_qty": int(r.total_qty or 0),
+        }
+        for r in top_skus_rows
+    ]
+
     return {
         "period": {
             "from": date_from.isoformat() if date_from else None,
@@ -544,6 +627,8 @@ async def get_roi(
         "il_avg_pct": float(row.il_avg or 0),
         "successful_tasks_count": int(row.ok or 0),
         "failed_tasks_count": int(row.fail or 0),
+        "monthly": monthly,
+        "top_skus": top_skus,
     }
 
 

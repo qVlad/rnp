@@ -1,5 +1,15 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend as ChartLegend,
+  ResponsiveContainer,
+  Tooltip as ChartTooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { api } from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { fmtRub, fmtNum, fmtLocalDt, fmtLocalTime } from "@/lib/format";
@@ -721,6 +731,94 @@ function RoiCard({ roi, loading }: { roi: any; loading: boolean }) {
           успешных бронирований, в ₽ никто не считает.
         </div>
       )}
+
+      {/* Monthly bar-chart (доводка TASK-DEV-012) */}
+      {r.monthly && r.monthly.length > 0 && (
+        <div className="mt-4 pt-4 border-t border-border">
+          <div className="text-xs text-muted uppercase tracking-wide mb-2">
+            Динамика по месяцам
+          </div>
+          <RoiMonthlyChart data={r.monthly} />
+        </div>
+      )}
+
+      {/* Top-10 SKU breakdown (доводка TASK-DEV-012) */}
+      {r.top_skus && r.top_skus.length > 0 && (
+        <div className="mt-4 pt-4 border-t border-border">
+          <div className="text-xs text-muted uppercase tracking-wide mb-2">
+            Топ-10 SKU по экономии логистики
+          </div>
+          <table className="w-full text-sm">
+            <thead className="text-xs text-muted">
+              <tr>
+                <th className="text-left p-1">Артикул WB</th>
+                <th className="text-left p-1">Артикул селлера</th>
+                <th className="text-left p-1">Бренд</th>
+                <th className="text-right p-1">Бронирований</th>
+                <th className="text-right p-1">Перевезено (шт)</th>
+                <th className="text-right p-1">Экономия ₽</th>
+              </tr>
+            </thead>
+            <tbody>
+              {r.top_skus.map((s: any) => (
+                <tr key={s.nm_id} className="border-t border-border/30">
+                  <td className="p-1 font-mono">{s.nm_id}</td>
+                  <td className="p-1">{s.vendor_code || "—"}</td>
+                  <td className="p-1 text-muted">{s.brand || "—"}</td>
+                  <td className="p-1 text-right">{fmtNum(s.tasks_count)}</td>
+                  <td className="p-1 text-right">{fmtNum(s.total_qty)}</td>
+                  <td className="p-1 text-right text-success">
+                    {fmtRub(s.total_saving_rub)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RoiMonthlyChart({ data }: { data: any[] }) {
+  // Простой recharts BarChart с двумя сериями: экономия (зелёный) и комиссия (красный).
+  // Tooltip показывает все 4 метрики (revenue / saving / fee / net_profit).
+  return (
+    <div style={{ width: "100%", height: 220 }}>
+      <ResponsiveContainer>
+        <BarChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#444" />
+          <XAxis dataKey="month" stroke="#888" fontSize={11} />
+          <YAxis
+            stroke="#888"
+            fontSize={11}
+            tickFormatter={(v) =>
+              Math.abs(v) >= 1000 ? `${Math.round(v / 1000)}k` : String(v)
+            }
+          />
+          <ChartTooltip
+            contentStyle={{
+              background: "#1a1a1a",
+              border: "1px solid #444",
+              fontSize: 11,
+            }}
+            formatter={(v: any) => fmtRub(v as number)}
+          />
+          <ChartLegend wrapperStyle={{ fontSize: 11 }} />
+          <Bar
+            dataKey="saving_rub"
+            fill="#3ddc97"
+            name="Экономия логистики"
+            stackId="a"
+          />
+          <Bar
+            dataKey="fee_rub"
+            fill="#ff4d6d"
+            name="Комиссия +0.5%"
+            stackId="b"
+          />
+        </BarChart>
+      </ResponsiveContainer>
     </div>
   );
 }

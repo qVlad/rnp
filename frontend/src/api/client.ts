@@ -556,6 +556,22 @@ export const api = {
       il_avg_pct: number;
       successful_tasks_count: number;
       failed_tasks_count: number;
+      monthly: Array<{
+        month: string;
+        revenue_rub: number;
+        fee_rub: number;
+        saving_rub: number;
+        net_profit_rub: number;
+        tasks_count: number;
+      }>;
+      top_skus: Array<{
+        nm_id: number;
+        vendor_code: string | null;
+        brand: string | null;
+        tasks_count: number;
+        total_saving_rub: number;
+        total_qty: number;
+      }>;
     }>(`/api/redistribution/roi?${qs}`);
   },
   redistributionGenerate: () =>
@@ -1237,6 +1253,42 @@ paymentOrderDelete: (payment_order_id: string) =>
         sparkline_revenue: number[];
       }>;
     }>(`/api/managers-kpi?year=${year}&month=${month}&mode=${mode}`),
+
+  // ── Reconciliation 4-way (Stratege ставка #2 MVP) ──
+  reconciliation4way: (weeks: number = 8) =>
+    request<{
+      weeks: number;
+      scope: "company" | "brands";
+      sources: Record<string, string>;
+      periods: Array<{
+        period_from: string;
+        period_to: string;
+        rows_count: number;
+        ours: {
+          revenue_gross: number;
+          commission: number;
+          diff_vs_wb_pct: number;
+        };
+        wb_cabinet: {
+          revenue_gross: number;
+          revenue_returns: number;
+          commission: number;
+          payout: number;
+        };
+        wb_documents: {
+          redeem_total_rub: number;
+          offset_total_rub: number;
+          total_rub: number;
+          redeem_count: number;
+          offset_count: number;
+        };
+        bookkeeper: {
+          revenue_gross: number | null;
+          commission: number | null;
+          available: boolean;
+        };
+      }>;
+    }>(`/api/reconciliation/4way?weeks=${weeks}`),
 
   // ── Metric templates (TASK-DEV-011 — custom KPI через формулы) ──
   metricTemplatesList: () =>

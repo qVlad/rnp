@@ -51,6 +51,11 @@ KNOWN_KEYS = {
     "buyout_min_pct",
     "drr_max_pct",
     "stockout_warning_days",
+    # TASK-DEV-010 — расширенные аномалии (новые пороги)
+    "margin_min_pct",
+    "revenue_dip_dod_pct",
+    "turnover_drop_wow_pct",
+    "new_sku_no_sales_days",
 }
 
 
@@ -65,6 +70,11 @@ class SettingsPayload(BaseModel):
     buyout_min_pct: float | None = None
     drr_max_pct: float | None = None
     stockout_warning_days: float | None = None
+    # TASK-DEV-010 — пороги расширенных детекторов
+    margin_min_pct: float | None = None
+    revenue_dip_dod_pct: float | None = None
+    turnover_drop_wow_pct: float | None = None
+    new_sku_no_sales_days: float | None = None
 
 
 @router.get("", dependencies=[Depends(require_director)])

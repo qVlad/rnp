@@ -8,6 +8,7 @@ import Chargebacks from "./pages/Chargebacks";
 import PnL from "./pages/PnL";
 import Redistribution from "./pages/Redistribution";
 import PnLReconciliation from "./pages/PnLReconciliation";
+import Reconciliation4Way from "./pages/Reconciliation4Way";
 import TaxReport from "./pages/TaxReport";
 import TaxReportAusn from "./pages/TaxReportAusn";
 import Supplies from "./pages/Supplies";
@@ -113,6 +114,14 @@ export default function App() {
           <Route index element={<Dashboard />} />
           <Route path="pnl" element={<PnL />} />
           <Route path="pnl-reconciliation" element={<PnLReconciliation />} />
+          <Route
+            path="reconciliation-4way"
+            element={
+              <DirectorOrHead>
+                <Reconciliation4Way />
+              </DirectorOrHead>
+            }
+          />
           <Route
             path="audit"
             element={

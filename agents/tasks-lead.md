@@ -966,6 +966,74 @@ Lead использует этот файл как master-view: сюда скл�
 
 ---
 
+### TASK-LEAD-023: Redis-кеш для `/api/managers-kpi` (N×6 fan-out)
+
+- **Исполнитель:** Lead → Developer
+- **Приоритет:** P0 (блокирует TASK-DEV-008 Owner cockpit)
+- **Оценка:** 4-6ч
+- **Источник:** Lead post-Sprint+1 review — backend `managers_kpi.py` после TASK-DEV-009 делает N×6 `compute_dashboard` вызовов (10 manager × 6 месяцев = 60 SQL). На текущей prod-нагрузке норм, но TASK-DEV-008 (Owner cockpit) добавит ещё 4 виджета через те же endpoints → 30-60 секунд на refresh дашборда.
+- **Описание:** Redis-кеш `managers-kpi:{tenant_id}:{year}:{month}` TTL=1800 (30 мин). Альтернатива: переписать на один `GROUP BY date_trunc('month', sale_dt), products.brand` агрегат в `services/metrics.py:compute_dashboard_by_brand_by_month` — точнее, но больше работы. Решение по реализации — на разработчике после profile-теста.
+- **Критерии готовности:**
+  - [ ] Cache: либо Redis (`SETEX` + JSON), либо single-query rewrite
+  - [ ] Invalidate на финиш `sync_report_detail` (через event-bus или просто TTL)
+  - [ ] Profile: до=N сек, после=<2 сек на team size 10 managers
+  - [ ] Smoke: prev-month-final значения совпадают до/после кеша
+- **Зависимости:** TASK-DEV-009 (deployed)
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-024: Coordination `agents/CLAIMS.md` для предотвращения гонок
+
+- **Исполнитель:** Lead
+- **Приоритет:** P1
+- **Оценка:** 2-3ч
+- **Источник:** Lead post-Sprint+1 review — наблюдалось в текущей сессии: TASK-DEV-011 использовался дважды (recon-alert + custom-metrics), параллельные сессии перебивали друг другу `tasks-developer.md` правки и version-файлы. DEPLOY_LOCK решает только deploy, не coordinate'ит code/task-numbering.
+- **Описание:** Новый файл `agents/CLAIMS.md` — список активных claim'ов (агент → task ID → файлы). Брать claim перед началом работы: `git add` маркера в `agents/claims/<task-id>.claim` (содержит JSON `{agent, started_at, files: [...]}`). Параллельный агент видит claim → выбирает другую задачу или ждёт. Истекшие claim'ы (>24h без обновления) auto-cleanup-овый task в beat'е.
+- **Критерии готовности:**
+  - [ ] Спека в `agents/CLAIMS.md` (README + format + workflow)
+  - [ ] Правило в `agents/RULES.md` § Правило 2.8 «Claim перед правкой»
+  - [ ] Helper-script `./scripts/claim.sh <task-id>` (берёт claim) / `./scripts/release-claim.sh <task-id>`
+  - [ ] Smoke: 2 параллельные сессии — вторая видит claim первой и выбирает другую задачу
+- **Зависимости:** нет
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-025: Funnel-визуализация views → cart → order → buyout per-SKU
+
+- **Исполнитель:** Lead → Developer
+- **Приоритет:** P1
+- **Оценка:** 2-3 дня
+- **Источник:** Strategist post-Sprint+1 — у MPump first-class «Воронка продаж и Конверсии», у TrueStats basket-conv / order-conv в рекламе. У нас buyout_pct один скаляр — узкое место в воронке не видно.
+- **Описание:** Новый виджет/страница `/funnel` (или вкладка в Units): per-SKU воронка с 4 шагами (показы → корзина → заказ → выкуп) и conversion-rate между ними. Источник: `wb_ad_stats_daily` для показов/кликов, `wb_orders` для заказов, `wb_report_detail.supplier_oper_name='Продажа'` для выкупов. WB не отдаёт «добавления в корзину» — либо опускаем шаг, либо моделируем через WB-аналитику /api/v1/analytics/funnel (если доступно).
+- **Критерии готовности:**
+  - [ ] Backend: `/api/funnel/by-sku` — возвращает per-nm waterfall + conv-rates
+  - [ ] Frontend: визуализация (recharts FunnelChart или custom step-bars)
+  - [ ] Tooltip с формулой каждого conv-rate
+  - [ ] Сортировка по «слабой ступени» (где SKU больше всего теряет)
+- **Зависимости:** WB-аналитика API проверить — есть ли cart-step
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-026: Statistical outlier detection (z-score / IQR на дневных KPI)
+
+- **Исполнитель:** Lead → Developer
+- **Приоритет:** P2
+- **Оценка:** 1-2 дня
+- **Источник:** Strategist post-Sprint+1 — MPump заявляет 13+ типов аномалий, мы сделали 11 после TASK-DEV-010. Дальнейшее наращивание hardcoded thresholds — не масштабируется. Нужен statistical outlier detection per-SKU на основе исторических распределений.
+- **Описание:** На каждый KPI (`revenue_net`, `drr_pct`, `buyout_pct`) считаем z-score текущего дня vs rolling 28-дневное окно. |z| > 2 → outlier-alert. Дополнительно IQR-метод (Tukey fences): значение вне `[Q1 - 1.5×IQR, Q3 + 1.5×IQR]` → outlier. Преимущество: «сервис сам находит» без настройки порогов — vending sales-аргумент MPump.
+- **Критерии готовности:**
+  - [ ] `services/anomaly_statistical.py` — новый модуль с z-score / IQR на pandas-rolling
+  - [ ] Подключение в `collect_alerts` рядом с threshold'ами
+  - [ ] Tooltip: «отклонение -2.3σ от 28-дневного среднего — обычно бывает раз в 100 дней»
+  - [ ] Tunable: `z_threshold` и `iqr_multiplier` в AppSetting
+- **Зависимости:** есть достаточно истории (≥28 дней wb_report_detail / wb_orders)
+- **Статус:** Открыта
+
+---
+
 ## Формат / Жизненный цикл
 
 См. `RULES.md` §«Формат задачи».

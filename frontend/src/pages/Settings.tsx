@@ -35,6 +35,11 @@ export default function Settings() {
   const [buyoutMin, setBuyoutMin] = useState("");
   const [drrMax, setDrrMax] = useState("");
   const [stockoutDays, setStockoutDays] = useState("");
+  // TASK-DEV-010: пороги расширенных детекторов
+  const [marginMin, setMarginMin] = useState("");
+  const [revenueDipDod, setRevenueDipDod] = useState("");
+  const [turnoverDropWow, setTurnoverDropWow] = useState("");
+  const [newSkuNoSalesDays, setNewSkuNoSalesDays] = useState("");
   const [uploadResult, setUploadResult] = useState<string | null>(null);
   const [syncResult, setSyncResult] = useState<string | null>(null);
 
@@ -50,6 +55,10 @@ export default function Settings() {
     setBuyoutMin(s.buyout_min_pct ?? "");
     setDrrMax(s.drr_max_pct ?? "");
     setStockoutDays(s.stockout_warning_days ?? "");
+    setMarginMin(s.margin_min_pct ?? "");
+    setRevenueDipDod(s.revenue_dip_dod_pct ?? "");
+    setTurnoverDropWow(s.turnover_drop_wow_pct ?? "");
+    setNewSkuNoSalesDays(s.new_sku_no_sales_days ?? "");
   }, [settingsQ.data]);
 
   const saveMut = useMutation({
@@ -65,6 +74,10 @@ export default function Settings() {
         buyout_min_pct: buyoutMin ? Number(buyoutMin) : null,
         drr_max_pct: drrMax ? Number(drrMax) : null,
         stockout_warning_days: stockoutDays ? Number(stockoutDays) : null,
+        margin_min_pct: marginMin ? Number(marginMin) : null,
+        revenue_dip_dod_pct: revenueDipDod ? Number(revenueDipDod) : null,
+        turnover_drop_wow_pct: turnoverDropWow ? Number(turnoverDropWow) : null,
+        new_sku_no_sales_days: newSkuNoSalesDays ? Number(newSkuNoSalesDays) : null,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
   });
@@ -581,6 +594,51 @@ export default function Settings() {
               onChange={(e) => setStockoutDays(e.target.value)}
               placeholder="3"
               className="input"
+            />
+          </Field>
+        </div>
+
+        {/* TASK-DEV-010: расширенные пороги (5 новых детекторов) */}
+        <h3 className="font-medium mt-6 mb-3">Расширенные пороги аномалий</h3>
+        <div className="text-xs text-muted mb-3">
+          5 новых детекторов в дополнение к старым 6: маржа, день-к-дню,
+          неделя-к-неделе, новые SKU без продаж. Пусто = дефолт (5% / 30% / 25% / 14 дн).
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <Field label="Маржа меньше, %">
+            <input
+              value={marginMin}
+              onChange={(e) => setMarginMin(e.target.value)}
+              placeholder="5"
+              className="input"
+              title="Алерт если маржинальная прибыль компании за неделю меньше N%"
+            />
+          </Field>
+          <Field label="Дневное падение выручки, %">
+            <input
+              value={revenueDipDod}
+              onChange={(e) => setRevenueDipDod(e.target.value)}
+              placeholder="30"
+              className="input"
+              title="Алерт если выручка вчера упала на N% относительно позавчерашнего дня"
+            />
+          </Field>
+          <Field label="Недельное падение заказов, %">
+            <input
+              value={turnoverDropWow}
+              onChange={(e) => setTurnoverDropWow(e.target.value)}
+              placeholder="25"
+              className="input"
+              title="Алерт если заказов на этой неделе на N% меньше прошлой"
+            />
+          </Field>
+          <Field label="SKU без продаж, дней">
+            <input
+              value={newSkuNoSalesDays}
+              onChange={(e) => setNewSkuNoSalesDays(e.target.value)}
+              placeholder="14"
+              className="input"
+              title="Алерт для SKU старше N дней без единого заказа"
             />
           </Field>
         </div>
