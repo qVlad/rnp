@@ -1182,6 +1182,42 @@ function UnitPlanDesktop() {
   const [search, setSearch] = useState("");
   const [periodsModalOpen, setPeriodsModalOpen] = useState(false);
 
+  // Quick-filters (TASK-DEV-004) — найти проблемные SKU за 3 клика.
+  // Маржа/ROI хранятся в долях (0.05 = 5%), UI принимает % и делит на 100.
+  // null = фильтр не активен.
+  const QUICK_FILTERS_KEY = "unit-plan.quick-filters.v1";
+  const [marginMaxPct, setMarginMaxPct] = useState<string>(() => {
+    try {
+      const raw = localStorage.getItem(QUICK_FILTERS_KEY);
+      return raw ? (JSON.parse(raw).marginMaxPct ?? "") : "";
+    } catch { return ""; }
+  });
+  const [roiMaxPct, setRoiMaxPct] = useState<string>(() => {
+    try {
+      const raw = localStorage.getItem(QUICK_FILTERS_KEY);
+      return raw ? (JSON.parse(raw).roiMaxPct ?? "") : "";
+    } catch { return ""; }
+  });
+  const [stockoutMaxDays, setStockoutMaxDays] = useState<string>(() => {
+    try {
+      const raw = localStorage.getItem(QUICK_FILTERS_KEY);
+      return raw ? (JSON.parse(raw).stockoutMaxDays ?? "") : "";
+    } catch { return ""; }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        QUICK_FILTERS_KEY,
+        JSON.stringify({ marginMaxPct, roiMaxPct, stockoutMaxDays }),
+      );
+    } catch {}
+  }, [marginMaxPct, roiMaxPct, stockoutMaxDays]);
+  const clearQuickFilters = () => {
+    setMarginMaxPct("");
+    setRoiMaxPct("");
+    setStockoutMaxDays("");
+  };
+
   // ── Column visibility (persisted) ──
   const [visibility, setVisibility] = useState<Record<string, boolean>>(() => {
     try {
@@ -1360,19 +1396,50 @@ function UnitPlanDesktop() {
   const config = configQ.data;
   const isMock = data === MOCK_RESPONSE;
 
-  // ── Filter rows client-side by search ──
+  // ── Filter rows client-side by search + quick-filters ──
   const items = useMemo(() => {
     if (!data) return [];
+    let rows = data.items;
     const q = search.trim().toLowerCase();
-    if (!q) return data.items;
-    return data.items.filter(
-      (r) =>
-        String(r.nm_id).includes(q) ||
-        (r.vendor_code || "").toLowerCase().includes(q) ||
-        (r.subject || "").toLowerCase().includes(q) ||
-        (r.brand || "").toLowerCase().includes(q),
-    );
-  }, [data, search]);
+    if (q) {
+      rows = rows.filter(
+        (r) =>
+          String(r.nm_id).includes(q) ||
+          (r.vendor_code || "").toLowerCase().includes(q) ||
+          (r.subject || "").toLowerCase().includes(q) ||
+          (r.brand || "").toLowerCase().includes(q),
+      );
+    }
+    // Quick filters — TASK-DEV-004: сравниваем margin/roi (в долях) с
+    // вводом пользователя (%). 5 в input = 0.05 в данных.
+    const marginThreshold = marginMaxPct.trim() === ""
+      ? null : Number(marginMaxPct) / 100;
+    const roiThreshold = roiMaxPct.trim() === ""
+      ? null : Number(roiMaxPct) / 100;
+    const stockoutThreshold = stockoutMaxDays.trim() === ""
+      ? null : Number(stockoutMaxDays);
+    if (marginThreshold != null && !Number.isNaN(marginThreshold)) {
+      rows = rows.filter(
+        (r) => r.margin_pct != null && r.margin_pct < marginThreshold,
+      );
+    }
+    if (roiThreshold != null && !Number.isNaN(roiThreshold)) {
+      rows = rows.filter(
+        (r) => r.roi_pct != null && r.roi_pct < roiThreshold,
+      );
+    }
+    if (stockoutThreshold != null && !Number.isNaN(stockoutThreshold)) {
+      rows = rows.filter(
+        (r) => r.days_to_stockout != null && r.days_to_stockout < stockoutThreshold,
+      );
+    }
+    return rows;
+  }, [data, search, marginMaxPct, roiMaxPct, stockoutMaxDays]);
+
+  const quickFilterActive =
+    marginMaxPct.trim() !== "" ||
+    roiMaxPct.trim() !== "" ||
+    stockoutMaxDays.trim() !== "";
 
   // ── Visible columns derived ──
   const visibleColumns = useMemo(
@@ -1497,6 +1564,66 @@ function UnitPlanDesktop() {
 
       {/* ── Top-panel: глобальные константы (read-only chips) ── */}
       <TopConstants config={config} />
+
+      {/* ── Quick filters (TASK-DEV-004): найти проблемные SKU в 1 клик ── */}
+      <div className="card p-3 flex flex-wrap items-center gap-3 text-sm">
+        <span className="text-muted text-xs uppercase tracking-wider">
+          Быстрые фильтры
+        </span>
+        <label className="flex items-center gap-1 text-xs text-muted">
+          Маржа &lt;
+          <input
+            type="number"
+            inputMode="numeric"
+            placeholder="15"
+            value={marginMaxPct}
+            onChange={(e) => setMarginMaxPct(e.target.value)}
+            className="input w-16 text-sm text-right"
+            title="Показать SKU где маржа меньше указанного %"
+          />
+          <span>%</span>
+        </label>
+        <label className="flex items-center gap-1 text-xs text-muted">
+          ROI &lt;
+          <input
+            type="number"
+            inputMode="numeric"
+            placeholder="30"
+            value={roiMaxPct}
+            onChange={(e) => setRoiMaxPct(e.target.value)}
+            className="input w-16 text-sm text-right"
+            title="Показать SKU где ROI меньше указанного %"
+          />
+          <span>%</span>
+        </label>
+        <label className="flex items-center gap-1 text-xs text-muted">
+          Дней до стокаута &lt;
+          <input
+            type="number"
+            inputMode="numeric"
+            placeholder="14"
+            value={stockoutMaxDays}
+            onChange={(e) => setStockoutMaxDays(e.target.value)}
+            className="input w-16 text-sm text-right"
+            title="Показать SKU которые закончатся быстрее N дней"
+          />
+        </label>
+        {quickFilterActive && (
+          <button
+            type="button"
+            onClick={clearQuickFilters}
+            className="btn text-xs"
+            title="Сбросить быстрые фильтры"
+          >
+            ✕ Сбросить
+          </button>
+        )}
+        {quickFilterActive && (
+          <span className="text-xs text-warning">
+            Активен фильтр: показано {items.length} из {data?.items.length ?? 0} SKU
+          </span>
+        )}
+      </div>
 
       {/* ── Filters bar ── */}
       <div className="card p-3 flex flex-wrap items-center gap-3">
