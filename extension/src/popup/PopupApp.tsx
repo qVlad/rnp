@@ -6,7 +6,7 @@ import type { ActiveTest } from "@/lib/types";
 export function PopupApp() {
   const [tests, setTests] = useState<ActiveTest[]>([]);
   const [lastSync, setLastSync] = useState<number | null>(null);
-  const [wbabUrl, setWbabUrl] = useState("https://rnp.sellerfriends.ru");
+  const [rnpUrl, setRnpUrl] = useState("https://rnp.sellerfriends.ru");
   const [loading, setLoading] = useState(true);
   const [shiftsTestOutput, setShiftsTestOutput] = useState<string | null>(null);
   const [shiftsTesting, setShiftsTesting] = useState(false);
@@ -20,7 +20,7 @@ export function PopupApp() {
       ]);
       setTests(cached);
       setLastSync(sync);
-      setWbabUrl(settings.wbabUrl);
+      setRnpUrl(settings.rnpUrl);
       setLoading(false);
     })();
   }, []);
@@ -39,12 +39,12 @@ export function PopupApp() {
   }
 
   function openTest(t: ActiveTest) {
-    const url = `${(wbabUrl || "https://rnp.sellerfriends.ru").replace(/\/$/, "")}/abtest/${t.id}`;
+    const url = `${(rnpUrl || "https://rnp.sellerfriends.ru").replace(/\/$/, "")}/abtest/${t.id}`;
     chrome.tabs.create({ url });
   }
 
   function openWbab() {
-    chrome.tabs.create({ url: wbabUrl || "https://rnp.sellerfriends.ru" });
+    chrome.tabs.create({ url: rnpUrl || "https://rnp.sellerfriends.ru" });
   }
 
   function openOptions() {

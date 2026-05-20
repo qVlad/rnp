@@ -52,26 +52,26 @@ export function OptionsApp() {
           self-hosted backend, поэтому URL индивидуальный.
         </p>
 
-        <label htmlFor="wbabUrl">URL РНП</label>
+        <label htmlFor="rnpUrl">URL РНП</label>
         <input
-          id="wbabUrl"
+          id="rnpUrl"
           type="url"
           placeholder="https://rnp.sellerfriends.ru"
-          value={settings.wbabUrl}
-          onChange={(e) => update("wbabUrl", e.target.value.trim())}
+          value={settings.rnpUrl}
+          onChange={(e) => update("rnpUrl", e.target.value.trim())}
         />
         <p className="hint">
           Без слеша на конце. Продакшен — https://rnp.sellerfriends.ru.
           Заполнится автоматически при заходе на РНП в Chrome.
         </p>
 
-        <label htmlFor="wbabToken">API-токен РНП</label>
+        <label htmlFor="rnpToken">API-токен РНП</label>
         <input
-          id="wbabToken"
+          id="rnpToken"
           type="password"
           placeholder="(JWT из cookie rnp_session или сгенерированный API-токен)"
-          value={settings.wbabToken}
-          onChange={(e) => update("wbabToken", e.target.value.trim())}
+          value={settings.rnpToken}
+          onChange={(e) => update("rnpToken", e.target.value.trim())}
         />
         <p className="hint">
           Токен прокидывается в заголовок Authorization: Bearer ... при каждом

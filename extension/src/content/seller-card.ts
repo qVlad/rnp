@@ -228,12 +228,12 @@ async function maybeRefreshAutoToken(): Promise<void> {
       console.log("[wbab-ext] auto-token: enableAutoToken=false → silent skip (включите в Options расширения)");
       return;
     }
-    if (!settings.wbabUrl || !settings.wbabToken) {
+    if (!settings.rnpUrl || !settings.rnpToken) {
       console.warn("[wbab-ext] auto-token: wbabUrl/wbabToken не настроены в Options расширения");
       return;
     }
     console.log(
-      `[wbab-ext] auto-token: enabled, wbab=${settings.wbabUrl}, URL=${location.href}`,
+      `[wbab-ext] auto-token: enabled, wbab=${settings.rnpUrl}, URL=${location.href}`,
     );
 
     // Дебаунс на уровне вкладки (sessionStorage — per-tab).
@@ -579,13 +579,13 @@ async function toggleEmbedIframe(host: HTMLElement, testId: string): Promise<voi
   }
   const { getSettings } = await import("@/lib/storage");
   const settings = await getSettings();
-  const base = (settings.wbabUrl || "https://rnp.sellerfriends.ru").replace(/\/$/, "");
+  const base = (settings.rnpUrl || "https://rnp.sellerfriends.ru").replace(/\/$/, "");
   const fullUrl = `${base}/abtest/${testId}`;
   // iframe в third-party context (seller.wildberries.ru) не получает cookies
   // wbab (SameSite=Lax). Поэтому прокидываем extension token в query — backend
   // делает dual auth: session ИЛИ ?token=... (см. src/lib/embed-auth.ts).
-  const tokenParam = settings.wbabToken
-    ? `?token=${encodeURIComponent(settings.wbabToken)}`
+  const tokenParam = settings.rnpToken
+    ? `?token=${encodeURIComponent(settings.rnpToken)}`
     : "";
   const embedUrl = `${base}/embed/tests/${testId}${tokenParam}`;
 
@@ -815,7 +815,7 @@ function renderOverviewWidget(): HTMLElement {
       e.preventDefault();
       const { getSettings } = await import("@/lib/storage");
       const settings = await getSettings();
-      const base = (settings.wbabUrl || "https://rnp.sellerfriends.ru").replace(/\/$/, "");
+      const base = (settings.rnpUrl || "https://rnp.sellerfriends.ru").replace(/\/$/, "");
       // chrome.tabs.create требует разрешения которое есть только у SW —
       // но window.open работает в content script нормально.
       window.open(`${base}/tests`, "_blank", "noopener");
@@ -863,7 +863,7 @@ function updateOverviewWidget(host: HTMLElement, tests: ActiveTest[]): void {
       card.onclick = async () => {
         const { getSettings } = await import("@/lib/storage");
         const settings = await getSettings();
-        const base = (settings.wbabUrl || "https://rnp.sellerfriends.ru").replace(/\/$/, "");
+        const base = (settings.rnpUrl || "https://rnp.sellerfriends.ru").replace(/\/$/, "");
         window.open(`${base}/abtest/${t.id}`, "_blank", "noopener");
       };
       list.appendChild(card);

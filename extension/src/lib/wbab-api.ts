@@ -13,7 +13,7 @@
  *   POST /api/extension/positions                       — приём данных о позициях
  *   POST /api/extension/launch                          — создать черновик теста (pre-fill)
  *
- * Аутентификация — Bearer token из settings.wbabToken. Пока что
+ * Аутентификация — Bearer token из settings.rnpToken. Пока что
  * extension-эндпоинты НЕ реализованы в основном wbab — этот клиент
  * сейчас работает в MOCK-режиме (см. флаг useMock).
  */
@@ -39,13 +39,13 @@ export async function fetchActiveTestForNmId(nmId: number): Promise<ActiveTest |
   if (USE_MOCK) return mockActiveTestForNmId(nmId);
 
   const settings = await getSettings();
-  if (!settings.wbabUrl || !settings.wbabToken) return null;
+  if (!settings.rnpUrl || !settings.rnpToken) return null;
 
   try {
     const res = await fetch(
-      `${settings.wbabUrl}/api/extension/tests/active?nmId=${nmId}`,
+      `${settings.rnpUrl}/api/extension/tests/active?nmId=${nmId}`,
       {
-        headers: { Authorization: `Bearer ${settings.wbabToken}` },
+        headers: { Authorization: `Bearer ${settings.rnpToken}` },
       },
     );
     if (!res.ok) return null;
@@ -61,11 +61,11 @@ export async function fetchActiveTests(): Promise<ActiveTest[]> {
   if (USE_MOCK) return mockActiveTests();
 
   const settings = await getSettings();
-  if (!settings.wbabUrl || !settings.wbabToken) return [];
+  if (!settings.rnpUrl || !settings.rnpToken) return [];
 
   try {
-    const res = await fetch(`${settings.wbabUrl}/api/extension/tests/active`, {
-      headers: { Authorization: `Bearer ${settings.wbabToken}` },
+    const res = await fetch(`${settings.rnpUrl}/api/extension/tests/active`, {
+      headers: { Authorization: `Bearer ${settings.rnpToken}` },
     });
     if (!res.ok) return [];
     return (await res.json()) as ActiveTest[];
@@ -79,13 +79,13 @@ export async function fetchWinnersSince(cursor: number): Promise<WinnerEvent[]> 
   if (USE_MOCK) return mockWinnersSince(cursor);
 
   const settings = await getSettings();
-  if (!settings.wbabUrl || !settings.wbabToken) return [];
+  if (!settings.rnpUrl || !settings.rnpToken) return [];
 
   try {
     const res = await fetch(
-      `${settings.wbabUrl}/api/extension/winners/since?cursor=${cursor}`,
+      `${settings.rnpUrl}/api/extension/winners/since?cursor=${cursor}`,
       {
-        headers: { Authorization: `Bearer ${settings.wbabToken}` },
+        headers: { Authorization: `Bearer ${settings.rnpToken}` },
       },
     );
     if (!res.ok) return [];
@@ -114,14 +114,14 @@ export async function postPositions(payload: {
   }
 
   const settings = await getSettings();
-  if (!settings.wbabUrl || !settings.wbabToken) return false;
+  if (!settings.rnpUrl || !settings.rnpToken) return false;
 
   try {
-    const res = await fetch(`${settings.wbabUrl}/api/extension/positions`, {
+    const res = await fetch(`${settings.rnpUrl}/api/extension/positions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${settings.wbabToken}`,
+        Authorization: `Bearer ${settings.rnpToken}`,
       },
       body: JSON.stringify(payload),
     });
@@ -142,15 +142,15 @@ export async function saveWbToken(
   expiresAt: number | null,
 ): Promise<boolean> {
   const settings = await getSettings();
-  if (!settings.wbabUrl || !settings.wbabToken) return false;
+  if (!settings.rnpUrl || !settings.rnpToken) return false;
   try {
     const res = await fetch(
-      `${settings.wbabUrl.replace(/\/$/, "")}/api/extension/wb-token/save`,
+      `${settings.rnpUrl.replace(/\/$/, "")}/api/extension/wb-token/save`,
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${settings.wbabToken}`,
+          Authorization: `Bearer ${settings.rnpToken}`,
         },
         body: JSON.stringify({
           jwt,
@@ -177,12 +177,12 @@ export async function getWbTokenStatus(): Promise<
   import("./bg-bridge").WbTokenStatus | null
 > {
   const settings = await getSettings();
-  if (!settings.wbabUrl || !settings.wbabToken) return null;
+  if (!settings.rnpUrl || !settings.rnpToken) return null;
   try {
     const res = await fetch(
-      `${settings.wbabUrl.replace(/\/$/, "")}/api/extension/wb-token/status`,
+      `${settings.rnpUrl.replace(/\/$/, "")}/api/extension/wb-token/status`,
       {
-        headers: { Authorization: `Bearer ${settings.wbabToken}` },
+        headers: { Authorization: `Bearer ${settings.rnpToken}` },
       },
     );
     if (!res.ok) return null;
@@ -199,7 +199,7 @@ export async function getWbTokenStatus(): Promise<
  */
 export async function openWbabLauncher(nmId: number): Promise<void> {
   const settings = await getSettings();
-  const base = settings.wbabUrl || "https://rnp.sellerfriends.ru";
+  const base = settings.rnpUrl || "https://rnp.sellerfriends.ru";
   const url = `${base.replace(/\/$/, "")}/abtest/new?nmId=${nmId}&fromExt=1`;
   await chrome.tabs.create({ url });
 }

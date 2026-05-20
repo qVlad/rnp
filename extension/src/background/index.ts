@@ -82,7 +82,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   if (details.reason === "install") {
     await refreshTokenFromRnpCookies();
     const settings = await getSettings();
-    if (!settings.wbabToken) {
+    if (!settings.rnpToken) {
       // Auto-connect не сработал (юзер не залогинен или не на этих URL)
       // → открываем options для ручной настройки.
       await chrome.runtime.openOptionsPage();
@@ -215,13 +215,13 @@ async function tryAutoConnect(url: string): Promise<AutoConnectResult> {
 
   const tokenSuffix = cookie.value.slice(-12);
   const settings = await getSettings();
-  const tokenChanged = settings.wbabToken !== cookie.value;
-  const urlChanged = settings.wbabUrl !== url;
+  const tokenChanged = settings.rnpToken !== cookie.value;
+  const urlChanged = settings.rnpUrl !== url;
   if (!tokenChanged && !urlChanged) {
     return { status: "unchanged", url, tokenSuffix };
   }
 
-  await saveSettings({ wbabUrl: url, wbabToken: cookie.value });
+  await saveSettings({ rnpUrl: url, rnpToken: cookie.value });
   console.log(
     `[wbab-ext SW] auto-connected to ${url} (token=${tokenSuffix})`,
   );
@@ -259,8 +259,8 @@ async function refreshTokenFromRnpCookies(): Promise<void> {
   const settings = await getSettings();
   // Если юзер сконфигурировал кастомный URL вручную — пробуем сначала его.
   const candidates = [
-    ...(settings.wbabUrl ? [settings.wbabUrl] : []),
-    ...RNP_ORIGINS.filter((u) => u !== settings.wbabUrl),
+    ...(settings.rnpUrl ? [settings.rnpUrl] : []),
+    ...RNP_ORIGINS.filter((u) => u !== settings.rnpUrl),
   ];
   for (const url of candidates) {
     if (!RNP_ORIGINS.includes(url)) continue; // safety: только из whitelist
@@ -320,7 +320,7 @@ chrome.cookies.onChanged.addListener((info) => {
 async function maybeRefreshWbToken(): Promise<void> {
   const settings = await getSettings();
   if (!settings.enableAutoToken) return;
-  if (!settings.wbabUrl || !settings.wbabToken) return;
+  if (!settings.rnpUrl || !settings.rnpToken) return;
 
   const status = await getWbTokenStatus();
   if (!status) {
@@ -365,7 +365,7 @@ async function maybeRefreshWbToken(): Promise<void> {
 async function syncSessionCookies(): Promise<void> {
   const settings = await getSettings();
   if (!settings.enableSessionSync) return;
-  if (!settings.wbabUrl || !settings.wbabToken) return;
+  if (!settings.rnpUrl || !settings.rnpToken) return;
 
   const { getSellerCabinetCookies } = await import("@/lib/wb-session");
   const cookies = await getSellerCabinetCookies();
@@ -389,12 +389,12 @@ async function syncSessionCookies(): Promise<void> {
 
   try {
     const res = await fetch(
-      `${settings.wbabUrl.replace(/\/$/, "")}/api/extension/session/refresh`,
+      `${settings.rnpUrl.replace(/\/$/, "")}/api/extension/session/refresh`,
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${settings.wbabToken}`,
+          Authorization: `Bearer ${settings.rnpToken}`,
         },
         body: JSON.stringify(payload),
       },
@@ -431,7 +431,7 @@ async function pollOnce(): Promise<void> {
 
 async function showWinnerNotification(w: WinnerEvent): Promise<void> {
   const settings = await getSettings();
-  const url = `${(settings.wbabUrl || "https://rnp.sellerfriends.ru").replace(/\/$/, "")}/abtest/${w.testId}`;
+  const url = `${(settings.rnpUrl || "https://rnp.sellerfriends.ru").replace(/\/$/, "")}/abtest/${w.testId}`;
   const id = `wbab.winner.${w.testId}`;
   chrome.notifications.create(id, {
     type: "basic",
@@ -469,7 +469,7 @@ async function maybeForwardToTelegram(w: WinnerEvent): Promise<void> {
     `Тест: ${w.testName}\n` +
     `Артикул: ${w.nmId}\n` +
     `Вариант: *${w.winnerVariantLabel}*\n` +
-    `[Открыть в РНП](${(s.wbabUrl || "").replace(/\/$/, "")}/abtest/${w.testId})`;
+    `[Открыть в РНП](${(s.rnpUrl || "").replace(/\/$/, "")}/abtest/${w.testId})`;
   try {
     await fetch(`https://api.telegram.org/bot${s.telegramBotToken}/sendMessage`, {
       method: "POST",
@@ -551,7 +551,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
       case "openTestPage": {
         const settings = await getSettings();
-        const url = `${(settings.wbabUrl || "https://rnp.sellerfriends.ru").replace(/\/$/, "")}/abtest/${req.testId}`;
+        const url = `${(settings.rnpUrl || "https://rnp.sellerfriends.ru").replace(/\/$/, "")}/abtest/${req.testId}`;
         await chrome.tabs.create({ url });
         sendResponse({ kind: "ok" } as BgResponse);
         return;
@@ -640,13 +640,13 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
   // Юзер выключил session sync → отзываем сессию на backend.
   if (oldVal?.enableSessionSync === true && newVal?.enableSessionSync === false) {
     const settings = await getSettings();
-    if (settings.wbabUrl && settings.wbabToken) {
+    if (settings.rnpUrl && settings.rnpToken) {
       try {
         await fetch(
-          `${settings.wbabUrl.replace(/\/$/, "")}/api/extension/session`,
+          `${settings.rnpUrl.replace(/\/$/, "")}/api/extension/session`,
           {
             method: "DELETE",
-            headers: { Authorization: `Bearer ${settings.wbabToken}` },
+            headers: { Authorization: `Bearer ${settings.rnpToken}` },
           },
         );
         console.log("[wbab-ext SW] session revoked on backend");

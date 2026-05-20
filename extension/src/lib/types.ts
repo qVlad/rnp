@@ -1,15 +1,20 @@
 /**
- * Доменные типы — должны совпадать с серверными ответами wbab API.
- * Когда подключим реальный backend, эти типы синхронизируем с
- * `src/lib/api-types.ts` основного проекта.
+ * Доменные типы расширения РНП — должны совпадать с серверными ответами
+ * `/api/extension/*` (см. backend/app/api/extension.py).
  */
 
-export type WbabTestStatus = "draft" | "running" | "paused" | "completed" | "cancelled";
+export type AbTestStatus = "draft" | "running" | "paused" | "completed" | "cancelled";
+
+/**
+ * @deprecated — старое имя ребрендинга wbab→РНП. Алиас для совместимости.
+ * Удалить через пару релизов после миграции всех call sites.
+ */
+export type WbabTestStatus = AbTestStatus;
 
 export type ActiveTest = {
   id: string;
   name: string;
-  status: WbabTestStatus;
+  status: AbTestStatus;
   /** Артикул WB, к которому привязан тест. */
   nmId: number;
   /** Какой вариант (A/B/C/D) сейчас активен на витрине. */
@@ -17,7 +22,7 @@ export type ActiveTest = {
   /** Метка следующей ротации (ISO date) или null если триггер по VIEWS/BUDGET. */
   nextRotationAt: string | null;
   /**
-   * Сценарий — соответствует change_logic в основном проекте.
+   * Сценарий — соответствует change_logic в РНП-модуле /abtest.
    * Решающая метрика подсказывает что показывать в badge.
    */
   scenario: "ADV_PHOTO" | "ANY_FUNNEL" | "BOTH_FUNNEL" | "ADV_FUNNEL" | "LEGACY";
@@ -36,20 +41,22 @@ export type WinnerEvent = {
 };
 
 export type ExtensionSettings = {
-  /** URL вашего wbab — у каждого пользователя свой self-hosted. */
-  wbabUrl: string;
-  /** API-токен для запросов к /api/extension/* эндпоинтам wbab. */
-  wbabToken: string;
+  /** URL вашего инстанса РНП (self-hosted либо публичный rnp.sellerfriends.ru). */
+  rnpUrl: string;
+  /** API-токен (JWT) для запросов к /api/extension/* эндпоинтам РНП.
+   *  Заполняется автоматически через auto-connect (chrome.cookies API)
+   *  при заходе на сайт РНП в Chrome, либо вручную в Options. */
+  rnpToken: string;
   /** Опционально: Telegram bot token + chat_id для дублирования алертов. */
   telegramBotToken: string;
   telegramChatId: string;
   /** Включить трекинг позиций карточек в каталоге WB? */
   enablePositionTracking: boolean;
-  /** Поллинг service worker'а: как часто опрашивать wbab на новые winner-события. */
+  /** Поллинг service worker'а: как часто опрашивать РНП на новые winner-события. */
   pollIntervalMinutes: number;
   /**
    * Фаза 2 token-less mode: расширение читает сессионные куки seller.wildberries.ru
-   * и шлёт их на backend wbab. Backend хранит зашифрованно и (когда будет
+   * и шлёт их на backend РНП. Backend хранит зашифрованно и (когда будет
    * cabinet-клиент) использует для запросов к внутреннему API кабинета,
    * минуя Personal token.
    *
@@ -62,14 +69,12 @@ export type ExtensionSettings = {
 
   /**
    * AUTO-TOKEN: расширение автоматически получает Personal API token
-   * через cabinet endpoint tokensjrpc и шлёт на backend wbab.
-   * Дополнение к ручному вводу — но **сильно лучше UX** (юзер не делает
-   * шага «создайте токен в кабинете → скопируйте сюда»).
+   * через cabinet endpoint tokensjrpc и шлёт на backend РНП.
    *
-   * По умолчанию ВЫКЛЮЧЕНО — токен передаётся только при явном согласии
-   * пользователя (так как это считай делегирование доступа к WB API).
-   * Когда включено — content script на seller.wildberries.ru при первом
-   * заходе делает refresh, далее SW обновляет периодически.
+   * Сейчас deprecated (tokensjrpc возвращает cabinet-session token,
+   * не Personal API token). Поле оставлено для обратной совместимости
+   * с уже установленными расширениями — при getSettings() принудительно
+   * сбрасывается в false.
    */
   enableAutoToken: boolean;
 };
@@ -77,11 +82,9 @@ export type ExtensionSettings = {
 export const DEFAULT_SETTINGS: ExtensionSettings = {
   // По умолчанию — production-инстанс РНП. Для локальной разработки
   // расширение сменит URL автоматически через auto-connect (rnp-detector.ts
-  // увидит localhost:4098 и сохранит его как wbabUrl).
-  // Поле называется wbabUrl исторически (extension изначально писался под wbab);
-  // переименование требует миграции chrome.storage.
-  wbabUrl: "https://rnp.sellerfriends.ru",
-  wbabToken: "",
+  // увидит localhost:4098 и сохранит его как rnpUrl).
+  rnpUrl: "https://rnp.sellerfriends.ru",
+  rnpToken: "",
   telegramBotToken: "",
   telegramChatId: "",
   enablePositionTracking: true,
@@ -89,4 +92,16 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   enableSessionSync: false,
   sessionRefreshIntervalMinutes: 60,
   enableAutoToken: false,
+};
+
+/**
+ * Legacy shape пишется в chrome.storage.sync под ключом «wbab.settings».
+ * Используется `storage.ts` для миграции при первом чтении после апгрейда.
+ */
+export type LegacyExtensionSettings = Omit<
+  ExtensionSettings,
+  "rnpUrl" | "rnpToken"
+> & {
+  wbabUrl?: string;
+  wbabToken?: string;
 };
