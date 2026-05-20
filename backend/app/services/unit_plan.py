@@ -400,13 +400,12 @@ def _storage_rub(
 
     FBS → 0.
     Монопаллет → pallet_storage_base × storage_days / items_per_pallet.
-    Box → box_storage_base × литры × storage_days.
+    Box → box_storage_base × ceil_litre(V) × storage_days.
 
-    Примечание про `storage_liter`: WB Tariffs API возвращает «per-litre
-    surcharge» как отдельное поле, но Excel-методика LeymanKids считает
-    хранение по линейной формуле «base ₽/л/день × V × days», игнорируя
-    storage_liter. Если в будущем понадобится точная WB-формула — добавить
-    флаг в global_config (аналогично reverse_logistics_mode §14.5).
+    `ceil_litre`: для V < 1 округляем вверх до 1 (как и для acceptance в
+    Excel-методике, §4 AS). Это даёт «биллабельный объём в литрах», не
+    физический. WB-API тариф `storage_liter` не используется (Excel-методика
+    его игнорирует — линейная по объёму формула).
     """
     if is_fbs:
         return D0
@@ -417,7 +416,11 @@ def _storage_rub(
         return pallet.storage_base * days / Decimal(items_per_pallet)
     if box is None or box.storage_base is None:
         return D0
-    return box.storage_base * volume_l * days
+    # ceil(V) для V < 1 (как в acceptance §4 AS — биллабельный литр)
+    billable = (
+        Decimal(math.ceil(float(volume_l))) if volume_l < D1 and volume_l > D0 else volume_l
+    )
+    return box.storage_base * billable * days
 
 
 def _vat_rub(*, price_final_t: Decimal, vat_mode: str, vat_pct: Decimal) -> Decimal:

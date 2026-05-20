@@ -79,6 +79,10 @@ def _build_config(constants: dict) -> GlobalConfig:
         velocity_days=int(float(constants["velocity_days"])),
         buyout_fallback_pct=Decimal("0.5"),
         storage_days=60,
+        # UNIT_PLAN.md §14.5 — Excel-эталон LeymanKids в rows 4+ использует
+        # фиксированную 50 ₽ обратной логистики (а не AG из тарифа). См.
+        # services/unit_plan.py:_logistics_weighted.
+        reverse_logistics_mode="flat_50",
     )
 
 

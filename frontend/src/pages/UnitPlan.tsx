@@ -53,6 +53,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import PageHeader from "@/components/PageHeader";
 import { UnitPlanDrillDrawer } from "@/components/UnitPlanDrillDrawer";
+import { UnitPlanSnapshotsDrawer } from "@/components/UnitPlanSnapshotsDrawer";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1216,6 +1217,8 @@ function UnitPlanDesktop() {
 
   // ── Column menu ──
   const [colMenuOpen, setColMenuOpen] = useState(false);
+  // UNIT-PLAN-015: snapshot UI state (drawer внутри сам управляет diff-view)
+  const [snapshotsDrawerOpen, setSnapshotsDrawerOpen] = useState(false);
 
   // ── Auth (для определения canEdit и manager-RBAC) ──
   const { user: me } = useAuth();
@@ -1426,7 +1429,7 @@ function UnitPlanDesktop() {
 
   // ── Toolbar actions ──
   const onSnapshot = () => {
-    alert("Снимок плана — функция появится в Sprint 4 (UNIT-PLAN-016).");
+    setSnapshotsDrawerOpen(true);
   };
   const onExportXlsx = () => {
     const qs = new URLSearchParams();
@@ -1848,6 +1851,10 @@ function UnitPlanDesktop() {
           onClose={() => setDrilledNm(null)}
         />
       )}
+      <UnitPlanSnapshotsDrawer
+        open={snapshotsDrawerOpen}
+        onClose={() => setSnapshotsDrawerOpen(false)}
+      />
       {pasteVolumeText !== null && (
         <PasteVolumeModal
           rawText={pasteVolumeText}
