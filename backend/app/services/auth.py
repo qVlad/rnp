@@ -155,17 +155,25 @@ async def get_current_user(
     request: Request,
     session: AsyncSession = Depends(get_db),
 ) -> CurrentUser:
-    """Resolve the user from the session cookie. Raises 401 if missing/invalid.
+    """Resolve the user from the session cookie OR `Authorization: Bearer <jwt>`.
+
+    Primary path — HttpOnly cookie `rnp_session` (set by /api/auth/login).
+    Fallback — Bearer header (same JWT, удобно для CLI / Chrome-расширения /
+    внешних интеграций). Соответствует логике `auth_gate` middleware в main.py.
 
     Enforces "active" — disabled users (admin can flip is_active off) are
     immediately locked out without invalidating tokens (since they're stateless).
     """
     token = request.cookies.get(cfg.auth_cookie_name)
-    if not token:
-        raise HTTPException(401, "not authenticated")
-    payload = decode_session_token(token)
+    payload = decode_session_token(token) if token else None
     if not payload:
-        raise HTTPException(401, "session invalid or expired")
+        # Fallback: Authorization: Bearer <jwt>
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            bearer = auth_header[7:].strip()
+            payload = decode_session_token(bearer)
+    if not payload:
+        raise HTTPException(401, "not authenticated")
     try:
         uid = int(payload["sub"])
     except (KeyError, ValueError, TypeError) as e:

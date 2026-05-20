@@ -48,6 +48,7 @@ from app.db.models import (
     AbTest,
     AbTestAlert,
     AbTestDailyStat,
+    AbTestPositionSnapshot,
     AbTestRotation,
     AbTestVariant,
     AbTestVariantPhoto,
@@ -988,6 +989,98 @@ async def get_rotations(
         )
     ).scalars().all()
     return {"items": [_serialize_rotation(r) for r in rows]}
+
+
+@router.get("/{abtest_id}/positions")
+async def get_positions(
+    abtest_id: int,
+    limit: Annotated[int, Query(le=10_000)] = 2000,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
+) -> dict[str, Any]:
+    """Снимки позиций карточки теста в выдаче WB (поиск/каталог).
+
+    Источник данных — Chrome-расширение (`extension/src/content/wb-search.ts`)
+    при заходе юзера на www.wildberries.ru. Возвращаем снимки за период
+    активности теста (started_at..completed_at|now) — это интервал в который
+    позиция реально могла влиять на результат теста.
+
+    Группировка по запросу делается на фронте — здесь возвращаем плоский
+    список для гибкости (UI может построить и таблицу, и timeline-чарт по
+    каждому запросу).
+
+    Ответ:
+      {
+        "items": [
+          {"id": 42, "query": "куртка мужская",
+           "position": 5, "page": 1,
+           "collected_at": "2026-05-19T19:35:00+00:00"},
+          ...
+        ],
+        "summary": {
+          "total_snapshots": 200,
+          "distinct_queries": 5,
+          "first_seen": "2026-05-15T...",
+          "last_seen": "2026-05-19T..."
+        }
+      }
+    """
+    test = await _check_test_access(session, abtest_id, brands)
+
+    # Фильтруем по интервалу теста: started_at..completed_at|now.
+    # Если тест ещё в draft (нет started_at) — отдаём пустой результат
+    # (некорректно показывать "позиции до старта").
+    if not test.started_at:
+        return {"items": [], "summary": {
+            "total_snapshots": 0,
+            "distinct_queries": 0,
+            "first_seen": None,
+            "last_seen": None,
+        }}
+
+    stmt = (
+        select(AbTestPositionSnapshot)
+        .where(
+            AbTestPositionSnapshot.nm_id == test.nm_id,
+            AbTestPositionSnapshot.collected_at >= test.started_at,
+        )
+        .order_by(desc(AbTestPositionSnapshot.collected_at))
+        .limit(limit)
+    )
+    if test.completed_at:
+        stmt = stmt.where(AbTestPositionSnapshot.collected_at <= test.completed_at)
+    rows = (await session.execute(stmt)).scalars().all()
+
+    items = [
+        {
+            "id": r.id,
+            "query": r.query,
+            "position": r.position,
+            "page": r.page,
+            "collected_at": r.collected_at.isoformat() if r.collected_at else None,
+        }
+        for r in rows
+    ]
+
+    # Summary: distinct queries + first/last seen (берём из items, всё в памяти).
+    if items:
+        queries = {it["query"] for it in items}
+        # items уже отсортирован desc по collected_at
+        last_seen = items[0]["collected_at"]
+        first_seen = items[-1]["collected_at"]
+    else:
+        queries = set()
+        last_seen = first_seen = None
+
+    return {
+        "items": items,
+        "summary": {
+            "total_snapshots": len(items),
+            "distinct_queries": len(queries),
+            "first_seen": first_seen,
+            "last_seen": last_seen,
+        },
+    }
 
 
 @router.get("/{abtest_id}/alerts")

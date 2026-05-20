@@ -15,6 +15,8 @@ import {
   BarChart,
   CartesianGrid,
   Legend,
+  Line,
+  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -173,6 +175,212 @@ function TimelineSection({
             })}
           </tbody>
         </table>
+      </div>
+    </section>
+  );
+}
+
+
+/**
+ * Снимки позиций карточки теста в выдаче WB.
+ *
+ * Источник данных — Chrome-расширение (`extension/src/content/wb-search.ts`)
+ * при заходе юзера на www.wildberries.ru. Данные накапливаются за время
+ * активности теста.
+ *
+ * Показываем:
+ *   • сводку — сколько снимков, сколько уникальных запросов, период
+ *   • timeline-чарт — позиция во времени, по линии на каждый запрос
+ *     (только если есть данные за >=2 момента времени, иначе пусто)
+ *   • таблицу последних 50 снимков для гранулярной диагностики
+ *
+ * При status=draft (тест не запущен) — скрыта.
+ */
+function PositionsSection({ abtestId }: { abtestId: number }) {
+  const q = useQuery({
+    queryKey: ["abtest-positions", abtestId],
+    queryFn: () => abtestApi.getPositions(abtestId, 2000),
+  });
+
+  if (q.isLoading) {
+    return (
+      <section>
+        <h2 className="text-lg font-medium mb-2">Позиции в выдаче WB</h2>
+        <div className="card text-muted">Загрузка…</div>
+      </section>
+    );
+  }
+  if (q.isError) {
+    return (
+      <section>
+        <h2 className="text-lg font-medium mb-2">Позиции в выдаче WB</h2>
+        <div className="card text-warn text-sm">
+          Не удалось загрузить позиции: {(q.error as Error).message}
+        </div>
+      </section>
+    );
+  }
+  const items = q.data?.items || [];
+  const summary = q.data?.summary;
+
+  if (items.length === 0) {
+    return (
+      <section>
+        <h2 className="text-lg font-medium mb-2">Позиции в выдаче WB</h2>
+        <div className="card text-muted text-sm space-y-1">
+          <div>Снимков позиций ещё нет.</div>
+          <div className="text-xs">
+            Данные собирает Chrome-расширение РНП при заходе на
+            <code className="px-1">www.wildberries.ru</code> с включённой
+            опцией <em>«Трекинг позиций»</em> (по умолчанию включена). Когда
+            кто-то откроет каталог/поиск со SKU вашего теста — позиции
+            начнут накапливаться здесь.
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // Группируем по query → массив точек {ts, position}.
+  // Берём топ-5 запросов по числу снимков чтобы chart не превращался в кашу.
+  const byQuery = new Map<string, Array<{ ts: number; position: number }>>();
+  for (const it of items) {
+    const arr = byQuery.get(it.query) || [];
+    arr.push({ ts: new Date(it.collected_at).getTime(), position: it.position });
+    byQuery.set(it.query, arr);
+  }
+  const topQueries = Array.from(byQuery.entries())
+    .sort((a, b) => b[1].length - a[1].length)
+    .slice(0, 5);
+
+  // Все timestamp'ы в единой шкале X — берём union, сортируем asc.
+  const allTs = new Set<number>();
+  for (const [, pts] of topQueries) {
+    for (const p of pts) allTs.add(p.ts);
+  }
+  const xs = Array.from(allTs).sort((a, b) => a - b);
+
+  // Для каждого X — собираем точку по каждому запросу (или null).
+  const chartData = xs.map((ts) => {
+    const row: Record<string, number | string | null> = {
+      ts,
+      label: new Date(ts).toLocaleString("ru-RU", {
+        day: "2-digit",
+        month: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+    };
+    for (const [query, pts] of topQueries) {
+      const match = pts.find((p) => p.ts === ts);
+      row[query] = match ? match.position : null;
+    }
+    return row;
+  });
+
+  // Палитра recharts для линий — теми же оттенками что и daily-stats бары.
+  const COLORS = ["#3b82f6", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6"];
+
+  return (
+    <section className="space-y-3">
+      <h2 className="text-lg font-medium">Позиции в выдаче WB</h2>
+
+      {summary && (
+        <div className="flex gap-6 text-sm">
+          <div>
+            <span className="text-muted">Снимков: </span>
+            <strong>{summary.total_snapshots}</strong>
+          </div>
+          <div>
+            <span className="text-muted">Уникальных запросов: </span>
+            <strong>{summary.distinct_queries}</strong>
+          </div>
+          <div>
+            <span className="text-muted">Первый: </span>
+            <strong>{fmtDate(summary.first_seen)}</strong>
+          </div>
+          <div>
+            <span className="text-muted">Последний: </span>
+            <strong>{fmtDate(summary.last_seen)}</strong>
+          </div>
+        </div>
+      )}
+
+      {chartData.length >= 2 && (
+        <div className="card p-3" style={{ height: 320 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+              <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+              {/*
+                Y-ось перевёрнута: лучшая позиция = 1 (вверху), 100+ внизу.
+                Это конвенция SEO-отчётов.
+              */}
+              <YAxis
+                tick={{ fontSize: 11 }}
+                reversed
+                domain={[1, "dataMax"]}
+                allowDecimals={false}
+                label={{
+                  value: "Позиция",
+                  angle: -90,
+                  position: "insideLeft",
+                  fontSize: 12,
+                }}
+              />
+              <Tooltip />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              {topQueries.map(([query], idx) => (
+                <Line
+                  key={query}
+                  type="monotone"
+                  dataKey={query}
+                  stroke={COLORS[idx % COLORS.length]}
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
+                  connectNulls
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+          <p className="text-xs text-muted mt-1">
+            Показаны топ-5 запросов по числу снимков. Лучшая позиция (1)
+            — вверху графика; чем выше линия, тем лучше карточка ранжируется.
+          </p>
+        </div>
+      )}
+
+      <div className="card overflow-x-auto p-0">
+        <table className="min-w-full text-sm">
+          <thead className="bg-surface-2 text-muted text-xs uppercase">
+            <tr>
+              <th className="text-left p-2">Время</th>
+              <th className="text-left p-2">Запрос</th>
+              <th className="text-right p-2">Позиция</th>
+              <th className="text-right p-2">Страница</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.slice(0, 50).map((it) => (
+              <tr key={it.id} className="border-t border-border">
+                <td className="p-2 text-muted">{fmtDate(it.collected_at)}</td>
+                <td
+                  className="p-2 max-w-md truncate"
+                  title={it.query}
+                >
+                  {it.query}
+                </td>
+                <td className="p-2 text-right font-mono">{it.position}</td>
+                <td className="p-2 text-right text-muted">{it.page}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {items.length > 50 && (
+          <div className="p-2 text-xs text-muted text-center border-t border-border">
+            Показаны последние 50 из {items.length}.
+          </div>
+        )}
       </div>
     </section>
   );
@@ -590,6 +798,8 @@ export default function AbTestDetail() {
         variants={variants}
         rotations={recent_rotations}
       />
+
+      <PositionsSection abtestId={id} />
 
       <StopDialog
         open={stopOpen}

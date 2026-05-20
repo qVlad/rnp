@@ -45,6 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
     AbTest,
+    AbTestPositionSnapshot,
     AbTestResult,
     AbTestVariant,
     Product,
@@ -345,22 +346,59 @@ async def record_positions(
     user: CurrentUser = Depends(get_extension_user),
     session: AsyncSession = Depends(get_db),
 ) -> None:
-    """Принимает позицию карточки из выдачи WB.
+    """Принимает позицию карточки из выдачи WB и сохраняет в БД.
 
-    TODO: пока no-op (только лог) — для production нужна отдельная таблица
-    `abtest_position_snapshot(tenant_id, nm_id, query, position, page,
-    collected_at)` и UI-страница «позиции по тестам». Это объяснит дисперсию
-    показов между вариантами теста: если фото A было на 1-й странице, а B
-    на 4-й — разница в трафике не от фото, а от позиции в SEO.
+    Сохраняем БЕЗ дедупа — частота нужна для оценки стабильности позиции.
+    Дальнейшая аналитика по этим данным — через `GET /api/abtest/{id}/positions`
+    на стороне UI (раздел «Позиции в выдаче» на странице A/B-теста).
+
+    Защиты:
+      • Pydantic schema валидирует типы (nmId int, position int, page int)
+      • Sanity-check значений ниже — если что-то выглядит абсурдно, отвечаем
+        204 (не ломаем расширение), но в таблицу не пишем. Логируем для
+        дебага.
+      • Truncate query до 500 символов (схема), URL-длина WB поиска бывает
+        большой.
     """
+    if payload.position < 1 or payload.position > 100_000:
+        log.warning(
+            "[extension] positions: skip suspicious position=%s nm=%s tenant=%s",
+            payload.position, payload.nmId, user.tenant_id,
+        )
+        return None
+    if payload.page < 1 or payload.page > 1000:
+        log.warning(
+            "[extension] positions: skip suspicious page=%s nm=%s tenant=%s",
+            payload.page, payload.nmId, user.tenant_id,
+        )
+        return None
+
+    # collectedAt приходит от клиента — парсим как ISO. Если плохое значение,
+    # используем now() в БД (created_at), а в collected_at тоже now().
+    from datetime import datetime as _dt
+
+    try:
+        # JS пишет '2026-05-19T19:35:00.123Z' — Python принимает Z только с 3.11+.
+        # Приведём 'Z' → '+00:00' для совместимости.
+        collected = _dt.fromisoformat(payload.collectedAt.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        collected = _dt.now(timezone.utc)
+
+    snap = AbTestPositionSnapshot(
+        tenant_id=user.tenant_id,
+        nm_id=payload.nmId,
+        query=payload.query[:500],
+        position=payload.position,
+        page=payload.page,
+        collected_at=collected,
+    )
+    session.add(snap)
+    await session.commit()
+
     log.info(
-        "[extension] positions: tenant=%s nm=%s q=%r pos=%s page=%s at=%s",
-        user.tenant_id,
-        payload.nmId,
-        payload.query,
-        payload.position,
-        payload.page,
-        payload.collectedAt,
+        "[extension] positions saved: tenant=%s nm=%s q=%r pos=%s page=%s",
+        user.tenant_id, payload.nmId, payload.query[:80],
+        payload.position, payload.page,
     )
     return None
 

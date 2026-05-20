@@ -269,6 +269,27 @@ export const abtestApi = {
         created_at: string;
       }>;
     }>(`/api/abtest/${id}/events?limit=${limit}`),
+  /**
+   * Снимки позиций карточки в выдаче WB (поиск/каталог). Источник —
+   * Chrome-расширение `extension/src/content/wb-search.ts`.
+   * Возвращаются за период активности теста (started_at..completed_at|now).
+   */
+  getPositions: (id: number, limit = 2000) =>
+    req<{
+      items: Array<{
+        id: number;
+        query: string;
+        position: number;
+        page: number;
+        collected_at: string;
+      }>;
+      summary: {
+        total_snapshots: number;
+        distinct_queries: number;
+        first_seen: string | null;
+        last_seen: string | null;
+      };
+    }>(`/api/abtest/${id}/positions?limit=${limit}`),
   syncNow: (id: number) =>
     req<{ status: string }>(`/api/abtest/${id}/sync-now`, { method: "POST" }),
   budgetRefresh: (id: number) =>

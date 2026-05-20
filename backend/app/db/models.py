@@ -1312,6 +1312,49 @@ class AbTestResult(Base, TenantScopedMixin):
     )
 
 
+class AbTestPositionSnapshot(Base, TenantScopedMixin):
+    """Снимок позиции карточки в выдаче WB (поиск или каталог).
+
+    Источник: Chrome-расширение (`extension/src/content/wb-search.ts`) — при
+    заходе юзера на www.wildberries.ru content script парсит позиции карточек
+    из активных A/B-тестов и шлёт сюда (POST /api/extension/positions). Это
+    помогает объяснить дисперсию показов между вариантами теста (если фото A
+    было на 1-й странице, а B на 4-й — разница в трафике не от фото, а от
+    позиции в SEO).
+
+    Дедуп НЕ делаем — частота важна для оценки стабильности позиции. Хранение
+    бессрочное; если объём станет проблемой — добавить partition / TTL job.
+
+    Связь с тестом — через `nm_id` (а не FK на abtest_id), потому что:
+      • одна карточка может участвовать в нескольких тестах со временем
+      • точное соответствие «снимок ↔ тест» определяется по интервалу
+        времени теста (started_at..completed_at)
+    """
+
+    __tablename__ = "abtest_position_snapshot"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    nm_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    query: Mapped[str] = mapped_column(String(500), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    page: Mapped[int] = mapped_column(Integer, nullable=False)
+    collected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_abtest_pos_tenant_nm_dt", "tenant_id", "nm_id", "collected_at"
+        ),
+        Index(
+            "ix_abtest_pos_tenant_q_dt", "tenant_id", "query", "collected_at"
+        ),
+    )
+
+
 class AbTestStatsSnapshot(Base, TenantScopedMixin):
     """Snapshot кумулятивов за день — для дельта-атрибуции между вариантами.
 
