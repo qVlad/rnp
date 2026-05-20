@@ -51,17 +51,23 @@ let cachedWbSellerLk: string | null = null;
 let cachedRootVersion: string | null = null;
 let interceptCount = 0;
 
-// Дедуп для auto-connect: in-memory hash последнего отправленного AuthV3.
-// Содержит last-12 chars (тот же формат что в SW storage). Это убирает
-// шум сообщений когда MAIN-world перехватывает один и тот же токен на
-// каждом fetch'е WB-фронта. SW делает ещё один уровень дедупа поверх.
-let lastSentAuthV3Hash: string | null = null;
+// Дедуп для auto-connect: in-memory hash последней отправленной ПАРЫ
+// (AuthV3 + Wb-Seller-Lk). Содержит last-12 chars каждого через ":".
+// BUG-DEV-006: раньше был только AuthV3 — но он валиден ~1 год, не
+// меняется. Wb-Seller-Lk живёт 5 мин, должен обновляться каждый fetch.
+// Со старым дедупом content script отправлял пару один раз и больше
+// никогда — короткий токен на backend протухал.
+// SW делает второй уровень дедупа (chrome.storage.local) — оба теперь
+// сравнивают композитный hash.
+let lastSentTokensHash: string | null = null;
 
 function maybeForwardLkAutoConnect(): void {
   if (!cachedAuthV3 || cachedAuthV3.length < 32) return;
-  const hash = cachedAuthV3.slice(-12);
-  if (hash === lastSentAuthV3Hash) return;
-  lastSentAuthV3Hash = hash;
+  const a = cachedAuthV3.slice(-12);
+  const l = cachedWbSellerLk ? cachedWbSellerLk.slice(-12) : "none";
+  const hash = `${a}:${l}`;
+  if (hash === lastSentTokensHash) return;
+  lastSentTokensHash = hash;
   chrome.runtime
     .sendMessage({
       type: "rnp:lk-autoconnect",
@@ -75,7 +81,7 @@ function maybeForwardLkAutoConnect(): void {
     .catch((e) => {
       // SW мог проснуться/уснуть — сбрасываем hash чтобы повторить на след. tick'е
       console.warn("[rnp-ext content] lk-autoconnect failed:", e);
-      lastSentAuthV3Hash = null;
+      lastSentTokensHash = null;
     });
 }
 
@@ -212,7 +218,7 @@ chrome.runtime.onMessage.addListener((rawMsg, _sender, sendResponse) => {
       hasWbSellerLk: !!cachedWbSellerLk,
       wbSellerLkSuffix: cachedWbSellerLk ? cachedWbSellerLk.slice(-12) : null,
       rootVersion: cachedRootVersion,
-      lastSentHash: lastSentAuthV3Hash,
+      lastSentHash: lastSentTokensHash,
     });
     return true;
   }

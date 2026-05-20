@@ -74,6 +74,24 @@
 
 ---
 
+## BUG-DEV-006: LK auto-connect не обновляет короткий `Wb-Seller-Lk` (дедуп только по AuthV3)
+
+- **Приоритет:** P0 (блокирует всё /redistribution — quota валится с 401, юзер видит «Нужен перелогин в WB» и фича недоступна)
+- **Обнаружено:** 2026-05-20 (QA static review + прод-ssh)
+- **Среда:** prod (rnp.sellerfriends.ru, tenant_id=1)
+- **Причина:** Расширение дедуплицирует отправку токенов на backend `/api/redistribution/lk/connect` по хешу **только** `AuthorizeV3` (last-12 chars) — в двух местах: `wb-shifts-content.ts:62-64` и `background/index.ts:410-414`. `AuthorizeV3` валиден ~1 год, не меняется. `Wb-Seller-Lk` живёт 5 мин и обновляется на каждом fetch'е WB-фронта. Из-за дедупа `maybeAutoConnectLk` отсекает все пакеты с тем же AuthV3 — backend получает Wb-Seller-Lk **один раз** (при первой отправке) и больше никогда. Через 5 минут он истекает → quota job получает 401 от WB → backend `mark_needs_relogin` → юзер видит баннер. Подтверждение в БД на проде: `authorize_v3_exp=2027-05-20` (валиден), `wb_seller_lk_exp=2026-05-20 08:04 UTC` (давно истёк), `last_success_at=NULL`, `POST /lk/connect` за последний час = **0**.
+- **Затронутые файлы:**
+  - `extension/src/background/index.ts` (`maybeAutoConnectLk` дедуп)
+  - `extension/src/content/wb-shifts-content.ts` (`maybeForwardLkAutoConnect` дедуп)
+- **Критерии исправления:**
+  - [ ] Дедуп считает hash от пары `(AuthV3.slice(-12) + ":" + WbSellerLk.slice(-12))` — обновление любого из двух токенов триггерит отправку
+  - [ ] `STORAGE_LK_LAST_HASH` хранит композитный hash (рекомендуется переименовать → `rnp.lk.lastTokensHash`, оставить старый ключ для миграции)
+  - [ ] При первой загрузке после reload расширения content script отправляет токены даже если `lastSentAuthV3Hash` сбрасывается на null (текущее поведение — ок)
+  - [ ] Smoke на проде: после reload `wb_seller_lk_exp` в БД должен обновляться каждые 5-10 мин пока юзер активно работает в LK
+- **Статус:** Открыт
+
+---
+
 ## BUG-DEV-005: redistribution cooldown check всегда возвращает False (placeholder `to_office_id=0`)
 
 - **Приоритет:** P1 (можно отправить дубль и получить отказ от WB)

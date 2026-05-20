@@ -54,8 +54,23 @@ const ALARM_TOKEN_REFRESH = "rnp.tokenRefresh";
 const ALARM_RNP_COOKIE_SYNC = "rnp.cookieSync";
 const ALARM_LK_JOBS_POLL = "rnp.lkJobsPoll";
 
-const STORAGE_LK_LAST_HASH = "rnp.lk.lastAuthV3Hash";
+// BUG-DEV-006: дедуп LK auto-connect считается по ПАРЕ
+// (AuthV3.slice(-12) + ":" + WbSellerLk.slice(-12)). Раньше был только
+// AuthV3 — но он валиден ~1 год и не меняется, а Wb-Seller-Lk живёт 5 мин,
+// обновляется каждый fetch. Старый дедуп блокировал обновления → backend
+// получал короткий токен один раз и навсегда (через 5 мин он истекал).
+const STORAGE_LK_LAST_HASH = "rnp.lk.lastTokensHash";
+// Legacy ключ — оставлен только для миграции у уже установленных
+// расширений (читаем и удаляем при первой возможности).
+const STORAGE_LK_LEGACY_HASH = "rnp.lk.lastAuthV3Hash";
 const STORAGE_LK_NOTIFIED = "rnp.lk.notified";
+
+/** Композитный hash от пары (AuthV3+WbSellerLk). null = одиного из токенов нет. */
+function tokensHash(authV3: string, wbSellerLk: string | null | undefined): string {
+  const a = authV3.slice(-12);
+  const l = wbSellerLk ? wbSellerLk.slice(-12) : "none";
+  return `${a}:${l}`;
+}
 
 /**
  * Домены РНП, на которых пытаемся auto-connect. Содержит origin'ы без
@@ -407,7 +422,10 @@ async function maybeAutoConnectLk(payload: {
   if (!payload.authorize_v3 || payload.authorize_v3.length < 32) {
     return { status: "no-rnp-token" }; // токен невалиден — silently skip
   }
-  const hash = payload.authorize_v3.slice(-12);
+  // BUG-DEV-006: hash от пары (AuthV3+WbSellerLk). Обновление любого из
+  // двух токенов триггерит отправку. Legacy-ключ удаляем при первом
+  // успехе чтобы не висел.
+  const hash = tokensHash(payload.authorize_v3, payload.wb_seller_lk);
   const stored = await chrome.storage.local.get(STORAGE_LK_LAST_HASH);
   if (stored[STORAGE_LK_LAST_HASH] === hash) {
     return { status: "unchanged" };
@@ -440,6 +458,8 @@ async function maybeAutoConnectLk(payload: {
       return { status: "http-error", code: r.status };
     }
     await chrome.storage.local.set({ [STORAGE_LK_LAST_HASH]: hash });
+    // BUG-DEV-006 migration: чистим legacy ключ (был только AuthV3 hash).
+    await chrome.storage.local.remove(STORAGE_LK_LEGACY_HASH);
     console.log(`[rnp-ext SW] LK auto-connected (token=${hash})`);
 
     const wasNotified = await chrome.storage.local.get(STORAGE_LK_NOTIFIED);
