@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { fmtRub } from "@/lib/format";
+import { fmtRub, fmtLocalDt, fmtLocalTime } from "@/lib/format";
 
 export default function Redistribution() {
   const qc = useQueryClient();
@@ -231,7 +231,7 @@ export default function Redistribution() {
               {tasksQ.data.items.map((t) => (
                 <tr key={t.id} className="border-t border-border align-top">
                   <td className="p-2 font-mono text-xs">
-                    {(t.created_at || t.target_window_at)?.slice(0, 16) || "—"}
+                    {fmtLocalDt(t.created_at || t.target_window_at)}
                   </td>
                   <td className="p-2 font-mono text-xs">{t.chrt_id}</td>
                   <td className="p-2 text-xs">
@@ -245,7 +245,7 @@ export default function Redistribution() {
                     {t.attempt_count}
                     {t.last_attempt_at && (
                       <div className="text-[10px] text-muted">
-                        {t.last_attempt_at.slice(11, 16)}
+                        {fmtLocalTime(t.last_attempt_at)}
                       </div>
                     )}
                   </td>
@@ -473,7 +473,7 @@ function TaskStatusBadge({
       <span className={`text-xs ${tone}`}>{label}</span>
       {acceptedAt && status === "accepted" && (
         <div className="text-[10px] text-muted font-mono">
-          {acceptedAt.slice(0, 16)}
+          {fmtLocalDt(acceptedAt)}
         </div>
       )}
     </div>

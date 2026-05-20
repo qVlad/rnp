@@ -29,3 +29,25 @@ export const arrowForDelta = (v: number | null | undefined): string => {
   return v > 0 ? "▲" : "▼";
 };
 
+/** ISO timestamp → "DD.MM HH:MM" в локальном TZ браузера. */
+export const fmtLocalDt = (iso: string | null | undefined): string => {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mn = String(d.getMinutes()).padStart(2, "0");
+  return `${dd}.${mm} ${hh}:${mn}`;
+};
+
+/** ISO timestamp → "HH:MM" в локальном TZ браузера. */
+export const fmtLocalTime = (iso: string | null | undefined): string => {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mn = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}:${mn}`;
+};
+
