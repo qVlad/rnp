@@ -1,12 +1,19 @@
+from calendar import monthrange
 from datetime import date, timedelta
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models import Product
 from app.db.session import get_db
-from app.services.auth import get_db_tenant_scoped
-from app.services.auth import current_brands_filter
+from app.services.auth import (
+    CurrentUser,
+    current_brands_filter,
+    get_current_user,
+    get_db_tenant_scoped,
+)
 from app.services.pnl_builder import build_pnl
 from app.services.pnl_reconciliation import build_reconciliation
 
@@ -162,6 +169,113 @@ async def get_pnl_timeseries(
     for r in rows:
         r["date"] = r.pop("period_start")
     return {"days": days, "rows": rows}
+
+
+@router.get("/by-brand")
+async def get_pnl_by_brand(
+    months: int = Query(default=6, ge=1, le=24),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    user: CurrentUser = Depends(get_current_user),
+    brands: set[str] | None = Depends(current_brands_filter),
+) -> dict[str, Any]:
+    """TASK-DEV-002 — матрица «бренд × месяц × маржа» для drill-down в P&L.
+
+    Возвращает по каждому бренду помесячные revenue_net и net_margin_pct
+    за последние N месяцев. UI отрисовывает как heatmap и подсвечивает
+    красным маржу < 15% (это пороговое значение для маркетплейса).
+
+    Доступ — обычная brand-фильтрация: director/head видят все бренды,
+    manager — только свои.
+    """
+    today = date.today()
+    # N последних месяцев включая текущий, начало с 1 числа N-1 месяцев назад
+    cur_y, cur_m = today.year, today.month
+    start_y = cur_y
+    start_m = cur_m - (months - 1)
+    while start_m <= 0:
+        start_m += 12
+        start_y -= 1
+    date_from = date(start_y, start_m, 1)
+    last_day = monthrange(cur_y, cur_m)[1]
+    date_to = date(cur_y, cur_m, last_day)
+
+    # Список брендов: если manager — берём из его фильтра, иначе DISTINCT из products
+    if brands is None:
+        all_brands_rows = (
+            await session.execute(
+                select(Product.brand.distinct())
+                .where(Product.brand.isnot(None))
+            )
+        ).scalars().all()
+        brand_list = sorted({b for b in all_brands_rows if b})
+    else:
+        brand_list = sorted(brands)
+
+    # Список месячных меток (YYYY-MM) для UI-сетки
+    month_labels: list[str] = []
+    y, m = start_y, start_m
+    for _ in range(months):
+        month_labels.append(f"{y:04d}-{m:02d}")
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+
+    rows: list[dict[str, Any]] = []
+    for brand in brand_list:
+        pnl = await build_pnl(
+            session,
+            date_from=date_from,
+            date_to=date_to,
+            granularity="month",
+            brands={brand},
+        )
+        # Маппим period_start → row
+        by_period = {r["period_start"]: r for r in pnl.get("rows", [])}
+        monthly: list[dict[str, Any]] = []
+        for label in month_labels:
+            # Берём 1-е число каждого месяца как ключ
+            iso = label + "-01"
+            r = by_period.get(iso)
+            if r:
+                monthly.append(
+                    {
+                        "period": label,
+                        "revenue_net": r.get("revenue_net", 0),
+                        "profit": r.get("profit", 0),
+                        "net_margin_pct": r.get("net_margin_pct", 0),
+                    }
+                )
+            else:
+                monthly.append(
+                    {
+                        "period": label,
+                        "revenue_net": 0,
+                        "profit": 0,
+                        "net_margin_pct": 0,
+                    }
+                )
+        totals = pnl.get("totals", {})
+        rows.append(
+            {
+                "brand": brand,
+                "monthly": monthly,
+                "total_revenue_net": totals.get("revenue_net", 0),
+                "total_profit": totals.get("profit", 0),
+                "total_margin_pct": totals.get("net_margin_pct", 0),
+            }
+        )
+
+    # Сортируем по убыванию суммарной выручки
+    rows.sort(key=lambda r: -float(r["total_revenue_net"]))
+
+    return {
+        "scope": "company" if brands is None else "brands",
+        "months": month_labels,
+        "from": date_from.isoformat(),
+        "to": date_to.isoformat(),
+        "rows": rows,
+    }
 
 
 @router.get("/reconciliation")

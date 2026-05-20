@@ -618,6 +618,26 @@ export const api = {
       };
     }>(`/api/pnl/yoy${year ? `?year=${year}` : ""}`),
 
+  pnlByBrand: (months: number = 6) =>
+    request<{
+      scope: "company" | "brands";
+      months: string[];
+      from: string;
+      to: string;
+      rows: Array<{
+        brand: string;
+        monthly: Array<{
+          period: string;
+          revenue_net: number;
+          profit: number;
+          net_margin_pct: number;
+        }>;
+        total_revenue_net: number;
+        total_profit: number;
+        total_margin_pct: number;
+      }>;
+    }>(`/api/pnl/by-brand?months=${months}`),
+
   pnlTimeseries: (days: number = 30) =>
     request<{
       days: number;

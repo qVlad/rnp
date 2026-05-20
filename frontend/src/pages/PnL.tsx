@@ -8,6 +8,7 @@ import {
 } from "@/components/ColumnVisibility";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import PnLCardsView from "@/components/PnLCardsView";
+import PnLByBrandView from "@/components/PnLByBrandView";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const daysAgo = (n: number) => {
@@ -152,7 +153,7 @@ function deltaCell(curr: number | undefined, prev: number | undefined): {
   };
 }
 
-type ViewMode = "table" | "cards";
+type ViewMode = "table" | "cards" | "by-brand";
 const VIEW_KEY = "pnl.view.v1";
 
 export default function PnL() {
@@ -163,7 +164,8 @@ export default function PnL() {
   const [view, setView] = useState<ViewMode>(() => {
     try {
       const v = localStorage.getItem(VIEW_KEY);
-      return v === "cards" ? "cards" : "table";
+      if (v === "cards" || v === "by-brand") return v;
+      return "table";
     } catch {
       return "table";
     }
@@ -209,6 +211,13 @@ export default function PnL() {
               title="Карточки ОПиУ: годовая шапка с YoY и sparkline"
             >
               Карточки
+            </button>
+            <button
+              className={`btn ${view === "by-brand" ? "border-accent text-accent" : ""}`}
+              onClick={() => onSetView("by-brand")}
+              title="Матрица бренд × месяц × маржа — где деньги, а где проблемы"
+            >
+              По брендам
             </button>
           </div>
           {view === "table" && (
@@ -257,6 +266,7 @@ export default function PnL() {
       </div>
 
       {view === "cards" && <PnLCardsView />}
+      {view === "by-brand" && <PnLByBrandView />}
 
       {view === "table" && (
       <div className="card overflow-x-auto">
