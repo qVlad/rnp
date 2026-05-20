@@ -48,6 +48,12 @@ MIN_DST_QUOTA = 1
 # (extension polls каждые 5-30 сек, content script fetch ~1-3 сек).
 JOB_TIMEOUT_S = 45
 
+# Сколько раз ретраить транзитные ошибки (HTTP error от WB, unexpected
+# response shape) перед тем как пометить task permanent `failed`. При
+# 2-минутном polling = ~30 мин ретраев. Permanent ошибки (no_office,
+# no_nm) идут в failed сразу — ретраить их бессмысленно.
+MAX_RETRY_ATTEMPTS = 15
+
 
 def _office_id_lookup(office_name: str) -> int | None:
     """Резолв office_name → office_id (fallback для legacy tasks без to_office_id)."""
@@ -185,13 +191,25 @@ async def execute_window_for_tenant(
                 quota_job_id,
                 quota_res["error"],
             )
+            # 401 → токены LK устарели. Пометим needs_relogin (баннер на UI),
+            # но task оставим queued — расширение обновит токены при следующем
+            # визите в seller.wb.ru.
+            if quota_res["http_status"] == 401:
+                from app.services.redistribution.session_store import (
+                    mark_needs_relogin,
+                )
+
+                await mark_needs_relogin(session, tenant_id, "401 от quota")
             for t in group_tasks:
-                t.status = "failed"
                 t.last_attempt_at = datetime.now(timezone.utc)
                 t.last_status_code = quota_res["http_status"]
                 t.last_response = f"quota check failed: {quota_res['error']}"
                 t.attempt_count = (t.attempt_count or 0) + 1
-                failed += 1
+                if t.attempt_count >= MAX_RETRY_ATTEMPTS:
+                    t.status = "failed"
+                    failed += 1
+                else:
+                    skipped_no_extension += 1  # bucket: «попробуем позже»
             continue
 
         dst_quota = int((quota_res["data"] or {}).get("quota", 0))
@@ -258,13 +276,22 @@ async def execute_window_for_tenant(
                 "execute_window: create_order failed: %s",
                 order_res["error"],
             )
+            if order_res["http_status"] == 401:
+                from app.services.redistribution.session_store import (
+                    mark_needs_relogin,
+                )
+
+                await mark_needs_relogin(session, tenant_id, "401 от create_order")
             for t in group_tasks:
-                t.status = "failed"
                 t.last_attempt_at = datetime.now(timezone.utc)
                 t.last_status_code = order_res["http_status"]
                 t.last_response = f"create_order failed: {order_res['error']}"
                 t.attempt_count = (t.attempt_count or 0) + 1
-                failed += 1
+                if t.attempt_count >= MAX_RETRY_ATTEMPTS:
+                    t.status = "failed"
+                    failed += 1
+                else:
+                    skipped_no_extension += 1
             continue
 
         # === 4. Success → accepted + cooldown ===
@@ -314,13 +341,19 @@ async def execute_window_for_tenant(
             log.warning("execute_window: unexpected response: %r", data)
             failed_rec_ids: set[int] = set()
             for t in group_tasks:
-                t.status = "failed"
                 t.last_attempt_at = datetime.now(timezone.utc)
                 t.last_response = f"unexpected: {data!r}"
                 t.attempt_count = (t.attempt_count or 0) + 1
-                failed += 1
-                if t.recommendation_id:
-                    failed_rec_ids.add(int(t.recommendation_id))
+                if t.attempt_count >= MAX_RETRY_ATTEMPTS:
+                    t.status = "failed"
+                    failed += 1
+                    if t.recommendation_id:
+                        failed_rec_ids.add(int(t.recommendation_id))
+                else:
+                    skipped_no_extension += 1
+            # Помечаем recommendation.status='failed' только когда task
+            # реально permanent-failed (после MAX_RETRY_ATTEMPTS). Иначе
+            # она остаётся 'queued' и by-manager analytics не теряет её.
             if failed_rec_ids:
                 from sqlalchemy import update as sql_update
 

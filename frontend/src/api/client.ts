@@ -522,6 +522,11 @@ export const api = {
         created_at: string | null;
       }>;
     }>(`/api/redistribution/tasks${status ? `?status=${status}` : ""}`),
+  redistributionRetryTask: (id: number) =>
+    request<{ id: number; status: string }>(
+      `/api/redistribution/tasks/${id}/retry`,
+      { method: "POST" },
+    ),
   redistributionRoi: (date_from?: string, date_to?: string) => {
     const qs = new URLSearchParams();
     if (date_from) qs.set("date_from", date_from);
