@@ -67,6 +67,16 @@ export default defineManifest({
       run_at: "document_idle",
     },
     {
+      // Shifts API proxy (LEAD-016): SW не может fetch напрямую к
+      // seller-weekly-report (cookies третьей стороны не прикрепляются).
+      // Этот content script ловит messages от SW и делает fetch ИЗ
+      // контекста страницы seller.wildberries.ru — там cookies и
+      // localStorage с JWT-токенами нативные.
+      matches: ["https://seller.wildberries.ru/*"],
+      js: ["src/content/wb-shifts-content.ts"],
+      run_at: "document_start",
+    },
+    {
       // Поиск/каталог WB — трекинг позиций карточек, участвующих в активных
       // тестах, по ключевикам, заданным в настройках теста.
       // URL'ы вида:

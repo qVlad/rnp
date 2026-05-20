@@ -11,13 +11,18 @@
  * seller-weekly-report.wildberries.ru → куки + JWT-токены из localStorage
  * (если WB их там хранит) прикрепляются как в обычном браузерном XHR.
  *
- * Архитектура: SW получает запрос от popup'а / backend'а → шлёт
- * chrome.tabs.sendMessage в открытую вкладку seller.wildberries.ru →
- * content script (этот файл) делает fetch → отдаёт результат обратно.
+ * JWT-токены (AuthorizeV3, Wb-Seller-Lk) у WB **не** в localStorage и **не**
+ * в DOM-видимых cookies — они в коде WB-фронта, который сам их выдаёт в
+ * headers через свой fetch wrapper. Поэтому мы делаем **fetch interceptor
+ * в MAIN world**: перехватываем все исходящие fetch/XHR от WB-фронта,
+ * вытаскиваем AuthorizeV3 и Wb-Seller-Lk headers, кешируем для нашего proxy.
  *
- * Требование: у юзера должна быть открыта вкладка seller.wildberries.ru
- * (любая страница кабинета). Без неё proxy не работает — нужно открыть
- * (программно через chrome.tabs.create или попросить юзера).
+ * Архитектура:
+ *   1. MAIN world script (через chrome.scripting.executeScript world:'MAIN'
+ *      ИЛИ через инжект <script>): подменяет window.fetch/XHR.send,
+ *      шлёт перехваченные headers в ISOLATED world через window.postMessage.
+ *   2. Этот файл (ISOLATED world): слушает postMessage, кеширует headers,
+ *      использует их при proxy-вызовах от SW.
  */
 
 const SHIFTS_BASE =
@@ -40,32 +45,90 @@ type ProxyResp =
   | { ok: true; status: number; data: unknown }
   | { ok: false; status: number; reason: string; body?: string };
 
-/**
- * Достать JWT-токены WB из localStorage (если они там есть).
- * WB seller-portal хранит токены в разных ключах — пробуем известные имена.
- * Если не нашли — fetch может всё равно сработать благодаря cookies.
- */
-function readWbTokens(): { authorizeV3?: string; wbSellerLk?: string } {
-  const out: { authorizeV3?: string; wbSellerLk?: string } = {};
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (!k) continue;
-      const v = localStorage.getItem(k);
-      if (!v) continue;
-      const lower = k.toLowerCase();
-      if (lower.includes("authorizev3") || lower === "wb-authorize-v3") {
-        out.authorizeV3 = v.replace(/^"|"$/g, "");
-      }
-      if (lower.includes("seller-lk") || lower === "wb-seller-lk") {
-        out.wbSellerLk = v.replace(/^"|"$/g, "");
-      }
-    }
-  } catch {
-    /* ignore */
+// Кеш перехваченных JWT-токенов. Обновляется fetch-интерсептором в MAIN world.
+let cachedAuthV3: string | null = null;
+let cachedWbSellerLk: string | null = null;
+let cachedRootVersion: string | null = null;
+let interceptCount = 0;
+
+window.addEventListener("message", (e: MessageEvent) => {
+  if (e.source !== window) return;
+  if (e.data?.__rnp !== "wb-headers") return;
+  const h = e.data.headers as Record<string, string>;
+  if (h["authorizev3"]) cachedAuthV3 = h["authorizev3"];
+  if (h["wb-seller-lk"]) cachedWbSellerLk = h["wb-seller-lk"];
+  if (h["root-version"]) cachedRootVersion = h["root-version"];
+  interceptCount++;
+  if (interceptCount <= 3) {
+    console.log("[wbab-ext content] intercepted headers from", e.data.url, {
+      authV3: !!cachedAuthV3,
+      wbSellerLk: !!cachedWbSellerLk,
+    });
   }
-  return out;
+});
+
+/**
+ * Инжектим MAIN-world скрипт через <script> тег. MAIN world имеет доступ к
+ * странице's window.fetch (можем его подменить), а ISOLATED world видит
+ * только свой. postMessage — мост между ними.
+ */
+function injectMainWorldInterceptor(): void {
+  const code = `(() => {
+    const origFetch = window.fetch.bind(window);
+    window.fetch = function(input, init) {
+      const url = typeof input === 'string' ? input : (input instanceof Request ? input.url : String(input));
+      // Только запросы к WB-доменам интересны
+      if (url.includes('seller-weekly-report.wildberries.ru') || url.includes('seller.wildberries.ru/ns/')) {
+        let headers = {};
+        if (init?.headers) {
+          if (init.headers instanceof Headers) {
+            init.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
+          } else if (Array.isArray(init.headers)) {
+            for (const [k, v] of init.headers) headers[k.toLowerCase()] = v;
+          } else {
+            for (const k of Object.keys(init.headers)) headers[k.toLowerCase()] = init.headers[k];
+          }
+        }
+        if (input instanceof Request) {
+          input.headers.forEach((v, k) => { if (!headers[k.toLowerCase()]) headers[k.toLowerCase()] = v; });
+        }
+        if (headers['authorizev3'] || headers['wb-seller-lk']) {
+          window.postMessage({ __rnp: 'wb-headers', url, headers }, '*');
+        }
+      }
+      return origFetch(input, init);
+    };
+    // Также XHR
+    const OrigXHR = window.XMLHttpRequest;
+    const origOpen = OrigXHR.prototype.open;
+    const origSetRH = OrigXHR.prototype.setRequestHeader;
+    const origSend = OrigXHR.prototype.send;
+    OrigXHR.prototype.open = function(method, url) {
+      this.__rnpUrl = url;
+      this.__rnpHeaders = {};
+      return origOpen.apply(this, arguments);
+    };
+    OrigXHR.prototype.setRequestHeader = function(k, v) {
+      if (this.__rnpHeaders) this.__rnpHeaders[k.toLowerCase()] = v;
+      return origSetRH.apply(this, arguments);
+    };
+    OrigXHR.prototype.send = function() {
+      const url = this.__rnpUrl || '';
+      if ((url.includes('seller-weekly-report.wildberries.ru') || url.includes('seller.wildberries.ru/ns/'))
+          && (this.__rnpHeaders?.['authorizev3'] || this.__rnpHeaders?.['wb-seller-lk'])) {
+        window.postMessage({ __rnp: 'wb-headers', url, headers: this.__rnpHeaders }, '*');
+      }
+      return origSend.apply(this, arguments);
+    };
+    console.log('[wbab-ext MAIN] fetch+XHR interceptor installed');
+  })();`;
+  const s = document.createElement("script");
+  s.textContent = code;
+  (document.head || document.documentElement).appendChild(s);
+  s.remove();
 }
+
+injectMainWorldInterceptor();
 
 async function doShiftsCall(
   method: "GET" | "POST",
@@ -79,14 +142,13 @@ async function doShiftsCall(
     ).toString();
     if (qs) url += `?${qs}`;
   }
-  const tokens = readWbTokens();
   const headers: Record<string, string> = {
     Accept: "*/*",
     "Content-Type": "application/json",
-    "Root-Version": "v1.93.1",
+    "Root-Version": cachedRootVersion ?? "v1.93.1",
   };
-  if (tokens.authorizeV3) headers.AuthorizeV3 = tokens.authorizeV3;
-  if (tokens.wbSellerLk) headers["Wb-Seller-Lk"] = tokens.wbSellerLk;
+  if (cachedAuthV3) headers.AuthorizeV3 = cachedAuthV3;
+  if (cachedWbSellerLk) headers["Wb-Seller-Lk"] = cachedWbSellerLk;
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 10_000);
@@ -148,7 +210,11 @@ chrome.runtime.onMessage.addListener((msg: ProxyMsg, _sender, sendResponse) => {
   if (msg?.type !== "wbShiftsProxyContent") return false;
   (async () => {
     try {
-      console.log("[wbab-ext content] shifts proxy op=", msg.op);
+      console.log("[wbab-ext content] shifts proxy op=", msg.op, {
+        cachedAuthV3: !!cachedAuthV3,
+        cachedWbSellerLk: !!cachedWbSellerLk,
+        intercepts: interceptCount,
+      });
       let result: ProxyResp;
       switch (msg.op) {
         case "quota":
@@ -179,13 +245,15 @@ chrome.runtime.onMessage.addListener((msg: ProxyMsg, _sender, sendResponse) => {
           });
           break;
       }
+      console.log("[wbab-ext content] result =", result);
       sendResponse(result);
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e);
+      console.error("[wbab-ext content] handler error:", e);
       sendResponse({ ok: false, status: 0, reason: `content handler error: ${errMsg}` });
     }
   })();
-  return true; // async sendResponse
+  return true;
 });
 
 console.log("[wbab-ext content] wb-shifts-content.ts loaded on", location.href);
