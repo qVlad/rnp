@@ -50,6 +50,8 @@
 | Top-SKU | Топ-5 SKU по выручке / марже / **худшие** (worst-margin, кандидаты на ребренд). `order=asc\|desc` query-param в `/api/dashboard/top-skus` | `Dashboard.tsx`, `metrics.py:top_skus(order=...)` | brands-filter |
 | Alerts bar | Шапка дашборда с активными правилами уведомлений | `components/AlertsBar.tsx` | brands-filter |
 | ManagersKpi: Δ м/м + sparkline + sort | На `/managers-kpi` — колонки «Δ м/м» (Δ выручки в % к прошлому месяцу, цвет по порогу 3%) и «6 мес» (sparkline-линия выручки за последние 6 мес). Прошлый месяц всегда `mode=final` чтобы preliminary-шум не давал ложную просадку. Все столбцы сортируются кликом по `<th>` (persist в localStorage). TASK-DEV-009 | `pages/ManagersKpi.tsx`, `api/managers_kpi.py:_month_revenue_margin` | director, head |
+| **Маржа без операционных расходов** (hero-KPI, TASK-LEAD-034) | KPI-карточка `contribution_margin` + `contribution_margin_pct` на Dashboard. Формула: `revenue − COGS − все WB-удержания (commission/delivery/storage/penalty/deduction/acquiring) − реклама`. НЕ включает OPEX/fixed_costs/налоги. Берётся из `pnl_builder.totals.profit_from_sales` — match с P&L страницей. Tooltip с полной формулой и «что входит / что НЕ входит». Sprint+3 паритет с TrueStats. | `services/metrics.py:compute_dashboard`, `pages/Dashboard.tsx` (HERO_KEYS), `pages/Glossary.tsx#contribution_margin` | brands-filter |
+| **Гибкое сравнение 2 произвольных периодов** (TASK-LEAD-029) | Toggle «Сравнить периоды» на Dashboard разворачивает `PeriodComparePicker` (2 DateRangePicker'а). При клике «Сравнить» → 2 колонки KPI (period A / Δ% / period B). Цветовая кодировка дельты учитывает «lower-is-better» метрики (рост ad_cost/returns — красный). Backend `GET /api/dashboard/compare?a_from&a_to&b_from&b_to&mode` возвращает `{period_a, period_b, delta_pct}`. Δ% = (a-b)/b*100, div-by-zero → `null`. Brand-filter и preliminary/final/hybrid поддержаны. | `api/dashboard_compare.py`, `components/PeriodComparePicker.tsx`, `components/DashboardCompareView.tsx`, `pages/Dashboard.tsx` | brands-filter |
 
 ---
 
@@ -181,6 +183,8 @@
 |---|---|---|---|
 | Forecast stockout | Прогноз остатков с учётом velocity | `services/forecast.py`, `api/units.py` | brands-filter |
 | Plans CRUD | Планы продаж (store / nm_id / group scope) | `pages/Plans.tsx`, `api/plans.py`, миграция 0004 | director/head (CUD), all (read) |
+| **Импорт XLSX плана** (TASK-LEAD-031) | `POST /api/plans/import-excel` (multipart + опциональный `mapping_json`). Auto-detect русских/английских заголовков (Артикул/Год/Месяц/Выручка план/Заказы или nm_id/year/month/...). Upsert по натуральному ключу. `POST /api/plans/import-excel/preview` для предпросмотра mapping'а. Audit_log. | `services/excel_io.py:preview_sales_plan_xlsx/import_sales_plans_with_mapping`, `api/plans.py`, кнопка «📂 Импорт XLSX» в `pages/Plans.tsx` | director, head |
+| **Распределить план из факта** (TASK-LEAD-031) | `POST /api/plans/distribute-by-fact?plan_id=&fact_period_days=30&base=orders\|revenue\|units` — берёт store/group-план и раскладывает на nm_id пропорционально факту предыдущего равного периода. Fallback на равные доли при нулевом факте. Last-row pickup для round-off (Σ = исходный план ± 0.01). Brand-filter учитывается. | `services/plan_distribute.py:distribute_plan_by_fact`, кнопка «⇉ Распределить» возле non-nm планов | director, head |
 | Plan-fact | Сравнение план vs факт | `services/plan_fact.py` | brands-filter |
 | Season plan | Сезонные коэффициенты | `pages/SeasonPlan.tsx`, `services/season_plan.py` | director, head |
 | Product groups | Группировка SKU + назначение | миграция 0011, `pages/ProductGroups.tsx` | director, head |
@@ -195,6 +199,7 @@
 | Ad stats sync | Расходы и клики per-day per-nm-id-platform | `wb_ad_stats_daily`, `sync_ad_stats`, чаще 4×/день | — |
 | Ad campaign details sync | Заполнение NULL полей кампаний | `sync_ad_campaign_details` | — |
 | Ads heatmap | Тепловая карта DRR / spent / revenue / orders / clicks по nm_id × дате | `pages/AdsHeatmap.tsx`, `api/ads.py` | brands-filter |
+| **Conversion-метрики в ads-heatmap** (TASK-LEAD-033) | 4 новые метрики в селекторе heatmap: `cpl = spent/clicks` (₽), `cps = spent/orders` (₽), `basket_conv = atbs/clicks × 100` (%), `order_conv = orders/clicks × 100` (%). Агрегация sum-num/sum-denom (не среднее средних — match с funnel). При clicks=0 → `null`. Селектор разбит на `<optgroup>` (Финансы / Воронка / Стоимость+Конверсия). Tooltip с формулой. Glossary обновлён. Sprint+3 паритет с TrueStats. | `api/ads.py:get_heatmap` (поля cpl/cps/basket_conv/order_conv + metric_formulas), `pages/AdsHeatmap.tsx`, `pages/Glossary.tsx` | brands-filter |
 | External ad costs | Учёт внешней рекламы (вне WB) с периодом действия | `api/external_ad_costs.py`, миграция 0022 | director, head |
 | Artificial orders | Самовыкупы (selfbuy / giveaway / DBS / rFBS) | `api/artificial_orders.py` | director, head |
 | Revenue corrections | Ручные корректировки выручки | `pages/RevenueCorrections.tsx` | director, head |
@@ -450,8 +455,8 @@ Daily digest через Celery beat в 09:00 MSK. TG_BOT_TOKEN в `.env`.
 
 | Фича | Описание | Путь в коде | Доступ |
 |---|---|---|---|
-| Capitalization | Капитализация склада (приход/расход остатков) | `pages/Capitalization.tsx`, `api/off_platform.py` | director, head |
-| Off-platform stock | Off-WB остатки | миграция 0009 | director, head |
+| **Капитализация WB-склада** (TASK-LEAD-028) | Новая страница `/inventory`: hero-KPI «Σ(`wb_stocks.quantity` × COGS) на дату», area-chart динамики (recharts) по выбранному периоду, breakdown-таблица по brand/group/warehouse (warehouse — заглушка до интеграции wb_warehouse_stocks). COGS-timeline через `pnl_builder.build_cogs_lookup` + `cost_for_date` (как везде в P&L). RBAC: director/head/manager (brands-filter). Никаких миграций. Sprint+3 паритет с TrueStats «Склад → Капитализация». | `services/inventory_snapshot.py`, `api/inventory.py` (`GET /api/inventory/snapshot`, `/dynamic`), `pages/Inventory.tsx` | brands-filter |
+| Off-platform stock (рестайл переименование) | Бывшая страница `Capitalization.tsx` переименована в `OffPlatformStock.tsx`, route `/capitalization` → `/off-platform` (с `<Navigate replace />` для back-compat). Меню: «Внеплатформенные движения». Это off-WB остатки + движения (миграция 0009). | `pages/OffPlatformStock.tsx`, `api/off_platform.py`, миграция 0009 | director, head |
 
 ---
 
@@ -493,6 +498,8 @@ Daily digest через Celery beat в 09:00 MSK. TG_BOT_TOKEN в `.env`.
 | exportPdf | html2canvas + jspdf | `lib/exportPdf.ts` |
 | shareUrl | base64 URL hash encoding | `lib/shareUrl.ts` |
 | CSS-vars | `--bg`, `--surface`, `--accent`, `--focus-ring` и т.д. | `styles.css`, `tailwind.config.js` |
+| **PWA-манифест + service worker** (TASK-LEAD-032) | `frontend/public/manifest.webmanifest` (name="РНП", icons 192/512, theme="#0f172a", display=standalone) + минимальный SW `/sw.js` (no-op install/activate/fetch для PWA-валидации). Регистрация в `main.tsx`. Apple meta-tags + apple-touch-icon. Позволяет «Add to home screen» на iOS Safari + Android Chrome. Заменяет native mobile app. | `frontend/public/manifest.webmanifest`, `frontend/public/sw.js`, `frontend/index.html`, `frontend/src/main.tsx` |
+| **Маркер «Сегодня» в Cash-flow** (TASK-LEAD-032) | На странице `/payment-calendar` — `ReferenceLine` на сегодняшней дате в LineChart (dashed warn-color, label «Сегодня») + цветовая дифференциация past/future в таблице расписания (past = full opacity, future = `/70`, today-строка = `border-warning bg-warning/5` + бейдж). Если today вне видимого периода — линия не рендерится. | `pages/PaymentCalendar.tsx` |
 
 ### Tokens
 
