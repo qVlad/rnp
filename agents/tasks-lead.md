@@ -1882,13 +1882,19 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   4. **Опционально:** WB Promo API — есть ли endpoint для получения списка предложенных акций? Если да — preload их в форму.
   5. История участия в акциях (model `wb_promo_participation(nm_id, promo_id, started_at, ended_at, discount_pct)`) — опционально для retrospective analysis
 - **Критерии готовности:**
-  - [ ] Pre-flight: проверить WB API на endpoint `/api/v1/promotions` или аналог (если есть — приоритет на интеграцию)
-  - [ ] `services/promo_calculator.py` — pure-function `simulate_promo(nm_id, discount, duration, velocity_boost)` → `{revenue_delta, margin_delta, roi_delta}`
-  - [ ] API endpoint `POST /api/promo-calculator/simulate`
-  - [ ] Frontend `pages/PromoCalculator.tsx`
-  - [ ] Smoke на 2-3 реальных SKU
+  - [x] Pre-flight: проверить WB API на endpoint `/api/v1/promotions` или аналог (если есть — приоритет на интеграцию)
+  - [x] `services/promo_calculator.py` — pure-function `simulate_promo(nm_id, discount, duration, velocity_boost)` → `{revenue_delta, margin_delta, roi_delta}`
+  - [x] API endpoint `POST /api/promo-calculator/simulate`
+  - [x] Frontend `pages/PromoCalculator.tsx`
+  - [ ] Smoke на 2-3 реальных SKU (после деплоя — main session)
 - **Зависимости:** нет
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-21 — Developer + Design Engineer (worktree agent-abf5a9d67)
+
+**Реализация:**
+- WB Promo API research: dp-calendar-api.wildberries.ru существует как endpoint (Promo Calendar) для списка предложенных акций — реализован минималистичный клиент `integrations/wb/promotions.py` с graceful fallback (если 404/410/недоступен — фронт работает в manual-input режиме). Preload активных акций — отдельная UX-задача (calendar предлагает данные, но не отвечает на критичный бизнес-вопрос «выгодно ли» — расчёт всё равно делает наш simulator).
+- `services/promo_calculator.py` — pure-function `simulate_promo(...)`. Baseline (revenue/velocity/margin per SKU за `baseline_period_days`) → with-promo (новая цена + boost velocity → новая маржа per unit + total) → delta + breakeven boost.
+- API endpoint `POST /api/promo-calculator/simulate` — brand-filter через `current_brands_filter`.
+- Frontend `/promo-calculator` (директор+head+manager): SKU multi-picker (re-use ProductPicker pattern), скидка %, длительность дней, velocity boost slider, baseline period. Result table per-SKU с цветовой индикацией и totals row.
 
 ---
 

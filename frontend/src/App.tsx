@@ -50,6 +50,7 @@ import AbTestList from "./pages/AbTestList";
 import AbTestNew from "./pages/AbTestNew";
 import AbTestDetail from "./pages/AbTestDetail";
 import ManagersKpi from "./pages/ManagersKpi";
+import PromoCalculator from "./pages/PromoCalculator";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, needsBootstrap } = useAuth();
@@ -253,6 +254,7 @@ export default function App() {
             }
           />
           <Route path="calc" element={<UnitCalculator />} />
+          <Route path="promo-calculator" element={<PromoCalculator />} />
           <Route
             path="users"
             element={

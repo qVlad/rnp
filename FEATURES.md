@@ -452,6 +452,7 @@ Daily digest через Celery beat в 09:00 MSK. TG_BOT_TOKEN в `.env`.
 |---|---|---|---|
 | Unit calculator | Расчёт юнит-экономики SKU «что если» | `pages/UnitCalculator.tsx`, `api/calc.py` | all |
 | New products (CIF) | Калькулятор новинок из Китая + 4 НДС-сценария | `pages/NewProducts.tsx` | all |
+| **Promo calculator** (TASK-LEAD-050) | Калькулятор рентабельности WB-акций: пользователь выбирает SKU (multi-select), параметры акции (скидка %, длительность, ожидаемый velocity boost), baseline-период (7/14/30 дней). Backend `simulate_promo_for_skus` берёт baseline из `wb_report_detail` (revenue/velocity/margin/commission/logistics per SKU), считает with-promo сценарий (new_price = price × (1−discount), new_velocity = velocity × (1+boost), new_margin = new_price − cogs − comm − log). Возвращает per-SKU baseline vs with-promo + delta + breakeven velocity boost (минимальный boost для безубытка). Color-coding в таблице: зелёный фон = better than baseline, красный = убыток per unit. Сортировка по delta_margin desc. WB Promo Calendar API (`dp-calendar-api.wildberries.ru`) пока используется только как опциональный source для preload активных акций (`integrations/wb/promotions.py`) — graceful fallback на manual-input при недоступности. | `services/promo_calculator.py`, `api/promo_calculator.py` (`POST /api/promo-calculator/simulate`), `integrations/wb/promotions.py`, `pages/PromoCalculator.tsx`, тест `tests/test_promo_calculator.py` | brands-filter (director/head/manager) |
 
 ---
 

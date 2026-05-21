@@ -97,7 +97,7 @@ Authorization: <token>
 | **Returns** | `https://returns-api.wildberries.ru` | Возвраты |
 | **Buyer Chat** | `https://buyer-chat-api.wildberries.ru` | Чат с покупателями |
 | **User Management** | `https://user-management-api.wildberries.ru` | /api/v1/users/* |
-| **Promo Calendar** | `https://dp-calendar-api.wildberries.ru` | Промо-акции |
+| **Promo Calendar** | `https://dp-calendar-api.wildberries.ru` | Промо-акции (`/api/v1/calendar/promotions` для списка). См. §11.5 — используется в TASK-LEAD-050 (graceful fallback на manual-input). |
 | **Digital (WBD)** | `https://devapi-digital.wildberries.ru` | Цифровые товары |
 
 ### Sandbox hosts

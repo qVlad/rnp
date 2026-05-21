@@ -2313,6 +2313,52 @@ paymentOrderDelete: (payment_order_id: string) =>
     if (!r.ok) throw new Error(`Failed to load FEATURES.md: ${r.status}`);
     return r.text();
   },
+
+  // ── Promo calculator (TASK-LEAD-050) ──
+  promoCalculatorSimulate: (body: {
+    nm_ids: number[];
+    discount_pct: number;
+    duration_days: number;
+    expected_velocity_boost_pct: number;
+    baseline_period_days: number;
+  }) =>
+    request<{
+      params: {
+        nm_ids: number[];
+        discount_pct: number;
+        duration_days: number;
+        expected_velocity_boost_pct: number;
+        baseline_period_days: number;
+      };
+      items: Array<{
+        nm_id: number;
+        vendor_code: string | null;
+        brand: string | null;
+        photo_url: string | null;
+        baseline: Record<string, number>;
+        with_promo: Record<string, number>;
+        delta_pct: Record<string, number | null>;
+        delta_abs: Record<string, number>;
+        is_profitable: boolean;
+        is_better_than_baseline: boolean;
+        breakeven_velocity_boost_pct: number | null;
+      }>;
+      totals: {
+        skipped_nm_ids: number[];
+        items_count: number;
+        profitable_count: number;
+        better_than_baseline_count: number;
+        sum_baseline_revenue_total: number;
+        sum_baseline_margin_total: number;
+        sum_with_promo_revenue_total: number;
+        sum_with_promo_margin_total: number;
+        sum_delta_revenue_total: number;
+        sum_delta_margin_total: number;
+      };
+    }>("/api/promo-calculator/simulate", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 };
 
 /**

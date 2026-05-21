@@ -40,6 +40,7 @@ from app.api import (
     product_groups,
     product_tags,
     products,
+    promo_calculator,
     reconciliation_4way,
     redistribution,
     season_plan,
@@ -253,4 +254,5 @@ app.include_router(extension.router)
 app.include_router(extension_lk_jobs.router)
 app.include_router(managers_kpi.router)
 app.include_router(metric_templates.router)
+app.include_router(promo_calculator.router)
 app.include_router(reconciliation_4way.router)

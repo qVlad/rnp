@@ -452,6 +452,7 @@ activeTenantId + switchTenant(). Layout dropdown «Кабинет ▼» в ша�
 | `/api/sync/status` | tenant-scoped | sync checkpoints + WB cooldowns + celery active tasks |
 | `/api/unit-plan/*` | brands-filter (rows), director (global-config PUT), director_or_head (overrides/snapshots) | **UNIT-план** — плановая юнит-экономика на базе Excel-методики LeymanKids. См. [`UNIT_PLAN.md`](UNIT_PLAN.md). |
 | `/api/tariffs/*` | director_or_head (list/timeline/current), director (sync POST) | WB Tariffs box/pallet/commission — view (latest as-of, timeline, current) + manual sync. SCD2 reference-таблицы, sync ежедневно 08:00 MSK. |
+| `/api/promo-calculator/simulate` | brands-filter | **Калькулятор рентабельности WB-акций** (TASK-LEAD-050): симулирует impact акции (discount × duration × velocity_boost) на маржу/выручку per-SKU. Baseline из `wb_report_detail`. WB Promo Calendar API (`dp-calendar-api.wildberries.ru`) — опциональный preload, graceful fallback на manual-input. |
 | `/api/version`, `/api/whoami`, `/api/health` | публ. | служебные |
 
 Видимость пунктов меню фронта — в `frontend/src/components/Layout.tsx` (`directorOnly`, `directorOrHead`).
