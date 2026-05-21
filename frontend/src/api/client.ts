@@ -58,7 +58,7 @@ async function request<T>(
 export type Me = {
   id: number;
   username: string;
-  role: "director" | "head_of_sales" | "manager";
+  role: "director" | "head_of_sales" | "manager" | "bookkeeper";
   full_name: string | null;
   // null = unrestricted (director/head); array = manager's brand assignments
   // (может быть пустым массивом — нет назначений)

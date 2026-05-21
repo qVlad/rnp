@@ -1545,14 +1545,19 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   audit-mode guard'ы). FEATURES.md § 15 (Roles, Brand-scoped filter,
   новая строка Bookkeeper guard).
 
-**Осталось (отдельные шаги в main session):**
-- Frontend `Layout.tsx`: добавить tag `bookkeeperOnly: true` для пунктов
-  меню (Tax-report*, Payment-orders, Audit-mode read). Скрывать
-  остальные для bookkeeper'а. Баннер role на странице.
-- Опционально: страница `/payment-calendar` доступна bookkeeper'у —
-  если есть отдельная ручка, добавить guard.
-- UX-Validator smoke pass в роли accountant (post-feature review loop,
-  RULES.md § 2.5).
+**Реализация frontend (main session, 2026-05-21):**
+- `frontend/src/api/client.ts:61` — Role type расширен: `"director" | "head_of_sales" | "manager" | "bookkeeper"`
+- `frontend/src/components/Layout.tsx`:
+  - `Link` type получил `bookkeeperOk?: boolean` (whitelist-подход)
+  - `const isBookkeeper = user?.role === "bookkeeper"`
+  - `filterItems()` — для bookkeeper'а показывает только пункты с `bookkeeperOk: true`
+  - Помечены `bookkeeperOk: true`: `/tax-report`, `/tax-report-ausn`, `/tax-report-usn`, `/tax-report-usn-vat5`, `/tax-report-usn-vat7`, `/payment-calendar`, `/audit`, `/glossary`, `/docs`, `/features`
+  - Profile-блок в footer: ветка `isBookkeeper ? "Бухгалтер" (text-warn) : ...`
+- `tsc --noEmit` чисто
+
+**Осталось (для следующего раунда / отдельной задачи):**
+- UX-Validator smoke pass в роли accountant (post-feature review loop, RULES.md § 2.5)
+- Создать тестового пользователя `bookkeeper@test` (или CLI команда) для прогона.
 
 ---
 

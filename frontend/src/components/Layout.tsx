@@ -21,6 +21,10 @@ type Link = {
   end?: boolean;
   directorOnly?: boolean;
   directorOrHead?: boolean;
+  // TASK-LEAD-040 frontend: whitelist для bookkeeper-роли. Без флага пункт
+  // скрыт для bookkeeper'а (безопаснее blacklist — новые pages по default
+  // скрыты, явно открываются здесь).
+  bookkeeperOk?: boolean;
   icon?: IconName;
 };
 
@@ -34,19 +38,19 @@ const GROUPS: Group[] = [
       { to: "/pnl", label: "P&L", icon: "list" },
       { to: "/pnl-reconciliation", label: "Сверка с WB", icon: "check" },
       { to: "/reconciliation-4way", label: "4-way Сверка", icon: "check", directorOrHead: true },
-      { to: "/audit", label: "Аудит-режим", icon: "check", directorOrHead: true },
+      { to: "/audit", label: "Аудит-режим", icon: "check", directorOrHead: true, bookkeeperOk: true },
     ],
   },
   {
     label: "Налоги и деньги",
     items: [
-      { to: "/tax-report", label: "Налог. отчёт", directorOrHead: true },
-      { to: "/tax-report-ausn", label: "АУСН-Доходы 8%", directorOrHead: true },
-      { to: "/tax-report-usn", label: "УСН-Доходы 6%", directorOrHead: true },
-      { to: "/tax-report-usn-vat5", label: "УСН 6% + НДС 5%", directorOrHead: true },
-      { to: "/tax-report-usn-vat7", label: "УСН 6% + НДС 7%", directorOrHead: true },
+      { to: "/tax-report", label: "Налог. отчёт", directorOrHead: true, bookkeeperOk: true },
+      { to: "/tax-report-ausn", label: "АУСН-Доходы 8%", directorOrHead: true, bookkeeperOk: true },
+      { to: "/tax-report-usn", label: "УСН-Доходы 6%", directorOrHead: true, bookkeeperOk: true },
+      { to: "/tax-report-usn-vat5", label: "УСН 6% + НДС 5%", directorOrHead: true, bookkeeperOk: true },
+      { to: "/tax-report-usn-vat7", label: "УСН 6% + НДС 7%", directorOrHead: true, bookkeeperOk: true },
       { to: "/cash-flow", label: "ДДС", directorOrHead: true },
-      { to: "/payment-calendar", label: "Платёжный календарь", directorOrHead: true },
+      { to: "/payment-calendar", label: "Платёжный календарь", directorOrHead: true, bookkeeperOk: true },
       { to: "/inventory", label: "Капитализация WB" },
       { to: "/off-platform", label: "Внеплатформенные движения", directorOrHead: true },
       { to: "/tariffs", label: "Тарифы WB" },
@@ -99,9 +103,9 @@ const GROUPS: Group[] = [
   {
     label: "Справка",
     items: [
-      { to: "/glossary", label: "Глоссарий", icon: "list" },
-      { to: "/docs", label: "Помощь", icon: "help" },
-      { to: "/features", label: "Каталог функций", icon: "layers" },
+      { to: "/glossary", label: "Глоссарий", icon: "list", bookkeeperOk: true },
+      { to: "/docs", label: "Помощь", icon: "help", bookkeeperOk: true },
+      { to: "/features", label: "Каталог функций", icon: "layers", bookkeeperOk: true },
     ],
   },
   {
@@ -120,6 +124,7 @@ export default function Layout() {
   const { user, logout } = useAuth();
   const isDirector = user?.role === "director";
   const isHead = user?.role === "head_of_sales";
+  const isBookkeeper = user?.role === "bookkeeper";
   const sees_all_brands = isDirector || isHead;
 
   const [collapsed, setCollapsed] = useState<boolean>(() => {
@@ -148,6 +153,9 @@ export default function Layout() {
 
   const filterItems = (items: Link[]) =>
     items.filter((l) => {
+      // TASK-LEAD-040 frontend: для bookkeeper'а — whitelist через bookkeeperOk.
+      // Без флага пункт скрыт (новые pages по default не показываем).
+      if (isBookkeeper) return !!l.bookkeeperOk;
       if (l.directorOnly) return isDirector;
       if (l.directorOrHead) return sees_all_brands;
       return true;
@@ -226,10 +234,18 @@ export default function Layout() {
                     ? "text-success"
                     : isHead
                     ? "text-accent"
+                    : isBookkeeper
+                    ? "text-warn"
                     : "text-muted"
                 }
               >
-                {isDirector ? "Директор" : isHead ? "РОП" : "Менеджер"}
+                {isDirector
+                  ? "Директор"
+                  : isHead
+                  ? "РОП"
+                  : isBookkeeper
+                  ? "Бухгалтер"
+                  : "Менеджер"}
               </div>
             </div>
           )}
