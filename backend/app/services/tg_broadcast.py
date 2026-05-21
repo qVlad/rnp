@@ -32,6 +32,35 @@ from app.integrations.telegram import send_message
 log = get_logger(__name__)
 
 
+async def notify_user(
+    session: AsyncSession,
+    user_id: int,
+    text: str,
+    *,
+    parse_mode: str = "HTML",
+) -> bool:
+    """Шлём конкретному юзеру через его `users.tg_chat_id`.
+
+    Fail-open: если юзер не привязал TG — просто `return False`, не raises.
+    Используется для back-loop'а нотификаций (например, manager узнаёт что
+    его plan_edit_request приняли/отклонили).
+    """
+    try:
+        chat_id = (
+            await session.execute(
+                select(User.tg_chat_id).where(
+                    User.id == user_id, User.tg_chat_id.isnot(None)
+                )
+            )
+        ).scalar_one_or_none()
+        if not chat_id:
+            return False
+        return await send_message(str(chat_id), text, parse_mode=parse_mode)
+    except Exception as e:  # noqa: BLE001
+        log.warning("notify_user failed (user_id=%s): %s", user_id, e)
+        return False
+
+
 async def broadcast_to_directors(
     session: AsyncSession,
     text: str,

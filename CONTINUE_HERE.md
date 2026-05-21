@@ -37,6 +37,42 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## 2026-05-21 — **TG back-loop для plan_edit_requests** (v0.15.2)
+
+Замкнули workflow TASK-DEV-017. Раньше:
+
+1. Manager жмёт «Предложить правку» → POST → director получает TG-уведомление ✓
+2. Director нажимает Accept или Reject → план обновляется, но **manager об
+   этом не узнаёт** — приходит в UI на следующий день, видит свою заявку
+   в статусе resolved.
+
+Теперь — back-loop через `services/tg_broadcast.notify_user(session, user_id, text)`:
+
+- Принимает `users.tg_chat_id` напрямую (не fan-out), fail-open если не привязан.
+- В `accept_request` → TG manager'у: «✓ Заявка #N принята · план обновлён ·
+  принял <ФИО>».
+- В `reject_request` → TG manager'у: «✕ Заявка #N отклонена · причина <note> ·
+  отклонил <ФИО>».
+- Fail-open: рассылка не блокирует accept/reject mutation; manager без
+  привязанного chat_id просто не получает уведомление.
+
+### Версия
+0.15.1 → 0.15.2 (patch — improvement существующей фичи без новых endpoint'ов
+или миграций)
+
+### Изменённые файлы
+- `backend/app/services/tg_broadcast.py` — функция `notify_user`
+- `backend/app/api/plan_edit_requests.py` — wire в accept/reject
+- `FEATURES.md` — обновлена строка TASK-DEV-017
+
+### Что в следующих сессиях
+- Manager-side TG nudge для `supply_send` тоже (но там UI-toast уже есть, P3)
+- Bot `/start` auto-bind: бот распознаёт зарегистрированного юзера и
+  автозаписывает `tg_chat_id` (UX: вместо копи-паста chat_id вручную)
+- Email-канал для тех кто не использует Telegram
+
+---
+
 ## 2026-05-21 — **Архитектурный долг #2: 5 closures** (v0.15.0)
 
 Закрыли 5 пунктов тех-долга после Sprint+2.

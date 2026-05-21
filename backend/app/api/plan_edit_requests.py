@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logging import get_logger
 from app.db.models import PlanEditRequest, SalesPlan, User
 from app.services.audit import audit_log
-from app.services.tg_broadcast import broadcast_to_directors
+from app.services.tg_broadcast import broadcast_to_directors, notify_user
 from app.services.auth import (
     CurrentUser,
     current_brands_filter,
@@ -223,6 +223,23 @@ async def accept_request(
         comment=f"via plan_edit_request #{req.id}",
     )
     await session.commit()
+
+    # Back-loop: notify requester в Telegram если он привязал свой chat_id.
+    # Fail-open — рассылка не блокирует accept.
+    if req.requested_by_user_id:
+        try:
+            resolver_name = user.full_name or user.username
+            msg = (
+                f"<b>✓ Заявка #{req.id} принята</b>\n\n"
+                f"План #{req.plan_id}, поле <code>{req.field_name}</code>:\n"
+                f"  {req.current_value or '—'} → <b>{req.requested_value}</b>\n\n"
+                f"Принял: {resolver_name}\n"
+                f"Откройте /plans чтобы увидеть обновлённый план."
+            )
+            await notify_user(session, req.requested_by_user_id, msg)
+        except Exception as e:  # noqa: BLE001
+            log.warning("notify accept failed: %s", e)
+
     return {"ok": True, "request_id": req.id, "applied": True}
 
 
@@ -249,4 +266,20 @@ async def reject_request(
     req.resolved_at = datetime.now(timezone.utc)
     req.resolution_note = body.note
     await session.commit()
+
+    # Back-loop: notify requester (manager) что заявку отклонили + причина.
+    if req.requested_by_user_id:
+        try:
+            resolver_name = user.full_name or user.username
+            msg = (
+                f"<b>✕ Заявка #{req.id} отклонена</b>\n\n"
+                f"План #{req.plan_id}, поле <code>{req.field_name}</code>:\n"
+                f"  {req.current_value or '—'} → ~~{req.requested_value}~~\n\n"
+                f"Причина: <i>{body.note}</i>\n\n"
+                f"Отклонил: {resolver_name}"
+            )
+            await notify_user(session, req.requested_by_user_id, msg)
+        except Exception as e:  # noqa: BLE001
+            log.warning("notify reject failed: %s", e)
+
     return {"ok": True, "request_id": req.id, "rejected": True}
