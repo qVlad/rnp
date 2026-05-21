@@ -1957,11 +1957,18 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   3. Output: стоимость по `wb_tariff_box` или `wb_tariff_pallet` (из миграции 0040, уже есть)
   4. Опционально: сравнить с альтернативами (приёмка vs FBS прямой)
 - **Критерии готовности:**
-  - [ ] `frontend/src/components/TransitCalculator.tsx`
-  - [ ] Использует существующие `wb_tariff_*` таблицы
-  - [ ] Подключён как таб в `/new-products` или separate route
-- **Зависимости:** TASK-LEAD-040 (Tariffs API уже на проде с 0040)
-- **Статус:** Открыта
+  - [x] `frontend/src/pages/TransitCalculator.tsx` (отдельная страница, не таб)
+  - [x] Использует существующие `api.tariffWarehouses()` + `api.tariffCurrent('box')` (тарифы из миграции 0040)
+  - [x] Route `/transit-calculator` в App.tsx + пункт меню «Калькулятор поставки» в Layout «SKU и продажи»
+  - [x] Persist params в `localStorage["transit-calc.params.v1"]`
+  - [x] tsc чисто
+- **Зависимости:** TASK-LEAD-040 (Tariffs API на проде с миграции 0040 ✅)
+- **Статус:** ✅ Выполнено — 2026-05-21 (main session, раунд 5)
+- **Реализация:**
+  - Form: склад / штук / литров на шт / дней хранения
+  - Output: Acceptance total + Storage total + Grand total + per-unit breakdown
+  - Detail-блок WB-тарифа с источником (effective_from)
+  - Note про то что не включено (внешняя логистика до WB-склада, платная приёмка, себестоимость)
 
 ---
 

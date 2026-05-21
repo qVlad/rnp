@@ -44,6 +44,7 @@ import Checklist from "./pages/Checklist";
 import SeasonPlan from "./pages/SeasonPlan";
 import Jam from "./pages/Jam";
 import NewProducts from "./pages/NewProducts";
+import TransitCalculator from "./pages/TransitCalculator";
 import AbTestList from "./pages/AbTestList";
 import AbTestNew from "./pages/AbTestNew";
 import AbTestDetail from "./pages/AbTestDetail";
@@ -291,6 +292,7 @@ export default function App() {
               </DirectorOrHead>
             }
           />
+          <Route path="transit-calculator" element={<TransitCalculator />} />
           <Route
             path="settings"
             element={
