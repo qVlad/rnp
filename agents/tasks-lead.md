@@ -21,6 +21,11 @@ Lead использует этот файл как master-view: сюда скл�
 >
 > Multi-cabinet workspace полностью готов end-to-end (backend + frontend).
 >
+> **Раунд 5 — новый backlog (РОП-приоритеты + TS-анализ):**
+> - 5 фич РОПа → TASK-LEAD-049..053 (см. секцию «🔥 РОП-приоритеты» ниже)
+> - 3 новых gap из обновлённого `TRUESTATS_REFERENCE.md` → TASK-LEAD-054..056
+> - Стартовый recommended order: 049 → 051 → 053 → 050 → 052
+>
 > **Завершено в этой сессии 2026-05-21 (раунд 2):**
 > - ✅ **TASK-LEAD-040 frontend** (Layout bookkeeper visibility, whitelist через `bookkeeperOk`) — main, commit `808e28e`
 > - ✅ **Release v0.20.1 deploy** (pack: 030 backend + 040 backend + 042 + 040 frontend) — commit `30311dd`
@@ -1826,10 +1831,205 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [x] Frontend часть НЕ трогать (Фаза C — main session отдельно) ✅
 - **Зависимости:** TASK-LEAD-039 спека ✅ (commit `f8000f8`)
 - **Статус:** Выполнено — 2026-05-21 (backend часть, sub-agent C)
-- **Не вошло (Фаза C/D):**
-  - Frontend: AuthContext.availableTenants + Layout dropdown + queryClient.removeQueries
-  - UI для grant/revoke user_tenant_access (сейчас только signup/bootstrap создаёт через ORM)
-  - Drop `users.tenant_id` (опционально, Фаза D)
+- **Не вошло (Фаза D):**
+  - UI для grant/revoke user_tenant_access (сейчас только signup/bootstrap создаёт через ORM) — отдельная задача
+  - Drop `users.tenant_id` (опционально, Фаза D после ~1 спринта стабилизации)
+
+---
+
+## 🔥 РОП-приоритеты + TS-анализ (2026-05-21 вечер, раунд 5)
+
+> Источник: пользователь провёл новый детальный анализ `TRUESTATS_REFERENCE.md` (1385 строк) + РОП передал 5 приоритетных фич. Explore-agent отчёт показал что 3 из 5 фич у нас уже **полнее чем у TS** (Unit-экономика через UnitPlan, отчёт менеджеру через ManagersKpi, CIF-калькулятор через NewProducts) — но РОП хочет **более простые/быстрые версии для daily workflow**. 2 фичи — gap у обоих (акции WB, локализация).
+>
+> Сразу 5 новых задач от РОПа + 3 топовых gap из обновлённого TS-анализа.
+
+### TASK-LEAD-049: Unit-экономика с inline-редактором цены/скидки (P0 РОП-запрос)
+
+- **Исполнитель:** Lead → Design Engineer + Developer (тонкий backend)
+- **Приоритет:** **P0** (явный РОП-запрос для daily workflow)
+- **Оценка:** M (3-5 дней)
+- **Источник:** РОП-запрос 2026-05-21 (фича #1). У нас `pages/UnitPlan.tsx` (60 колонок Excel-методика) уже умеет считать маржу для разных цен, но это **тяжёлый workflow** через override'ы. РОПу нужен **lightweight inline-editor** на `/units` для quick «изменил цену → увидел маржу за минуту».
+- **Описание:**
+  1. На `pages/Units.tsx` добавить колонку «Новая цена» с inline-input
+  2. Колонка «Новая маржа» — frontend-computed (revenue × (1-новая_скидка%) − cogs − commission_pct × revenue − logistics − storage − реклама_прокси)
+  3. Опционально — «Новая ДРР» / «Новый ROI»
+  4. Persist в localStorage (`units.price-overrides.v1` — `{nm_id: {price, discount}}`)
+  5. Кнопка «Применить как сценарий» → создаёт snapshot в UnitPlan (опционально, если timeframe позволит)
+- **Критерии готовности:**
+  - [ ] `frontend/src/pages/Units.tsx` — 2 новые колонки (price-override, computed margin)
+  - [ ] Frontend-side calculation (без backend endpoint — формулу взять из `services/unit_economics.py`)
+  - [ ] Persist в localStorage
+  - [ ] tsc чисто + smoke на проде
+- **Зависимости:** нет (использует существующие данные `units`)
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-050: Калькулятор рентабельности WB-акций (P1 РОП-запрос, gap у обоих)
+
+- **Исполнитель:** Lead → Developer + Design Engineer
+- **Приоритет:** **P1** (РОП-запрос + дифференциатор vs TS — у них этого нет)
+- **Оценка:** M (1 неделя)
+- **Источник:** РОП-запрос 2026-05-21 (фича #2). WB периодически предлагает участвовать в акциях с скидкой X%, и нужно понять «выгодно ли вступить» — посчитать impact на маржу/выручку с учётом velocity boost.
+- **Описание:**
+  1. Новая страница `/promo-calculator`
+  2. Input: SKU (multi-select из products) + параметры акции (`discount_pct`, `duration_days`, `expected_velocity_boost_pct` — манипулируется юзером)
+  3. Output: «прогноз чистой прибыли с акцией vs без» (baseline = последние 7/14/30 дней velocity)
+  4. **Опционально:** WB Promo API — есть ли endpoint для получения списка предложенных акций? Если да — preload их в форму.
+  5. История участия в акциях (model `wb_promo_participation(nm_id, promo_id, started_at, ended_at, discount_pct)`) — опционально для retrospective analysis
+- **Критерии готовности:**
+  - [ ] Pre-flight: проверить WB API на endpoint `/api/v1/promotions` или аналог (если есть — приоритет на интеграцию)
+  - [ ] `services/promo_calculator.py` — pure-function `simulate_promo(nm_id, discount, duration, velocity_boost)` → `{revenue_delta, margin_delta, roi_delta}`
+  - [ ] API endpoint `POST /api/promo-calculator/simulate`
+  - [ ] Frontend `pages/PromoCalculator.tsx`
+  - [ ] Smoke на 2-3 реальных SKU
+- **Зависимости:** нет
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-051: Weekly digest для менеджера (P1 РОП-запрос)
+
+- **Исполнитель:** Lead → Developer + Design Engineer
+- **Приоритет:** **P1** (РОП-запрос, улучшает существующий manager workflow)
+- **Оценка:** M (3-5 дней)
+- **Источник:** РОП-запрос 2026-05-21 (фича #3). У нас есть `ManagersKpi.tsx` (TASK-DEV-009), `ManagerPlanProgressCard.tsx` (TASK-DEV-015/016), и TG-бот с дайджестом, но РОП хочет **готовый weekly report для отправки/печати** — что-то типа PDF / структурированной страницы которую менеджер пересылает РОПу.
+- **Описание:**
+  1. Новая страница `/weekly-report` (доступ: manager + head_of_sales)
+  2. Период — последняя закрытая неделя по умолчанию (использует PeriodContext)
+  3. Структура отчёта (1 страница):
+     - Header: ФИО менеджера, бренды, период
+     - KPI блок: выручка WoW, маржа WoW, ДРР, прибыль (с дельтами)
+     - Top-5 SKU по выручке + top-5 по марже (с микрографиком тренда 7д)
+     - Алерты которые срабатывали (cogs_missing / stockout / drr_high) — list
+     - План-факт по неделе (если план есть)
+     - Свободное текстовое поле «Комментарий менеджера» (для weekly RO)
+  4. Export PDF через `exportToPdf` (уже есть в Dashboard)
+  5. Опционально: автоматическая публикация в TG-чат компании каждый понедельник 09:00 (Celery beat)
+- **Критерии готовности:**
+  - [ ] `frontend/src/pages/WeeklyReport.tsx`
+  - [ ] Backend endpoint `GET /api/weekly-report?week_start=YYYY-MM-DD&brand=...` — переиспользует существующие services
+  - [ ] PDF-export работает (через существующий `exportToPdf`)
+  - [ ] Smoke под manager на проде
+- **Зависимости:** нет
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-052: Отчёт по локализации заказов + % локализации (P1 РОП-запрос, gap у обоих)
+
+- **Исполнитель:** Lead → Developer (backend WB API)
+- **Приоритет:** **P1** (РОП-запрос + дифференциатор)
+- **Оценка:** L (1-2 недели) — нужно WB API research + миграция + sync + UI
+- **Источник:** РОП-запрос 2026-05-21 (фича #4). Локализация = % заказов которые отгружены **из склада, к которому юзер ближе** (минимизация логистики). WB считает её закрыто (см. WB-кабинет «отчёт по локализации»), для бизнеса это критичный KPI (низкая локализация = высокие logistics costs).
+- **Описание:**
+  1. **Pre-flight research:** WB API endpoint `/api/v2/orders` имеет `region_to`/`warehouseName` поля? Если нет — нужен sync `/content/v2/get/cards/list` + cross-ref с `wb_warehouses`. См. `WB_API_REFERENCE.md`.
+  2. Миграция: `wb_order_localization(rid, ordered_dt, region_to, warehouse_from, is_localized)` — флаг локализации = warehouse_from находится в той же региональной зоне что region_to.
+  3. Sync-task: ежедневно обогащать orders регионами (или встроить в `sync_orders` если данные приходят сразу).
+  4. UI: новая страница `/localization` (или раздел в /supply):
+     - KPI: «% локализации за период»
+     - Heatmap: бренд × склад × % локализации
+     - Top SKU с самой низкой локализацией (кандидаты на ребаланс поставок)
+- **Критерии готовности:**
+  - [ ] WB API research выполнен, источник region/warehouse определён
+  - [ ] Миграция + sync-task
+  - [ ] Backend service `services/localization.py` — расчёт % локализации
+  - [ ] Frontend `pages/Localization.tsx`
+  - [ ] Документация в `WB_API_REFERENCE.md` + `FEATURES.md`
+- **Зависимости:** нет (но requires WB API исследование сначала)
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-053: Калькулятор стоимости транзитных поставок (P2 РОП-запрос, extension существующего CIF)
+
+- **Исполнитель:** Design Engineer
+- **Приоритет:** **P2** (близко к существующему `/new-products` CIF, скорее extension)
+- **Оценка:** S (1-2 дня)
+- **Источник:** РОП-запрос 2026-05-21 (фича #5). У нас уже есть `pages/NewProducts.tsx` — CIF-калькулятор Китай. РОП хочет расширить — **транзит между складами WB** (не только из Китая) — например «перевезти 100 шт с Москвы на Казань» — сколько это стоит по WB-тарифам.
+- **Описание:**
+  1. На `pages/NewProducts.tsx` добавить новый таб «Транзит» (или отдельная страница `/transit-calculator`)
+  2. Input: from_warehouse, to_warehouse, объём (литры или штуки), вес (кг)
+  3. Output: стоимость по `wb_tariff_box` или `wb_tariff_pallet` (из миграции 0040, уже есть)
+  4. Опционально: сравнить с альтернативами (приёмка vs FBS прямой)
+- **Критерии готовности:**
+  - [ ] `frontend/src/components/TransitCalculator.tsx`
+  - [ ] Использует существующие `wb_tariff_*` таблицы
+  - [ ] Подключён как таб в `/new-products` или separate route
+- **Зависимости:** TASK-LEAD-040 (Tariffs API уже на проде с 0040)
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-054: Режимы отчётности «Управленческая / Финансовая» (gap из TS-анализа)
+
+- **Исполнитель:** Lead → Developer
+- **Приоритет:** P2 (high impact, но архитектурная фича)
+- **Оценка:** M (1-2 недели)
+- **Источник:** `TRUESTATS_REFERENCE.md` §16.3 — TS имеет глобальный toggle: «Управленческая» (дата = order_dt, как у нас сейчас) vs «Финансовая» (дата = payout_dt). Бухгалтер сверяется по выплатам, менеджер — по заказам. У нас единый `sale_dt`.
+- **Описание:**
+  1. Новый query-param `mode=operational|financial` на API ручках Dashboard/PnL/Reconciliation
+  2. Backend: `services/period_aggregates.py` — добавить `sale_dt_filter_financial()` который использует `pay_dt` или эквивалент из `wb_report_detail`
+  3. Frontend: глобальный toggle в шапке (рядом с PeriodContext) — switch меняет URL + invalidate queries
+  4. Persist в localStorage (`reportingMode.v1`)
+- **Критерии готовности:**
+  - [ ] Backend: API ручки принимают `mode=operational|financial`
+  - [ ] Frontend: глобальный toggle в Layout
+  - [ ] Reconciliation страница использует mode=financial по умолчанию (для бухгалтера логичнее)
+  - [ ] Smoke: переключение → разные цифры на одном периоде (заказы vs выплаты)
+- **Зависимости:** TASK-UI-005 ✅ (PeriodContext, чтобы single source period+mode)
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-055: Breakdown-попапы на KPI (Dashboard quick-win)
+
+- **Исполнитель:** Design Engineer
+- **Приоритет:** P2 (UX quick-win)
+- **Оценка:** S (3-5ч)
+- **Источник:** `TRUESTATS_REFERENCE.md` — на TS click на KPI «Логистика» → popup с 5 строками breakdown (доставка / возвраты / штрафы / приёмка / др). У нас drill-down есть для Units, для Dashboard KPI — нет.
+- **Описание:**
+  1. На `pages/Dashboard.tsx` для KPI с breakdown (commission_wb, logistics_wb, storage_wb, ad_cost, deduction) — добавить click-handler → modal/popover с детальной разбивкой
+  2. Backend endpoint `GET /api/dashboard/kpi-breakdown?metric=logistics_wb&period=...` — возвращает компоненты
+  3. Использовать existing `MetricDrilldownModal` или новый light-popover
+- **Критерии готовности:**
+  - [ ] Backend `/api/dashboard/kpi-breakdown`
+  - [ ] Frontend: 5 KPI кликабельны → popup
+- **Зависимости:** нет
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-056: Per-store налоговые ставки (gap для будущего multi-cabinet)
+
+- **Исполнитель:** Lead (спека) → Developer
+- **Приоритет:** P3 (становится релевантно когда multi-cabinet активно используется)
+- **Оценка:** M (3-5 дней)
+- **Источник:** `TRUESTATS_REFERENCE.md` — TS позволяет разные налоговые режимы для разных магазинов одной компании (разные юрлица). У нас один `setting_timeline` на tenant. С multi-cabinet workspace (039 готов) разные кабинеты могут быть разными юрлицами — нужно разные ставки.
+- **Описание:**
+  1. Миграция: `setting_timeline.tenant_id` уже есть. Но `setting_timeline` сейчас читается через `current_tenant` middleware — нужно убедиться что после `switch-tenant` ставка корректно переключается.
+  2. UI: на `/settings → Налоговый режим` показать активный tenant + ставка. При switch — обновляется.
+  3. Реально это уже работает «из коробки» благодаря multi-cabinet (039). Задача = верификация + документация.
+- **Критерии готовности:**
+  - [ ] Smoke: 2 tenant'а с разными ставками. Switch — налоги пересчитываются корректно.
+  - [ ] Документация в CLAUDE.md / TAX_AUSN_BANK.md
+- **Зависимости:** TASK-LEAD-039 ✅ (multi-cabinet end-to-end готов)
+- **Статус:** Открыта
+
+---
+
+### 📊 Приоритизация раунда 5 (для PM)
+
+| Порядок | TASK | Приоритет | Эффорт | Кому |
+|---|---|:-:|:-:|---|
+| 1 | TASK-LEAD-049 (inline edit на Units) | P0 | M | Design Engineer + Developer |
+| 2 | TASK-LEAD-051 (Weekly digest менеджера) | P1 | M | Design Engineer (PDF + page) |
+| 3 | TASK-LEAD-053 (Транзит-калькулятор) | P2 | S | Design Engineer (quick win) |
+| 4 | TASK-LEAD-050 (Калькулятор акций) | P1 | M | Developer (WB API research) |
+| 5 | TASK-LEAD-052 (Локализация заказов) | P1 | L | Developer (WB API + sync + UI) |
+| 6 | TASK-LEAD-055 (Breakdown-попапы на KPI) | P2 | S | Design Engineer |
+| 7 | TASK-LEAD-054 (Режимы отчётности) | P2 | M | Developer |
+| 8 | TASK-LEAD-056 (Per-store налоги) | P3 | M | Developer (после реального multi-cabinet usage) |
 
 ---
 

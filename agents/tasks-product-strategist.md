@@ -69,6 +69,26 @@ _(пусто на момент слияния — 2026-05-21)_
 
 ## Архив (закрытые)
 
+### TASK-PS-004: Раунд 5 — TS-reanalysis + 5 фич РОПа → backlog
+
+- **Исполнитель:** Product Strategist (+ Explore-agent для review `TRUESTATS_REFERENCE.md`)
+- **Приоритет:** P1
+- **Оценка:** 2-3ч
+- **Описание:** Пользователь провёл новый детальный анализ TS (`TRUESTATS_REFERENCE.md` 1385 строк) + РОП передал 5 приоритетных фич. Сделать gap-analysis и завести задачи в backlog.
+- **Критерии готовности:**
+  - [x] Прочитан `TRUESTATS_REFERENCE.md` через Explore-agent
+  - [x] Сравнено с `FEATURES.md` (текущее состояние) и `tasks-lead.md` (что уже в backlog'е)
+  - [x] 5 фич РОПа разобраны: 3 у нас полнее чем у TS (но тяжелее), 2 — gap у обоих
+  - [x] 3 новых gap из TS-анализа выделены (режимы отчётности, breakdown-попапы, per-store налоги)
+  - [x] 8 новых задач заведены в `tasks-lead.md` (TASK-LEAD-049..056) с приоритетами
+  - [x] Output: `agents/references/market/truestats-reanalysis-2026-05-21.md`
+  - [x] Рекомендованный порядок выполнения + параллелизация для PM
+- **Вывод:** РОПу нужны **lightweight варианты** существующих фич + 2 новых (акции, локализация). Старт с TASK-LEAD-049 (P0 РОП-запрос inline edit Units, M эффорт).
+- **Зависимости:** TASK-PS-003 ✅
+- **Статус:** Выполнено — 2026-05-21
+
+---
+
 ### TASK-PS-003: Gap-analysis под цель «минимальная замена TrueStats прямо сейчас»
 
 - **Исполнитель:** Product Strategist (+ Lead на tech scope + PM на приоритет)
