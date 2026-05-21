@@ -290,7 +290,7 @@ docker-compose.yml
 .claude/settings.json   permissions для агента
 ```
 
-## Миграции БД (48 шт., 0001-0048)
+## Миграции БД (49 шт., 0001-0055)
 
 > Полный список с деталями — в [`FEATURES.md`](FEATURES.md) → «Миграции». Здесь — топ-уровневое.
 
@@ -330,6 +330,7 @@ docker-compose.yml
 | **0052** | **product_tags + product_tag_assignments** — эмодзи-теги на nm_id (TASK-DEV-024). 6 preset-тегов (🏆/⭐/📦/🆕/🚨/🔥) seed-ятся при создании tenant'а. M-к-N через UNIQUE на (tenant, nm_id, tag_id). Endpoints `/api/product-tags` CRUD (director) + `/api/products/{nm_id}/tags` GET/PUT (brand-scope). |
 | **0053** | **plan_edit_requests** — заявки manager'а на правку плана (TASK-DEV-017). Workflow: pending → accepted (= apply + audit) / rejected (= close с note). Whitelist полей: planned_* (без metadata). TG-broadcast директорам через `services/tg_broadcast.py` (multi-recipient). Endpoints `/api/plan-edit-requests` (POST + GET) + `/{id}/accept` + `/{id}/reject`. |
 | **0054** | **users.tg_chat_id** — per-user Telegram binding для multi-recipient broadcast'а. Раньше TG-нотификации шли только в `AppSetting.tg_chat_id` тенанта. Теперь `services/tg_broadcast.broadcast_to_directors` сначала шлёт всем `User.tg_chat_id IS NOT NULL` подходящей роли, fallback на legacy AppSetting. UI: /settings → «Мой Telegram-чат». |
+| **0055** | **opex_entry_allocations** — many-to-many распределение OPEX (TASK-LEAD-030). Каждый `OpexEntry` → N scope'ов с весами 0..1 (`scope_type ∈ tenant/brand/group/nm`, Σweights ≤ 1.0). Backfill: 1 `tenant`-allocation weight=1.0 на каждый existing entry → **Δ=0₽ guard** для company-scope (читает `SUM(amount)` без JOIN). Manager-scope P&L теперь видит свою долю OPEX через `services/opex_allocations.manager_scope_effective_weights` (резолв nm→brand, group→fraction). API `POST /api/opex/entries/allocations/preview` (mode=`equal`/`revenue_share`) для UI-превью. UI в /opex — отдельная задача после деплоя backend. |
 
 ## Роли и RBAC
 

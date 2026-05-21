@@ -64,6 +64,11 @@ async def build_cash_flow(
     t = pnl["totals"]
 
     # ── OPEX по cf_section + kind (независимая ось от P&L's in_operating) ──
+    # ДДС всегда company-level (endpoint require_director_or_head), поэтому
+    # OPEX-allocations (TASK-LEAD-030, миграция 0055) тут НЕ учитываются —
+    # читаем полную сумму через `SUM(amount)`. Если будущая фича добавит
+    # manager-scope ДДС, сюда нужен manager_scope_effective_weights JOIN
+    # как в pnl_builder.opex_for_period.
     opex_rows = (
         await session.execute(
             select(

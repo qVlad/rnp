@@ -658,13 +658,19 @@ async def build_pnl(
         cogs_by_day[d] += units * cost_for_date(cogs_lookup, nm, d)
 
     # ── F) OPEX entries (split by category.in_operating) ──
-    # OPEX is company-level (rent, salaries, taxes-paid, dividends) and not
-    # allocable to a single brand without a meaningful pro-rata key. In a
-    # manager scope we drop OPEX entirely — keep contribution margin focused.
-    opex_rows = (
-        []
-        if not company_scope
-        else (
+    # До TASK-LEAD-030: OPEX был полностью company-level, manager видел 0.
+    # После 0055 — OPEX распределяется через `opex_entry_allocations` на
+    # brand/group/nm. Два разных read-path:
+    #   - company_scope (director/head): `SUM(amount)` напрямую без JOIN.
+    #     **Гарантирует Δ=0₽** — полная сумма расходов всегда учитывается.
+    #   - manager_scope: для каждого entry находим effective_weight
+    #     (Σ allocations.weight по тем scope'ам что попадают в user_brands),
+    #     умножаем amount × effective_weight.
+    opex_by_day: dict[date, dict[str, float]] = defaultdict(
+        lambda: {"operating": 0.0, "cashflow_only": 0.0, "income": 0.0}
+    )
+    if company_scope:
+        opex_rows = (
             await session.execute(
                 select(
                     OpexEntry.entry_date,
@@ -677,22 +683,52 @@ async def build_pnl(
                     OpexEntry.entry_date >= date_from,
                     OpexEntry.entry_date <= date_to,
                 )
-                .group_by(OpexEntry.entry_date, OpexCategory.kind, OpexCategory.in_operating)
+                .group_by(
+                    OpexEntry.entry_date,
+                    OpexCategory.kind,
+                    OpexCategory.in_operating,
+                )
             )
         ).all()
-    )
-    # opex split: (date) -> {operating, cashflow_only, income}
-    opex_by_day: dict[date, dict[str, float]] = defaultdict(
-        lambda: {"operating": 0.0, "cashflow_only": 0.0, "income": 0.0}
-    )
-    for r in opex_rows:
-        amt = _f(r.amount)
-        if r.kind == "income":
-            opex_by_day[r.entry_date]["income"] += amt
-        elif r.in_operating:
-            opex_by_day[r.entry_date]["operating"] += amt
-        else:
-            opex_by_day[r.entry_date]["cashflow_only"] += amt
+        for r in opex_rows:
+            amt = _f(r.amount)
+            if r.kind == "income":
+                opex_by_day[r.entry_date]["income"] += amt
+            elif r.in_operating:
+                opex_by_day[r.entry_date]["operating"] += amt
+            else:
+                opex_by_day[r.entry_date]["cashflow_only"] += amt
+    else:
+        from app.services.opex_allocations import manager_scope_effective_weights
+
+        eff_weights = await manager_scope_effective_weights(brands or set(), session)
+        if eff_weights:
+            entry_rows = (
+                await session.execute(
+                    select(
+                        OpexEntry.id,
+                        OpexEntry.entry_date,
+                        OpexCategory.kind,
+                        OpexCategory.in_operating,
+                        OpexEntry.amount,
+                    )
+                    .join(OpexCategory, OpexEntry.category_id == OpexCategory.id)
+                    .where(
+                        OpexEntry.entry_date >= date_from,
+                        OpexEntry.entry_date <= date_to,
+                        OpexEntry.id.in_(list(eff_weights.keys())),
+                    )
+                )
+            ).all()
+            for r in entry_rows:
+                w = float(eff_weights[r.id])
+                amt = _f(r.amount) * w
+                if r.kind == "income":
+                    opex_by_day[r.entry_date]["income"] += amt
+                elif r.in_operating:
+                    opex_by_day[r.entry_date]["operating"] += amt
+                else:
+                    opex_by_day[r.entry_date]["cashflow_only"] += amt
 
     # ── G) settings ──
     # Static (current) settings + timeline of date-effective overrides.

@@ -1674,6 +1674,44 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 
 ---
 
+### TASK-LEAD-047: UI на `/opex` — таблица allocations + auto-distribute
+
+- **Исполнитель:** Lead → Design Engineer / Developer
+- **Приоритет:** P2 (доделка TASK-LEAD-030 — backend готов, UI отложен чтобы
+  изолировать риск Δ=0₽ регрессии в P&L)
+- **Оценка:** S (1-2д) — front-only, без миграций
+- **Источник:** Продолжение TASK-LEAD-030. После того как backend (миграция 0055
+  + ORM + service + рефактор pnl_builder + API) задеплоен и Δ=0₽ smoke на проде
+  пройден — добавить UI на `/opex` для редактирования allocations.
+- **Описание:** В `frontend/src/pages/Opex.tsx` под полем «Комментарий» добавить
+  блок `<AllocationEditor>` (новый компонент). Использовать backend endpoint
+  `POST /api/opex/entries/allocations/preview` (уже задеплоен в 030) для
+  авто-распределения.
+- **Критерии готовности:**
+  - [ ] `api.previewOpexAllocations(mode, target_scopes, period)` в
+    `frontend/src/api/client.ts` (POST `/api/opex/entries/allocations/preview`)
+  - [ ] `Opex.tsx` (Entries form) — новый блок `<AllocationEditor>` под
+    «Комментарий», state `allocations: AllocationDraft[]`
+  - [ ] Inline-add row: dropdown `scope_type` (brand/group/nm; tenant скрыт —
+    residual вычисляется автоматически как 1−Σ) + dropdown `scope_value`
+    (зависит от scope_type — `api.listBrands()` / `api.listProductGroups()` /
+    `api.listProducts({ search })`) + input `weight` (0..1, step=0.01) + кнопка
+    удалить
+  - [ ] Live Σ-индикатор: зелёный Σ ≤ 1.0, красный Σ > 1.0+ε. Под ним строка
+    «Residual (только в company-scope): {(1−Σ)×100}%»
+  - [ ] Кнопка «Распределить по...»: select(`equal`/`revenue_share`) + period
+    (`DateRangePicker` — обязательно из `frontend/src/components/DateRangePicker.tsx`,
+    см. UI conventions в `CLAUDE.md`) + кнопка «Превью» → вызов
+    `previewOpexAllocations` → подставляет в state allocations
+  - [ ] Save mutation: POST/PUT отправляет `allocations` array; кнопка Save
+    выключена при Σ > 1.0
+  - [ ] Smoke: создать entry с brand-allocation 0.3, открыть P&L manager-view —
+    увидеть OPEX долю
+- **Зависимости:** TASK-LEAD-030 backend закрыт и задеплоен, Δ=0₽ smoke пройден
+- **Статус:** Открыта (зависит от TASK-LEAD-030 deploy + Δ=0₽ smoke)
+
+---
+
 ## Формат / Жизненный цикл
 
 См. `RULES.md` §«Формат задачи».

@@ -37,6 +37,43 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## 2026-05-21 — **OPEX many-to-many распределение (backend)** (TASK-LEAD-030)
+
+**Backend полностью готов**; UI отложен в TASK-LEAD-047. Что сделано:
+
+- Миграция **0055_opex_allocations** — таблица `opex_entry_allocations`
+  (scope_type ∈ tenant/brand/group/nm + scope_value + weight) с CHECK
+  constraints, partial UNIQUE на tenant-scope, backward-fill (1 tenant=1.0 на
+  каждый existing entry → **Δ=0₽ guard**).
+- ORM модель `OpexEntryAllocation` + relationship `OpexEntry.allocations`
+  (cascade="all, delete-orphan", lazy="selectin").
+- `services/opex_allocations.py` — `validate_allocations()`,
+  `compute_weights_preview(mode='equal'|'revenue_share', target_scopes, period)`,
+  `manager_scope_effective_weights(user_brands)` с резолвом nm→brand и
+  group→fraction.
+- **Рефактор** `pnl_builder.opex_for_period` — двухпутевой:
+  - **company_scope** (director/head): `SUM(amount)` без JOIN allocations
+    (Δ=0₽ инвариант сохранён),
+  - **manager_scope**: JOIN allocations × effective_weight, tenant-scope
+    excluded (residual только в company).
+- `cash_flow.py` без функциональных изменений — endpoint всегда
+  company-level (require_director_or_head), allocations не учитываются by
+  design.
+- API `/api/opex` расширен: `OpexEntryIn.allocations`, replace-all семантика
+  на POST/PUT, новый `POST /api/opex/entries/allocations/preview`, audit_log
+  с snapshot allocations.
+- Тесты — `backend/tests/test_opex_allocations.py` (25 кейсов): валидация,
+  compute_weights_preview, manager_scope_effective_weights, build_pnl с
+  Δ=0₽ guard + residual проверкой.
+- Docs: `FEATURES.md` (раздел «OPEX many-to-many распределение» + миграция
+  0055), `CLAUDE.md` (строка про миграцию 0055), `tasks-lead.md` (статус
+  «Выполнено» + новая TASK-LEAD-047 для UI).
+
+**После деплоя обязательно:** Δ=0₽ smoke на reconciliation последней
+закрытой недели — убедиться что company-scope path не сломал сверку.
+
+---
+
 ## 2026-05-21 — **Dashboard storytelling + PnL DateRangePicker + Supply CSV расширение** (v0.18.0)
 
 Закрыли три задачи (TASK-DEV-010, TASK-DEV-012, TASK-DEV-021) одним релизом.

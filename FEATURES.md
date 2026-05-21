@@ -510,7 +510,7 @@ Daily digest через Celery beat в 09:00 MSK. TG_BOT_TOKEN в `.env`.
 
 ---
 
-## Миграции (0001–0047)
+## Миграции (0001–0055)
 
 | № | Что |
 |---|---|
@@ -561,6 +561,50 @@ Daily digest через Celery beat в 09:00 MSK. TG_BOT_TOKEN в `.env`.
 | 0045 | wb_lk_jobs (LK shifts async jobs для /redistribution) |
 | **0046** | unit_plan_global_config.reverse_logistics_mode (`tariff` \| `flat_50`) — флаг режима обратной логистики (см. UNIT_PLAN.md §14.5) |
 | **0047** | unit_plan_snapshot_config — freeze global_config в момент snapshot'а (UNIT_PLAN.md §10): diff отдаёт frozen+current+changed_keys, чтобы изменения констант после snapshot'а не давали false-positive |
+| **0055** | **opex_entry_allocations** — many-to-many распределение OPEX (TASK-LEAD-030). Каждый `OpexEntry` распределяется на N scope'ов (`tenant`/`brand`/`group`/`nm`) с весами 0..1. Σweights ≤ 1.0 (residual = «не распределено», только в company-scope). Backward-fill: одна `tenant`-allocation weight=1.0 на каждый existing entry → Δ=0₽ guard для company-scope P&L. Manager-scope P&L теперь видит свою долю OPEX через `services.opex_allocations.manager_scope_effective_weights` |
+
+---
+
+## OPEX many-to-many распределение
+
+Раньше `OpexEntry` был полностью company-level — `pnl_builder.opex_for_period`
+читал OPEX только для `company_scope` (director/head), manager со своим
+brands-фильтром видел contribution-margin без OPEX. После TASK-LEAD-030
+(миграция 0055) каждый расход можно разнести на бренд/группу/SKU с весами:
+
+- **Backend модель:** `OpexEntryAllocation(scope_type ∈ {tenant,brand,group,nm}, scope_value, weight ∈ [0,1])`.
+  CHECK-constraints гарантируют корректность scope_value (NULL только для
+  `tenant`); UNIQUE (`opex_id, scope_type, scope_value`); partial-unique
+  «один tenant-allocation на opex». Backfill миграции 0055 создал `tenant=1.0`
+  на каждый legacy entry — поведение P&L после миграции эквивалентно
+  до-миграционному.
+- **Сервис:** `services/opex_allocations.py` — `validate_allocations()` (правила
+  Σ≤1.0+ε), `compute_weights_preview(mode='equal'|'revenue_share', target_scopes, period)`
+  для UI-превью, `manager_scope_effective_weights(user_brands)` для JOIN
+  с P&L (резолвит `nm→brand` через Product, `group→fraction` через
+  ProductGroupAssignment).
+- **Read-path в P&L** (`pnl_builder.opex_for_period`):
+  - `company_scope` (director/head) — `SUM(amount)` **без JOIN** allocations.
+    **Гарантирует Δ=0₽** в reconciliation/P&L total numbers — полная сумма
+    расхода всегда учитывается.
+  - `manager_scope` (с brands-фильтром) — JOIN'ит allocations через
+    `manager_scope_effective_weights`, применяет `amount × effective_weight`.
+    `tenant`-allocations для manager не показываются (residual остаётся в
+    company-only). Σ manager-view'ов брендов ≤ company-view (если Σweights<1.0).
+- **Cash Flow** всегда company-level (endpoint `require_director_or_head`),
+  allocations не учитываются.
+- **API:**
+  - `OpexEntryIn.allocations: list[AllocationIn] | None` — `None` создаёт
+    дефолтный `tenant=1.0`, `[]` оставляет residual=100%, `[items]` — явное
+    распределение (Σ≤1.0+ε).
+  - `POST/PUT /api/opex/entries` — replace-all семантика для allocations.
+  - `POST /api/opex/entries/allocations/preview` — UI-превью весов до
+    сохранения (mode=`equal`/`revenue_share`, target_scopes, период).
+  - `DELETE /api/opex/entries/{id}` — CASCADE удаление allocations.
+- **Audit log** — snapshot allocations добавлен в `before`/`after` JSON
+  для create/update/delete entry.
+
+UI (`/opex` страница) расширяется отдельной задачей (после деплоя backend).
 
 ---
 

@@ -861,6 +861,54 @@ class OpexEntry(Base, TenantScopedMixin):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     category: Mapped[OpexCategory] = relationship(back_populates="entries")
+    allocations: Mapped[list["OpexEntryAllocation"]] = relationship(
+        back_populates="entry",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+
+# ----------------------------------------------------------------------
+# OPEX many-to-many распределение (TASK-LEAD-030, миграция 0055).
+# Каждый OpexEntry может быть разнесён на N scope'ов с весами 0..1.
+# Σweights ≤ 1.0; residual (1−Σ) — «не распределено», остаётся в company-scope.
+# Инвариант: после миграции 0055 у каждого entry ≥1 allocation
+# (backfill создаёт 1 tenant-allocation weight=1.0 на каждый legacy entry).
+# ----------------------------------------------------------------------
+class OpexEntryAllocation(Base, TenantScopedMixin):
+    __tablename__ = "opex_entry_allocations"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    opex_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("opex_entries.id", ondelete="CASCADE"), nullable=False
+    )
+    # scope_type ∈ {'tenant','brand','group','nm'}.
+    # 'tenant' = «вся сумма принадлежит компании, не распределено» (legacy/default).
+    # 'brand'  = scope_value = название бренда (Product.brand).
+    # 'group'  = scope_value = id ProductGroup как text.
+    # 'nm'     = scope_value = nm_id как text.
+    scope_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    # NULL только для scope_type='tenant' (см. CHECK constraint в миграции 0055).
+    scope_value: Mapped[str | None] = mapped_column(Text)
+    weight: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    entry: Mapped[OpexEntry] = relationship(back_populates="allocations")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "opex_id", "scope_type", "scope_value", name="uq_opex_alloc_scope"
+        ),
+        Index("ix_opex_alloc_opex_id", "opex_id"),
+        Index(
+            "ix_opex_alloc_scope_lookup",
+            "tenant_id",
+            "scope_type",
+            "scope_value",
+        ),
+    )
 
 
 # ----------------------------------------------------------------------
