@@ -33,6 +33,24 @@
 
 ---
 
+## 🚀 Sprint+3 · TrueStats gap-closing (план 2026-05-21)
+
+Источник: трёхголосый анализ Analyst+Lead+Strategist по [`COMPETITIVE_TRUESTATS.md`](COMPETITIVE_TRUESTATS.md). Детали в [`agents/tasks-lead.md`](agents/tasks-lead.md).
+
+| TASK | Описание | P | Эффорт |
+|---|---|---|---|
+| **TASK-LEAD-028** | Капитализация WB-склада (`/inventory`) + переименование `/capitalization` → `/off-platform` | P1 | S |
+| **TASK-LEAD-029** | Гибкое сравнение 2 произвольных периодов на Dashboard | P1 | S |
+| **TASK-LEAD-030** | OPEX many-to-many (рефактор P&L, высокий риск Δ≠0) | P2 | M |
+| **TASK-LEAD-031** | Импорт XLSX плана + распределение из факта | P2 | S |
+| **TASK-LEAD-032** | Маркер «Сегодня» в Cash-flow + PWA-манифест | P3 | XS |
+| **TASK-LEAD-033** | Conversion-метрики в ads-heatmap (CPL/CPS/basket-conv) | P1 | XS |
+| **TASK-LEAD-034** | «Маржа без операционных расходов» hero-KPI | P3 | XS |
+
+**Явные отказы Sprint+3:** триал-механика, multi-cabinet, Ozon, native mobile, кросс-секционные комментарии — см. `COMPETITIVE_TRUESTATS.md` §0bis.
+
+---
+
 ## P1 · Модуль «Перераспределение остатков» (в работе)
 
 📋 **Полный план:** [`REDISTRIBUTION_PLAN.md`](REDISTRIBUTION_PLAN.md) — 12 разделов, 8-недельный MVP roadmap.

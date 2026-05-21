@@ -20,3 +20,14 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     </QueryClientProvider>
   </React.StrictMode>,
 );
+
+// PWA — регистрация минимального service worker (TASK-LEAD-032).
+// Нужно для "Add to home screen" на iOS Safari / Android Chrome.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch((err) => {
+      // не критично — приложение работает и без SW
+      console.warn("[PWA] SW registration failed:", err);
+    });
+  });
+}

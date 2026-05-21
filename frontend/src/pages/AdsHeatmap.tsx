@@ -11,7 +11,16 @@ const daysAgo = (n: number) => {
   return d.toISOString().slice(0, 10);
 };
 
-type Metric = "drr" | "spent" | "orders" | "clicks" | "revenue";
+type Metric =
+  | "drr"
+  | "spent"
+  | "orders"
+  | "clicks"
+  | "revenue"
+  | "cpl"
+  | "cps"
+  | "basket_conv"
+  | "order_conv";
 
 const metricLabel: Record<Metric, string> = {
   drr: "ДРР %",
@@ -19,6 +28,10 @@ const metricLabel: Record<Metric, string> = {
   revenue: "Выручка ₽",
   orders: "Заказы шт",
   clicks: "Клики шт",
+  cpl: "CPL ₽",
+  cps: "CPS ₽",
+  basket_conv: "Корз. конв. %",
+  order_conv: "Зак. конв. %",
 };
 
 const metricHelp: Record<Metric, string> = {
@@ -27,7 +40,21 @@ const metricHelp: Record<Metric, string> = {
   revenue: "Выручка от кликов по этому объявлению (`sum_price`).",
   orders: "Количество заказов с этого объявления.",
   clicks: "Количество кликов.",
+  cpl: "Стоимость клика (Cost Per Lead) = расход / клики. ₽ за клик. Чем ниже — тем дешевле трафик.",
+  cps: "Стоимость заказа (Cost Per Sale) = расход / заказы. ₽ за заказ. Сравнивай со средним чеком — должно быть в разы меньше.",
+  basket_conv: "Конверсия в корзину = atbs / клики × 100. % людей, которые после клика добавили товар в корзину. Норма 5-20%.",
+  order_conv: "Конверсия в заказ = заказы / клики × 100. % людей, которые после клика оформили заказ. Норма 1-5%.",
 };
+
+// Является ли метрика процентной (для форматирования в ячейках)
+function isPercentMetric(m: Metric): boolean {
+  return m === "drr" || m === "basket_conv" || m === "order_conv";
+}
+
+// Является ли метрика рублёвой
+function isRubMetric(m: Metric): boolean {
+  return m === "spent" || m === "revenue" || m === "cpl" || m === "cps";
+}
 
 function cellColor(metric: Metric, val: number | null): string {
   if (val == null || val <= 0) return "bg-bg text-muted/60";
@@ -38,6 +65,20 @@ function cellColor(metric: Metric, val: number | null): string {
     if (val < 30) return "bg-warn-subtle";
     if (val < 50) return "bg-warn/30";
     return "bg-danger/40 text-fg";
+  }
+  if (metric === "basket_conv") {
+    // Корзина-конверсия: чем выше — тем лучше (зелёный)
+    if (val >= 20) return "bg-success/40 text-fg";
+    if (val >= 10) return "bg-success-subtle";
+    if (val >= 5) return "bg-warn-subtle";
+    return "bg-danger/30";
+  }
+  if (metric === "order_conv") {
+    // Order-конверсия: норма 1-5%, выше — отлично
+    if (val >= 5) return "bg-success/40 text-fg";
+    if (val >= 2) return "bg-success-subtle";
+    if (val >= 1) return "bg-warn-subtle";
+    return "bg-danger/30";
   }
   // Для остальных метрик — accent с opacity (см. intensityStyle ниже)
   return "bg-accent-subtle";
@@ -57,9 +98,11 @@ export default function AdsHeatmap() {
   const campaigns: any[] = d?.campaigns || [];
   const totals = d?.totals;
 
-  // Для non-drr метрик считаем max для гладкой расцветки
+  // Для метрик с opacity-расцветкой считаем max. drr/basket_conv/order_conv
+  // имеют свою дискретную палитру (cellColor), max не нужен.
   const maxVal = useMemo(() => {
-    if (metric === "drr") return null;
+    if (metric === "drr" || metric === "basket_conv" || metric === "order_conv")
+      return null;
     let m = 0;
     for (const c of campaigns) for (const v of c.cells) if (v != null && v > m) m = v;
     return m || 1;
@@ -90,12 +133,29 @@ export default function AdsHeatmap() {
             className="input"
             value={metric}
             onChange={(e) => setMetric(e.target.value as Metric)}
+            title={metricHelp[metric]}
           >
-            {(["drr", "spent", "revenue", "orders", "clicks"] as Metric[]).map((m) => (
-              <option key={m} value={m}>
-                {metricLabel[m]}
-              </option>
-            ))}
+            <optgroup label="Финансы">
+              {(["drr", "spent", "revenue"] as Metric[]).map((m) => (
+                <option key={m} value={m}>
+                  {metricLabel[m]}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="Воронка">
+              {(["orders", "clicks"] as Metric[]).map((m) => (
+                <option key={m} value={m}>
+                  {metricLabel[m]}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="Стоимость / Конверсия (TASK-LEAD-033)">
+              {(["cpl", "cps", "basket_conv", "order_conv"] as Metric[]).map((m) => (
+                <option key={m} value={m}>
+                  {metricLabel[m]}
+                </option>
+              ))}
+            </optgroup>
           </select>
         </div>
         {totals && (
@@ -106,6 +166,20 @@ export default function AdsHeatmap() {
               ДРР итого:{" "}
               <span className="text-fg font-mono">
                 {totals.drr != null ? fmtPct(totals.drr) : "—"}
+              </span>
+            </div>
+            <div>
+              CPL / CPS:{" "}
+              <span className="text-fg font-mono">
+                {totals.cpl != null ? fmtRub(totals.cpl) : "—"} /{" "}
+                {totals.cps != null ? fmtRub(totals.cps) : "—"}
+              </span>
+            </div>
+            <div>
+              Корз. / Зак.:{" "}
+              <span className="text-fg font-mono">
+                {totals.basket_conv != null ? `${totals.basket_conv.toFixed(1)}%` : "—"} /{" "}
+                {totals.order_conv != null ? `${totals.order_conv.toFixed(1)}%` : "—"}
               </span>
             </div>
           </div>
@@ -165,26 +239,41 @@ export default function AdsHeatmap() {
                   </td>
                   {c.cells.map((v: number | null, i: number) => {
                     const cls = cellColor(metric, v);
+                    // Для drr и conv-метрик расцветка уже задана в cellColor —
+                    // не накладываем opacity (иначе зелёный/красный размывается).
+                    const useOpacity =
+                      metric !== "drr" &&
+                      metric !== "basket_conv" &&
+                      metric !== "order_conv";
                     const intensityStyle =
-                      metric !== "drr" && v != null && maxVal
+                      useOpacity && v != null && maxVal
                         ? { opacity: Math.max(0.2, Math.min(1, v / maxVal)) }
                         : undefined;
+                    const fmtCell = (val: number) => {
+                      if (isPercentMetric(metric)) return `${val.toFixed(metric === "drr" ? 0 : 1)}`;
+                      if (isRubMetric(metric))
+                        return val >= 1000
+                          ? `${Math.round(val / 100) / 10}k`
+                          : metric === "cpl" || metric === "cps"
+                          ? val.toFixed(val < 10 ? 1 : 0)
+                          : Math.round(val);
+                      return Math.round(val);
+                    };
+                    const fmtTitle = (val: number) => {
+                      if (metric === "drr") return fmtPct(val);
+                      if (metric === "basket_conv" || metric === "order_conv")
+                        return `${val.toFixed(1)}%`;
+                      if (isRubMetric(metric)) return fmtRub(val);
+                      return fmtNum(val);
+                    };
                     return (
                       <td
                         key={i}
                         className={`p-1 text-center text-[10px] font-mono ${cls}`}
                         style={intensityStyle}
-                        title={`${days[i]}: ${v != null ? (metric === "drr" ? fmtPct(v) : metric === "spent" || metric === "revenue" ? fmtRub(v) : fmtNum(v)) : "—"}`}
+                        title={`${days[i]}: ${v != null ? fmtTitle(v) : "—"}`}
                       >
-                        {v != null
-                          ? metric === "drr"
-                            ? `${v.toFixed(0)}`
-                            : metric === "spent" || metric === "revenue"
-                            ? v >= 1000
-                              ? `${Math.round(v / 100) / 10}k`
-                              : Math.round(v)
-                            : Math.round(v)
-                          : ""}
+                        {v != null ? fmtCell(v) : ""}
                       </td>
                     );
                   })}

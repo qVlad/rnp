@@ -768,6 +768,26 @@ async def compute_dashboard(
     net_profit = _f(pnl_curr.get("totals", {}).get("profit", 0))
     prev_net_profit = _f(pnl_prev.get("totals", {}).get("profit", 0))
 
+    # Contribution-margin (без OPEX / fixed_costs / налогов) — TASK-LEAD-034.
+    # `profit_from_sales` в pnl_builder = revenue_after_vat − COGS − коммерческие
+    # расходы (commission + delivery + storage + penalty + deduction + acquiring
+    # + ad_cost + external_ad_cost + contractor_fees). Точно то, что просит
+    # таска: «revenue_net − COGS − wb_удержания − реклама», без OPEX/налогов.
+    pnl_totals = pnl_curr.get("totals", {})
+    pnl_prev_totals = pnl_prev.get("totals", {})
+    contribution_margin = _f(pnl_totals.get("profit_from_sales", 0))
+    prev_contribution_margin = _f(pnl_prev_totals.get("profit_from_sales", 0))
+    rev_after_vat = _f(pnl_totals.get("revenue_after_vat", 0))
+    prev_rev_after_vat = _f(pnl_prev_totals.get("revenue_after_vat", 0))
+    contribution_margin_pct = (
+        (contribution_margin / rev_after_vat * 100) if rev_after_vat > 0 else 0.0
+    )
+    prev_contribution_margin_pct = (
+        (prev_contribution_margin / prev_rev_after_vat * 100)
+        if prev_rev_after_vat > 0
+        else 0.0
+    )
+
     margin_value = curr["revenue_net"] - sold_cogs - curr["ad_cost"]
     margin_pct = (margin_value / curr["revenue_net"] * 100) if curr["revenue_net"] > 0 else 0.0
     prev_margin_value = prev["revenue_net"] - prev_sold_cogs - prev["ad_cost"]
@@ -891,6 +911,20 @@ async def compute_dashboard(
             "Совпадает со строкой «Итог по товарам» в WB-кабинете.\n"
             "Это «то, что физически придёт на банк» — не путать с маржой и не путать с чистой выручкой.\n"
             "Доступно только в Final режиме."),
+        KPI("contribution_margin", "Маржа без операционных расходов",
+            contribution_margin, prev_contribution_margin,
+            _pct_change(contribution_margin, prev_contribution_margin), "₽",
+            "Контрибуционная маржа — прибыль ДО операционных и фиксированных расходов.\n"
+            "Формула: Выручка net − Себестоимость − WB-удержания (комиссия + логистика + "
+            "хранение + эквайринг + штрафы + удержания) − Реклама (WB + внешний маркетинг).\n"
+            "НЕ включает: OPEX (зарплаты/аренда), фиксированные расходы, налоги, НДС.\n"
+            "Берётся из pnl_builder.profit_from_sales (gross_profit − commercial_expenses)."),
+        KPI("contribution_margin_pct", "Маржа без OPEX, %",
+            contribution_margin_pct, prev_contribution_margin_pct,
+            _pct_change(contribution_margin_pct, prev_contribution_margin_pct), "%",
+            "Контрибуционная маржа в % от чистой выручки (после НДС).\n"
+            "Формула: contribution_margin / revenue_after_vat × 100.\n"
+            "Норма: 10-30 %; если ниже — операционные расходы (OPEX + налоги) могут увести в минус."),
         KPI("net_profit", "Чистая прибыль", net_profit, prev_net_profit,
             _pct_change(net_profit, prev_net_profit), "₽",
             "Финальная прибыль компании после ВСЕХ расходов:\n"

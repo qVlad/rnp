@@ -25,6 +25,10 @@ import {
   useColumnVisibility,
 } from "@/components/ColumnVisibility";
 import { DateRangePicker } from "@/components/DateRangePicker";
+import PeriodComparePicker, {
+  type ComparePeriods,
+} from "@/components/PeriodComparePicker";
+import DashboardCompareView from "@/components/DashboardCompareView";
 import TodayVsYesterdayStrip from "@/components/TodayVsYesterdayStrip";
 import WeeklyChangesFeed from "@/components/WeeklyChangesFeed";
 import ViewPresetsBar from "@/components/ViewPresetsBar";
@@ -70,6 +74,25 @@ export default function Dashboard() {
   const [showRevenue, setShowRevenue] = useState(true);
   const [showOrders, setShowOrders] = useState(true);
   const [topBy, setTopBy] = useState<"revenue" | "margin" | "worst_margin">("revenue");
+  // TASK-LEAD-029 — toggle «Сравнить периоды».
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [comparePeriods, setComparePeriods] = useState<ComparePeriods | null>(null);
+
+  const compareKey = comparePeriods
+    ? `${comparePeriods.a.from}:${comparePeriods.a.to}|${comparePeriods.b.from}:${comparePeriods.b.to}`
+    : null;
+  const compareQ = useQuery({
+    queryKey: ["dashboard-compare", compareKey, dataMode],
+    queryFn: () =>
+      api.dashboardCompare(
+        comparePeriods!.a.from,
+        comparePeriods!.a.to,
+        comparePeriods!.b.from,
+        comparePeriods!.b.to,
+        dataMode,
+      ),
+    enabled: !!comparePeriods,
+  });
 
   const range =
     mode.kind === "preset"
@@ -267,8 +290,45 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* TASK-LEAD-029 — toggle и picker для сравнения двух периодов. */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <button
+          type="button"
+          onClick={() => {
+            const next = !compareOpen;
+            setCompareOpen(next);
+            if (!next) setComparePeriods(null);
+          }}
+          className={`btn text-xs ${compareOpen ? "border-accent text-accent" : ""}`}
+          title="Сравнить два произвольных периода KPI бок-о-бок"
+        >
+          {compareOpen ? "✕ Скрыть сравнение" : "Сравнить периоды"}
+        </button>
+        {compareOpen && (
+          <PeriodComparePicker
+            initialA={{ from: daysAgo(6), to: today() }}
+            initialB={{ from: daysAgo(13), to: daysAgo(7) }}
+            onCompare={(p) => setComparePeriods(p)}
+          />
+        )}
+      </div>
+
+      {compareOpen && comparePeriods && compareQ.isLoading && (
+        <div className="text-muted">Сравнение загружается…</div>
+      )}
+      {compareOpen && compareQ.data && (
+        <div className="card">
+          <div className="font-medium mb-3">Сравнение периодов</div>
+          <DashboardCompareView
+            periodA={compareQ.data.period_a}
+            periodB={compareQ.data.period_b}
+            deltaPct={compareQ.data.delta_pct}
+          />
+        </div>
+      )}
+
       {dashQ.isLoading && <div className="text-muted">Загрузка…</div>}
-      {dashQ.data && (
+      {dashQ.data && !compareOpen && (
         <DashboardKpiGrid kpis={dashQ.data.kpis} mode={dataMode} />
       )}
 
@@ -447,7 +507,12 @@ export default function Dashboard() {
   );
 }
 
-const HERO_KEYS = new Set(["revenue_net", "net_profit", "margin_pct"]);
+const HERO_KEYS = new Set([
+  "revenue_net",
+  "net_profit",
+  "margin_pct",
+  "contribution_margin",
+]);
 
 function DashboardKpiGrid({
   kpis,

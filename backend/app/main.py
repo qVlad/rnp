@@ -20,12 +20,14 @@ from app.api import (
     checklist,
     cost_history,
     dashboard,
+    dashboard_compare,
     excel,
     extension,
     extension_lk_jobs,
     external_ad_costs,
     features_doc,
     funnel,
+    inventory,
     jam,
     managers_kpi,
     metric_templates,
@@ -191,6 +193,7 @@ async def whoami() -> dict[str, object]:
 
 
 app.include_router(dashboard.router)
+app.include_router(dashboard_compare.router)
 app.include_router(pnl.router)
 app.include_router(units.router)
 app.include_router(unit_plan.router)
@@ -230,6 +233,7 @@ app.include_router(checklist.router)
 app.include_router(season_plan.router)
 app.include_router(jam.router)
 app.include_router(funnel.router)
+app.include_router(inventory.router)
 app.include_router(sync_status.router)
 app.include_router(features_doc.router)
 app.include_router(abtest.router)

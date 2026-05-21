@@ -5,9 +5,10 @@ report-detail / orders / sales and are joined at read-time by services/plan_fact
 """
 from __future__ import annotations
 
+import json
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +18,11 @@ from app.db.session import get_db
 from app.services.audit import actor_from_request, audit_log, snapshot
 from app.services.auth import get_db_tenant_scoped
 from app.services.auth import current_brands_filter, require_director_or_head
+from app.services.excel_io import (
+    import_sales_plans_with_mapping,
+    preview_sales_plan_xlsx,
+)
+from app.services.plan_distribute import distribute_plan_by_fact
 
 from app.services.plan_fact import build_plan_fact
 
@@ -208,3 +214,132 @@ async def delete_plan(
     )
     await session.commit()
     return {"status": "deleted"}
+
+
+# ---------------------------------------------------------------------------
+# TASK-LEAD-031 — XLSX import with column-mapping + distribute-by-fact
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/import-excel/preview",
+    dependencies=[Depends(require_director_or_head)],
+)
+async def import_excel_preview(
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    """Превью XLSX-файла для UI mapping-wizard.
+
+    Возвращает headers, auto-detected mapping, список canonical-полей,
+    preview первых 5 строк. Юзер видит auto-mapping → правит → отправляет
+    в /import-excel.
+    """
+    content = await file.read()
+    try:
+        return preview_sales_plan_xlsx(content)
+    except Exception as e:
+        raise HTTPException(400, f"preview failed: {e}")
+
+
+@router.post(
+    "/import-excel",
+    dependencies=[Depends(require_director_or_head)],
+)
+async def import_excel_plans(
+    request: Request,
+    file: UploadFile = File(...),
+    mapping_json: str | None = Form(default=None),
+    default_year: int | None = Form(default=None),
+    default_month: int | None = Form(default=None),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Импорт планов из XLSX с column-mapping (TASK-LEAD-031).
+
+    multipart: `file` + опциональный JSON-string `mapping_json={header: canonical_field}`.
+    Если mapping не передан — auto-detect по заголовкам.
+    """
+    content = await file.read()
+    mapping: dict[str, str] | None = None
+    if mapping_json:
+        try:
+            mapping = json.loads(mapping_json)
+            if not isinstance(mapping, dict):
+                raise ValueError("must be a dict {header: field}")
+        except (json.JSONDecodeError, ValueError) as e:
+            raise HTTPException(400, f"invalid mapping_json: {e}")
+
+    try:
+        result = await import_sales_plans_with_mapping(
+            session,
+            file_bytes=content,
+            mapping=mapping,
+            default_year=default_year,
+            default_month=default_month,
+        )
+    except Exception as e:
+        raise HTTPException(400, f"import failed: {e}")
+
+    await audit_log(
+        session, "sales_plans", "bulk_import",
+        entity_id=file.filename or "uploaded.xlsx",
+        after={
+            "inserted": result["inserted"],
+            "updated": result["updated"],
+            "skipped": result["skipped"],
+            "total_rows": result["total_rows"],
+            "warnings_count": len(result["warnings"]),
+            "errors_count": len(result["errors"]),
+            "mapping_used": result.get("mapping_used"),
+        },
+        actor=actor_from_request(request),
+    )
+    await session.commit()
+    return result
+
+
+class DistributeByFactPayload(BaseModel):
+    plan_id: int
+    fact_period_days: int = Field(default=30, ge=1, le=365)
+    base: Literal["orders", "revenue", "units"] = "orders"
+
+
+@router.post(
+    "/distribute-by-fact",
+    dependencies=[Depends(require_director_or_head)],
+)
+async def distribute_by_fact(
+    payload: DistributeByFactPayload,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
+) -> dict[str, Any]:
+    """Пропорционально распределить план уровня store/group по nm_id.
+
+    base ∈ orders|revenue|units — что берём как факт-вес за предыдущие
+    `fact_period_days` дней. Создаёт (или upsert'ит) nm-уровневые планы.
+    """
+    try:
+        result = await distribute_plan_by_fact(
+            session,
+            plan_id=payload.plan_id,
+            fact_period_days=payload.fact_period_days,
+            base=payload.base,
+            brand_filter=brands,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    await audit_log(
+        session, "sales_plans", "distribute_by_fact",
+        entity_id=str(payload.plan_id),
+        after={
+            "base": payload.base,
+            "fact_period_days": payload.fact_period_days,
+            "nm_count": result["nm_count"],
+            "fallback_used": result["fallback_used"],
+            "totals": result["totals"],
+        },
+        actor=actor_from_request(request),
+    )
+    await session.commit()
+    return result

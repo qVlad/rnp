@@ -3,13 +3,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub, fmtNum } from "@/lib/format";
 
-export default function Capitalization() {
+export default function OffPlatformStock() {
   const qc = useQueryClient();
-  const [asOf, setAsOf] = useState<string>("");
 
   const summary = useQuery({
-    queryKey: ["off-platform-summary", asOf],
-    queryFn: () => api.offPlatformSummary(asOf || undefined),
+    queryKey: ["off-platform-summary"],
+    queryFn: () => api.offPlatformSummary(),
   });
 
   const movements = useQuery({

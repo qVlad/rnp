@@ -30,7 +30,8 @@ import Supply from "./pages/Supply";
 import Plans from "./pages/Plans";
 import CashFlow from "./pages/CashFlow";
 import UnitCalculator from "./pages/UnitCalculator";
-import Capitalization from "./pages/Capitalization";
+import OffPlatformStock from "./pages/OffPlatformStock";
+import Inventory from "./pages/Inventory";
 import ProductGroups from "./pages/ProductGroups";
 import AuditLog from "./pages/AuditLog";
 import Login from "./pages/Login";
@@ -247,13 +248,18 @@ export default function App() {
             }
           />
           <Route
-            path="capitalization"
+            path="off-platform"
             element={
               <DirectorOrHead>
-                <Capitalization />
+                <OffPlatformStock />
               </DirectorOrHead>
             }
           />
+          <Route
+            path="capitalization"
+            element={<Navigate to="/off-platform" replace />}
+          />
+          <Route path="inventory" element={<Inventory />} />
           <Route path="product-groups" element={<ProductGroups />} />
           <Route
             path="audit-log"

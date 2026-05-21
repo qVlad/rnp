@@ -224,6 +224,7 @@ Uncommitted `M`-файлы, которые ты в этой сессии **са�
 | Расчёт УСН-Доходы 6% (без НДС / + НДС 5% / + НДС 7%) | [`TAX_USN_BANK.md`](TAX_USN_BANK.md) |
 | Ручное исключение отчётов из налоговой базы (per-regime флаги) | [`TAX_BOOKKEEPER_OVERRIDES.md`](TAX_BOOKKEEPER_OVERRIDES.md) |
 | UI/UX правки и задачи арт-директора | [`UI_UX_AUDIT.md`](UI_UX_AUDIT.md) |
+| **Дизайн-система (single source of truth):** токены, типографика, компоненты, chart-палитра, что НЕ делать | [`DESIGN_SYSTEM.md`](DESIGN_SYSTEM.md) ⭐ |
 | Конкурентный анализ vs Eggheads.solutions + план развития | [`COMPETITIVE_EGGHEADS.md`](COMPETITIVE_EGGHEADS.md) |
 | Конкурентный анализ vs Evirma (Chrome-расширение) + 3 идеи для web-app | [`COMPETITIVE_EVIRMA.md`](COMPETITIVE_EVIRMA.md) |
 | Конкурентный анализ vs TrueStats + Sprint-план (custom-metrics, триал, аудит-режим) | [`COMPETITIVE_TRUESTATS.md`](COMPETITIVE_TRUESTATS.md) |

@@ -24,13 +24,27 @@ async def get_ads_heatmap(
     start_date: Annotated[date | None, Query(alias="from")] = None,
     end_date: Annotated[date | None, Query(alias="to")] = None,
     days_back: Annotated[int, Query(ge=1, le=180)] = 30,
-    metric: Annotated[str, Query(regex="^(drr|spent|orders|clicks|revenue)$")] = "drr",
+    metric: Annotated[
+        str,
+        Query(
+            regex="^(drr|spent|orders|clicks|revenue|cpl|cps|basket_conv|order_conv)$"
+        ),
+    ] = "drr",
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     """Heatmap: строки = кампании, колонки = дни, значение = выбранная метрика.
 
     Параметры:
-        metric: 'drr' (default, %), 'spent' (₽), 'orders' (шт), 'clicks' (шт), 'revenue' (₽)
+        metric: 'drr' (default, %), 'spent' (₽), 'orders' (шт), 'clicks' (шт),
+                'revenue' (₽), 'cpl' (₽/клик), 'cps' (₽/заказ),
+                'basket_conv' (%, atbs/clicks), 'order_conv' (%, orders/clicks)
+
+    Conversion-метрики (TASK-LEAD-033) считаются sum-numerator/sum-denominator
+    (НЕ среднее средних — match с funnel logic):
+        cpl         = spent / clicks               (null если clicks=0)
+        cps         = spent / orders               (null если orders=0)
+        basket_conv = atbs / clicks × 100          (null если clicks=0)
+        order_conv  = orders / clicks × 100        (null если clicks=0)
     """
     if end_date is None:
         end_date = date.today()
@@ -46,6 +60,7 @@ async def get_ads_heatmap(
             func.sum(WbAdStatsDaily.sum_price).label("revenue"),
             func.sum(WbAdStatsDaily.orders).label("orders"),
             func.sum(WbAdStatsDaily.clicks).label("clicks"),
+            func.sum(WbAdStatsDaily.atbs).label("atbs"),
         )
         .where(WbAdStatsDaily.stat_date >= start_date)
         .where(WbAdStatsDaily.stat_date <= end_date)
@@ -73,6 +88,7 @@ async def get_ads_heatmap(
         rev = float(r.revenue or 0)
         orders = int(r.orders or 0)
         clicks = int(r.clicks or 0)
+        atbs = int(r.atbs or 0)
         if metric == "drr":
             val: float | None = (spent / rev * 100.0) if rev > 0 else None
         elif metric == "spent":
@@ -83,17 +99,27 @@ async def get_ads_heatmap(
             val = float(orders)
         elif metric == "clicks":
             val = float(clicks)
+        elif metric == "cpl":
+            val = (spent / clicks) if clicks > 0 else None
+        elif metric == "cps":
+            val = (spent / orders) if orders > 0 else None
+        elif metric == "basket_conv":
+            val = (atbs / clicks * 100.0) if clicks > 0 else None
+        elif metric == "order_conv":
+            val = (orders / clicks * 100.0) if clicks > 0 else None
         else:
             val = None
         cell_matrix = matrix.setdefault(r.advert_id, {})
         cell_matrix[r.stat_date.isoformat()] = val
         t = totals_per_camp.setdefault(
-            r.advert_id, {"spent": 0.0, "revenue": 0.0, "orders": 0, "clicks": 0}
+            r.advert_id,
+            {"spent": 0.0, "revenue": 0.0, "orders": 0, "clicks": 0, "atbs": 0},
         )
         t["spent"] += spent
         t["revenue"] += rev
         t["orders"] += orders
         t["clicks"] += clicks
+        t["atbs"] += atbs
 
     # Список кампаний — сортируем по общим тратам убывая
     campaigns_out: list[dict[str, Any]] = []
@@ -104,6 +130,14 @@ async def get_ads_heatmap(
             if totals["revenue"] > 0
             else None
         )
+        cpl_total = (totals["spent"] / totals["clicks"]) if totals["clicks"] > 0 else None
+        cps_total = (totals["spent"] / totals["orders"]) if totals["orders"] > 0 else None
+        basket_conv_total = (
+            (totals["atbs"] / totals["clicks"] * 100.0) if totals["clicks"] > 0 else None
+        )
+        order_conv_total = (
+            (totals["orders"] / totals["clicks"] * 100.0) if totals["clicks"] > 0 else None
+        )
         campaigns_out.append(
             {
                 "advert_id": adv_id,
@@ -113,11 +147,26 @@ async def get_ads_heatmap(
                 "revenue": round(totals["revenue"], 2),
                 "orders": int(totals["orders"]),
                 "clicks": int(totals["clicks"]),
+                "atbs": int(totals["atbs"]),
                 "drr_total": round(drr_total, 2) if drr_total is not None else None,
+                "cpl_total": round(cpl_total, 2) if cpl_total is not None else None,
+                "cps_total": round(cps_total, 2) if cps_total is not None else None,
+                "basket_conv_total": (
+                    round(basket_conv_total, 1) if basket_conv_total is not None else None
+                ),
+                "order_conv_total": (
+                    round(order_conv_total, 1) if order_conv_total is not None else None
+                ),
                 "cells": [matrix.get(adv_id, {}).get(day) for day in days],
             }
         )
     campaigns_out.sort(key=lambda x: x["spent"], reverse=True)
+
+    spent_sum = sum(c["spent"] for c in campaigns_out)
+    rev_sum = sum(c["revenue"] for c in campaigns_out)
+    orders_sum = sum(c["orders"] for c in campaigns_out)
+    clicks_sum = sum(c["clicks"] for c in campaigns_out)
+    atbs_sum = sum(c["atbs"] for c in campaigns_out)
 
     return {
         "from": start_date.isoformat(),
@@ -125,16 +174,33 @@ async def get_ads_heatmap(
         "metric": metric,
         "days": days,
         "campaigns": campaigns_out,
-        "totals": (
-            lambda spent_sum, rev_sum: {
-                "spent": round(spent_sum, 2),
-                "revenue": round(rev_sum, 2),
-                "orders": sum(c["orders"] for c in campaigns_out),
-                "clicks": sum(c["clicks"] for c in campaigns_out),
-                "drr": round(spent_sum / rev_sum * 100, 2) if rev_sum > 0 else None,
-            }
-        )(
-            sum(c["spent"] for c in campaigns_out),
-            sum(c["revenue"] for c in campaigns_out),
-        ),
+        "totals": {
+            "spent": round(spent_sum, 2),
+            "revenue": round(rev_sum, 2),
+            "orders": orders_sum,
+            "clicks": clicks_sum,
+            "atbs": atbs_sum,
+            "drr": round(spent_sum / rev_sum * 100, 2) if rev_sum > 0 else None,
+            "cpl": round(spent_sum / clicks_sum, 2) if clicks_sum > 0 else None,
+            "cps": round(spent_sum / orders_sum, 2) if orders_sum > 0 else None,
+            "basket_conv": (
+                round(atbs_sum / clicks_sum * 100, 1) if clicks_sum > 0 else None
+            ),
+            "order_conv": (
+                round(orders_sum / clicks_sum * 100, 1) if clicks_sum > 0 else None
+            ),
+        },
+        # Tooltip-формулы (TASK-LEAD-033) — фронт может использовать вместо
+        # хардкода. Ключи совпадают с именами метрик.
+        "metric_formulas": {
+            "drr": "spent / revenue × 100",
+            "spent": "Σ sum_spent",
+            "revenue": "Σ sum_price",
+            "orders": "Σ orders",
+            "clicks": "Σ clicks",
+            "cpl": "spent / clicks",
+            "cps": "spent / orders",
+            "basket_conv": "atbs / clicks × 100",
+            "order_conv": "orders / clicks × 100",
+        },
     }

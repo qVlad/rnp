@@ -4,6 +4,7 @@ import {
   CartesianGrid,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -38,6 +39,22 @@ export default function PaymentCalendar() {
       outgoing: -row.outgoing,
     }));
   }, [d]);
+
+  // today в локальной TZ как YYYY-MM-DD (для сравнения с row.date)
+  const todayIso = useMemo(() => {
+    const t = new Date();
+    const y = t.getFullYear();
+    const m = String(t.getMonth() + 1).padStart(2, "0");
+    const dd = String(t.getDate()).padStart(2, "0");
+    return `${y}-${m}-${dd}`;
+  }, []);
+
+  // если today попадает в видимый период — формат MM-DD для XAxis-tick
+  const todayInView = useMemo(() => {
+    if (!d || !d.days?.length) return null as string | null;
+    const hit = d.days.find((r: any) => r.date === todayIso);
+    return hit ? hit.date.slice(5) : null;
+  }, [d, todayIso]);
 
   return (
     <div className="space-y-4">
@@ -150,6 +167,20 @@ export default function PaymentCalendar() {
                 contentStyle={chartTheme.tooltipStyle}
               />
               <Line type="monotone" dataKey="balance" stroke={chartTheme.primary} dot={false} strokeWidth={2} />
+              {todayInView && (
+                <ReferenceLine
+                  x={todayInView}
+                  stroke={chartTheme.warn}
+                  strokeDasharray="4 4"
+                  strokeWidth={2}
+                  label={{
+                    value: "Сегодня",
+                    position: "top",
+                    fill: chartTheme.warn,
+                    fontSize: 11,
+                  }}
+                />
+              )}
             </LineChart>
           </ResponsiveContainer>
         )}
@@ -170,24 +201,40 @@ export default function PaymentCalendar() {
             <tbody>
               {d.days.map((row: any) => {
                 const hasMovement = row.incoming > 0 || row.outgoing > 0;
+                const isToday = row.date === todayIso;
+                const isPast = row.date < todayIso;
+                const rowClass = isToday
+                  ? "border-t-2 border-warning bg-warning/5 font-medium"
+                  : `border-t border-border/40 ${
+                      hasMovement ? (isPast ? "" : "text-muted") : "text-muted/60"
+                    }`;
+                const dateExtra = isToday
+                  ? ""
+                  : isPast
+                  ? ""
+                  : " border-l border-dashed border-border";
                 return (
-                  <tr
-                    key={row.date}
-                    className={`border-t border-border/40 ${
-                      hasMovement ? "" : "text-muted/60"
-                    }`}
-                  >
-                    <td className="p-2 font-mono">{row.date}</td>
+                  <tr key={row.date} className={rowClass}>
+                    <td className={`p-2 font-mono${dateExtra}`}>
+                      {row.date}
+                      {isToday && (
+                        <span className="ml-2 text-xs uppercase text-warning">сегодня</span>
+                      )}
+                    </td>
                     <td className="p-2 text-right font-mono">
                       {row.incoming > 0 ? (
-                        <span className="text-success">+{fmtRub(row.incoming)}</span>
+                        <span className={isPast ? "text-success" : "text-success/70"}>
+                          +{fmtRub(row.incoming)}
+                        </span>
                       ) : (
                         "—"
                       )}
                     </td>
                     <td className="p-2 text-right font-mono">
                       {row.outgoing > 0 ? (
-                        <span className="text-danger">−{fmtRub(row.outgoing)}</span>
+                        <span className={isPast ? "text-danger" : "text-danger/70"}>
+                          −{fmtRub(row.outgoing)}
+                        </span>
                       ) : (
                         "—"
                       )}

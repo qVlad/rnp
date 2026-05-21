@@ -602,6 +602,21 @@ export const api = {
       mode: "preliminary" | "final" | "hybrid";
       rows: { date: string; revenue: number; orders: number; ad_cost: number }[];
     }>(`/api/dashboard/timeseries?days=${days}&mode=${mode}`),
+  dashboardCompare: (
+    aFrom: string,
+    aTo: string,
+    bFrom: string,
+    bTo: string,
+    mode: "preliminary" | "final" | "hybrid" = "preliminary",
+  ) =>
+    request<{
+      mode: "preliminary" | "final" | "hybrid";
+      period_a: { kpis: any[]; period: any; mode: string };
+      period_b: { kpis: any[]; period: any; mode: string };
+      delta_pct: Record<string, number | null>;
+    }>(
+      `/api/dashboard/compare?a_from=${aFrom}&a_to=${aTo}&b_from=${bFrom}&b_to=${bTo}&mode=${mode}`,
+    ),
   topSkus: (
     range: { period: "day" | "week" | "month" } | { start: string; end: string },
     by: "revenue" | "margin",
@@ -1567,6 +1582,82 @@ paymentOrderDelete: (payment_order_id: string) =>
       items: any[];
     }>(`/api/plans/fact?year=${year}&month=${month}`),
 
+  // TASK-LEAD-031 — XLSX import + distribute-by-fact
+  plansImportExcelPreview: async (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const resp = await fetch("/api/plans/import-excel/preview", {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(`API ${resp.status}: ${text || resp.statusText}`);
+    }
+    return resp.json() as Promise<{
+      headers: string[];
+      auto_mapping: Record<string, string>;
+      canonical_fields: string[];
+      preview_rows: string[][];
+    }>;
+  },
+  plansImportExcel: async (
+    file: File,
+    options: {
+      mapping?: Record<string, string>;
+      default_year?: number;
+      default_month?: number;
+    } = {},
+  ) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (options.mapping) {
+      fd.append("mapping_json", JSON.stringify(options.mapping));
+    }
+    if (options.default_year != null) {
+      fd.append("default_year", String(options.default_year));
+    }
+    if (options.default_month != null) {
+      fd.append("default_month", String(options.default_month));
+    }
+    const resp = await fetch("/api/plans/import-excel", {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(`API ${resp.status}: ${text || resp.statusText}`);
+    }
+    return resp.json() as Promise<{
+      inserted: number;
+      updated: number;
+      skipped: number;
+      warnings: string[];
+      errors: string[];
+      total_rows: number;
+      mapping_used: Record<string, string>;
+    }>;
+  },
+  plansDistributeByFact: (body: {
+    plan_id: number;
+    fact_period_days?: number;
+    base?: "orders" | "revenue" | "units";
+  }) =>
+    request<{
+      plan_id: number;
+      base: string;
+      fact_period: { from: string; to: string };
+      nm_count: number;
+      fallback_used: boolean;
+      totals: Record<string, number>;
+      allocations: Array<{ nm_id: number; [k: string]: number }>;
+    }>("/api/plans/distribute-by-fact", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
   // ── Setting timeline (future-dated tax/VAT) ──
   listSettingTimeline: () =>
     request<{
@@ -1752,6 +1843,33 @@ paymentOrderDelete: (payment_order_id: string) =>
       by_kind: Record<string, { qty: number; amount: number }>;
       kind_labels: Record<string, string>;
     }>(`/api/off-platform/summary${asOf ? `?as_of=${asOf}` : ""}`),
+
+  // ── Inventory (WB-склад капитализация) ──
+  inventorySnapshot: (
+    on_date?: string,
+    breakdown: "brand" | "group" | "warehouse" = "brand",
+  ) => {
+    const qs = new URLSearchParams();
+    if (on_date) qs.set("on_date", on_date);
+    qs.set("breakdown", breakdown);
+    return request<{
+      on_date: string;
+      capitalization: number;
+      scope: "brand" | "group" | "warehouse";
+      breakdown: Array<{ key: string; qty: number; value: number }>;
+    }>(`/api/inventory/snapshot?${qs.toString()}`);
+  },
+  inventoryDynamic: (
+    from: string,
+    to: string,
+    freq: "week" | "month" = "week",
+  ) => {
+    const qs = new URLSearchParams({ from, to, freq });
+    return request<{
+      points: Array<{ date: string; value: number }>;
+      freq: "week" | "month";
+    }>(`/api/inventory/dynamic?${qs.toString()}`);
+  },
 
   // ── Stockout forecast ──
   stockoutForecast: (

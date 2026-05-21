@@ -27,8 +27,9 @@
 |---|---|---|---|---|
 | **Lead / Architect** | [`lead.md`](lead.md) | [`tasks-lead.md`](tasks-lead.md) | — | Декомпозиция, приоритеты, code review, RBAC, скоуп |
 | **Developer** (full-stack) | [`developer.md`](developer.md) | [`tasks-developer.md`](tasks-developer.md) | [`bugs-developer.md`](bugs-developer.md) | Backend (FastAPI/SQL/Celery) + Frontend (React/TS) |
-| **UX Designer** | [`designer.md`](designer.md) | [`tasks-designer.md`](tasks-designer.md) | [`bugs-designer.md`](bugs-designer.md) | UI/UX дашбордов, P&L, ДДС, drill-down, ИА |
-| **Art Director** | [`art-director.md`](art-director.md) | [`tasks-art.md`](tasks-art.md) | — | Бренд, design tokens, иконки, визуальная согласованность |
+| **UX Designer** | [`designer.md`](designer.md) | [`tasks-designer.md`](tasks-designer.md) | [`bugs-designer.md`](bugs-designer.md) | UI/UX дашбордов, P&L, ДДС, drill-down, ИА. Пишет спеки, не код. |
+| **Art Director** | [`art-director.md`](art-director.md) | [`tasks-art.md`](tasks-art.md) | — | Бренд, design tokens, иконки, визуальная согласованность. Держит [`DESIGN_SYSTEM.md`](../DESIGN_SYSTEM.md). |
+| **UI Engineer** | [`ui-engineer.md`](ui-engineer.md) | [`tasks-ui-engineer.md`](tasks-ui-engineer.md) | [`bugs-ui-engineer.md`](bugs-ui-engineer.md) | Контроль соответствия кода [`DESIGN_SYSTEM.md`](../DESIGN_SYSTEM.md) + выполнение чисто-визуальных задач. Мост между Designer/Art Director и Developer. |
 | **QA** | [`qa.md`](qa.md) | [`tasks-qa.md`](tasks-qa.md) | (заводит в bugs-dev/des) | Smoke на проде, сверка цифр, RBAC, регресс. **Промежуточный слой между Persona и продуктовой командой** |
 | **Release Manager** | [`release-manager.md`](release-manager.md) | [`tasks-release-manager.md`](tasks-release-manager.md) | — | **Единственный** кто бампает версии (3 файла) и запускает `./scripts/remote.sh deploy`. Single-instance через [`DEPLOY_LOCK.md`](../DEPLOY_LOCK.md). Остальные роли после `Выполнено` передают эстафету. |
 
@@ -75,10 +76,11 @@
                          │ TASK-LEAD-NNN   │ TASK-{DEV,DES,ART,QA}-NNN
                          └────────────┬────┘
                                       ▼
-                  ┌────────────────────────────────────┐
-                  │  Developer  Designer  ArtDir  QA   │
-                  │  (реализация / визуал / тесты)     │
-                  └──────────────┬─────────────────────┘
+                  ┌────────────────────────────────────────────────┐
+                  │  Developer  Designer  ArtDir  UI-Eng  QA       │
+                  │  (бизнес-логика / UX-спеки / токены /          │
+                  │   UI-исполнение и compliance / тесты)          │
+                  └──────────────┬─────────────────────────────────┘
                                  │ task: Выполнено
                                  │ → handoff
                                  ▼
@@ -158,6 +160,7 @@
 | Developer | `wb-api-specialist`, `clean-architect`, `integration-analyst` |
 | UX Designer | `visual-design-lead` |
 | Art Director | `visual-design-lead` |
+| UI Engineer | `visual-design-lead` (для WCAG audit'ов), `clean-architect` (при выделении новых primitive-компонентов) |
 | QA | `qa-tester`, `integration-analyst` |
 | Strategist | `integration-analyst` (для технического сравнения конкурентов), WebSearch / WebFetch |
 | Persona-Accountant | `integration-analyst` (для сверки формул с 1С / УПД) |

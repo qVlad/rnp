@@ -1025,3 +1025,271 @@ async def import_excel(
     res = await REGISTRY[entity][1](session, rows)
     await session.commit()
     return res
+
+
+# ---------------------------------------------------------------------------
+# Sales plans — flexible parser with column mapping wizard (TASK-LEAD-031)
+#
+# Бухгалтер / РОП может выгрузить план в произвольном формате (русские/английские
+# заголовки, любой порядок). В отличие от строгого `import_excel(entity=...)` —
+# здесь мы:
+#   1. Автодетектим колонки по словарю синонимов.
+#   2. Принимаем явный `mapping: {header_in_file: canonical_field}` если auto
+#      не справился (пользователь сопоставит в UI).
+#   3. Поддерживаем два формата: period_year/period_month ИЛИ period_start
+#      (берём год+месяц из даты).
+#   4. Поддерживаем scope=nm (по nm_id), scope=brand (имя бренда → раскладка
+#      на каждый nm бренда), scope=group (по group_id), scope=store (всё).
+# ---------------------------------------------------------------------------
+
+
+_PLAN_FIELD_ALIASES: dict[str, list[str]] = {
+    "nm_id": [
+        "nm_id", "nmid", "nm", "артикул", "артикул wb", "арт", "sku",
+        "артикул вб",
+    ],
+    "scope_type": ["scope_type", "уровень", "тип"],
+    "scope_id": ["scope_id", "id", "scope"],
+    "brand": ["brand", "бренд"],
+    "group_id": ["group_id", "группа", "group"],
+    "period_year": ["period_year", "год", "year"],
+    "period_month": ["period_month", "месяц", "month"],
+    "period_start": [
+        "period_start", "начало", "начало периода", "дата начала", "from",
+    ],
+    "period_end": [
+        "period_end", "конец", "конец периода", "дата конца", "to",
+    ],
+    "planned_orders_qty": [
+        "planned_orders_qty", "заказы", "заказы (шт)", "orders_qty", "orders",
+    ],
+    "planned_orders_revenue": [
+        "planned_orders_revenue", "выручка по заказам", "orders_revenue",
+        "revenue_orders",
+    ],
+    "planned_sales_qty": [
+        "planned_sales_qty", "продажи", "продажи (шт)", "sales_qty", "units",
+        "planned_units",
+    ],
+    "planned_sales_revenue": [
+        "planned_sales_revenue", "выручка", "выручка (план)",
+        "чистая выручка", "sales_revenue", "revenue", "planned_revenue",
+    ],
+    "planned_profit": [
+        "planned_profit", "прибыль", "чистая прибыль", "profit", "margin",
+    ],
+    "planned_marketing_cost": [
+        "planned_marketing_cost", "реклама", "маркетинг", "marketing",
+        "ad_cost", "ads",
+    ],
+    "comment": ["comment", "комментарий", "примечание", "note"],
+}
+
+
+def _norm_header(s: Any) -> str:
+    return str(s or "").strip().lower().replace("ё", "е")
+
+
+def _auto_detect_plan_mapping(headers: list[str]) -> dict[str, str]:
+    """Возвращает mapping: header_in_file → canonical_field.
+
+    Берём первое совпадение из словаря синонимов. Если несколько синонимов
+    указывают на один canonical, побеждает первый встретившийся header.
+    """
+    mapping: dict[str, str] = {}
+    used_fields: set[str] = set()
+    for h in headers:
+        nh = _norm_header(h)
+        if not nh:
+            continue
+        for field, aliases in _PLAN_FIELD_ALIASES.items():
+            if field in used_fields:
+                continue
+            if nh in {_norm_header(a) for a in aliases}:
+                mapping[h] = field
+                used_fields.add(field)
+                break
+    return mapping
+
+
+def preview_sales_plan_xlsx(file_bytes: bytes, *, max_rows: int = 5) -> dict[str, Any]:
+    """Для UI mapping-wizard: возвращает headers, auto-detected mapping,
+    список canonical-полей и preview первых 5 строк."""
+    wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+    ws = wb.active
+    rows_iter = ws.iter_rows(values_only=True)
+    header_raw = next(rows_iter, None) or []
+    headers = [str(h).strip() if h is not None else "" for h in header_raw]
+    preview: list[list[Any]] = []
+    for r in rows_iter:
+        if r is None or all(c is None or c == "" for c in r):
+            continue
+        preview.append([("" if c is None else str(c)) for c in r])
+        if len(preview) >= max_rows:
+            break
+    return {
+        "headers": headers,
+        "auto_mapping": _auto_detect_plan_mapping(headers),
+        "canonical_fields": list(_PLAN_FIELD_ALIASES.keys()),
+        "preview_rows": preview,
+    }
+
+
+def _resolve_period(
+    raw: dict[str, Any], *, default_year: int | None, default_month: int | None,
+) -> tuple[int, int]:
+    """Из строки выдрать (year, month). Принимает period_year+period_month
+    либо period_start (берём год+месяц)."""
+    year = _to_int(raw.get("period_year"))
+    month = _to_int(raw.get("period_month"))
+    if year and month:
+        return year, month
+    start = _to_date(raw.get("period_start"))
+    if start:
+        return start.year, start.month
+    if default_year and default_month:
+        return default_year, default_month
+    raise ValueError("нет period_year+period_month или period_start")
+
+
+async def import_sales_plans_with_mapping(
+    session: AsyncSession,
+    *,
+    file_bytes: bytes,
+    mapping: dict[str, str] | None = None,
+    default_year: int | None = None,
+    default_month: int | None = None,
+) -> dict[str, Any]:
+    """Импорт планов с гибким маппингом.
+
+    - mapping={header: canonical_field}. Если None — auto-detect.
+    - Поддерживает nm-уровень (есть nm_id) и store-уровень (нет nm_id, нет brand).
+    - Если в файле бренд (`brand`-колонка) но нет nm_id — пишем как scope_type='nm'
+      на КАЖДЫЙ nm бренда: НЕ делаем (это уже distribute-by-fact), warn только.
+    - Validation: nm_id должен существовать в Product (warn, но не fail).
+    - Upsert по (year, month, scope_type, scope_id).
+    - Возвращает {inserted, updated, skipped, warnings, errors, total_rows}.
+    """
+    wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+    ws = wb.active
+    rows_iter = ws.iter_rows(values_only=True)
+    header_raw = next(rows_iter, None)
+    if not header_raw:
+        return {
+            "inserted": 0, "updated": 0, "skipped": 0,
+            "warnings": [], "errors": ["пустой файл"], "total_rows": 0,
+        }
+    headers = [str(h).strip() if h is not None else "" for h in header_raw]
+    use_mapping = mapping or _auto_detect_plan_mapping(headers)
+    # header_in_file → canonical_field; индекс колонки → canonical_field
+    col_to_field: dict[int, str] = {}
+    for i, h in enumerate(headers):
+        if h in use_mapping:
+            col_to_field[i] = use_mapping[h]
+
+    inserted = updated = skipped = 0
+    warnings: list[str] = []
+    errors: list[str] = []
+    total_rows = 0
+
+    # Сначала собираем все nm_id из файла одним запросом, чтобы не дёргать БД на каждую строку.
+    raw_rows: list[dict[str, Any]] = []
+    for row_idx, r in enumerate(rows_iter, start=2):
+        if r is None or all(c is None or c == "" for c in r):
+            continue
+        d: dict[str, Any] = {"__row__": row_idx}
+        for i, val in enumerate(r):
+            if i in col_to_field:
+                d[col_to_field[i]] = val
+        raw_rows.append(d)
+
+    total_rows = len(raw_rows)
+    nm_ids_in_file = {
+        _to_int(r.get("nm_id")) for r in raw_rows if r.get("nm_id") is not None
+    } - {None}
+    existing_nm_ids: set[int] = set()
+    if nm_ids_in_file:
+        res = await session.execute(
+            select(Product.nm_id).where(Product.nm_id.in_(nm_ids_in_file))
+        )
+        existing_nm_ids = {row[0] for row in res.all()}
+
+    for r in raw_rows:
+        row_idx = r["__row__"]
+        try:
+            year, month = _resolve_period(
+                r, default_year=default_year, default_month=default_month
+            )
+            if not (1 <= month <= 12):
+                errors.append(f"строка {row_idx}: month вне 1..12")
+                skipped += 1
+                continue
+            # period_end не используем для модели, но если есть — sanity check
+            ps = _to_date(r.get("period_start"))
+            pe = _to_date(r.get("period_end"))
+            if ps and pe and pe < ps:
+                errors.append(f"строка {row_idx}: period_end < period_start")
+                skipped += 1
+                continue
+
+            nm_id = _to_int(r.get("nm_id"))
+            group_id = _to_int(r.get("group_id"))
+            scope_type_raw = _to_str(r.get("scope_type"))
+            scope_id_raw = _to_int(r.get("scope_id"))
+
+            if nm_id:
+                scope_type = "nm"
+                scope_id: int | None = nm_id
+                if nm_id not in existing_nm_ids:
+                    warnings.append(
+                        f"строка {row_idx}: nm_id={nm_id} не найден в Product — план создан"
+                    )
+            elif group_id:
+                scope_type, scope_id = "group", group_id
+            elif scope_type_raw:
+                scope_type = scope_type_raw
+                scope_id = scope_id_raw
+            else:
+                scope_type, scope_id = "store", None
+
+            existing = (
+                await session.execute(
+                    select(SalesPlan).where(
+                        SalesPlan.period_year == year,
+                        SalesPlan.period_month == month,
+                        SalesPlan.scope_type == scope_type,
+                        SalesPlan.scope_id == scope_id,
+                    )
+                )
+            ).scalars().first()
+            kwargs = dict(
+                period_year=year, period_month=month,
+                scope_type=scope_type, scope_id=scope_id,
+                planned_orders_qty=_to_int(r.get("planned_orders_qty")) or 0,
+                planned_orders_revenue=_to_decimal(r.get("planned_orders_revenue")) or Decimal(0),
+                planned_sales_qty=_to_int(r.get("planned_sales_qty")) or 0,
+                planned_sales_revenue=_to_decimal(r.get("planned_sales_revenue")) or Decimal(0),
+                planned_profit=_to_decimal(r.get("planned_profit")) or Decimal(0),
+                planned_marketing_cost=_to_decimal(r.get("planned_marketing_cost")) or Decimal(0),
+                comment=_to_str(r.get("comment")),
+            )
+            if existing:
+                for k, v in kwargs.items():
+                    setattr(existing, k, v)
+                updated += 1
+            else:
+                session.add(SalesPlan(**kwargs))
+                inserted += 1
+        except Exception as e:
+            errors.append(f"строка {row_idx}: {e}")
+            skipped += 1
+
+    return {
+        "inserted": inserted,
+        "updated": updated,
+        "skipped": skipped,
+        "warnings": warnings,
+        "errors": errors,
+        "total_rows": total_rows,
+        "mapping_used": use_mapping,
+    }

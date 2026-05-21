@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -140,6 +140,68 @@ export default function Plans() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["plans"] });
       qc.invalidateQueries({ queryKey: ["plan-fact"] });
+    },
+  });
+
+  // TASK-LEAD-031 — XLSX import + distribute-by-fact
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [importMsg, setImportMsg] = useState<string | null>(null);
+  const [distributeFor, setDistributeFor] = useState<{
+    plan_id: number;
+    scope_type: string;
+    scope_id: number | null;
+  } | null>(null);
+  const [distBase, setDistBase] = useState<"orders" | "revenue" | "units">("orders");
+  const [distDays, setDistDays] = useState(30);
+
+  const importMut = useMutation({
+    mutationFn: (file: File) =>
+      api.plansImportExcel(file, {
+        default_year: year,
+        default_month: month,
+      }),
+    onSuccess: (res) => {
+      const parts: string[] = [];
+      parts.push(`Импортировано: ${res.inserted} новых, ${res.updated} обновлено`);
+      if (res.skipped > 0) parts.push(`пропущено ${res.skipped}`);
+      if (res.warnings.length > 0) parts.push(`⚠ ${res.warnings.length} warning'ов`);
+      if (res.errors.length > 0) parts.push(`✗ ${res.errors.length} ошибок`);
+      setImportMsg("✓ " + parts.join("; "));
+      setTimeout(() => setImportMsg(null), 8000);
+      qc.invalidateQueries({ queryKey: ["plans"] });
+      qc.invalidateQueries({ queryKey: ["plan-fact"] });
+    },
+    onError: (e: any) => {
+      setImportMsg(`✗ ${e?.message || "Ошибка импорта"}`);
+      setTimeout(() => setImportMsg(null), 10000);
+    },
+  });
+
+  const handleImportClick = () => fileInputRef.current?.click();
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) importMut.mutate(f);
+    e.target.value = "";  // allow re-select same file
+  };
+
+  const distributeMut = useMutation({
+    mutationFn: () =>
+      api.plansDistributeByFact({
+        plan_id: distributeFor!.plan_id,
+        fact_period_days: distDays,
+        base: distBase,
+      }),
+    onSuccess: (res) => {
+      const fallbackTxt = res.fallback_used ? " (fallback: равные доли — нет факта)" : "";
+      setImportMsg(`✓ Распределено по ${res.nm_count} nm_id${fallbackTxt}`);
+      setTimeout(() => setImportMsg(null), 8000);
+      setDistributeFor(null);
+      qc.invalidateQueries({ queryKey: ["plans"] });
+      qc.invalidateQueries({ queryKey: ["plan-fact"] });
+    },
+    onError: (e: any) => {
+      setImportMsg(`✗ ${e?.message || "Ошибка распределения"}`);
+      setTimeout(() => setImportMsg(null), 10000);
     },
   });
 
@@ -385,9 +447,91 @@ export default function Plans() {
         </div>
       )}
 
+      {importMsg && (
+        <div
+          className={`card text-sm ${importMsg.startsWith("✓") ? "text-success" : "text-red-400"}`}
+        >
+          {importMsg}
+        </div>
+      )}
+
+      {/* TASK-LEAD-031: distribute-by-fact mini-dialog */}
+      {distributeFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="card max-w-md w-full p-4 flex flex-col gap-3">
+            <div className="font-medium">
+              Распределить план #{distributeFor.plan_id} по nm_id
+            </div>
+            <div className="text-xs text-muted">
+              Уровень: {distributeFor.scope_type}
+              {distributeFor.scope_id != null && ` (id=${distributeFor.scope_id})`}.
+              Значение разложится пропорционально факту за последние N дней.
+            </div>
+            <label className="flex flex-col text-xs">
+              База распределения
+              <select
+                value={distBase}
+                onChange={(e) => setDistBase(e.target.value as any)}
+                className="input mt-1"
+              >
+                <option value="orders">Заказы (кол-во)</option>
+                <option value="revenue">Выручка (price_with_disc)</option>
+                <option value="units">Продажи (кол-во)</option>
+              </select>
+            </label>
+            <label className="flex flex-col text-xs">
+              Окно факта, дней
+              <input
+                type="number"
+                min={1}
+                max={365}
+                value={distDays}
+                onChange={(e) => setDistDays(Number(e.target.value) || 30)}
+                className="input mt-1"
+              />
+            </label>
+            <div className="flex gap-2 justify-end">
+              <button
+                className="btn text-xs"
+                onClick={() => setDistributeFor(null)}
+              >
+                Отмена
+              </button>
+              <button
+                className="btn-primary text-xs"
+                disabled={distributeMut.isPending}
+                onClick={() => distributeMut.mutate()}
+              >
+                {distributeMut.isPending ? "Распределяю…" : "Распределить"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-end justify-between flex-wrap gap-3">
         <h1 className="text-xl font-semibold">План — Факт</h1>
         <div className="flex items-end gap-3 flex-wrap">
+          {canEdit && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,.xls"
+                onChange={handleFileChange}
+                className="hidden"
+              />
+              <button
+                type="button"
+                className="btn text-xs self-end"
+                onClick={handleImportClick}
+                disabled={importMut.isPending}
+                title="Загрузить XLSX-файл с планами — auto-detect колонок"
+              >
+                {importMut.isPending ? "Импортирую…" : "📂 Импорт XLSX"}
+              </button>
+            </>
+          )}
           {canEdit && (
             <button
               type="button"
@@ -634,6 +778,27 @@ export default function Plans() {
               </div>
               {canEdit && (
                 <div className="space-x-2">
+                  {(() => {
+                    const p = (plansQ.data?.items ?? []).find(
+                      (x: any) => x.id === it.plan_id,
+                    );
+                    if (!p || p.scope_type === "nm") return null;
+                    return (
+                      <button
+                        className="btn text-xs"
+                        title="Разложить пропорционально факту по nm_id"
+                        onClick={() =>
+                          setDistributeFor({
+                            plan_id: p.id,
+                            scope_type: p.scope_type,
+                            scope_id: p.scope_id,
+                          })
+                        }
+                      >
+                        ⇉ Распределить
+                      </button>
+                    );
+                  })()}
                   <button
                     className="btn text-xs"
                     onClick={() => {

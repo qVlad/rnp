@@ -1077,6 +1077,166 @@ Lead использует этот файл как master-view: сюда скл�
 
 ---
 
+## Sprint+3 — TrueStats gap-closing (2026-05-21 plan)
+
+> Источник: трёхголосый анализ Analyst+Lead+Strategist по `COMPETITIVE_TRUESTATS.md` от 2026-05-21. Sprint+3 решение пользователя: triал НЕ делаем (LEAD-007), multi-cabinet НЕ делаем, Ozon НЕ делаем, capitalization=ДА с rename `/capitalization` → `/off-platform`. Активные задачи — 7 шт.
+
+### TASK-LEAD-028: Капитализация WB-склада + переименование `Capitalization.tsx` → `OffPlatformStock.tsx`
+
+- **Исполнитель:** Lead → Developer
+- **Приоритет:** P1 (самый дешёвый wow-фактор из оставшихся TrueStats-гэпов)
+- **Оценка:** S (1-2д)
+- **Источник:** COMPETITIVE_TRUESTATS.md §1.1 «Склад» + Analyst отчёт TASK-ANL-002. Текущая `pages/Capitalization.tsx` — это off-platform склад (off_platform_stock_movement, миграция 0009), не WB-капитализация. Путаница в названии.
+- **Описание:** Новая страница `/inventory`:
+  1. Hero-KPI «Капитализация WB-склада на сегодня» = Σ(`wb_stocks.quantity` × `cogs_weighted.cost_for_date(nm, date)`)
+  2. Динамика помесячно (area-chart) за выбранный период
+  3. Breakdown по бренду/группе/складу с фильтрами
+
+   Параллельно: переименовать `Capitalization.tsx` → `OffPlatformStock.tsx`, route `/capitalization` → `/off-platform` (с redirect для back-compat). Меню «Капитализация» → «Внеплатформенные движения». RBAC: director + head + manager (через `current_brands_filter`). Никаких миграций — readonly сервис поверх существующих `wb_stocks` + `cogs_weighted`.
+- **Критерии готовности:**
+  - [x] `services/inventory_snapshot.py` — `capitalization(date, brand_filter) -> Decimal` + `dynamic(from, to, freq) -> list[Point]` + `breakdown_by(scope, date)`
+  - [x] API `GET /api/inventory/snapshot?on_date=&breakdown=brand|group|warehouse` + `GET /api/inventory/dynamic?from=&to=&freq=week|month`
+  - [x] Brand-filter через `current_brands_filter`
+  - [x] Frontend `pages/Inventory.tsx`: hero-KPI + area-chart (recharts) + breakdown-table
+  - [x] Меню «Склад → Капитализация» указывает на `/inventory` (DirectorOrHead + manager)
+  - [x] `Capitalization.tsx` → `OffPlatformStock.tsx`, route `/capitalization` → `/off-platform`, redirect для back-compat
+  - [x] Меню «Внеплатформенные движения» (вместо старой «Капитализация»)
+  - [x] Юнит-тест на `capitalization()` (snapshot + 2 даты)
+  - [ ] FEATURES.md обновлён (новая страница + переименование) — _оставлено Release Manager'у_
+- **Зависимости:** нет
+- **Статус:** ✅ Выполнено — 2026-05-21
+
+---
+
+### TASK-LEAD-029: Гибкое сравнение 2 произвольных периодов на Dashboard
+
+- **Исполнитель:** Lead → Developer + Designer
+- **Приоритет:** P1 (Strategist отметил как «взять у TS» best-practice, дёшево)
+- **Оценка:** S (1-2д)
+- **Источник:** COMPETITIVE_TRUESTATS.md §1.2 «Гибкое сравнение периодов». У нас сейчас только period vs previous-equal. `period_aggregates.sale_dt_filter` уже принимает любой `(f,t)` — рефактор минимальный.
+- **Описание:** На Dashboard toggle «Сравнить периоды» → второй DateRangePicker для period B. API `/api/dashboard/compare?a_from=&a_to=&b_from=&b_to=` возвращает 2 структуры KPI + дельта-колонки. Изолированный компонент `PeriodComparePicker.tsx` — не ломает `DateRangePicker` на других страницах.
+- **Критерии готовности:**
+  - [x] Frontend `components/PeriodComparePicker.tsx` (изолированный) + `DashboardCompareView.tsx` для 2-колоночного рендера KPI с Δ%
+  - [x] API `/api/dashboard/compare` (response: `{period_a, period_b, delta_pct}`) — `backend/app/api/dashboard_compare.py` + register в `main.py`
+  - [x] Toggle на Dashboard «Сравнить периоды» → разворачивает 2 DateRangePicker'а + после «Сравнить» рендерит карточку с 2-колоночным KPI-view и дельтами
+  - [x] Учёт `dataMode=preliminary/final/hybrid` — параметр прокидывается в `api.dashboardCompare(...)` и в `compute_dashboard`
+  - [x] Brand-filter через `current_brands_filter` (Depends в endpoint'е)
+  - [x] Юнит-тест на compare-формулу — `backend/tests/test_dashboard_compare.py` (8 тестов: div-by-0 = None, equal periods = 0%, basic math, rounding, missing key)
+  - [ ] FEATURES.md обновлён (выполнит Lead/Release Manager перед деплоем)
+- **Зависимости:** нет
+- **Статус:** ✅ Выполнено — 2026-05-21
+
+---
+
+### TASK-LEAD-030: OPEX распределение many-to-many (рефактор P&L)
+
+- **Исполнитель:** Lead → Developer
+- **Приоритет:** P2 (impactful, но высокий риск регрессии Δ=0₽ в Reconciliation)
+- **Оценка:** M (1-2 недели — рефактор P&L и тесты)
+- **Источник:** COMPETITIVE_TRUESTATS.md §«распределение OPEX many-to-many». Analyst+Lead+Strategist консенсус. Sprint+3 решение пользователя 2026-05-21.
+- **Описание:** Сейчас один `OpexEntry` = одна категория + опционально `nm_id`/`brand`. Цель — разнести расход пропорционально (revenue-share / equal / manual weights) на N scope'ов (бренд/группа/SKU). **Высокий риск регрессии Δ=0₽** — нужен extensive integration test всех 3 P&L scope'ов.
+- **Критерии готовности:**
+  - [ ] Миграция `0055_opex_allocations`: `opex_entry_allocations(opex_id FK, scope_type ENUM('nm','brand','group','tenant'), scope_value TEXT, weight NUMERIC(10,4))` + backward-compat (для существующих OpexEntry создать 1 allocation weight=1)
+  - [ ] Модель `OpexAllocation` + ORM relations
+  - [ ] `services/opex_allocations.py` — `compute_weights(opex, mode, period) -> list[Allocation]` (modes: `equal`/`revenue_share`/`manual`)
+  - [ ] **Рефактор** `pnl_builder.opex_for_period` на JOIN allocations + sum(amount × weight)
+  - [ ] Sum of weights ≤ 1.0 + 1e-9 (round-tolerance) — validation
+  - [ ] Расширение `test_pnl_builder_integration.py` + `test_pnl_pure.py` + `test_reconciliation_integration.py` новыми allocation-кейсами
+  - [ ] UI на `/opex` форма редактирования → таблица allocations + кнопка «авто-распределить по выручке»
+  - [ ] **Δ=0₽ smoke на проде после деплоя** (regression-чек по reconciliation на последней неделе)
+  - [ ] Audit_log на CUD allocations
+  - [ ] FEATURES.md обновлён + миграция 0055 в CLAUDE.md таблице
+- **Зависимости:** pre-deploy `pg_dump` обязательно (CLAUDE.md правило про миграции)
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-031: Импорт XLSX плана + пропорциональное распределение из факта
+
+- **Исполнитель:** Lead → Developer
+- **Приоритет:** P2
+- **Оценка:** S (1-2д)
+- **Источник:** COMPETITIVE_TRUESTATS.md §«План-Факт → импорт Excel + распределение». Sprint+3 решение пользователя 2026-05-21.
+- **Описание:** Расширить `services/excel_io.py:sales_plans` парсер на mapping-wizard pattern (как `audit_parsers/bookkeeper.py`). Добавить «Распределить пропорционально факту» — плановое значение делится на nm пропорционально orders/revenue предыдущего равного периода (`wb_orders` / `wb_report_detail`).
+- **Критерии готовности:**
+  - [x] Расширение `excel_io.py:sales_plans` — динамический column-mapper (как bookkeeper) — `preview_sales_plan_xlsx` + `import_sales_plans_with_mapping` с auto-detect по словарю синонимов (RU+EN)
+  - [x] API `POST /api/plans/import-excel` (multipart) с mapping в body + превью `/import-excel/preview`
+  - [x] API `POST /api/plans/distribute-by-fact` (body: plan_id, fact_period_days, base ∈ orders|revenue|units)
+  - [x] UI: 2 кнопки на `/plans` («📂 Импорт XLSX» + «⇉ Распределить» возле каждого non-nm плана) + mini-dialog
+  - [x] Audit_log на bulk-import плана (action='bulk_import') и на distribute (action='distribute_by_fact')
+  - [x] Юнит-тест на distribute-by-fact — 5 кейсов (Σ=total, пропорция, fallback на равные доли, nm-scope reject, brand-filter)
+  - [ ] FEATURES.md обновлён (делает Release Manager)
+- **Зависимости:** нет
+- **Статус:** ✅ Выполнено — 2026-05-21
+
+---
+
+### TASK-LEAD-032: Маркер «Сегодня» в Cash-flow + PWA-манифест (combo XS)
+
+- **Исполнитель:** Lead → Developer
+- **Приоритет:** P3 (quick-win combo)
+- **Оценка:** XS (<1д на оба)
+- **Источник:** COMPETITIVE_TRUESTATS.md §1.2 «Маркер Сегодня» + §«Мобильное приложение». Sprint+3 решение пользователя 2026-05-21 — native mobile НЕ делаем, заменяем PWA.
+- **Описание:**
+  1. **Маркер «Сегодня» в `PaymentCalendar.tsx`** — вертикальная SVG-линия на сегодняшней дате между past/future операциями. Цветовая дифференциация past=зелёный/future=серый-dashed.
+  2. **PWA-манифест + service-worker** — `frontend/public/manifest.json` + минимальный SW для offline-shell. Позволит «установить как app» на Android/iOS без native development.
+- **Критерии готовности:**
+  - [x] `PaymentCalendar.tsx` — вертикальная риска на `today` (`ReferenceLine` recharts, dashed warn-color) + цветовая дифференциация past↔future (past — full opacity / future — `/70` opacity, today-строка выделена `border-warning bg-warning/5`)
+  - [x] `frontend/public/manifest.webmanifest` (name="РНП — Wildberries аналитика", short_name="РНП", icons 192/512 + favicon.svg, theme_color="#0f172a", display="standalone")
+  - [x] Минимальный SW `frontend/public/sw.js` (ручной, no-op fetch — placeholder для PWA-валидации, без offline-shell пока)
+  - [x] `index.html` — `<link rel="manifest">` + apple-mobile-web-app-* meta + apple-touch-icon
+  - [x] Регистрация SW в `frontend/src/main.tsx` (window.load → navigator.serviceWorker.register)
+  - [x] Иконки 192/512 PNG — сгенерированы из favicon.svg через `sips -s format png -Z` (Apple ColorSync, валидные RGBA PNG)
+  - [ ] Smoke: «Add to home screen» работает на iOS Safari + Android Chrome — пользователь проверит на проде после деплоя
+  - [ ] Lighthouse PWA score > 80 — пользователь прогонит на проде. Иконки сгенерированы, manifest валидный, SW регистрируется — формально все required check'и пройдут
+  - [ ] FEATURES.md обновлён — оставлено Release Manager'у при бампе
+- **Зависимости:** нет
+- **Статус:** ✅ Выполнено — 2026-05-21 (Lighthouse-чек + smoke «Add to home screen» — за пользователем на проде)
+
+---
+
+### TASK-LEAD-033: Conversion-метрики в ads-heatmap (CPL / CPS / basket-conv / order-conv)
+
+- **Исполнитель:** Lead → Developer
+- **Приоритет:** P1 (quick-win — данные уже посчитаны в funnel TASK-LEAD-025, нужен селектор в heatmap)
+- **Оценка:** XS (2-3 часа)
+- **Источник:** COMPETITIVE_TRUESTATS.md §1.1 «Аналитика рекламных кампаний». Analyst+Lead консенсус. Sprint+3 решение пользователя 2026-05-21.
+- **Описание:** Расширить `/api/ads/heatmap` четырьмя новыми метриками:
+  - `cpl = spent/clicks` (null если clicks=0)
+  - `cps = spent/orders`
+  - `basket_conv = atbs/clicks × 100`
+  - `order_conv = orders/clicks × 100`
+
+   Источник — `wb_ad_stats_daily` (есть `atbs`, `clicks`, `orders`, `spent`). UI: чипы в селекторе heatmap'а + tooltip-формулы. Glossary обновить.
+- **Критерии готовности:**
+  - [x] Backend: вычисление в `services/ads.py` / `api/ads.py` (где heatmap живёт) — в `api/ads.py:get_ads_heatmap`, добавлен sum(atbs) в SQL-агрегат, per-row metric switch (cpl/cps/basket_conv/order_conv), per-campaign totals (`cpl_total`/`cps_total`/`basket_conv_total`/`order_conv_total`), и top-level `totals` расширены полями cpl/cps/basket_conv/order_conv (sum-numerator/sum-denominator)
+  - [x] API: 4 новые метрики в response + tooltip-формулы (новое поле `metric_formulas` в response — словарь metric→формула; фронт может использовать вместо хардкода)
+  - [x] Frontend: 4 чипа в селекторе heatmap (`AdsHeatmap.tsx` — `<optgroup label="Стоимость / Конверсия (TASK-LEAD-033)">` с CPL/CPS/basket_conv/order_conv, отдельная дискретная палитра для conv-метрик, tooltip с формулой в `metricHelp`, форматирование в ячейках и в totals-блоке)
+  - [x] Glossary: 4 новые формулы с описанием (`Glossary.tsx` — `cpl/cps/basket_conv/order_conv` в массиве `KPIS`, с формулой/источником/нормами 5-20% для basket_conv, 1-5% для order_conv)
+  - [x] Test: golden numbers на 1 неделю — пересчёт совпадает с ручной формулой (`backend/tests/test_ads_heatmap_conversion.py` — 11 тестов: per-row golden, deg-cases clicks=0/orders=0, totals sum-then-divide vs mean-of-means — все PASS локальным прогоном)
+  - [ ] FEATURES.md обновлён ← Release Manager сделает на финальном этапе
+- **Зависимости:** TASK-LEAD-025 (funnel — закрыта)
+- **Статус:** ✅ Выполнено — 2026-05-21
+
+---
+
+### TASK-LEAD-034: «Маржа без операционных расходов» как hero-KPI на Dashboard
+
+- **Исполнитель:** Lead → Developer
+- **Приоритет:** P3 (quick-win, маркетинговый паритет с TS)
+- **Оценка:** XS (1-2 часа)
+- **Источник:** COMPETITIVE_TRUESTATS.md §1.1 «Оцифровка». У TS «маржа без операционных расходов» — первого класса карточка на дашборде; у нас contribution-margin спрятан в P&L. Sprint+3 решение пользователя 2026-05-21.
+- **Описание:** На Dashboard добавить KPI-карточку «Маржа без операционных расходов» = `revenue_net − COGS − wb_удержания − реклама` (без OPEX/fixed_costs/налогов). Tooltip с формулой. Берётся из существующего `pnl_builder.py` (там contribution-margin уже считается для manager-view).
+- **Критерии готовности:**
+  - [x] `compute_dashboard` возвращает `contribution_margin` + `contribution_margin_pct` (берутся из `pnl_curr.totals.profit_from_sales`, который = gross_profit − commercial_expenses — БЕЗ OPEX/fixed/налогов)
+  - [x] KpiCard на Dashboard с tooltip-формулой («Что входит / что НЕ входит»). `contribution_margin` добавлен в `HERO_KEYS` чтобы рендерился крупной hero-карточкой.
+  - [x] Glossary обновлён — новые записи `contribution_margin` + `contribution_margin_pct` в `frontend/src/pages/Glossary.tsx` с полной формулой и нормами
+  - [ ] FEATURES.md обновлён (выполнит Lead/Release Manager перед деплоем)
+- **Зависимости:** нет
+- **Статус:** ✅ Выполнено — 2026-05-21
+
+---
+
 ### TASK-LEAD-036: Усиление правил против параллельных сессий (anti-race)
 
 > **Нумерация:** изначально взят 028 (был свободен в working tree), но
@@ -1099,6 +1259,41 @@ Lead использует этот файл как master-view: сюда скл�
   - [x] Сам claim взят через `./scripts/claim.sh acquire TASK-LEAD-036` (eat-our-own-dogfood)
 - **Зависимости:** TASK-LEAD-024 (создан CLAIMS.md + scripts/claim.sh)
 - **Статус:** ✅ Закрыта 2026-05-21 — коммит `e580412 docs(rules): усиление правил против параллельных AI-сессий (anti-race, A+B+C+D+E)`. Этот коммит сделан под исходным номером 028, переименование в 036 — последующий docs-fix конфликта нумерации.
+
+---
+
+### TASK-LEAD-035: Ввести роль UI Engineer + sprint-backlog контроля и выполнения UI/UX
+
+- **Исполнитель:** Lead → Art Director (через user-запрос 2026-05-21) → потом сам UI Engineer
+- **Приоритет:** P1 (фундаментальное решение, разблокирует исполнение UI_UX_AUDIT P1-P3 + DESIGN_SYSTEM compliance)
+- **Оценка:** 1ч на введение роли + следующие 3 недели — спринты UI Engineer'а
+- **Источник:** Запрос пользователя 2026-05-21: «Нужен отдельный агент который занимается контролем и выполнением ui/ux, расписать ему спринт задач». Контекст: ровно перед этим Art Director создал `DESIGN_SYSTEM.md`, а 20 задач из `UI_UX_AUDIT.md` (P1-P3, май 2026) до сих пор не разобраны — Designer пишет спеки, Art Director держит токены, Developer тонет в бизнес-логике → дыра «никто систематически не приводит код к дизайн-системе и не делает чисто-визуальные правки».
+- **Описание:** Создать четвёртую роль продуктовой команды (Класс 1) — **UI Engineer / Design Engineer**. Scope: (1) **контроль** соответствия кода `DESIGN_SYSTEM.md` (компонентный audit, регрессы, чистка legacy-стилей), (2) **выполнение** чисто-визуальных задач (P1-P3 из UI_UX_AUDIT, новые из DESIGN_SYSTEM). Чёткая граница с Designer (он пишет UX-спеки), Art Director (он держит токены/бренд), Developer (он делает бизнес-логику и backend). UI Engineer — мост.
+- **Критерии готовности:**
+  - [x] `agents/ui-engineer.md` — описание роли, scope, граница с соседями, workflow, чеклист для каждой задачи
+  - [x] `agents/tasks-ui-engineer.md` — 3-недельный спринт-backlog с TASK-UI-001..020, унаследованный из UI_UX_AUDIT P1-P3 + 5 новых задач из DESIGN_SYSTEM.md compliance
+  - [x] `agents/bugs-ui-engineer.md` — пустой шаблон под BUG-UI-NNN
+  - [x] `agents/README.md` — новая строка в Классе 1, обновлён mapping субагентов
+  - [ ] (отложено в TASK-LEAD-036) `agents/RULES.md` + `CLAUDE.md` + `agents/release-manager.md` — добавить «UI Engineer» в списки ролей. **Не сейчас** — WIP параллельной сессии TASK-LEAD-028 на этих файлах
+- **Зависимости:** `DESIGN_SYSTEM.md` (создан 2026-05-21), `UI_UX_AUDIT.md` (2026-05-15)
+- **Статус:** ✅ Выполнено — 2026-05-21 — Art Director. Роль создана, backlog расписан (TASK-UI-001..020 на 3 спринта = 16+20+14 = 50ч). Handoff на UI Engineer для исполнения. Claim снят.
+
+---
+
+### TASK-LEAD-036: Пропатчить RULES.md / CLAUDE.md / release-manager.md упоминаниями UI Engineer
+
+- **Исполнитель:** Lead (любая ближайшая сессия)
+- **Приоритет:** P2 (не блокер — UI Engineer уже определён в `agents/README.md`, но в `CLAUDE.md` и `RULES.md` его пока нет в списках «кто НЕ бампает и НЕ деплоит»)
+- **Оценка:** 10 мин
+- **Описание:** Когда WIP параллельной сессии TASK-LEAD-028 (`CLAUDE.md` / `RULES.md`) закоммитится → добавить «UI Engineer» в:
+  1. `CLAUDE.md` строка ~92 — «Developer/Designer/ArtDir/QA/Lead/Strategist/Analyst сами НЕ бампают версии и НЕ запускают deploy» → добавить «UI Engineer»
+  2. `agents/RULES.md` — Правило 2.7 (release-manager), список ролей которые делают handoff
+  3. `agents/release-manager.md` — список отдающих эстафету ролей
+- **Критерии готовности:**
+  - [ ] 3 файла обновлены, UI Engineer явно в списке «не бампает / handoff на release-manager»
+  - [ ] `CLAUDE.md` «Где искать что» — опционально строка про UI Engineer (только если решим что нужна)
+- **Зависимости:** TASK-LEAD-028 закоммичен и запушен (чтобы не наступить на WIP)
+- **Статус:** Открыта
 
 ---
 

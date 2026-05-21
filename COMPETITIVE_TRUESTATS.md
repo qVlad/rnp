@@ -29,6 +29,53 @@ P3 (был помечен «не делаем осознанно») — `wb_ware
 
 ---
 
+## 0bis. Recap 2026-05-21 — статус после третьей итерации (Analyst+Lead+Strategist)
+
+После второй итерации (2026-05-17) **большая часть Sprint 1-3 ниже уже закрыта** в стороне от этого документа — частично в Sprint+1/Sprint+2 (TASK-DEV-011..026, TASK-LEAD-025/026/027). Этот раздел — фактическая разница «план vs реальность» на 2026-05-21.
+
+### Из Sprint-плана этого документа (§6) — закрыто
+
+| Sprint 1 в §6 | Реальный статус |
+|---|---|
+| Custom-метрики через формулу | ✅ **Закрыто** — миграция `0050_metric_templates`, `services/custom_metrics.py` (safe Python AST eval), `api/metric_templates.py` (CRUD + evaluate + preview), TASK-DEV-011 |
+| Conversion-метрики в funnel | ✅ **Закрыто** — `api/funnel.py` через `WbAdStatsDaily.atbs/clicks/orders`, TASK-LEAD-025 |
+| Триал-механика + промокоды | ❌ **НЕ делаем** (решение пользователя 2026-05-21 — managed-hosting first, LEAD-007) |
+
+| Sprint 3 в §6 | Реальный статус |
+|---|---|
+| Аудит-режим 3-source compare | ✅ **Закрыто лучше** — 4-way Reconciliation (наш P&L vs ЛК WB vs raw report_detail vs bookkeeper XLSX), миграции 0051 + 0038, `Reconciliation4Way.tsx`, коммит 82b4f00 |
+
+### Активный Sprint+3 (решение 2026-05-21) — 7 задач в `agents/tasks-lead.md`
+
+| TASK | Описание | Приоритет | Эффорт |
+|---|---|---|---|
+| **TASK-LEAD-028** | Капитализация WB-склада (`/inventory`) + переименование `Capitalization.tsx` → `OffPlatformStock.tsx` (route `/capitalization` → `/off-platform`) | P1 | S (1-2д) |
+| **TASK-LEAD-029** | Гибкое сравнение 2 произвольных периодов на Dashboard | P1 | S (1-2д) |
+| **TASK-LEAD-030** | OPEX распределение many-to-many (рефактор `pnl_builder` — высокий риск Δ≠0 в Recon) | P2 | M (1-2 нед) |
+| **TASK-LEAD-031** | Импорт XLSX плана + пропорциональное распределение из факта | P2 | S (1-2д) |
+| **TASK-LEAD-032** | Маркер «Сегодня» в Cash-flow + PWA-манифест (combo XS) | P3 | XS |
+| **TASK-LEAD-033** | Conversion-метрики в ads-heatmap (CPL/CPS/basket-conv/order-conv) | P1 | XS (2-3ч) |
+| **TASK-LEAD-034** | «Маржа без операционных расходов» как hero-KPI на Dashboard | P3 | XS (1-2ч) |
+
+### Явные отказы Sprint+3 (НЕ делаем)
+
+- ❌ **Триал-механика** — managed-hosting first, decision LEAD-007 подтверждён пользователем 2026-05-21
+- ❌ **Multi-cabinet workspace (1 tenant = N WB-токенов)** — XL рефактор без product-trigger
+- ❌ **Ozon integration** — отложено за пределы Sprint+3, отдельный roadmap-документ когда придёт время
+- ❌ **Яндекс.Маркет** — рынок мал, явный отказ остаётся
+- ❌ **Native mobile** — заменяем PWA (TASK-LEAD-032)
+- ❌ **Кросс-секционные комментарии на nm_id** — отложено до запроса с прода (бывший Sprint 3 в §6)
+- ❌ **«Карусель бандлов»** — UX-фантазия без бизнес-эффекта для нашего ICP
+- ❌ **Гранулярные права по разделам** — KISS, есть RBAC + brand-scope
+
+### Что ждёт пользовательского триггера для покупки TS
+
+Strategist рекомендует купить триал TrueStats (~3 000 ₽) для живого UX-обзора builder'а custom-метрик и Audit-механики **перед стартом следующего раунда планирования** (после Sprint+3). Пользователь зарегистрируется и сообщит когда будет доступ — confidence обновим с medium-high (7/10) до high (9/10).
+
+> **Внимание:** Sprint 1-3 в §6 ниже — **исторический план от 2026-05-17**. Sprint+3 на 2026-05-21 определён выше и в `agents/tasks-lead.md`.
+
+---
+
 ## 1. Карта модулей TrueStats (свежий просмотр после P1+P2)
 
 TrueStats — петербургская компания, статус «проверенный сервис от ВБ». Стек заявлен PHP/Symfony+PostgreSQL+Redis+RabbitMQ; фронт React+TypeScript+Tailwind+Vite. Поддержка WB + Ozon + **Яндекс.Маркет** (запущен в 2026, в апреле вышел из бесплатного теста). 6 основных модулей.
@@ -387,3 +434,4 @@ TrueStats берёт трафик через:
 ## Decision Log
 
 - **2026-05-17**: вторая итерация анализа TrueStats после реализации P1+P2 в прошлой сессии. Утверждены 3 sprint'а: (1) триал-механика + custom-метрики + conversion-реклама, (2) капитализация склада + many-to-many OPEX + импорт плана, (3) аудит-режим (наш обходной ход) + кросс-секционные комментарии. НЕ копируем ЯМ, native mobile, карусель бандлов. Ozon — отдельный roadmap в будущем. Тарифная гипотеза: вход 1 990 ₽ (vs 2 999 TS), Pro 8 990 (vs 9 499 TS) с tax-моатом.
+- **2026-05-21**: третья итерация — параллельный анализ Analyst+Lead+Strategist по `COMPETITIVE_TRUESTATS.md`. Из Sprint 1-3 (§6) фактически закрыто: custom-метрики (миграция 0050, TASK-DEV-011), funnel/conversion (TASK-LEAD-025), 4-way Reconciliation (как замена audit-mode 3-source). Утверждён Sprint+3 — 7 задач **TASK-LEAD-028..034** в `agents/tasks-lead.md`: капитализация WB-склада + `/capitalization` → `/off-platform` rename, гибкое сравнение 2 периодов, OPEX m2m, импорт XLSX плана, today+PWA combo, conversion-метрики в heatmap, contribution-margin hero-KPI. **НЕ делаем**: триал-механика (LEAD-007 подтверждён), multi-cabinet workspace, Ozon, native mobile, кросс-секционные комментарии (отложены). Пользователь зарегистрируется на триал TS и сообщит когда будет доступ для UX-обзора.
