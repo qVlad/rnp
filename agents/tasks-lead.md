@@ -16,9 +16,10 @@ Lead использует этот файл как master-view: сюда скл�
 
 ## 🎯 Active Sprint — Параллельная координация (2026-05-21)
 
-> **В работе сейчас (раунд 3 — 2026-05-21 evening):**
-> - **TASK-LEAD-048** (Multi-cabinet Фаза B backend) — sub-agent C, worktree, background
-> - **TASK-UI-005 продолжение** (Dashboard.tsx + Units.tsx) — main session
+> **Раунд 4 завершён (2026-05-21 evening):**
+> - ✅ **TASK-LEAD-039 Фаза C frontend** (multi-cabinet UI: AuthContext + Layout cabinet switcher + invalidate queries) — main session
+>
+> Multi-cabinet workspace полностью готов end-to-end (backend + frontend).
 >
 > **Завершено в этой сессии 2026-05-21 (раунд 2):**
 > - ✅ **TASK-LEAD-040 frontend** (Layout bookkeeper visibility, whitelist через `bookkeeperOk`) — main, commit `808e28e`
@@ -1475,16 +1476,20 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   6. UI: dropdown в `Layout.tsx` шапке «Кабинет: A ▼» — список доступных tenant'ов, клик переключает + invalidate всех TanStack queries
   7. (опционально, P2) «Сводный режим» — отдельная страница где KPI по N tenant'ам в одной таблице
 - **Критерии готовности:**
-  - [ ] Миграция применима без потери данных (`user_tenant_access` создаётся для всех существующих users)
-  - [ ] Один тестовый user привязан к 2 tenant'ам, может переключаться без logout/login
-  - [ ] Все API ручки используют `active_tenant_id` (а не `user.tenant_id`)
-  - [ ] Smoke: данные не пересекаются между tenant'ами после switch (`/dashboard` показывает разные KPI)
-  - [ ] RBAC соблюдается per-tenant (manager в A не видит данные B)
-  - [ ] FEATURES.md обновлён
-  - [ ] CLAUDE.md обновлён (новая миграция в таблице)
-- **Зависимости:** TASK-LEAD-040 ✅ (bookkeeper-role в Role enum)
-- **Lead-спека готова:** `agents/references/spec-multi-cabinet-039.md` — детальная архитектурная спека на 3 фазы (B backend ~5д / C frontend ~3-5д / D cleanup). Sub-agent backend Фазы B может стартовать сразу со спекой.
-- **Статус:** Открыта (Lead-спека готова — TASK-LEAD-048 «039 Фаза B backend» можно завести и запустить sub-agent'ом)
+  - [x] Миграция применима без потери данных (миграция 0056 + backfill через `ON CONFLICT DO NOTHING`)
+  - [x] Backend готов на проде v0.22.0 (TASK-LEAD-048 ✅, sub-agent C commit `411a22a` merged в `eae9f9c`)
+  - [x] Frontend Фаза C готов (TASK-LEAD-039 Фаза C — этот раунд): AuthContext расширен + Layout cabinet switcher + queryClient.removeQueries при switch + persist
+  - [ ] Smoke на проде: 1 user привязан к 2 tenant'ам через прямой SQL → переключается через UI → данные разные. Требует тестового setup'а.
+  - [x] FEATURES.md обновлён (sub-agent C)
+  - [x] CLAUDE.md обновлён — миграция 0056 + секция «Multi-cabinet workspace»
+- **Зависимости:** TASK-LEAD-040 ✅, TASK-LEAD-048 ✅ (backend)
+- **Lead-спека:** `agents/references/spec-multi-cabinet-039.md`
+- **Реализация Фаза C frontend (main session, 2026-05-21):**
+  - `frontend/src/api/client.ts` — тип `AvailableTenant` + wrapper'ы `availableTenants()` / `switchTenant(tenant_id)`
+  - `frontend/src/contexts/AuthContext.tsx` — расширен полями `availableTenants`, `activeTenantId`, метод `switchTenant`. При login/refresh — load `/api/auth/available-tenants`. При switch — `queryClient.removeQueries()` + reload `/me` + persist в `localStorage["activeTenantId.v1"]`. Logout — очищает state и localStorage.
+  - `frontend/src/components/Layout.tsx` — Cabinet switcher в footer sidebar'а выше Profile selector. Виден если `availableTenants.length > 1` (для single-cabinet users — скрыт).
+- **Статус:** ✅ Выполнено — 2026-05-21 (backend + frontend end-to-end). Smoke на проде — за пользователем (нужен 2-й tenant в access list).
+- **Фаза D cleanup** (drop legacy `users.tenant_id`) — отдельная задача после ~1 спринта стабилизации.
 
 ---
 

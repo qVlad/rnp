@@ -177,7 +177,7 @@ function readProfile(): Profile {
 }
 
 export default function Layout() {
-  const { user, logout } = useAuth();
+  const { user, logout, availableTenants, activeTenantId, switchTenant } = useAuth();
   const isDirector = user?.role === "director";
   const isHead = user?.role === "head_of_sales";
   const isBookkeeper = user?.role === "bookkeeper";
@@ -301,6 +301,40 @@ export default function Layout() {
           </div>
         )}
         <div className="border-t border-border px-3 py-2 text-tiny">
+          {/* TASK-LEAD-039 Фаза C — Multi-cabinet workspace switcher.
+              Виден только если у user'а ≥2 доступных tenant'ов.
+              При выборе — invalidate всех queries, reload /me, persist в cookie+localStorage. */}
+          {!collapsed && availableTenants.length > 1 && (
+            <div className="mb-2">
+              <label
+                htmlFor="sidebar-cabinet"
+                className="block text-faint uppercase tracking-wider text-[10px] mb-1"
+              >
+                Кабинет
+              </label>
+              <select
+                id="sidebar-cabinet"
+                className="input w-full text-xs py-1"
+                value={activeTenantId ?? ""}
+                onChange={(e) => {
+                  const id = Number(e.target.value);
+                  if (Number.isFinite(id) && id !== activeTenantId) {
+                    switchTenant(id).catch((err) => {
+                      // eslint-disable-next-line no-console
+                      console.error("Switch tenant failed", err);
+                    });
+                  }
+                }}
+                title="Переключение WB-кабинета. Все данные перезагружаются для выбранного tenant'а."
+              >
+                {availableTenants.map((t) => (
+                  <option key={t.tenant_id} value={t.tenant_id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           {!collapsed && profileVisible && (
             <div className="mb-2">
               <label

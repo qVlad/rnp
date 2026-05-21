@@ -65,6 +65,14 @@ export type Me = {
   brands?: string[] | null;
 };
 
+// TASK-LEAD-039 Фаза C — multi-cabinet workspace
+export type AvailableTenant = {
+  tenant_id: number;
+  name: string;
+  role: "director" | "head_of_sales" | "manager" | "bookkeeper";
+  last_active_at: string | null;
+};
+
 export interface Chargeback {
   id: number;
   rrd_id: number;
@@ -120,6 +128,14 @@ export const api = {
     request<Me & { tenant_id: number; tenant_name: string; tenant_slug: string }>(
       "/api/auth/signup",
       { method: "POST", body: JSON.stringify(body) },
+    ),
+  // TASK-LEAD-039 Фаза C — multi-cabinet workspace
+  availableTenants: () =>
+    request<AvailableTenant[]>("/api/auth/available-tenants"),
+  switchTenant: (tenant_id: number) =>
+    request<{ ok: boolean; tenant_id: number; role: string }>(
+      "/api/auth/switch-tenant",
+      { method: "POST", body: JSON.stringify({ tenant_id }) },
     ),
 
   // ── Tenant WB token ──
