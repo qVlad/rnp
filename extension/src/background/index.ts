@@ -64,6 +64,10 @@ const STORAGE_LK_LAST_HASH = "rnp.lk.lastTokensHash";
 // расширений (читаем и удаляем при первой возможности).
 const STORAGE_LK_LEGACY_HASH = "rnp.lk.lastAuthV3Hash";
 const STORAGE_LK_NOTIFIED = "rnp.lk.notified";
+// Последний результат вызова maybeAutoConnectLk — для diag в rnp:debug-status.
+// Пишется на каждый вызов (включая network/HTTP-error), чтобы увидеть почему
+// `lkLastHash` остаётся null.
+const STORAGE_LK_LAST_RESULT = "rnp.lk.lastResult";
 
 /** Композитный hash от пары (AuthV3+WbSellerLk). null = одиного из токенов нет. */
 function tokensHash(authV3: string, wbSellerLk: string | null | undefined): string {
@@ -408,7 +412,7 @@ type LkAutoConnectResult =
   | { status: "unchanged" }
   | { status: "ok" }
   | { status: "forbidden" }
-  | { status: "http-error"; code: number }
+  | { status: "http-error"; code: number; body?: string }
   | { status: "network-error"; error: string };
 
 async function maybeAutoConnectLk(payload: {
@@ -416,11 +420,17 @@ async function maybeAutoConnectLk(payload: {
   wb_seller_lk?: string | null;
   root_version?: string | null;
 }): Promise<LkAutoConnectResult> {
+  const writeResult = async (r: LkAutoConnectResult): Promise<LkAutoConnectResult> => {
+    await chrome.storage.local.set({
+      [STORAGE_LK_LAST_RESULT]: { ...r, at: new Date().toISOString() },
+    });
+    return r;
+  };
   const settings = await getSettings();
-  if (!settings.rnpUrl || !settings.rnpToken) return { status: "no-rnp-token" };
+  if (!settings.rnpUrl || !settings.rnpToken) return writeResult({ status: "no-rnp-token" });
 
   if (!payload.authorize_v3 || payload.authorize_v3.length < 32) {
-    return { status: "no-rnp-token" }; // токен невалиден — silently skip
+    return writeResult({ status: "no-rnp-token" });
   }
   // BUG-DEV-006: hash от пары (AuthV3+WbSellerLk). Обновление любого из
   // двух токенов триггерит отправку. Legacy-ключ удаляем при первом
@@ -428,7 +438,7 @@ async function maybeAutoConnectLk(payload: {
   const hash = tokensHash(payload.authorize_v3, payload.wb_seller_lk);
   const stored = await chrome.storage.local.get(STORAGE_LK_LAST_HASH);
   if (stored[STORAGE_LK_LAST_HASH] === hash) {
-    return { status: "unchanged" };
+    return writeResult({ status: "unchanged" });
   }
 
   try {
@@ -448,17 +458,17 @@ async function maybeAutoConnectLk(payload: {
       },
     );
     if (r.status === 403) {
-      // Не director — LK подключается другим аккаунтом этого же tenant'а.
-      // Зашьём hash чтобы не ретраить — следующий новый токен снова попробует.
       await chrome.storage.local.set({ [STORAGE_LK_LAST_HASH]: hash });
-      return { status: "forbidden" };
+      return writeResult({ status: "forbidden" });
     }
     if (!r.ok) {
-      console.warn(`[rnp-ext SW] LK auto-connect: HTTP ${r.status}`);
-      return { status: "http-error", code: r.status };
+      // BUG-DEV-006 follow-up: читаем body для диагностики (401/400/422 от backend).
+      let body = "";
+      try { body = (await r.text()).slice(0, 200); } catch { /* ignore */ }
+      console.warn(`[rnp-ext SW] LK auto-connect: HTTP ${r.status} ${body}`);
+      return writeResult({ status: "http-error", code: r.status, body });
     }
     await chrome.storage.local.set({ [STORAGE_LK_LAST_HASH]: hash });
-    // BUG-DEV-006 migration: чистим legacy ключ (был только AuthV3 hash).
     await chrome.storage.local.remove(STORAGE_LK_LEGACY_HASH);
     console.log(`[rnp-ext SW] LK auto-connected (token=${hash})`);
 
@@ -474,11 +484,11 @@ async function maybeAutoConnectLk(payload: {
       });
       await chrome.storage.local.set({ [STORAGE_LK_NOTIFIED]: true });
     }
-    return { status: "ok" };
+    return writeResult({ status: "ok" });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.warn("[rnp-ext SW] LK auto-connect failed:", e);
-    return { status: "network-error", error: msg };
+    return writeResult({ status: "network-error", error: msg });
   }
 }
 
@@ -508,6 +518,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       const lkSession = await chrome.storage.local.get([
         STORAGE_LK_LAST_HASH,
         STORAGE_LK_NOTIFIED,
+        STORAGE_LK_LAST_RESULT,
       ]);
       const tabSnapshots = await Promise.all(
         tabs.map(async (t) => {
@@ -525,11 +536,23 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }),
       );
       const settings = await getSettings();
+      const tok = settings.rnpToken ?? "";
+      const tokenKind = !tok
+        ? "none"
+        : tok.startsWith("rnpext_")
+          ? "rnpext"
+          : tok.startsWith("eyJ")
+            ? "jwt"
+            : "unknown";
       sendResponse({
         rnpUrl: settings.rnpUrl,
         rnpTokenSet: !!settings.rnpToken,
+        tokenKind,
+        tokenLen: tok.length,
+        tokenPrefix: tok.slice(0, 10),
         lkLastHash: lkSession[STORAGE_LK_LAST_HASH] ?? null,
         lkNotified: lkSession[STORAGE_LK_NOTIFIED] ?? false,
+        lkLastResult: lkSession[STORAGE_LK_LAST_RESULT] ?? null,
         tabs: tabSnapshots,
         tabCount: tabs.length,
       });
