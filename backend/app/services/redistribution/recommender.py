@@ -39,6 +39,7 @@ from app.services.redistribution.economics import (
     Economics,
     compute_economics,
 )
+from app.services.redistribution.execute_window import _build_office_lookup
 from app.services.redistribution.extension_jobs import create_job, wait_for_job
 
 log = logging.getLogger(__name__)
@@ -185,6 +186,13 @@ async def build_recommendations(
     """
     candidates: list[Recommendation] = []
 
+    # BUG-DEV-005: накопительный кеш office_name → office_id для cooldown check.
+    # Инициализируем _build_office_lookup'ом (хардкод-fallback + история из
+    # RedistributionRecommendation/Task), пополняем по мере обхода src_by_office.
+    office_name_to_id: dict[str, int] = await _build_office_lookup(
+        session, tenant_id=tenant_id
+    )
+
     # Создаём все stocks job'ы СРАЗУ → extension выгребет их одним батчем →
     # потом ждём результаты последовательно. Это гораздо быстрее чем
     # serial create_job + wait_for_job (расширение polls раз в 30 сек).
@@ -240,6 +248,9 @@ async def build_recommendations(
         for office in src_by_office:
             office_id = int(office.get("officeID") or 0)
             office_name = office.get("officeName") or ""
+            # BUG-DEV-005: пополняем кеш для будущих target-lookup'ов.
+            if office_id > 0 and office_name:
+                office_name_to_id.setdefault(office_name, office_id)
             for stk in office.get("inStock") or []:
                 chrt_id = int(stk.get("chrtID") or 0)
                 count = int(stk.get("count") or 0)
@@ -284,11 +295,15 @@ async def build_recommendations(
                 if qty < MIN_LOT:
                     continue
 
+                # BUG-DEV-005: реальный to_office_id из накопительного кеша.
+                # Если склад ещё не встречался в stocks — 0 (cooldown skip как раньше).
+                to_office_id_resolved = office_name_to_id.get(off_name, 0)
+
                 if await _is_in_cooldown(
                     session,
                     tenant_id=tenant_id,
                     chrt_id=shelf["chrt_id"],
-                    to_office_id=0,
+                    to_office_id=to_office_id_resolved,
                 ):
                     continue
 
@@ -306,7 +321,7 @@ async def build_recommendations(
                         chrt_id=shelf["chrt_id"],
                         from_office_id=shelf["office_id"],
                         from_office_name=shelf["office_name"],
-                        to_office_id=0,
+                        to_office_id=to_office_id_resolved,
                         to_office_name=off_name,
                         qty=qty,
                         econ=econ,

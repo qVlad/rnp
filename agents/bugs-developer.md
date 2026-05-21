@@ -103,10 +103,11 @@
 - **Среда:** code review
 - **Причина:** `recommender.py` передаёт `to_office_id=0` в `_is_in_cooldown()` потому что справочника `office_name → office_id` нет. Сейчас функция возвращает False для всех. Юзер approve'ит ту же заявку дважды.
 - **Затронутые файлы:** `backend/app/services/redistribution/recommender.py`
-- **Критерии исправления:**
-  - [ ] Завести справочник `wb_offices(name, office_id)` (миграция 0038 + seed из известных officeID в HAR §6.1.1 + сборка из реальных запросов `lk.get_stocks`)
-  - [ ] Использовать реальный `to_office_id` в `_is_in_cooldown` и при создании task
-- **Статус:** Открыт
+- **Критерии исправления (упрощённое решение — без отдельного справочника):**
+  - [x] В `build_recommendations` инициализируем `office_name_to_id` через переиспользованный `_build_office_lookup` из `execute_window.py` (хардкод-fallback + история из `RedistributionRecommendation`/`Task`), пополняем накопительно из `src_by_office`
+  - [x] Использовать реальный `to_office_id_resolved = office_name_to_id.get(off_name, 0)` в `_is_in_cooldown` и в `Recommendation(to_office_id=...)`. Если office не в мапе — оставляем 0 (skip cooldown), не хуже текущего поведения
+  - [x] Smoke: `python3 -c "import ast; ast.parse(...)"` ok
+- **Статус:** Исправлено — 2026-05-21 (recommender.py: убран placeholder `to_office_id=0`, переиспользована `_build_office_lookup` из execute_window — единый source of truth для маппинга)
 
 ---
 
