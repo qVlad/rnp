@@ -21,10 +21,12 @@ Lead использует этот файл как master-view: сюда скл�
 >
 > Multi-cabinet workspace полностью готов end-to-end (backend + frontend).
 >
-> **Раунд 5 запущен (2026-05-21 evening — 3 потока):**
-> - 🔄 **TASK-LEAD-049** Inline edit Units (P0 РОП) — main session
-> - 🔄 **TASK-LEAD-050** Калькулятор WB-акций (P1) — sub-agent D, worktree, background
-> - 🔄 **TASK-LEAD-052** Локализация заказов (P1) — sub-agent E, worktree, background
+> **Раунд 5 завершён (v0.24.0 — 5 фич РОПа на проде):**
+> - ✅ TASK-LEAD-049 inline edit Units / 050 калькулятор акций / 051 weekly digest / 052 локализация / 053 транзит-калькулятор
+>
+> **Раунд 6 запущен (2026-05-21 night — 2 потока):**
+> - 🔄 **TASK-LEAD-055** Breakdown-попапы на KPI Dashboard (P2, S) — main session
+> - 🔄 **TASK-LEAD-054** Режимы отчётности «Управленческая / Финансовая» (P2, M) — sub-agent F после push 055
 >
 > После завершения раунда — TASK-LEAD-051 (Weekly digest) и TASK-LEAD-053 (Транзит) в следующем заходе.
 >
