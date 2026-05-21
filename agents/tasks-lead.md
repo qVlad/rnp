@@ -1052,10 +1052,28 @@ Lead использует этот файл как master-view: сюда скл�
         `DEFAULT_Z_THRESHOLD=2.0`, `DEFAULT_IQR_MULTIPLIER=1.5` константами;
         тюнинг через AppSetting — follow-up если будут жалобы на чувствительность
   - [x] MVP scope — только `revenue_net` (самая болезненная). DRR / buyout
-        outlier-детекторы — follow-up (TASK-LEAD-NNN)
+        outlier-детекторы — выделены в [TASK-LEAD-027](#task-lead-027-per-brand-drr--buyout-outliers)
 - **Зависимости:** есть достаточно истории (≥28 дней wb_report_detail / wb_orders)
 - **Статус:** ✅ Закрыта 2026-05-21 (`services/anomaly_statistical.py`,
   wire в `anomaly.py:collect_alerts`)
+
+---
+
+### TASK-LEAD-027: Per-brand DRR + buyout outliers
+
+- **Исполнитель:** Lead → Developer
+- **Приоритет:** P2
+- **Оценка:** 2-3ч
+- **Источник:** Follow-up TASK-LEAD-026 (откладывалось как «MVP только по revenue_net»). После того как для company-level DRR/buyout outlier'ы уже считаются, осталось добавить per-(brand,day) разрез — чтобы ROP видел «бренд X начал жечь рекламу» / «бренд Y стали возвращать чаще», даже если общая компанейская картина в норме.
+- **Описание:** Те же z-score правила, что в `_detect_drr_outlier` / `_detect_buyout_outlier`, но агрегаты считаются `GROUP BY (brand, day)`. Для каждого бренда — независимый 28-дневный distribution. Алертит только при росте DRR (z > +threshold) и только при падении buyout (z < -threshold). Топ-5 алертов по |z| на категорию (защита от шума, если у тенанта десятки брендов).
+- **Критерии готовности:**
+  - [x] `services/anomaly_statistical.py:_detect_per_brand_drr_outliers` — JOIN Product → WbAdStatsDaily/WbOrder, GROUP BY (brand, day), один проход
+  - [x] `services/anomaly_statistical.py:_detect_per_brand_buyout_outliers` — аналогично через WbOrder + WbReportDetail (sale_dt_filter)
+  - [x] Wire-in в `detect_outliers` после `_detect_per_brand_outliers`
+  - [x] min 14 дней истории на бренд (как в _detect_per_brand_outliers)
+  - [x] top-5 по |z| на категорию (всего ≤10 per-brand DRR/buyout алертов)
+- **Зависимости:** TASK-LEAD-026
+- **Статус:** ✅ Закрыта 2026-05-21
 
 ---
 
