@@ -384,11 +384,17 @@
   («сумма плана / % выполнения ASC»). Default — sort по completion_pct ASC
   (отстающие сверху) чтобы первое что менеджер видит — это где он проседает.
 - **Критерии готовности:**
-  - [ ] Toggle persist в localStorage
-  - [ ] Default — sort ASC по completion_pct (наиболее болезненные сверху)
-  - [ ] Compact-mode чтобы не съесть полэкрана если планов 30+
+  - [x] Toggle persist в localStorage (`manager-plans.card.v1` =
+        `{sort, scope}`)
+  - [x] Default — sort ASC по completion_pct (наиболее болезненные сверху).
+        Null/«—» уходят в конец, чтобы не маскировать реальные просадки.
+  - [x] Compact-mode авто-включается при >10 строках: тоньше прогресс-бар,
+        меньше gap, текст `text-xs`
+  - [x] Toggle «Топ-5 / Все (N)» в шапке карточки рядом с sort-toggle
 - **Зависимости:** TASK-DEV-007
-- **Статус:** Открыта
+- **Статус:** ✅ Выполнено 2026-05-21 (`components/ManagerPlanProgressCard.tsx`:
+  state `settings = {sort, scope}` с persist, useMemo на sort, compact при
+  visible.length > 10, chip-toggle Топ-5/Все + по %↑/по плану↓)
 
 ---
 
@@ -402,11 +408,16 @@
   крестик «свернуть до конца недели». Сохраняется в localStorage с TTL до
   понедельника 00:00.
 - **Критерии готовности:**
-  - [ ] localStorage key с expiry timestamp
-  - [ ] При смене недели — карточка снова показывается
-  - [ ] Crossable только при empty-state (не для содержательной карточки)
+  - [x] localStorage key с expiry timestamp
+        (`manager-plans.empty-dismissed.v1` = `{expiresAt}`)
+  - [x] При смене недели — карточка снова показывается
+        (TTL = ближайший понедельник 00:00 локально, `nextMondayMidnightTs()`)
+  - [x] Crossable только при empty-state (не для содержательной карточки) —
+        крестик отрисовывается только в `totalCount === 0` ветке
 - **Зависимости:** TASK-DEV-007
-- **Статус:** Открыта
+- **Статус:** ✅ Выполнено 2026-05-21 (`ManagerPlanProgressCard.tsx`:
+  state `emptyDismissedUntil`, кнопка `×` в шапке empty-state, return null
+  пока `expiresAt > Date.now()`)
 
 ---
 
@@ -576,13 +587,61 @@
         - `GET/PUT /api/products/{nm_id}/tags` (brand-scope check для manager)
   - [x] Frontend `components/ProductTagChips.tsx` — chips + popover-палитра.
         Click-toggle с TanStack mutation. compact-режим для embed в таблицу.
-  - [ ] Header-фильтр в Units / Unit-Plan / Supply / ABC — оставил
-        follow-up'ом (TASK-DEV-NNN). Сейчас chips можно навешивать; фильтрация
-        по тегу — отдельная UX-итерация.
+  - [x] Header-фильтр в Units / Unit-Plan / Supply / ABC — реализован через
+        [TASK-DEV-025](#task-dev-025-funnel-tag-filter) (Funnel) и был раньше
+        для Units/UnitPlan/Supply/ABC в этой же сессии. Сейчас chips можно
+        навешивать; фильтрация по тегу через header-dropdown.
 - **Зависимости:** нет
 - **Статус:** ✅ Закрыта 2026-05-21 (миграция 0052, model `ProductTag` +
   `ProductTagAssignment`, API в `product_tags.py`, frontend chip-component).
-  Header-фильтр по тегу — follow-up.
+
+---
+
+### TASK-DEV-025: Funnel tag-filter (extension TASK-DEV-024)
+
+- **Исполнитель:** Developer
+- **Приоритет:** P3
+- **Оценка:** 0.5ч
+- **Источник:** Funnel страница не получила header-фильтр в первоначальной
+  выкатке TASK-DEV-024 (закрыли с follow-up'ом). Перетянуть hook
+  `useTagFilter` + `TagFilterDropdown` который уже работает на Units /
+  UnitPlan / Supply / AbcAnalysis.
+- **Описание:** Добавить `<TagFilterDropdown storageKey="funnel.tag-filter.v1"/>`
+  в header и фильтровать items через `matchTag(nm_id)` в `useMemo`.
+- **Критерии готовности:**
+  - [x] Импорт `useTagFilter` + `TagFilterDropdown` в `pages/Funnel.tsx`
+  - [x] Фильтр через `.filter((it) => matchTag(it.nm_id))` перед сортировкой
+  - [x] `matchTag` в dep array `useMemo`
+  - [x] storageKey не пересекается с другими страницами
+- **Зависимости:** TASK-DEV-024
+- **Статус:** ✅ Закрыта 2026-05-21
+
+---
+
+### TASK-DEV-026: `/bind` `/unbind` команды TG-бота для self-binding User.tg_chat_id
+
+- **Исполнитель:** Developer
+- **Приоритет:** P2
+- **Оценка:** 1ч
+- **Источник:** CONTINUE_HERE.md v0.15.2 (TG back-loop) — упомянуто как
+  «Bot `/start` auto-bind: бот распознаёт зарегистрированного юзера и
+  автозаписывает `tg_chat_id`». Сейчас `users.tg_chat_id` нужно заполнять
+  через UI Settings → «Мой Telegram-чат» (миграция 0054) — но юзеру нужно
+  где-то взять свой chat_id. `/bind <username>` решает это: юзер пишет
+  боту, бот достаёт `chat_id` из update и записывает в `User.tg_chat_id`.
+- **Описание:**
+  - `/bind <username>` — находит активного User по `(tenant, username)`,
+    записывает chat_id. Открыт всем — не требует tenant-owner roles.
+  - `/unbind` — снимает привязку с текущего chat_id (все user'ы которые
+    привязаны к этому chat_id).
+  - HELP обновлён.
+- **Критерии готовности:**
+  - [x] `_bind_user(chat_id, username)` в `bot/main.py` — поиск по `(tenant_id, username, is_active)`
+  - [x] `_unbind_user(chat_id)` — UPDATE `users SET tg_chat_id = NULL WHERE tg_chat_id = chat_id`
+  - [x] Открытые команды (ДО `_is_authorized` check), любой юзер РНП может привязаться
+  - [x] HELP обновлён + usage hint при `/bind` без аргумента
+- **Зависимости:** миграция 0054 (`users.tg_chat_id`)
+- **Статус:** ✅ Закрыта 2026-05-21
 
 ---
 

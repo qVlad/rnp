@@ -37,6 +37,42 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## 2026-05-21 — **Manager-карточка планов: toggle Топ-5/Все + sort + dismiss empty** (v0.16.1)
+
+Закрыли две задачи (TASK-DEV-015 / TASK-DEV-016) из ревью Manager'а.
+
+### TASK-DEV-015 — Все планы + sort в `ManagerPlanProgressCard`
+
+- Chip-toggle «Топ-5 / Все (N)» — раньше карточка жёстко резала до 5 строк,
+  отстающие планы тонули за крупными.
+- Chip-toggle «по % ↑ / по плану ↓». Default — `completion_pct ASC`,
+  чтобы первое что менеджер видит утром — это где проседает.
+- Auto-compact при >10 видимых строках: тоньше прогресс-бар (`h-1`),
+  меньше gap (`gap-1`), `text-xs`. Чтобы 30+ планов не съели полэкрана.
+- Persist в `localStorage['manager-plans.card.v1']` = `{sort, scope}`.
+
+### TASK-DEV-016 — Dismiss empty-state карточки планов
+
+- Если у manager нет ни одного плана на текущий месяц — empty-state карточки
+  получает крестик «×» в шапке.
+- Клик → запоминаем TTL до ближайшего понедельника 00:00 локально
+  (`localStorage['manager-plans.empty-dismissed.v1']`), компонент возвращает
+  null до этого времени.
+- Crossable только в empty-state. При появлении плана / новой неделе
+  карточка автоматически вернётся.
+
+### Изменённые файлы
+- `frontend/src/components/ManagerPlanProgressCard.tsx` — переписан с
+  toggle'ами, useMemo на sort, compact-mode и empty-dismiss.
+- `FEATURES.md`, `CONTINUE_HERE.md`, `agents/tasks-developer.md` — статусы и
+  каталог фич.
+
+### Версия
+0.16.0 → 0.16.1 (patch — UX-доводка существующей карточки, без новой
+функциональности и backend-изменений)
+
+---
+
 ## 2026-05-21 — **Арх-долг #3: bot /bind + per-brand DRR/buyout + funnel tag-filter** (v0.16.0)
 
 Закрыли 3 оставшихся пункта (без email-канала — отложен).
