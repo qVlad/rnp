@@ -3,7 +3,13 @@
 См. spec: `agents/references/spec-audit-mode.md` (LEAD-006).
 
 Все ручки за `require_module("audit_mode")` — модуль включается per-tenant через
-`/api/tenant-modules`. Все мутации — director_or_head.
+`/api/tenant-modules`.
+
+RBAC (TASK-LEAD-040):
+- **read** (GET imports / compare / decisions / templates) — director,
+  head_of_sales, bookkeeper.
+- **write** (POST imports / decisions / templates, DELETE imports / templates)
+  — director_or_head.
 """
 from __future__ import annotations
 
@@ -32,17 +38,20 @@ from app.services.auth import (
     get_current_user,
     get_db_tenant_scoped,
     require_director,
+    require_director_head_or_bookkeeper,
     require_director_or_head,
 )
 from app.services.feature_flags import require_module
 
 
+# Router-level guard — авторизация (любой из трёх) + проверка модуля.
+# Per-endpoint строже: write-операции прячем за require_director_or_head.
 router = APIRouter(
     prefix="/api/audit-mode",
     tags=["audit-mode"],
     dependencies=[
         Depends(require_module("audit_mode")),
-        Depends(require_director_or_head),
+        Depends(require_director_head_or_bookkeeper),
     ],
 )
 
@@ -79,7 +88,7 @@ async def list_imports(
     }
 
 
-@router.post("/imports/preview")
+@router.post("/imports/preview", dependencies=[Depends(require_director_or_head)])
 async def preview_import(
     file: UploadFile = File(...),
     source: str = Form(...),
@@ -95,7 +104,7 @@ async def preview_import(
     return preview_bookkeeper(content)
 
 
-@router.post("/imports")
+@router.post("/imports", dependencies=[Depends(require_director_or_head)])
 async def create_import(
     file: UploadFile = File(...),
     source: str = Form(...),
@@ -218,7 +227,7 @@ async def get_compare(
     return result.to_dict()
 
 
-@router.post("/decisions")
+@router.post("/decisions", dependencies=[Depends(require_director_or_head)])
 async def create_decision(
     period_start: date = Body(...),
     period_end: date = Body(...),
@@ -324,7 +333,7 @@ async def list_templates(
     }
 
 
-@router.post("/templates")
+@router.post("/templates", dependencies=[Depends(require_director_or_head)])
 async def create_template(
     name: str = Body(..., embed=True),
     mapping_json: dict = Body(..., embed=True),
@@ -358,7 +367,7 @@ async def create_template(
     return {"name": name}
 
 
-@router.delete("/templates/{tid}")
+@router.delete("/templates/{tid}", dependencies=[Depends(require_director_or_head)])
 async def delete_template(
     tid: int,
     user: CurrentUser = Depends(get_current_user),

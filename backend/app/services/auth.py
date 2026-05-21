@@ -7,9 +7,18 @@ Design choices:
   Authorization-header SPA would be vulnerable to. SameSite=Lax for CSRF.
 - **Short-lived tokens** (12h default) — no refresh-flow yet; user logs in
   once a day. Trade-off vs full session table — simpler to operate.
-- **Roles**: `director` = full access; `manager` = read-most + edit-some
-  (products, groups, plans). Sensitive endpoints (settings, OPEX, налоги,
-  audit-log full read) are wrapped with `require_role("director")`.
+- **Roles** (4 шт., см. `ROLES` ниже):
+  - `director` — full access (RBAC / users / settings / OPEX / налоги / audit).
+  - `head_of_sales` — всё кроме RBAC users / settings mutations / audit_log.
+  - `manager` — scoped по `brand_assignments`, read-most + edit-some
+    (products, groups, plans для своих nm).
+  - `bookkeeper` — узкий scope: ТОЛЬКО налоговые отчёты (1С / АУСН / УСН),
+    payment-orders, buyback-уведомления, audit-mode сверка, audit_imports
+    (read). НЕ видит OPEX / ДДС / users / settings / brands / a/b-тесты /
+    plans / unit_plan. Видит все бренды (без brand-restriction).
+  Sensitive endpoints (settings, OPEX, налоги, audit-log full read) — это
+  `require_role("director")` или `require_director_or_head` либо специальные
+  guard'ы для bookkeeper (`require_director_or_bookkeeper`, etc.).
 
 Bootstrap (first-run): if no users exist, `POST /api/auth/bootstrap` creates
 the first director account. After that, the bootstrap endpoint refuses.
@@ -33,7 +42,7 @@ from app.db.session import get_db
 
 # ─── Roles ────────────────────────────────────────────────────────────────
 
-ROLES: tuple[str, ...] = ("director", "head_of_sales", "manager")
+ROLES: tuple[str, ...] = ("director", "head_of_sales", "manager", "bookkeeper")
 
 
 @dataclass
@@ -51,9 +60,18 @@ class CurrentUser:
         return self.role == "director"
 
     @property
+    def is_bookkeeper(self) -> bool:
+        return self.role == "bookkeeper"
+
+    @property
     def sees_all_brands(self) -> bool:
-        """director and head_of_sales see all brands; manager only their own."""
-        return self.role in ("director", "head_of_sales")
+        """director / head_of_sales / bookkeeper see all brands;
+        manager — only их собственные (через `brand_assignments`).
+
+        Bookkeeper'у brand-фильтр не нужен: он работает с налоговой
+        базой целиком (доход всего юрлица), а не per-brand аналитикой.
+        """
+        return self.role in ("director", "head_of_sales", "bookkeeper")
 
 
 # ─── Password hashing ─────────────────────────────────────────────────────
@@ -214,6 +232,15 @@ def require_role(*allowed_roles: str):
 # Convenience dependency aliases
 require_director = require_role("director")
 require_director_or_head = require_role("director", "head_of_sales")
+# Bookkeeper aliases (TASK-LEAD-040) — РБАК для роли «бухгалтер».
+# Bookkeeper видит налоговые отчёты / payment-orders / buybacks / audit-mode
+# и ничего больше. Шарные guards используются на эндпоинтах, которые видят
+# и director'ы (и head_of_sales), и bookkeeper.
+require_bookkeeper = require_role("bookkeeper")
+require_director_or_bookkeeper = require_role("director", "bookkeeper")
+require_director_head_or_bookkeeper = require_role(
+    "director", "head_of_sales", "bookkeeper"
+)
 
 
 async def get_db_tenant_scoped(
@@ -253,10 +280,51 @@ async def current_brands_filter(
     `None` ⇒ unrestricted (director, head_of_sales).
     `set[str]` ⇒ manager — only data for these brands. Empty set is valid
     and means "show nothing" — manager has no brand assignments yet.
+
+    **Bookkeeper:** raises 403. По умолчанию бухгалтер НЕ должен видеть
+    brand-scoped analytics (Dashboard / P&L / units / abc / abtest / plans /
+    funnel / inventory / jam / supply / chargebacks / tariffs / unit_plan /
+    products / cost-history / ads). Эндпоинты, которым нужен brand-filter
+    но ВКЛЮЧАЮЩИЕ bookkeeper'а (например `/api/tax-report` — там brands
+    нужен для contribution-margin breakdown), должны использовать
+    `current_brands_filter_with_bookkeeper` (см. ниже) — он возвращает
+    None для bookkeeper'а (он видит все бренды как и director).
     """
+    if user.is_bookkeeper:
+        raise HTTPException(
+            403,
+            "role 'bookkeeper' cannot access brand-scoped analytics; "
+            "use tax-report / payment-orders / audit-mode endpoints instead",
+        )
     if user.sees_all_brands:
         return None
     # Local import — avoid models <-> services circular import at module load.
+    from app.db.models import BrandAssignment  # noqa: WPS433
+
+    rows = (
+        await session.execute(
+            select(BrandAssignment.brand).where(
+                BrandAssignment.user_id == user.id,
+                BrandAssignment.tenant_id == user.tenant_id,
+            )
+        )
+    ).scalars().all()
+    return {b for b in rows if b}
+
+
+async def current_brands_filter_with_bookkeeper(
+    user: "CurrentUser" = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> set[str] | None:
+    """Same as `current_brands_filter`, но bookkeeper тоже получает `None`
+    (unrestricted) вместо 403.
+
+    Использовать на эндпоинтах, которые ЯВНО разрешены для bookkeeper'а
+    (`/api/tax-report*`) и при этом параметризованы `brands` (для UI
+    разбивки или scope='brands' fallback'а).
+    """
+    if user.sees_all_brands:
+        return None
     from app.db.models import BrandAssignment  # noqa: WPS433
 
     rows = (

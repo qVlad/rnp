@@ -334,20 +334,38 @@ docker-compose.yml
 
 ## Роли и RBAC
 
-| Возможность | director | head_of_sales | manager |
-|---|:-:|:-:|:-:|
-| Дашборд / P&L / units / ABC / supply / cost-history | все | все | **только свои бренды** |
-| ДДС / OPEX / external-marketing / корректировки / капитализация | ✅ | ✅ | ❌ 403 |
-| Plans (просмотр) | все | все | свои nm/group, store скрыт |
-| Plans (CUD) | ✅ | ✅ | ❌ 403 |
-| Brands (CRUD назначений) | ✅ | ✅ | ❌ 403 |
-| Users / Settings / Audit log | ✅ | ❌ | ❌ |
+| Возможность | director | head_of_sales | manager | bookkeeper |
+|---|:-:|:-:|:-:|:-:|
+| Дашборд / P&L / units / ABC / supply / cost-history | все | все | **только свои бренды** | ❌ 403 |
+| ДДС / OPEX / external-marketing / корректировки / капитализация | ✅ | ✅ | ❌ 403 | ❌ 403 |
+| Plans (просмотр) | все | все | свои nm/group, store скрыт | ❌ 403 |
+| Plans (CUD) | ✅ | ✅ | ❌ 403 | ❌ 403 |
+| Brands (CRUD назначений) | ✅ | ✅ | ❌ 403 | ❌ 403 |
+| Users / Audit log | ✅ | ❌ | ❌ | ❌ |
+| Settings (mutations) | ✅ | ❌ | ❌ | ❌ |
+| Settings/timeline (read — tax-system / VAT-rate as-of) | ✅ | ❌ | ❌ | ✅ |
+| **Tax-report / AUSN / USN / USN+VAT5/7** (read) | ✅ | ✅ | ❌ 403 | ✅ |
+| **Payment-orders** import / toggle-exclude / delete | ✅ | ✅ | ❌ 403 | ✅ |
+| **Buybacks** view / sync | ✅ | ✅ | ❌ 403 | ✅ |
+| Audit-mode (3-source compare — view) | ✅ | ✅ | ❌ 403 | ✅ |
+| Audit-mode imports / decisions / templates (write) | ✅ | ✅ | ❌ 403 | ❌ 403 |
+| A/B-тесты / Chrome-extension API | ✅ | ✅ | brand-scope | ❌ 403 |
 
 Manager видит только nm_id из своих `brand_assignments`. Если назначений нет — пустой результат во всех аналитических разделах.
 
+**Bookkeeper** (TASK-LEAD-040, 2026-05-21) — узкий scope бухгалтера юрлица:
+налоговые отчёты (1С / АУСН / УСН ± НДС), payment-orders из ЛК WB, выкупы,
+3-source audit-mode сверка. Brand-фильтра НЕ имеет (видит налоговую базу
+всего юрлица). НЕ имеет доступа к управленческой аналитике (Dashboard / P&L /
+units), OPEX/ДДС, RBAC users/settings mutations, brand-assignments, A/B,
+plans, unit_plan, jam, supply, redistribution, chargebacks, tariffs.
+
 **P&L для manager** строится в `scope=brands` (contribution-margin: без OPEX, fixed_costs, налогов и НДС). Director/head — `scope=company` с полной картиной. UI на `/pnl` показывает баннер.
 
-Helper `app.services.auth.current_brands_filter()` возвращает `set[str] | None` (None = unrestricted).
+Helper `app.services.auth.current_brands_filter()` возвращает `set[str] | None`
+(None = unrestricted). **Для bookkeeper — кидает 403** (узкий scope, нет
+brand-аналитики). Helper `current_brands_filter_with_bookkeeper()` — на
+эндпоинтах, явно разрешённых для bookkeeper, возвращает None.
 
 ## API endpoints (по группам)
 
@@ -371,9 +389,9 @@ Helper `app.services.auth.current_brands_filter()` возвращает `set[str
 | `/api/settings*` | director (mutations) | timeline налогов, Excel I/O, sync trigger (per-tenant до 1825 дней) |
 | `/api/wb-token` | director | per-tenant WB-токен (Fernet шифрование) + auto-trigger sync |
 | `/api/tenant-modules*` | director | включение/выключение модулей per-tenant |
-| `/api/tax-report*`, `/tax-report-ausn`, `/tax-report-usn` | director_or_head | налоги (1С / АУСН / УСН ±НДС) + per-regime exclusion |
-| `/api/tax-report/payment-orders/*` | director_or_head | платёжные документы WB, toggle exclude, import history |
-| `/api/tax-report/buybacks`, `/sync-buybacks` | director_or_head | Уведомления о выкупе |
+| `/api/tax-report*`, `/tax-report-ausn`, `/tax-report-usn` | director_head_or_bookkeeper | налоги (1С / АУСН / УСН ±НДС) + per-regime exclusion |
+| `/api/tax-report/payment-orders/*` | director_head_or_bookkeeper | платёжные документы WB, toggle exclude, import history |
+| `/api/tax-report/buybacks`, `/sync-buybacks` | director_head_or_bookkeeper | Уведомления о выкупе |
 | `/api/supplies*` | director_or_head | закупки → weighted-avg COGS |
 | `/api/abtest*`, `/api/abtest/.../photos` | brands-filter | A/B-тестирование фото карточек (порт wbab) |
 | `/api/extension/*` | Bearer JWT (header) | Chrome-расширение: active tests / winners polling / positions / wb-token status. См. `extension/` |
@@ -381,7 +399,7 @@ Helper `app.services.auth.current_brands_filter()` возвращает `set[str
 | `/api/notifications*` | director | правила TG-уведомлений + evaluate |
 | `/api/view-presets*` | tenant-scoped | сохранённые фильтры + sharable links |
 | `/api/checklist*` | tenant-scoped | онбординг чек-лист |
-| `/api/audit-mode*` | director_or_head | read-only режим для бухгалтерии |
+| `/api/audit-mode*` | director_head_or_bookkeeper (read), director_or_head (write) | 3-source сверка для бухгалтерии: read открыт bookkeeper'у, writes (imports/decisions/templates) — только director/head |
 | `/api/sync/status` | tenant-scoped | sync checkpoints + WB cooldowns + celery active tasks |
 | `/api/unit-plan/*` | brands-filter (rows), director (global-config PUT), director_or_head (overrides/snapshots) | **UNIT-план** — плановая юнит-экономика на базе Excel-методики LeymanKids. См. [`UNIT_PLAN.md`](UNIT_PLAN.md). |
 | `/api/tariffs/*` | director_or_head (list/timeline/current), director (sync POST) | WB Tariffs box/pallet/commission — view (latest as-of, timeline, current) + manual sync. SCD2 reference-таблицы, sync ежедневно 08:00 MSK. |

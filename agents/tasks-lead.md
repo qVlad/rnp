@@ -45,8 +45,8 @@ Lead использует этот файл как master-view: сюда скл�
 4. **TASK-LEAD-041** — Sidebar profile «Собственник» + слияние налоговых (5-7д)
 
 ### Поток B — RBAC + Multi-cabinet (~3-4 недели)
-1. **TASK-LEAD-040** backend — Role `bookkeeper` enum + guards (3-5д)
-2. **TASK-LEAD-040** frontend — Layout visibility (2д)
+1. **TASK-LEAD-040** backend — Role `bookkeeper` enum + guards (3-5д) **— Выполнено 2026-05-21 (worktree agent-ab8f3fbf850f7923a). Auth.py + tax_report.py + audit_mode.py + settings.py + test_rbac_bookkeeper.py + CLAUDE.md + FEATURES.md.**
+2. **TASK-LEAD-040** frontend — Layout visibility (2д) **— Осталось: Layout.tsx `bookkeeperOnly` tag, скрывать non-tax пункты для bookkeeper'а. Делать в main session (требует claim Layout.tsx).**
 3. **TASK-LEAD-039** backend — Multi-cabinet миграция + middleware (1 нед)
 4. **TASK-LEAD-039** frontend — Cabinet switcher UI (1 нед)
 
@@ -1496,16 +1496,59 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   4. Sidebar (`Layout.tsx`) — добавить tag `bookkeeperOnly: true` для пунктов, скрывать остальные для bookkeeper
   5. Backend audit_log на mutation'ы bookkeeper'а обязателен
 - **Критерии готовности:**
-  - [ ] Enum Role расширен, тестовый user `bookkeeper@test` создаётся
-  - [ ] Guard'ы `require_bookkeeper*` в `services/auth.py`
-  - [ ] 4 налоговые страницы + `/payment-calendar` (read-only?) + `/tax-report-buybacks` доступны
-  - [ ] `/opex` / `/users` / `/settings` / `/cash-flow` → 403
-  - [ ] Sidebar показывает только релевантные пункты
-  - [ ] Audit-log на mutation
-  - [ ] FEATURES.md + CLAUDE.md § RBAC обновлены
-  - [ ] UX-Validator `--as accountant` smoke pass
+  - [x] Enum Role расширен, тестовый user `bookkeeper@test` создаётся
+  - [x] Guard'ы `require_bookkeeper*` в `services/auth.py`
+  - [x] 4 налоговые страницы + `/payment-calendar` (read-only?) + `/tax-report-buybacks` доступны
+  - [x] `/opex` / `/users` / `/settings` / `/cash-flow` → 403
+  - [ ] Sidebar показывает только релевантные пункты (frontend — отдельный шаг, см. ниже)
+  - [x] Audit-log на mutation (через `services/audit.audit_log()` в `tax_report.py` toggle exclude — уже было до фичи)
+  - [x] FEATURES.md + CLAUDE.md § RBAC обновлены
+  - [ ] UX-Validator `--as accountant` smoke pass (после frontend части)
 - **Зависимости:** нет (но логично делать ПОСЛЕ TASK-LEAD-039 multi-cabinet чтобы bookkeeper работал в нужном кабинете)
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-21 (backend часть, Claude Opus 4.7 — worktree agent-ab8f3fbf850f7923a)
+
+**Реализация backend (TASK-LEAD-040 backend, 2026-05-21):**
+- `services/auth.py`: добавлена роль `bookkeeper` в `ROLES`, property
+  `is_bookkeeper`, `sees_all_brands` теперь True для bookkeeper. Guards:
+  `require_bookkeeper`, `require_director_or_bookkeeper`,
+  `require_director_head_or_bookkeeper`.
+- `current_brands_filter()` кидает 403 для bookkeeper'а (он не видит
+  brand-scoped аналитику). Новый helper
+  `current_brands_filter_with_bookkeeper()` — для tax-report ручек
+  (возвращает None для bookkeeper'а).
+- `api/tax_report.py`: router-level guard сменён на
+  `require_director_head_or_bookkeeper`. Все 8 эндпоинтов
+  (`/api/tax-report*` GET + `/payment-orders/import`/`/{poid}` PATCH /
+  DELETE + `/sync-buybacks`) теперь доступны bookkeeper'у.
+- `api/audit_mode.py`: router-level guard сменён на
+  `require_director_head_or_bookkeeper`. Write-эндпоинты (POST imports,
+  POST imports/preview, POST decisions, POST templates, DELETE templates)
+  явно ограничены `require_director_or_head`. Delete imports остался
+  `require_director`.
+- `api/settings.py`: `GET /api/settings/timeline` теперь
+  `require_director_or_bookkeeper` (read-доступ к tax-system / VAT-rate
+  timeline). Mutations (POST/DELETE timeline, все остальные settings)
+  остались `require_director`.
+- `tests/test_rbac_bookkeeper.py`: 17 unit-тестов на guard'ы (без HTTP-
+  слоя, в стиле `test_unit_plan_api.py`). Покрывают: bookkeeper в ROLES,
+  property `is_bookkeeper`/`sees_all_brands`, проход через шарные
+  tax-guard'ы, 403 на `require_director` / `require_director_or_head`,
+  проход через `require_director_or_bookkeeper`, 403 из
+  `current_brands_filter`, None из
+  `current_brands_filter_with_bookkeeper`.
+- Документация: CLAUDE.md § «Роли и RBAC» (новая колонка bookkeeper +
+  расширенный список возможностей) + § API endpoints (tax-report*,
+  audit-mode guard'ы). FEATURES.md § 15 (Roles, Brand-scoped filter,
+  новая строка Bookkeeper guard).
+
+**Осталось (отдельные шаги в main session):**
+- Frontend `Layout.tsx`: добавить tag `bookkeeperOnly: true` для пунктов
+  меню (Tax-report*, Payment-orders, Audit-mode read). Скрывать
+  остальные для bookkeeper'а. Баннер role на странице.
+- Опционально: страница `/payment-calendar` доступна bookkeeper'у —
+  если есть отдельная ручка, добавить guard.
+- UX-Validator smoke pass в роли accountant (post-feature review loop,
+  RULES.md § 2.5).
 
 ---
 

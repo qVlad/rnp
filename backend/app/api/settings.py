@@ -17,7 +17,7 @@ from app.services.auth import CurrentUser, get_current_user, get_db_tenant_scope
 from app.integrations.telegram import get_me as tg_get_me, send_message as tg_send
 from app.integrations.wb import cooldown as wb_cooldown
 from app.services.audit import actor_from_request, audit_log
-from app.services.auth import require_director
+from app.services.auth import require_director, require_director_or_bookkeeper
 from app.services.settings_timeline import TIMELINEABLE_KEYS
 from app.services.tenant_context import get_tenant
 
@@ -352,8 +352,10 @@ class TimelineEntryPayload(BaseModel):
     comment: str | None = None
 
 
-@router.get("/timeline", dependencies=[Depends(require_director)])
+@router.get("/timeline", dependencies=[Depends(require_director_or_bookkeeper)])
 async def list_timeline(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
+    # TASK-LEAD-040 — bookkeeper нужен read-доступ (видеть какая система
+    # налогообложения была в каком периоде), мутации (POST/DELETE) — director only.
     rows = (
         await session.execute(
             select(SettingTimeline).order_by(

@@ -1,7 +1,8 @@
 """Налоговый отчёт по WB — endpoint для страницы /tax-report.
 
 Воспроизводит методику клиентского бухгалтера 1:1 (см. services/tax_report.py).
-Доступен только director/head_of_sales (это юридически чувствительные данные).
+Доступен director / head_of_sales / bookkeeper (это юридически чувствительные
+данные, но именно для bookkeeper'а они — основная рабочая нагрузка).
 """
 from datetime import date, timedelta
 
@@ -10,7 +11,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import WbPaymentOrder, WbRedeemNotification
-from app.services.auth import current_brands_filter, get_db_tenant_scoped, require_director_or_head
+from app.services.auth import (
+    current_brands_filter_with_bookkeeper,
+    get_db_tenant_scoped,
+    require_director_head_or_bookkeeper,
+)
 from app.services.payment_orders import (
     parse_payment_history_xlsx,
     upsert_payment_orders,
@@ -22,7 +27,8 @@ from app.services.tax_report_usn import build_usn_monthly_report
 router = APIRouter(
     prefix="/api/tax-report",
     tags=["tax-report"],
-    dependencies=[Depends(require_director_or_head)],
+    # TASK-LEAD-040 — bookkeeper тоже допущен (это его core-workflow).
+    dependencies=[Depends(require_director_head_or_bookkeeper)],
 )
 
 
@@ -32,7 +38,7 @@ async def get_tax_report(
     date_to: date | None = Query(default=None, alias="to"),
     cogs_method: str = Query(default="historical", regex="^(historical|weighted_avg)$"),
     session: AsyncSession = Depends(get_db_tenant_scoped),
-    brands: set[str] | None = Depends(current_brands_filter),
+    brands: set[str] | None = Depends(current_brands_filter_with_bookkeeper),
 ) -> dict:
     """Per-WB-realization tax report (Доход / Расход / Себестоимость / Налог).
 

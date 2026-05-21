@@ -339,10 +339,11 @@
 | Tenants | Multi-tenant на 22+ таблицах через `tenant_id` FK | миграция 0016, `db/models.py:TenantScopedMixin` | — |
 | Signup | Регистрация нового кабинета | `pages/Signup.tsx`, `api/auth.py` | публ. |
 | Auto-tenant-filter | SQLAlchemy event listener `do_orm_execute` добавляет WHERE tenant_id | `services/tenant_context.py` | — |
-| Users CRUD | Управление пользователями (3 роли) | `pages/Users.tsx`, `api/users.py`, миграция 0012 | director |
-| Roles | director / head_of_sales / manager | `services/auth.py` | — |
+| Users CRUD | Управление пользователями (4 роли) | `pages/Users.tsx`, `api/users.py`, миграция 0012 | director |
+| Roles | director / head_of_sales / manager / **bookkeeper** (TASK-LEAD-040) | `services/auth.py` | — |
+| **Bookkeeper guard** | `require_director_head_or_bookkeeper` / `require_director_or_bookkeeper` / `require_bookkeeper` — узкий scope бухгалтера: налоговые отчёты, payment-orders, выкупы, audit-mode (read), setting_timeline (read). НЕ видит Dashboard / P&L / OPEX / users / settings mutations / A/B. | `services/auth.py:require_*bookkeeper*` | bookkeeper |
 | Brand assignments | Один бренд → один manager | `pages/Brands.tsx`, `api/brands.py`, миграция 0013 | director, head |
-| Brand-scoped filter | Helper `current_brands_filter()` → `set[str] | None` | `services/auth.py:current_brands_filter` | — |
+| Brand-scoped filter | Helper `current_brands_filter()` → `set[str] | None`. **Для bookkeeper кидает 403** — он не должен видеть brand-scoped аналитику. Вариант `current_brands_filter_with_bookkeeper()` для tax-report (возвращает None для bookkeeper'а). | `services/auth.py:current_brands_filter` | — |
 | Tenant modules | Включение/выключение модулей per-tenant | миграция 0034, `api/tenant_modules.py` | director |
 | Manager brands banner | Баннер на каждой странице для роли manager — «Показаны данные только по брендам: X, Y» | `components/ManagerBrandsBanner.tsx`, `Layout.tsx`, `api/auth.py:/me.brands` | manager (видит только manager) |
 | Managers KPI | Сводка KPI каждого менеджера за месяц (бренды, выручка, маржа, ДРР, заказы, реклама) | `pages/ManagersKpi.tsx`, `api/managers_kpi.py` | director, head |
