@@ -1326,6 +1326,132 @@ Lead использует этот файл как master-view: сюда скл�
 
 ---
 
+### TASK-LEAD-039: Multi-cabinet workspace (M:N user↔tenant + UI switcher)
+
+- **Исполнитель:** Lead → Developer + Design Engineer
+- **Приоритет:** **P0** (главная боль пользователя — у него 2-3 раздельных tenant'а, переключаться можно только через logout/login)
+- **Оценка:** XL (2-3 недели — БД-рефактор + middleware + UI)
+- **Источник:** UX-Validator seller report 2026-05-21 ⚠1 + явное подтверждение пользователя 2026-05-21 «нужно сделать удобной работу для собственных кабинетов»
+- **Описание:**
+  1. Миграция: `user_tenant_access(user_id, tenant_id, role, granted_at, granted_by)` — M:N
+  2. Backward-compat: при миграции для каждого `users.tenant_id` создать строку в `user_tenant_access` с той же role
+  3. `services/tenant_context.py` — расширить: вместо `user.tenant_id` смотреть в `request.state.active_tenant_id` (cookie / header / session)
+  4. Endpoint `POST /api/auth/switch-tenant` — установить active_tenant_id для сессии
+  5. `AuthContext` — расширить с `availableTenants: [{id, name}]` + `activeTenantId` + `switchTenant(id)`
+  6. UI: dropdown в `Layout.tsx` шапке «Кабинет: A ▼» — список доступных tenant'ов, клик переключает + invalidate всех TanStack queries
+  7. (опционально, P2) «Сводный режим» — отдельная страница где KPI по N tenant'ам в одной таблице
+- **Критерии готовности:**
+  - [ ] Миграция применима без потери данных (`user_tenant_access` создаётся для всех существующих users)
+  - [ ] Один тестовый user привязан к 2 tenant'ам, может переключаться без logout/login
+  - [ ] Все API ручки используют `active_tenant_id` (а не `user.tenant_id`)
+  - [ ] Smoke: данные не пересекаются между tenant'ами после switch (`/dashboard` показывает разные KPI)
+  - [ ] RBAC соблюдается per-tenant (manager в A не видит данные B)
+  - [ ] FEATURES.md обновлён
+  - [ ] CLAUDE.md обновлён (новая миграция в таблице)
+- **Зависимости:** TASK-LEAD-040 (bookkeeper-role) — параллельно, но multi-cabinet важнее
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-040: Новая role `bookkeeper` + RBAC scope для налогов/УПД
+
+- **Исполнитель:** Lead → Developer
+- **Приоритет:** P1 (явный запрос пользователя 2026-05-21)
+- **Оценка:** M (1 неделя — RBAC + scope-проверки + UI)
+- **Источник:** UX-Validator seller report 2026-05-21 ⚠6 + явный запрос пользователя
+- **Описание:**
+  1. Расширить enum `Role` в `services/auth.py`: `director / head_of_sales / manager / bookkeeper`
+  2. Создать guard `require_bookkeeper` в `services/auth.py` + варианты `require_director_or_bookkeeper`, `require_bookkeeper_or_head`
+  3. Scope `bookkeeper`:
+     - **Видит:** налоговые отчёты (`/tax-report`, `/tax-report-ausn`, `/tax-report-usn*`), УПД-реестры, payment_orders, документы WB (уведомления о выкупе + акты), `setting_timeline` (только read), audit_imports
+     - **Может править:** `excluded_from_ausn` / `excluded_from_usn` flags, исключение payment_orders из tax base, import payment orders xlsx, sync buybacks
+     - **НЕ видит:** OPEX/cash-flow (управленческий ДДС), brand_assignments, users, audit_log, settings, external_marketing, revenue-corrections, A/B-тесты, plans (CUD), unit_plan
+     - **НЕ может править:** ничего кроме per-regime exclusion flags и payment-orders impo
+  4. Sidebar (`Layout.tsx`) — добавить tag `bookkeeperOnly: true` для пунктов, скрывать остальные для bookkeeper
+  5. Backend audit_log на mutation'ы bookkeeper'а обязателен
+- **Критерии готовности:**
+  - [ ] Enum Role расширен, тестовый user `bookkeeper@test` создаётся
+  - [ ] Guard'ы `require_bookkeeper*` в `services/auth.py`
+  - [ ] 4 налоговые страницы + `/payment-calendar` (read-only?) + `/tax-report-buybacks` доступны
+  - [ ] `/opex` / `/users` / `/settings` / `/cash-flow` → 403
+  - [ ] Sidebar показывает только релевантные пункты
+  - [ ] Audit-log на mutation
+  - [ ] FEATURES.md + CLAUDE.md § RBAC обновлены
+  - [ ] UX-Validator `--as accountant` smoke pass
+- **Зависимости:** нет (но логично делать ПОСЛЕ TASK-LEAD-039 multi-cabinet чтобы bookkeeper работал в нужном кабинете)
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-041: Sidebar profile «Собственник» + слияние 4 налоговых страниц в `/taxes`
+
+- **Исполнитель:** Design Engineer (UX + код)
+- **Приоритет:** P1 (cognitive overhead — 47+ пунктов меню, OWNER_GUIDE говорит «нужны 4»)
+- **Оценка:** M (1 неделя)
+- **Источник:** UX-Validator seller report 2026-05-21 ⚠2
+- **Описание:**
+  1. **Profile toggle** в `Layout.tsx`: «Собственник» / «Полный» (persist в localStorage)
+     - «Собственник» режим: только Dashboard / P&L / 4-way Сверка / Plans / `/taxes`. Остальное под expander «Показать все».
+     - «Полный» режим: текущие 47+ пунктов
+  2. **Слияние налоговых страниц** в одну `/taxes`:
+     - Удалить 4 пункта в sidebar (`/tax-report-ausn`, `/tax-report-usn`, `/tax-report-usn-vat5`, `/tax-report-usn-vat7`)
+     - Оставить только `/tax-report` и `/taxes`
+     - На `/taxes` — selector «Режим:» (AUSN / USN / USN+5% / USN+7%), переключает frame внутри страницы (URL `?mode=ausn` persist'ит)
+     - Все 4 сервиса в backend не меняются, только UI-обёртка
+- **Критерии готовности:**
+  - [ ] Toggle profile «Собственник vs Полный» работает, persist
+  - [ ] Sidebar в режиме «Собственник» — ≤6 пунктов
+  - [ ] `/taxes?mode=X` показывает соответствующий отчёт
+  - [ ] Все 4 старых URL делают redirect на `/taxes?mode=X` (back-compat)
+  - [ ] Bookmark'и собственника работают
+- **Зависимости:** нет
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-042: Default Dashboard mode = `hybrid` + «Прибыль вчера» hero-line
+
+- **Исполнитель:** Design Engineer + Developer (для hero-line данных)
+- **Приоритет:** P1 (click-economy — главный вопрос «сколько заработал» должен отвечаться за < 3 сек)
+- **Оценка:** S (3-5ч)
+- **Источник:** UX-Validator seller report 2026-05-21 ⚠5, ⚠8
+- **Описание:**
+  1. Default `dataMode` в `Dashboard.tsx` сменить с `preliminary` на `hybrid` (закрытые недели → final, текущая → preliminary). `hybrid` уже реализован в backend, нужно поменять только default.
+  2. Hero-line **выше** существующего KPI-grid: «Прибыль вчера: 145 312 ₽ ▲ +5.2% WoW» крупным шрифтом. Источник — `compute_dashboard(yesterday, mode='final')` + сравнение с `compute_dashboard(yesterday - 7 days, mode='final')`
+  3. Tooltip на hero-line с разбивкой «Выручка: X − COGS: Y − Реклама: Z − Удержания WB: W = Прибыль»
+- **Критерии готовности:**
+  - [ ] Default `dataMode = hybrid` в Dashboard.tsx
+  - [ ] Hero-line «Прибыль вчера» рендерится выше KPI grid
+  - [ ] Tooltip с формулой
+  - [ ] Smoke: на закрытом периоде сходится с P&L final копейка-в-копейку
+- **Зависимости:** нет
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-043: Cross-source сводка периода + Reconciliation explainer
+
+- **Исполнитель:** Lead → Design Engineer + Developer
+- **Приоритет:** P2 (после P0/P1 — это «качественное улучшение» для боли «цифры не сходятся»)
+- **Оценка:** M (3-5 дней)
+- **Источник:** UX-Validator seller report 2026-05-21 ⚠4
+- **Описание:**
+  1. **Hero-блок «Сводка периода»** на Dashboard (выше KPI grid, под hero-line из TASK-LEAD-042):
+     - 3 колонки: «Наш P&L: X ₽» / «WB-кабинет: Y ₽» / «Δ Z%»
+     - При |Δ| > 1% — желтая подсветка + кнопка «Объяснить →» (ведёт на `/pnl-reconciliation` с pre-set периодом)
+  2. **Reconciliation explainer:** на странице `/pnl-reconciliation` при клике на строку с Δ → drawer с разбивкой:
+     - «Δ revenue: -2 350 ₽ → причина: 3 операции `Добровольная компенсация при возврате` минусят `ppvz_for_pay`»
+     - Данные есть в `wb_report_detail`, нужен только UI-explainer + group-by на `supplier_oper_name`
+- **Критерии готовности:**
+  - [ ] Hero «Сводка периода» на Dashboard
+  - [ ] При |Δ| > 1% подсветка + ссылка на explainer
+  - [ ] `/pnl-reconciliation` row-click → drawer с group-by `supplier_oper_name`
+  - [ ] Smoke: на тестовом расхождении объяснение появляется
+- **Зависимости:** TASK-LEAD-042 (hero-line) — общая структура hero-блока
+- **Статус:** Открыта
+
+---
+
 ### TASK-LEAD-038: Слияние UI/UX Designer + UI Engineer → Design Engineer
 
 - **Исполнитель:** Lead → сам
