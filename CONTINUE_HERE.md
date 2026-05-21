@@ -37,6 +37,50 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## 2026-05-21 — **Multi-tenant bot + clean-bind через код** (v0.17.0)
+
+Закрыли P0-долг «bot single-tenant» — теперь бот корректно работает с
+любым числом тенантов. Bonus: TODO про Fernet оказался устаревшим —
+шифрование уже в проде.
+
+### Backend
+- **Digest builders multi-tenant:** `build_now(tenant_id)`, `build_alerts`,
+  `build_pnl_short` принимают tenant_id явно. Fallback на `bot_tenant_id`.
+- **`_resolve_tenant_from_chat(chat_id)`** — лукапит `User.tg_chat_id`
+  across-tenants. Collision → первый по User.id.
+- **`/bind` 3-уровневый:**
+  1. Bind-code (6 символов alphanumeric) → Redis `tg_bind:{code}` → user_id.
+     Чистый UX, без enumeration.
+  2. `<slug>/<username>` для дизамбигуации.
+  3. `<username>` — поиск по всем тенантам. Если несколько матчей →
+     подсказка использовать slug-форму.
+- **`POST /api/settings/telegram/me/bind-code`** — генерит код,
+  Redis TTL=600s.
+- `/now /alerts /pnl` теперь получают tenant_id из user-binding, не из
+  `settings.bot_tenant_id`.
+
+### Frontend
+- `Settings.tsx → MyTgSubsection`: новая кнопка «🔑 Сгенерировать код привязки»
+  с countdown. Юзер копирует код → пишет `/bind <код>` боту. Старый flow
+  ручной вставки chat_id оставлен как legacy.
+
+### Bonus: Fernet для WB-токена уже работает
+- `SECRETS_ENCRYPTION_KEY` установлен в `/opt/rnp/.env`
+- Все 3 тенанта на проде с `wb_token LIKE 'enc:%'`
+- `secrets_crypto.encrypt/decrypt` используется в коде корректно
+- Обновил устаревший TODO-комментарий в `models.py:38`
+
+### Версия
+0.16.x → 0.17.0 (minor — multi-tenant bot + bind-code feature)
+
+### Что остаётся в арх-долге
+- Email-канал (deferred)
+- N+1 в managers-kpi (Redis cache есть, нет рефактора на single GROUP BY)
+- cogs_weighted running-average TODO
+- Worker concurrency=1 для stats
+
+---
+
 ## 2026-05-21 — **Manager-карточка планов: toggle Топ-5/Все + sort + dismiss empty** (v0.16.1)
 
 Закрыли две задачи (TASK-DEV-015 / TASK-DEV-016) из ревью Manager'а.

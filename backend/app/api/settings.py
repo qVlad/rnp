@@ -610,6 +610,38 @@ async def get_my_telegram(
     return {"chat_id": u.tg_chat_id if u else None}
 
 
+@router.post("/telegram/me/bind-code")
+async def gen_bind_code(
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Сгенерировать 6-символьный код привязки TG для текущего юзера.
+
+    Multi-tenant clean-bind: юзер жмёт «Сгенерировать код» в /settings,
+    видит 6-символьный код (alphanumeric uppercase), пишет в бот
+    `/bind <код>` → bot.main._bind_user смотрит в Redis по этому коду,
+    находит user_id, ставит `user.tg_chat_id`. TTL 600s.
+
+    Преимущества vs `/bind <username>`:
+      - Нет ambiguity с одинаковыми username в разных тенантах
+      - Нет enumeration-атаки (нельзя угадать существующие username'ы)
+      - Код одноразовый — после первого успешного `/bind` удаляется
+    """
+    import secrets as _secrets
+    import string
+    import redis.asyncio as redis_async
+
+    _ = session  # noqa: F841 — only needed for tenant-scoped guard
+    code = "".join(_secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
+    try:
+        r = redis_async.from_url(cfg.redis_url, decode_responses=True)
+        await r.setex(f"tg_bind:{code}", 600, str(user.id))
+        await r.aclose()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Redis недоступен: {e}") from e
+    return {"code": code, "expires_in_sec": 600}
+
+
 @router.put("/telegram/me")
 async def put_my_telegram(
     payload: MyTgPayload,

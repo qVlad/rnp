@@ -2634,6 +2634,7 @@ function MyTgSubsection() {
   });
   const [chatInput, setChatInput] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
+  const [bindCode, setBindCode] = useState<{ code: string; expires_at: number } | null>(null);
   useEffect(() => {
     setChatInput(meTgQ.data?.chat_id ?? "");
   }, [meTgQ.data]);
@@ -2647,17 +2648,49 @@ function MyTgSubsection() {
     },
   });
 
+  // TASK: multi-tenant bot — clean-bind через одноразовый 6-символьный код
+  const codeMut = useMutation({
+    mutationFn: () => api.myTgGenBindCode(),
+    onSuccess: (d) => {
+      const expires_at = Date.now() + d.expires_in_sec * 1000;
+      setBindCode({ code: d.code, expires_at });
+      setTimeout(() => setBindCode(null), d.expires_in_sec * 1000);
+    },
+  });
+
   return (
     <div className="mt-4 pt-3 border-t border-border/60">
       <div className="font-medium text-sm mb-2">
         Мой Telegram-чат (multi-recipient broadcast)
       </div>
       <div className="text-xs text-muted mb-2 leading-relaxed">
-        Привяжите свой chat_id чтобы получать broadcast-уведомления
-        (заявки на закупку, правки планов). Узнать chat_id: написать{" "}
-        <code>/start</code> боту — он ответит вашим chat_id. Если поле пусто —
-        вы НЕ получаете broadcast, но AppSetting tenant-чат (выше) продолжает
-        работать как fallback.
+        <strong>Рекомендуемый способ — clean-bind через код:</strong> жмите
+        «🔑 Сгенерировать код», скопируйте 6 символов, в боте РНП пишите
+        <code> /bind &lt;код&gt;</code>. Бот сам подвяжет ваш chat_id.<br/>
+        <strong>Ручная привязка</strong> (legacy): узнайте chat_id написав
+        <code> /start</code> боту, вставьте в поле ниже, сохраните.
+      </div>
+
+      {/* Bind-code generation */}
+      <div className="mb-3 flex items-center gap-2">
+        <button
+          type="button"
+          className="btn text-xs"
+          onClick={() => codeMut.mutate()}
+          disabled={codeMut.isPending}
+        >
+          {codeMut.isPending ? "Генерация…" : "🔑 Сгенерировать код привязки"}
+        </button>
+        {bindCode && (
+          <span className="font-mono text-base bg-surface-2/60 px-2 py-1 rounded">
+            {bindCode.code}
+          </span>
+        )}
+        {bindCode && (
+          <span className="text-xs text-muted">
+            истекает через {Math.max(0, Math.round((bindCode.expires_at - Date.now()) / 1000))}с
+          </span>
+        )}
       </div>
       <div className="flex items-center gap-2">
         <input

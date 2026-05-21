@@ -36,51 +36,153 @@ HELP = (
 )
 
 
-async def _bind_user(chat_id: int, username: str) -> str:
-    """Привязать chat_id к User.tg_chat_id (TASK-DEV-014/017 follow-up).
+async def _resolve_tenant_from_chat(chat_id: int) -> int | None:
+    """Multi-tenant: chat_id → User.tg_chat_id → tenant_id.
 
-    Любой залогиненный юзер РНП может привязать свой Telegram, не только
-    owner. Это нужно для multi-recipient broadcast'а (заявки на закупку,
-    правки планов → всем директорам сразу).
+    Если юзер не привязал — возвращает None (упадёт fallback'ом в
+    `settings.bot_tenant_id` для legacy single-tenant поведения).
+    Если несколько User'ов с одним chat_id (multi-tenant collision —
+    юзер активен в двух тенантах сразу) — берём первый по id, чтобы
+    хоть что-то отвечать; разруливание через /unbind + /bind.
     """
-    tid = settings.bot_tenant_id
     async with task_session_scope() as session:
-        set_tenant(session, tid)
-        user = (
+        # set_tenant не нужен — глобальный SELECT, нет RLS для bot-сервиса
+        row = (
             await session.execute(
-                select(User).where(
-                    User.tenant_id == tid,
-                    User.username == username,
+                select(User.tenant_id).where(
+                    User.tg_chat_id == str(chat_id),
                     User.is_active.is_(True),
-                )
+                ).order_by(User.id).limit(1)
             )
         ).scalar_one_or_none()
-        if not user:
+        return int(row) if row else None
+
+
+async def _bind_user(chat_id: int, ident: str) -> str:
+    """Привязать chat_id к User.tg_chat_id (TASK-DEV-014/017 follow-up).
+
+    Multi-tenant поиск:
+      - Сначала пробуем как 6-значный bind-код из Redis (`tg_bind:{code}`)
+        — клик «Сгенерировать код» в Settings → user_id. Чистый UX без
+        ambiguity.
+      - Иначе fallback: ищем `User.username == ident` среди ВСЕХ тенантов.
+        Если найдено > 1 → подсказка указать `<slug>/<username>` для
+        дизамбигуации.
+      - Поддержка `<slug>/<username>`: парсим slug, ищем tenant.id,
+        ищем user в этом тенанте.
+    """
+    import redis.asyncio as redis_async  # noqa: WPS433
+    from app.db.models import Tenant  # noqa: WPS433
+
+    ident = ident.strip()
+    code_is_short = ident.isalnum() and 4 <= len(ident) <= 12
+
+    # 1. Redis bind-code (short alnum)
+    if code_is_short:
+        try:
+            r = redis_async.from_url(settings.redis_url, decode_responses=True)
+            user_id_raw = await r.get(f"tg_bind:{ident.upper()}")
+            await r.aclose()
+        except Exception as e:  # noqa: BLE001
+            log.warning("bind code Redis lookup failed: %s", e)
+            user_id_raw = None
+        if user_id_raw:
+            try:
+                user_id = int(user_id_raw)
+            except (TypeError, ValueError):
+                user_id = None
+            if user_id:
+                async with task_session_scope() as session:
+                    user = await session.get(User, user_id)
+                    if user and user.is_active:
+                        user.tg_chat_id = str(chat_id)
+                        await session.commit()
+                        # Чистим использованный код
+                        try:
+                            r = redis_async.from_url(settings.redis_url, decode_responses=True)
+                            await r.delete(f"tg_bind:{ident.upper()}")
+                            await r.aclose()
+                        except Exception:  # noqa: BLE001
+                            pass
+                        return (
+                            f"✅ Привязано: <b>{user.full_name or user.username}</b> "
+                            f"({user.role}, тенант #{user.tenant_id}).\n\n"
+                            f"Теперь вы получаете broadcast-уведомления."
+                        )
+
+    # 2. `<slug>/<username>` форма
+    if "/" in ident:
+        slug, _, uname = ident.partition("/")
+        slug, uname = slug.strip(), uname.strip()
+        async with task_session_scope() as session:
+            tenant = (
+                await session.execute(
+                    select(Tenant).where(Tenant.slug == slug)
+                )
+            ).scalar_one_or_none()
+            if not tenant:
+                return f"🚫 Тенант <b>{slug}</b> не найден."
+            user = (
+                await session.execute(
+                    select(User).where(
+                        User.tenant_id == tenant.id,
+                        User.username == uname,
+                        User.is_active.is_(True),
+                    )
+                )
+            ).scalar_one_or_none()
+            if not user:
+                return f"🚫 Пользователь <b>{uname}</b> в тенанте <b>{slug}</b> не найден."
+            user.tg_chat_id = str(chat_id)
+            await session.commit()
             return (
-                f"🚫 Пользователь <b>{username}</b> не найден или заблокирован.\n"
-                f"Проверьте username — это тот же что вы используете для входа в РНП."
+                f"✅ Привязано: <b>{user.full_name or user.username}</b> "
+                f"({user.role}, {slug})."
             )
+
+    # 3. Plain username — search across ALL tenants
+    async with task_session_scope() as session:
+        users = (
+            await session.execute(
+                select(User, Tenant.slug)
+                .join(Tenant, Tenant.id == User.tenant_id)
+                .where(
+                    User.username == ident,
+                    User.is_active.is_(True),
+                )
+                .limit(5)
+            )
+        ).all()
+        if not users:
+            return (
+                f"🚫 Пользователь <b>{ident}</b> не найден ни в одном тенанте.\n\n"
+                f"Если у вас есть код привязки из /settings — используйте его:\n"
+                f"<code>/bind &lt;6-значный-код&gt;</code>"
+            )
+        if len(users) > 1:
+            slug_list = ", ".join(slug for _, slug in users)
+            return (
+                f"⚠ Найдено несколько аккаунтов с username <b>{ident}</b> "
+                f"(в тенантах: {slug_list}).\n\n"
+                f"Используйте форму <code>/bind &lt;slug&gt;/{ident}</code>, "
+                f"либо сгенерируйте уникальный код в /settings."
+            )
+        user, slug = users[0]
         user.tg_chat_id = str(chat_id)
         await session.commit()
         return (
-            f"✅ Привязано: <b>{user.full_name or user.username}</b> ({user.role}).\n\n"
-            f"Теперь вы будете получать персональные уведомления:\n"
-            f"• Заявки на закупку от менеджеров (если вы director/head)\n"
-            f"• Заявки на правку планов\n"
-            f"• Результаты ваших заявок (если вы manager)"
+            f"✅ Привязано: <b>{user.full_name or user.username}</b> "
+            f"({user.role}, {slug}).\n\n"
+            f"Теперь вы получаете broadcast-уведомления."
         )
 
 
 async def _unbind_user(chat_id: int) -> str:
-    tid = settings.bot_tenant_id
+    """Отвязать chat_id от всех User.tg_chat_id (across tenants)."""
     async with task_session_scope() as session:
-        set_tenant(session, tid)
         users = (
             await session.execute(
-                select(User).where(
-                    User.tenant_id == tid,
-                    User.tg_chat_id == str(chat_id),
-                )
+                select(User).where(User.tg_chat_id == str(chat_id))
             )
         ).scalars().all()
         if not users:
@@ -183,23 +285,37 @@ async def _handle_command(chat_id: int, text: str) -> None:
         await send_message(chat_id, msg)
         return
 
-    # All other commands require auth
-    if not await _is_authorized(chat_id):
-        await send_message(chat_id, "🚫 Этот бот не привязан к вашему чату.")
+    # Для KPI-команд (/now /alerts /pnl) определяем тенант ИЗ привязки юзера.
+    # Multi-tenant: chat_id → user → tenant_id. Если юзер не привязан —
+    # fallback на legacy `settings.bot_tenant_id` + старая owner-проверка.
+    if cmd in ("/now", "/alerts", "/pnl"):
+        tenant_id = await _resolve_tenant_from_chat(chat_id)
+        if tenant_id is None:
+            if not await _is_authorized(chat_id):
+                await send_message(
+                    chat_id,
+                    "🚫 Чат не привязан ни к одному аккаунту РНП.\n\n"
+                    "Используйте <code>/bind &lt;username&gt;</code> или "
+                    "сгенерируйте код привязки в /settings → «Мой Telegram-чат».",
+                )
+                return
+            # Legacy fallback — единственный owner-чат тенанта
+            tenant_id = settings.bot_tenant_id
+
+        try:
+            if cmd == "/now":
+                await send_message(chat_id, await build_now(tenant_id))
+            elif cmd == "/alerts":
+                await send_message(chat_id, await build_alerts(tenant_id))
+            elif cmd == "/pnl":
+                await send_message(chat_id, await build_pnl_short(tenant_id))
+        except Exception as e:  # noqa: BLE001
+            log.exception("bot: command %s failed: %s", cmd, e)
+            await send_message(chat_id, f"⚠ Ошибка обработки команды: {type(e).__name__}")
         return
 
-    try:
-        if cmd == "/now":
-            await send_message(chat_id, await build_now())
-        elif cmd == "/alerts":
-            await send_message(chat_id, await build_alerts())
-        elif cmd == "/pnl":
-            await send_message(chat_id, await build_pnl_short())
-        else:
-            await send_message(chat_id, HELP)
-    except Exception as e:  # noqa: BLE001
-        log.exception("bot: command %s failed: %s", cmd, e)
-        await send_message(chat_id, f"⚠ Ошибка обработки команды: {type(e).__name__}")
+    # Прочие команды — fallback на /help
+    await send_message(chat_id, HELP)
 
 
 async def _poll_loop(stop_event: asyncio.Event) -> None:

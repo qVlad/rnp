@@ -674,8 +674,16 @@ export const api = {
       };
     }>(`/api/pnl/yoy${year ? `?year=${year}` : ""}`),
 
-  pnlByBrand: (months: number = 6) =>
-    request<{
+  // TASK-DEV-010: `from`/`to` (YYYY-MM-DD) — опциональные. Если оба
+  // заданы — перекрывают `months`. Snap к границам месяца на бекенде.
+  pnlByBrand: (months: number = 6, from?: string, to?: string) => {
+    const qs = new URLSearchParams();
+    qs.set("months", String(months));
+    if (from && to) {
+      qs.set("date_from", from);
+      qs.set("date_to", to);
+    }
+    return request<{
       scope: "company" | "brands";
       months: string[];
       from: string;
@@ -693,7 +701,8 @@ export const api = {
         total_profit: number;
         total_margin_pct: number;
       }>;
-    }>(`/api/pnl/by-brand?months=${months}`),
+    }>(`/api/pnl/by-brand?${qs.toString()}`);
+  },
 
   pnlTimeseries: (days: number = 30) =>
     request<{
@@ -1317,6 +1326,11 @@ paymentOrderDelete: (payment_order_id: string) =>
       "/api/settings/telegram/me",
       { method: "PUT", body: JSON.stringify({ chat_id }) },
     ),
+  myTgGenBindCode: () =>
+    request<{ code: string; expires_in_sec: number }>(
+      "/api/settings/telegram/me/bind-code",
+      { method: "POST" },
+    ),
 
   // ── Calculator reference ──
   calcCategories: () =>
@@ -1864,6 +1878,18 @@ paymentOrderDelete: (payment_order_id: string) =>
 
   dashboardTodayVsYesterday: (mode: "preliminary" | "final" | "hybrid" = "preliminary") =>
     request(`/api/dashboard/today-vs-yesterday?mode=${mode}`),
+
+  // TASK-DEV-012: фид «что изменилось с прошлой недели». Кеш Redis 1ч на бекенде.
+  dashboardWeeklyChanges: () =>
+    request<{
+      items: Array<{
+        kind: "brand_revenue" | "drr_spike" | "plan_slip";
+        severity: "info" | "warning" | "danger";
+        text: string;
+        link?: string;
+      }>;
+      cached: boolean;
+    }>(`/api/dashboard/weekly-changes`),
 
   // ── View presets (saved layouts) ──
   viewPresetsList: (scope: string) =>

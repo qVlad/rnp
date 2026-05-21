@@ -35,7 +35,9 @@ class Tenant(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
-    # WB-токен per-tenant. TODO: зашифровать Fernet'ом.
+    # WB-токен per-tenant. Хранится с `enc:` префиксом (Fernet AES-128-CBC).
+    # См. `services/secrets_crypto.encrypt/decrypt`. На startup'е лифспана
+    # `migrate_plaintext_tokens()` зашифровывает оставшиеся legacy-plaintext.
     wb_token: Mapped[str | None] = mapped_column(Text)
     # Когда последний раз убедились, что токен валиден (WB вернул 200 на ping).
     wb_token_validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

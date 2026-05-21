@@ -47,10 +47,10 @@ def _arrow(change: float | None) -> str:
 # ────────────────────────────────────────────────────────────────────────────
 
 
-async def build_now() -> str:
-    """KPIs for today + week + month."""
+async def build_now(tenant_id: int | None = None) -> str:
+    """KPIs for today + week + month. Multi-tenant: передавай tenant_id явно."""
     async with task_session_scope() as session:
-        set_tenant(session, _cfg.bot_tenant_id)
+        set_tenant(session, tenant_id if tenant_id is not None else _cfg.bot_tenant_id)
         day = await compute_dashboard(session, "day")
         week = await compute_dashboard(session, "week")
         month = await compute_dashboard(session, "month")
@@ -79,9 +79,9 @@ async def build_now() -> str:
     )
 
 
-async def build_alerts() -> str:
+async def build_alerts(tenant_id: int | None = None) -> str:
     async with task_session_scope() as session:
-        set_tenant(session, _cfg.bot_tenant_id)
+        set_tenant(session, tenant_id if tenant_id is not None else _cfg.bot_tenant_id)
         alerts = await collect_alerts(session)
 
     if not alerts:
@@ -103,13 +103,13 @@ async def build_alerts() -> str:
     return "\n".join(lines)
 
 
-async def build_pnl_short() -> str:
+async def build_pnl_short(tenant_id: int | None = None) -> str:
     today = date.today()
     week_start = today - timedelta(days=6)
     month_start = today.replace(day=1)
 
     async with task_session_scope() as session:
-        set_tenant(session, _cfg.bot_tenant_id)
+        set_tenant(session, tenant_id if tenant_id is not None else _cfg.bot_tenant_id)
         week_pnl = await build_pnl(
             session, date_from=week_start, date_to=today, granularity="week"
         )
@@ -141,7 +141,7 @@ async def build_daily_digest() -> str:
     yesterday = today - timedelta(days=1)
 
     async with task_session_scope() as session:
-        set_tenant(session, _cfg.bot_tenant_id)
+        set_tenant(session, tenant_id if tenant_id is not None else _cfg.bot_tenant_id)
         day = await compute_dashboard(session, "day")
         week = await compute_dashboard(session, "week")
         alerts = await collect_alerts(session)
