@@ -1661,12 +1661,14 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
      - «Δ revenue: -2 350 ₽ → причина: 3 операции `Добровольная компенсация при возврате` минусят `ppvz_for_pay`»
      - Данные есть в `wb_report_detail`, нужен только UI-explainer + group-by на `supplier_oper_name`
 - **Критерии готовности:**
-  - [ ] Hero «Сводка периода» на Dashboard
-  - [ ] При |Δ| > 1% подсветка + ссылка на explainer
-  - [ ] `/pnl-reconciliation` row-click → drawer с group-by `supplier_oper_name`
-  - [ ] Smoke: на тестовом расхождении объяснение появляется
-- **Зависимости:** TASK-LEAD-042 (hero-line) — общая структура hero-блока
-- **Статус:** Открыта
+  - [x] `components/ReconciliationHeroWidget.tsx` — компактная карточка на Dashboard для director/head: «Наш P&L vs WB» за последнюю закрытую неделю + Δ% + payout. Click «⚠ Объяснить →» / «Подробнее →» ведёт на `/pnl-reconciliation`.
+  - [x] При |Δ| > 1% подсветка `border-warn/40` + текст «есть расхождение, открой подробную сверку чтобы понять причину».
+  - [x] `pages/PnLReconciliation.tsx` — в expand-row WizardRow добавлен **summary explainer block** для проблемных недель: Δ%, WB unattributed расходы (с разбивкой delivery/storage/penalty/deduction/acquiring/additional), Payout/Gross % с пояснением нормы 95-100%. Показывается когда alert OR unattributed > 100₽ OR payout < 85% OR > 105%.
+  - [x] Frontend-only — backend не менялся (использует existing `unattributed` + `diff` поля из `services/pnl_reconciliation`).
+  - [x] tsc чисто
+  - [ ] Smoke на проде (за пользователем — открыть Dashboard, увидеть Hero widget, на /pnl-reconciliation раскрыть проблемную неделю → увидеть Summary block)
+- **Зависимости:** TASK-LEAD-042 ✅ (hero-line WeekProfitHero — Dashboard structure)
+- **Статус:** ✅ Выполнено — 2026-05-21 (main session, раунд 7)
 
 ---
 

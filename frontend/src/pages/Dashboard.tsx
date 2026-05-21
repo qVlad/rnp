@@ -35,6 +35,7 @@ import DashboardCompareView from "@/components/DashboardCompareView";
 import TodayVsYesterdayStrip from "@/components/TodayVsYesterdayStrip";
 import WeekProfitHero from "@/components/WeekProfitHero";
 import WeeklyChangesFeed from "@/components/WeeklyChangesFeed";
+import ReconciliationHeroWidget from "@/components/ReconciliationHeroWidget";
 import { usePeriod } from "@/contexts/PeriodContext";
 import { useReportingMode } from "@/contexts/ReportingModeContext";
 import ViewPresetsBar from "@/components/ViewPresetsBar";
@@ -200,6 +201,10 @@ export default function Dashboard() {
     <div className="flex flex-col gap-4" ref={dashboardRef}>
       <AlertsBar alerts={alertsQ.data?.alerts ?? []} />
       <WeekProfitHero />
+      {/* TASK-LEAD-043 — Cross-source widget виден всем кто может видеть сверку */}
+      {(user?.role === "director" || user?.role === "head_of_sales") && (
+        <ReconciliationHeroWidget />
+      )}
       {user?.role === "manager" && <ManagerPlanProgressCard />}
       {user?.role === "director" && (
         <div className="flex items-center gap-2 -mb-1">

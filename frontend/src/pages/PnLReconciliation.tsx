@@ -318,9 +318,100 @@ function WizardRow({ p, fees }: { p: any; fees: number }) {
       note: "Сумма ppvz_for_pay net (Продажа − Возврат) — то что WB реально перечисляет селлеру.",
     },
   ];
+  // TASK-LEAD-043 — Explainer: если есть alert или unattributed > 0, показываем
+  // summary блок что именно расходится. Не заменяет WizardRow ниже — дополняет.
+  const hasAlert = p.diff?.alert;
+  const unattributed = p.unattributed;
+  const unattributedTotal = unattributed?.total ?? 0;
+  const payoutToGrossPct = p.diff?.payout_to_gross_pct;
+  const showExplainer =
+    hasAlert ||
+    unattributedTotal > 100 ||
+    (payoutToGrossPct != null && (payoutToGrossPct < 85 || payoutToGrossPct > 105));
+
   return (
     <tr className="bg-bg/50 border-t border-border">
       <td colSpan={13} className="p-4">
+        {/* TASK-LEAD-043 — Summary explainer для проблемных недель */}
+        {showExplainer && (
+          <div className="card mb-4 border border-warn/40">
+            <div className="font-medium mb-2">⚠ Что не сходится за эту неделю</div>
+            <div className="grid md:grid-cols-3 gap-3 text-sm">
+              {hasAlert && (
+                <div>
+                  <div className="text-xs text-muted uppercase">Δ revenue gross</div>
+                  <div className="text-lg font-mono font-semibold text-danger mt-1">
+                    {p.diff.revenue_gross_pct >= 0 ? "+" : ""}
+                    {p.diff.revenue_gross_pct.toFixed(2)}%
+                  </div>
+                  <div className="text-xs text-muted">
+                    {p.diff.revenue_gross_abs >= 0 ? "+" : ""}
+                    {fmtRub(p.diff.revenue_gross_abs)} абс. (WB − Наша)
+                  </div>
+                </div>
+              )}
+              {unattributedTotal > 100 && (
+                <div>
+                  <div className="text-xs text-muted uppercase">
+                    WB-расходы без SKU ({unattributed.rows_count} строк)
+                  </div>
+                  <div className="text-lg font-mono font-semibold text-warn mt-1">
+                    {fmtRub(unattributedTotal)}
+                  </div>
+                  <div className="text-xs text-muted">
+                    Платная приёмка / бонусы / корректировки на категорию.
+                    WB шлёт без nm_id — мы не учитываем в per-SKU аналитике.
+                  </div>
+                </div>
+              )}
+              {payoutToGrossPct != null && (
+                <div>
+                  <div className="text-xs text-muted uppercase">Payout / Gross</div>
+                  <div
+                    className={`text-lg font-mono font-semibold mt-1 ${
+                      payoutToGrossPct >= 95 && payoutToGrossPct <= 105
+                        ? "text-success"
+                        : payoutToGrossPct < 85
+                          ? "text-danger"
+                          : "text-warn"
+                    }`}
+                  >
+                    {payoutToGrossPct.toFixed(1)}%
+                  </div>
+                  <div className="text-xs text-muted">
+                    Норма 95-100%. &lt; 90% — WB активно «жмёт» удержаниями;
+                    &gt; 105% — WB доплачивает за прошлые периоды.
+                  </div>
+                </div>
+              )}
+            </div>
+            {unattributedTotal > 100 && (
+              <div className="mt-3 text-xs">
+                <span className="text-muted uppercase">Разбивка WB-расходов без SKU:</span>
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-2 mt-1 font-mono">
+                  {unattributed.delivery > 0 && (
+                    <div>Логистика: {fmtRub(unattributed.delivery)}</div>
+                  )}
+                  {unattributed.storage > 0 && (
+                    <div>Хранение: {fmtRub(unattributed.storage)}</div>
+                  )}
+                  {unattributed.penalty > 0 && (
+                    <div>Штрафы: {fmtRub(unattributed.penalty)}</div>
+                  )}
+                  {unattributed.deduction > 0 && (
+                    <div>Удержания: {fmtRub(unattributed.deduction)}</div>
+                  )}
+                  {unattributed.acquiring > 0 && (
+                    <div>Эквайринг: {fmtRub(unattributed.acquiring)}</div>
+                  )}
+                  {unattributed.additional > 0 && (
+                    <div>Доплаты: −{fmtRub(unattributed.additional)}</div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         <div className="grid lg:grid-cols-[1fr_1fr] gap-6">
           {/* Левая колонка: инструкция сверки */}
           <div className="text-sm flex flex-col gap-3">
