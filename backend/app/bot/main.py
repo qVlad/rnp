@@ -237,22 +237,47 @@ async def _handle_command(chat_id: int, text: str) -> None:
     args = text.split()[1:]
 
     if cmd in ("/start", "/help"):
+        # Multi-tenant welcome (v0.17+): любой чат может зайти и привязаться
+        # через /bind. Legacy `AppSetting.tg_chat_id` ставим один раз — для
+        # backward-compat с ежедневной сводкой 09:00 (если AppSetting пуст).
+        # Никаких блокировок «Бот занят» больше нет.
         saved = await _read_setting("tg_chat_id")
-        if not saved:
+        is_first_owner = not saved
+        if is_first_owner:
             await _save_setting("tg_chat_id", str(chat_id))
+
+        # Проверим привязки этого чата к User-аккаунтам (multi-tenant)
+        tenant_id = await _resolve_tenant_from_chat(chat_id)
+
+        if tenant_id is not None:
             await send_message(
                 chat_id,
-                "✅ <b>Готово!</b> Этот чат привязан к РНП.\n\n"
-                "Теперь вы будете получать ежедневные сводки в 09:00 МСК.\n\n"
+                f"✅ Чат привязан к РНП.\n\n"
+                f"Tenant ID: {tenant_id} (через User.tg_chat_id).\n\n"
                 + HELP,
             )
-        elif saved == str(chat_id):
-            await send_message(chat_id, "Этот чат уже привязан.\n\n" + HELP)
+        elif is_first_owner:
+            await send_message(
+                chat_id,
+                "✅ <b>Привет!</b> Этот чат теперь получает ежедневную сводку "
+                "по умолчанию (legacy fallback).\n\n"
+                "Для <b>персональных уведомлений</b> (заявки на закупку, "
+                "правки планов) привяжите свой РНП-аккаунт:\n"
+                "1. В /settings → «Мой Telegram-чат» → «🔑 Сгенерировать код»\n"
+                "2. Сюда напишите <code>/bind &lt;код&gt;</code>\n\n"
+                + HELP,
+            )
         else:
             await send_message(
                 chat_id,
-                "🚫 Бот уже привязан к другому чату. "
-                "Если это ваш бот — отправьте /resetowner с привязанного чата.",
+                "👋 <b>Привет!</b> Этот чат пока не привязан ни к одному "
+                "аккаунту РНП.\n\n"
+                "<b>Чтобы получать персональные уведомления:</b>\n"
+                "1. Зайдите в /settings → «Мой Telegram-чат»\n"
+                "2. Нажмите «🔑 Сгенерировать код привязки»\n"
+                "3. Сюда напишите <code>/bind &lt;код&gt;</code>\n\n"
+                "Альтернатива — <code>/bind &lt;ваш-username-в-РНП&gt;</code>.\n\n"
+                + HELP,
             )
         return
 
