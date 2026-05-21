@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-LEAD-030",
-  "agent": "Claude Opus 4.7 — main session",
-  "started_at": "2026-05-21T14:05:09Z",
-  "expected_minutes": 240,
-  "notes": "OPEX many-to-many: backend полностью (migration+model+service+pnl_builder+cash_flow+api+tests+docs+deploy), UI отложен в отдельный TASK"
-}
