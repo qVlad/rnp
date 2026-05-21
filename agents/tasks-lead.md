@@ -2026,10 +2026,13 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   2. Backend endpoint `GET /api/dashboard/kpi-breakdown?metric=logistics_wb&period=...` — возвращает компоненты
   3. Использовать existing `MetricDrilldownModal` или новый light-popover
 - **Критерии готовности:**
-  - [ ] Backend `/api/dashboard/kpi-breakdown`
-  - [ ] Frontend: 5 KPI кликабельны → popup
+  - [x] Backend `services/kpi_breakdown.py` + endpoint `GET /api/dashboard/kpi-breakdown?metric=X&period=...&limit=10`
+  - [x] Frontend: 5 KPI кликабельны (commission_wb / logistics_wb / storage_wb / deduction / penalty) → popup с top-10 SKU + % от итого
+  - [x] `MetricBreakdownPopup.tsx` (modal с ESC handler + click-outside-close)
+  - [x] `KpiCard.tsx` расширен опциональным prop `onBreakdown` (если key в BREAKDOWN_KEYS и onBreakdown задан — приоритет над onDrillDown)
+  - [x] Python AST + tsc чисто
 - **Зависимости:** нет
-- **Статус:** Открыта
+- **Статус:** ✅ Выполнено — 2026-05-21 (main session, раунд 6)
 
 ---
 

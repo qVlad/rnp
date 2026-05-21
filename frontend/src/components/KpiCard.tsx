@@ -46,19 +46,33 @@ export default function KpiCard({
   kpi,
   variant = "default",
   onDrillDown,
+  onBreakdown,
   composition,
   compositionTotal,
 }: {
   kpi: Kpi;
   variant?: Variant;
   onDrillDown?: (metric: "revenue" | "orders" | "ad_cost" | "profit") => void;
+  // TASK-LEAD-055 — breakdown popup для KPI без своего drill (commission/
+  // logistics/storage/deduction/penalty). Если задан и key в BREAKDOWN_METRICS
+  // (см. MetricBreakdownPopup), клик открывает popup вместо drill.
+  onBreakdown?: (key: string) => void;
   /** Опциональная композиция — стэкнутая полоска с %. Показывается под
    * change-pct строкой. Использовать только на hero-варианте (места мало). */
   composition?: CompositionSegment[];
   compositionTotal?: number;
 }) {
   const drillMetric = DRILLDOWN_METRIC[kpi.key];
-  const isClickable = !!drillMetric && !!onDrillDown;
+  // KPI с breakdown'ом (расшифровка по SKU): commission/logistics/storage/...
+  const BREAKDOWN_KEYS = new Set([
+    "logistics_wb",
+    "storage_wb",
+    "commission_wb",
+    "deduction",
+    "penalty",
+  ]);
+  const hasBreakdown = BREAKDOWN_KEYS.has(kpi.key) && !!onBreakdown;
+  const isClickable = (!!drillMetric && !!onDrillDown) || hasBreakdown;
   const positive = (kpi.change_pct ?? 0) >= 0;
   const lowerIsBetter = LOWER_IS_BETTER.has(kpi.key);
   const changeColor =
@@ -90,8 +104,24 @@ export default function KpiCard({
           ? "cursor-pointer hover:border-accent/60 hover:bg-surface-2/40 transition-colors"
           : ""
       }`}
-      onClick={isClickable ? () => onDrillDown!(drillMetric!) : undefined}
-      title={isClickable ? "Открыть график за период" : undefined}
+      onClick={
+        isClickable
+          ? () => {
+              if (hasBreakdown && onBreakdown) {
+                onBreakdown(kpi.key);
+              } else if (drillMetric && onDrillDown) {
+                onDrillDown(drillMetric);
+              }
+            }
+          : undefined
+      }
+      title={
+        hasBreakdown
+          ? "Разбивка по SKU — куда уходят деньги"
+          : isClickable
+            ? "Открыть график за период"
+            : undefined
+      }
     >
       <div className="text-tiny text-muted uppercase tracking-wide flex items-center gap-1">
         <span className="truncate">{kpi.label}</span>

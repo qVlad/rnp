@@ -14,6 +14,9 @@ import KpiCard from "@/components/KpiCard";
 import MetricDrilldownModal, {
   type MetricKey,
 } from "@/components/MetricDrilldownModal";
+import MetricBreakdownPopup, {
+  type BreakdownMetric,
+} from "@/components/MetricBreakdownPopup";
 import { type CompositionSegment } from "@/components/CompositionBar";
 import AlertsBar from "@/components/AlertsBar";
 import ManagerPlanProgressCard from "@/components/ManagerPlanProgressCard";
@@ -371,7 +374,7 @@ export default function Dashboard() {
 
       {dashQ.isLoading && <div className="text-muted">Загрузка…</div>}
       {dashQ.data && !compareOpen && (
-        <DashboardKpiGrid kpis={dashQ.data.kpis} mode={dataMode} />
+        <DashboardKpiGrid kpis={dashQ.data.kpis} mode={dataMode} range={range} />
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
@@ -559,9 +562,14 @@ const HERO_KEYS = new Set([
 function DashboardKpiGrid({
   kpis,
   mode,
+  range,
 }: {
   kpis: any[];
   mode: "preliminary" | "final" | "hybrid";
+  // TASK-LEAD-055 — range нужен для breakdown popup (период тот же что у dashboard).
+  range:
+    | { period: "day" | "week" | "month" }
+    | { start: string; end: string };
 }) {
   const { isHidden } = useColumnVisibility("dashboard.kpi.hidden.v1");
   const columns = kpis.map((k) => ({ key: k.key, label: k.label || k.key }));
@@ -569,8 +577,11 @@ function DashboardKpiGrid({
   const heroes = visible.filter((k) => HERO_KEYS.has(k.key));
   const rest = visible.filter((k) => !HERO_KEYS.has(k.key));
   const [drillMetric, setDrillMetric] = useState<MetricKey | null>(null);
+  const [breakdownMetric, setBreakdownMetric] = useState<BreakdownMetric | null>(null);
   const handleDrill = (m: "revenue" | "orders" | "ad_cost" | "profit") =>
     setDrillMetric(m);
+  const handleBreakdown = (key: string) =>
+    setBreakdownMetric(key as BreakdownMetric);
 
   // Composition data — ищем KPI по ключу и собираем сегменты для hero-карточек.
   // Нули/нулевые сегменты CompositionBar отфильтрует сам.
@@ -709,6 +720,7 @@ function DashboardKpiGrid({
                 kpi={k}
                 variant="hero"
                 onDrillDown={handleDrill}
+                onBreakdown={handleBreakdown}
                 composition={comp?.segments}
                 compositionTotal={comp?.total}
               />
@@ -724,6 +736,7 @@ function DashboardKpiGrid({
               kpi={k}
               variant="compact"
               onDrillDown={handleDrill}
+              onBreakdown={handleBreakdown}
             />
           ))}
         </div>
@@ -735,6 +748,12 @@ function DashboardKpiGrid({
           onClose={() => setDrillMetric(null)}
         />
       )}
+      <MetricBreakdownPopup
+        open={!!breakdownMetric}
+        metric={breakdownMetric}
+        range={range}
+        onClose={() => setBreakdownMetric(null)}
+      />
     </div>
   );
 }

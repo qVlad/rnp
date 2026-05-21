@@ -22,6 +22,11 @@ from app.services.auth import (
     get_db_tenant_scoped,
 )
 from app.services.anomaly import collect_alerts
+from app.services.kpi_breakdown import (
+    METRIC_LABELS,
+    BreakdownMetric,
+    compute_kpi_breakdown,
+)
 from app.services.metrics import compute_dashboard, revenue_timeseries, top_skus
 from app.services.periods import Period, get_period, period_from_range
 from app.services.weekly_changes import build_weekly_changes
@@ -102,6 +107,48 @@ async def get_top_skus(
         "items": await top_skus(
             session, p, by=by, limit=limit, brands=brands, mode=mode, order=order,
         ),
+    }
+
+
+@router.get("/kpi-breakdown")
+async def get_kpi_breakdown(
+    metric: Literal[
+        "logistics_wb", "storage_wb", "commission_wb", "deduction", "penalty"
+    ],
+    period: Literal["day", "week", "month"] = "week",
+    start_date: Annotated[date | None, Query()] = None,
+    end_date: Annotated[date | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 10,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
+) -> dict:
+    """TASK-LEAD-055 — Top-N SKU breakdown для KPI с большой суммой удержаний.
+
+    При клике на KPI (commission_wb / logistics_wb / storage_wb / deduction /
+    penalty) в Dashboard — открывается popup с расшифровкой «куда уходят деньги».
+    """
+    p = _resolve_period(period, start_date, end_date)
+    result = await compute_kpi_breakdown(
+        session, p, metric=metric, brands=brands, limit=limit
+    )
+    return {
+        "metric": result.metric,
+        "label": METRIC_LABELS.get(result.metric, result.metric),
+        "period_from": result.period_from,
+        "period_to": result.period_to,
+        "total": float(result.total),
+        "items": [
+            {
+                "nm_id": r.nm_id,
+                "vendor_code": r.vendor_code,
+                "subject": r.subject,
+                "brand": r.brand,
+                "value": float(r.value),
+                "pct_of_total": r.pct_of_total,
+            }
+            for r in result.items
+        ],
+        "truncated": result.truncated,
     }
 
 
