@@ -16,9 +16,9 @@ Lead использует этот файл как master-view: сюда скл�
 
 ## 🎯 Active Sprint — Параллельная координация (2026-05-21)
 
-> **В работе прямо сейчас (main session):**
-> - **TASK-LEAD-046** (QUICKSTART_BOOKKEEPER.md)
-> - **TASK-LEAD-039 Lead-спека** (Multi-cabinet)
+> **В работе сейчас (раунд 3 — 2026-05-21 evening):**
+> - **TASK-LEAD-048** (Multi-cabinet Фаза B backend) — sub-agent C, worktree, background
+> - **TASK-UI-005 продолжение** (Dashboard.tsx + Units.tsx) — main session
 >
 > **Завершено в этой сессии 2026-05-21 (раунд 2):**
 > - ✅ **TASK-LEAD-040 frontend** (Layout bookkeeper visibility, whitelist через `bookkeeperOk`) — main, commit `808e28e`
@@ -1786,6 +1786,33 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
     увидеть OPEX долю **(ждёт ручного smoke'а пользователя на dev/prod)**
 - **Зависимости:** TASK-LEAD-030 backend закрыт и задеплоен, Δ=0₽ smoke пройден
 - **Статус:** В работе — 2026-05-21 — Developer + Design Engineer (Claude Opus 4.7)
+
+---
+
+### TASK-LEAD-048: Multi-cabinet Фаза B — backend (migration + middleware + endpoints)
+
+- **Исполнитель:** Sub-agent C → Developer (worktree, background)
+- **Приоритет:** P0 (continuation TASK-LEAD-039 главная боль)
+- **Оценка:** L (~5 дней работы агента) — миграция + middleware + 2 endpoints + 5 unit-тестов
+- **Источник:** `agents/references/spec-multi-cabinet-039.md` (Lead-спека готова в commit `f8000f8`)
+- **Описание:** Backend часть multi-cabinet workspace по полной спеке:
+  1. Миграция `0056_user_tenant_access` (M:N user↔tenant + backfill)
+  2. ORM `UserTenantAccess` + relationship на `User`
+  3. Middleware `services/active_tenant.py` — резолв `request.state.active_tenant_id` (cookie → header → fallback)
+  4. SQLAlchemy event listener подмена источника tenant_id
+  5. API `POST /api/auth/switch-tenant` + `GET /api/auth/available-tenants`
+  6. Audit-log `tenant.switch` event
+  7. Тесты `test_multi_cabinet.py` (5 кейсов)
+  8. CLAUDE.md обновить — новая миграция 0056 в таблице, секция «Multi-cabinet»
+  9. FEATURES.md § 15 расширить
+- **Критерии готовности:**
+  - [ ] Миграция 0056 применима без потери данных (backfill из existing users)
+  - [ ] Один тестовый user привязан к 2 tenant'ам через CLI или прямой INSERT, switch работает
+  - [ ] Test `test_multi_cabinet.py` зелёные
+  - [ ] `python3 -c "import ast; ast.parse(...)"` на 5 затронутых .py файлах OK
+  - [ ] Frontend часть НЕ трогать (Фаза C — main session отдельно)
+- **Зависимости:** TASK-LEAD-039 спека ✅ (commit `f8000f8`)
+- **Статус:** Открыта (sub-agent C старт 2026-05-21)
 
 ---
 
