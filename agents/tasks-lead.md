@@ -17,14 +17,18 @@ Lead использует этот файл как master-view: сюда скл�
 ## 🎯 Active Sprint — Параллельная координация (2026-05-21)
 
 > **В работе прямо сейчас:**
-> - **TASK-LEAD-030** (OPEX m2m) — другая Claude-сессия в другом окне
-> - **TASK-LEAD-040 backend** (Role bookkeeper) — sub-agent A (worktree, background)
 > - **TASK-UI-005** (PeriodContext) — main session (Claude), следующий
 >
 > **Завершено в этой сессии 2026-05-21:**
+> - ✅ **TASK-LEAD-030 backend** (OPEX many-to-many) — параллельная сессия, commit `34bf27a` (v0.20.0)
+> - ✅ **TASK-LEAD-040 backend** (Role bookkeeper + RBAC guards + 17 unit-тестов) — sub-agent A, merged commit `0399c10`
 > - ✅ **TASK-LEAD-042** (default hybrid + WeekProfitHero) — main session, commit `2f7eda9`
 > - ✅ **TASK-LEAD-044** (README.md routing) — sub-agent B, merged commit `44df061`
 > - ✅ **TASK-LEAD-045** (QUICKSTART_OWNER.md) — sub-agent B, merged commit `44df061`
+>
+> **Открытые follow-up'ы:**
+> - **TASK-LEAD-040 frontend** — Layout.tsx visibility для bookkeeper (по дизайну sub-agent A оставил для main session)
+> - **TASK-LEAD-046** (QUICKSTART_BOOKKEEPER.md) — разблокирована (зависела от 040)
 
 
 > Цель: «удобство работы для собственных кабинетов» (internal tool, не SaaS).
