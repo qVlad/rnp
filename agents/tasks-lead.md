@@ -50,9 +50,9 @@ Lead использует этот файл как master-view: сюда скл�
 4. **TASK-LEAD-039** frontend — Cabinet switcher UI (1 нед)
 
 ### Поток D — Документация (любая роль, изолировано)
-1. **TASK-LEAD-044** — `README.md` в корне с navigation (1ч)
-2. **TASK-LEAD-045** — `QUICKSTART_OWNER.md` (2-3ч)
-3. **TASK-LEAD-046** — `QUICKSTART_BOOKKEEPER.md` (после TASK-LEAD-040, 2-3ч)
+1. ~~**TASK-LEAD-044** — `README.md` в корне с navigation (1ч)~~ ✅ Выполнено 2026-05-21 (Product Strategist)
+2. ~~**TASK-LEAD-045** — `QUICKSTART_OWNER.md` (2-3ч)~~ ✅ Выполнено 2026-05-21 (Product Strategist)
+3. **TASK-LEAD-046** — `QUICKSTART_BOOKKEEPER.md` (после TASK-LEAD-040, 2-3ч) — заблокирована TASK-LEAD-040
 
 ### Матрица параллельности (claim'ы обязательны на горячих файлах)
 
@@ -1552,49 +1552,38 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 
 ### TASK-LEAD-044: README.md в корне с навигацией «вы кто → читайте это»
 
-- **Исполнитель:** Design Engineer (минимальный текст) или Product Strategist
+- **Исполнитель:** Product Strategist
 - **Приоритет:** P1 (точка входа для новых пользователей команды + AI-сессий)
 - **Оценка:** XS (~1ч)
 - **Источник:** UX-Validator seller report 2026-05-21 + аудит документации
-- **Описание:** В корне репо сейчас нет `README.md`. Новый пользователь не знает с чего начать. AI-сессия идёт через `CONTINUE_HERE.md` → `CLAUDE.md`. Создать односекционный README со схемой:
-  - «Вы кто?» (3-5 ссылок на role-guides)
-  - «Вы AI?» → CONTINUE_HERE.md
-  - «Вы разработчик?» → CLAUDE.md
-  - Короткое описание проекта (3-5 строк) — internal tool, не SaaS
+- **Описание:** В корне репо был старый `README.md` (quickstart-стиль с docker compose + bootstrap пользователя), он перекрывался с `OPERATIONS.md` / `ADMIN_GUIDE.md` и не содержал routing'а по ролям. Переписан целиком — теперь только routing «вы кто → читайте это», без дублирования CLAUDE.md / OPERATIONS.md. Описание проекта 5 строк (internal tool, multi-tenant ready, 2-3 кабинета в проде, Δ 0 ₽ сверка).
 - **Критерии готовности:**
-  - [ ] `README.md` в корне репо
-  - [ ] Содержит навигацию по 5 ролям (собственник, manager, head_of_sales, bookkeeper когда появится, разработчик/AI)
-  - [ ] Ссылки на `OWNER_GUIDE.md`, `MANAGER_GUIDE.md`, `ADMIN_GUIDE.md`, `CLAUDE.md`, `CONTINUE_HERE.md`
-  - [ ] 3-5 строк «что это» (internal tool, WB-аналитика, single-tenant + multi-cabinet ready)
-  - [ ] Не дублирует CLAUDE.md — просто routing
+  - [x] `README.md` в корне репо (переписан, ~70 строк routing'а)
+  - [x] Содержит навигацию по 5 ролям (собственник, manager, head_of_sales, bookkeeper-как-director-пока, разработчик/AI)
+  - [x] Ссылки на `OWNER_GUIDE.md`, `MANAGER_GUIDE.md`, `ADMIN_GUIDE.md`, `CLAUDE.md`, `CONTINUE_HERE.md`, `FEATURES.md`, `OPERATIONS.md`, `DEPLOY.md`, `WB_API_REFERENCE.md`, `ROADMAP.md`, `UNIT_PLAN.md`, `TAX_AUSN_BANK.md`, `TAX_USN_BANK.md`, `TAX_BOOKKEEPER_OVERRIDES.md`, `DESIGN_SYSTEM.md`, `QUICKSTART_OWNER.md`, `agents/README.md`, `agents/RULES.md`
+  - [x] 5 строк «что это» — internal tool, не SaaS, multi-tenant ready, 2-3 кабинета в проде
+  - [x] Не дублирует CLAUDE.md — только routing + ссылка на CLAUDE.md § Стек
 - **Зависимости:** нет
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-21 — Product Strategist
 
 ---
 
 ### TASK-LEAD-045: QUICKSTART_OWNER.md — первый день собственника
 
-- **Исполнитель:** Product Strategist (контент) + Design Engineer (если нужны ASCII-схемы)
+- **Исполнитель:** Product Strategist
 - **Приоритет:** P2
 - **Оценка:** S (2-3ч)
 - **Источник:** UX-Validator seller report 2026-05-21 — OWNER_GUIDE начинается с daily-snapshot, пропускает onboarding
-- **Описание:** Между signup и первым осмысленным P&L у нового собственника — пропасть. Нужен пошаговый «первый день»:
-  1. Подключить WB-токен (откуда взять, инструкция-скрин)
-  2. Дождаться первого sync (~30 мин на 90 дней истории)
-  3. Загрузить COGS — Excel-шаблон + инструкция
-  4. Открыть Dashboard — что смотреть в первые 3 минуты
-  5. Открыть P&L — что должны увидеть, что насторожить
-  6. (опц.) Привязать Telegram — `/start` → bind
-  7. Что делать **не** нужно (anti-patterns: ручное редактирование .env, очистка cooldown'ов)
+- **Описание:** Между signup и первым осмысленным P&L у нового собственника — пропасть. Сделан пошаговый «первый день» (6 шагов + anti-patterns) с акцентом на «зачем + как + что увидеть» в каждом шаге. Включает: WB-токен на `/settings` → ожидание sync'а через индикатор в сайдбаре → COGS через `/cost-history` Excel-импорт → дашборд за вчера → сверка с WB на `/pnl-reconciliation` за закрытую неделю → опциональный Telegram. Anti-patterns ссылается на CLAUDE.md § Подводные камни.
 - **Критерии готовности:**
-  - [ ] `QUICKSTART_OWNER.md` в корне репо
-  - [ ] 6-7 пошаговых разделов
-  - [ ] Каждый шаг: «зачем + как + что увидеть»
-  - [ ] Anti-patterns секция в конце
-  - [ ] Ссылка из `OWNER_GUIDE.md` § 1 «начни здесь»
-  - [ ] Ссылка из `README.md` (после TASK-LEAD-044)
-- **Зависимости:** TASK-LEAD-044 (для ссылки из README)
-- **Статус:** Открыта
+  - [x] `QUICKSTART_OWNER.md` в корне репо (~170 строк)
+  - [x] 6 пошаговых разделов (WB-токен → sync → COGS → дашборд → сверка → Telegram)
+  - [x] Каждый шаг: «зачем + как + что увидеть» (тройная структура)
+  - [x] Anti-patterns секция в конце (6 пунктов: .env, cooldown, tax-режим, payment_orders, ручной sync, WB-токен менеджерам)
+  - [x] Ссылка из `OWNER_GUIDE.md` § 1 «начни здесь» (callout + строка в таблице навигации)
+  - [x] Ссылка из `README.md` (в блоке «Я собственник / директор»)
+- **Зависимости:** TASK-LEAD-044 (для ссылки из README) — выполнена в этой же сессии
+- **Статус:** Выполнено — 2026-05-21 — Product Strategist
 
 ---
 

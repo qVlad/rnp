@@ -1,83 +1,72 @@
-# РНП — Рука на Пульсе для Wildberries
+# РНП — внутренний инструмент аналитики Wildberries
 
-Персональный аналитический web-сервис для одного селлера WB. Подтягивает данные
-из Wildberries Seller API (продажи, заказы, остатки, реклама, отчёт о
-реализации), считает KPI «здесь и сейчас» и собирает P&L и юнит-экономику.
+Аналитика и план-факт для собственных WB-кабинетов селлера. Не SaaS-продукт —
+внутренний инструмент команды (собственник + менеджер(ы) + РОП + бухгалтер).
+Multi-tenant ready на уровне БД, в продакшене 2-3 раздельных WB-кабинета.
+Считает KPI «здесь и сейчас», P&L, юнит-экономику, налоги (АУСН/УСН ±НДС),
+сверку с ЛК WB до Δ 0 ₽ на закрытых неделях.
+
+---
+
+## Кто вы и что читать
+
+### Я собственник / директор
+
+Открой [`OWNER_GUIDE.md`](OWNER_GUIDE.md) — что смотреть утром, что в понедельник,
+что раз в месяц. Если ты новый пользователь и только что зарегистрировался —
+сначала пройди [`QUICKSTART_OWNER.md`](QUICKSTART_OWNER.md) (первый день: токен →
+sync → COGS → дашборд → сверка → Telegram).
+
+### Я менеджер WB
+
+Открой [`MANAGER_GUIDE.md`](MANAGER_GUIDE.md). Особенно § 1 «Первый вход» — что
+ты видишь (только свои бренды), что нет (OPEX/ДДС/налоги за 403).
+
+### Я РОП / head of sales
+
+Открой [`ADMIN_GUIDE.md`](ADMIN_GUIDE.md) — production-checklist, weekly-routine,
+управление менеджерами и планами.
+
+### Я бухгалтер
+
+Пока работает как `director`-доступ (отдельная роль в разработке). Читай
+[`OWNER_GUIDE.md`](OWNER_GUIDE.md) § 5.3 «Налоги» + [`TAX_AUSN_BANK.md`](TAX_AUSN_BANK.md)
+(АУСН-Доходы 8%) или [`TAX_USN_BANK.md`](TAX_USN_BANK.md) (УСН 6% ±НДС 5/7%). Для
+ручного исключения отчётов из налоговой базы — [`TAX_BOOKKEEPER_OVERRIDES.md`](TAX_BOOKKEEPER_OVERRIDES.md).
+
+### Я разработчик / AI-сессия
+
+Открой [`CLAUDE.md`](CLAUDE.md) — главная инструкция: стек, RBAC, эндпоинты,
+миграции, подводные камни. **Новая Claude-сессия начинается с**
+[`CONTINUE_HERE.md`](CONTINUE_HERE.md) — он показывает «что сделано в текущей
+сессии» и куда идти дальше. Роле-система агентов (9 ролей) и backlog задач/багов
+— [`agents/README.md`](agents/README.md) и [`agents/RULES.md`](agents/RULES.md).
+
+---
 
 ## Стек
-- Backend: Python 3.12, FastAPI, SQLAlchemy 2 (async), Alembic, Celery + Redis, httpx
-- Frontend: React 18, Vite, TypeScript, TanStack Query/Table, Recharts, Tailwind
-- БД: PostgreSQL 16
-- Деплой: Docker Compose
 
-## Структура
-```
-backend/    FastAPI + Celery
-frontend/   React SPA
-nginx/      reverse-proxy конфиг (опционально)
-docker-compose.yml
-.env.example
-```
+Python 3.12 / FastAPI / SQLAlchemy 2 async / Celery + Redis / PostgreSQL 16.
+React 18 / Vite / TypeScript / TanStack Query / recharts. Docker Compose,
+9 сервисов. Подробности — [`CLAUDE.md`](CLAUDE.md) § Стек.
 
-## Быстрый старт
+---
 
-1. **Подготовка окружения**
-   ```bash
-   cp .env.example .env
-   # отредактируйте WB_TOKEN
-   ```
+## Быстрая навигация по функционалу
 
-2. **Запуск**
-   ```bash
-   docker compose up -d --build
-   ```
-   - Бэк: http://localhost:8000/api/health
-   - UI: http://localhost:8080
+| Что нужно | Куда |
+|---|---|
+| Полный каталог функций (UI / API / сервисы / Celery) | [`FEATURES.md`](FEATURES.md) ⭐ |
+| Дашборд / P&L / Сверка с WB | [`OWNER_GUIDE.md`](OWNER_GUIDE.md) § 2-4 |
+| Налоги (АУСН / УСН / +НДС 5-7%) | [`TAX_AUSN_BANK.md`](TAX_AUSN_BANK.md), [`TAX_USN_BANK.md`](TAX_USN_BANK.md) |
+| План-Факт + UNIT-план (плановая юнит-экономика) | [`UNIT_PLAN.md`](UNIT_PLAN.md) |
+| Запуск / деплой / бэкап / restore | [`OPERATIONS.md`](OPERATIONS.md), [`DEPLOY.md`](DEPLOY.md) |
+| WB API лимиты, sunset, retry | [`WB_API_REFERENCE.md`](WB_API_REFERENCE.md) |
+| План на следующие сессии | [`ROADMAP.md`](ROADMAP.md) |
+| Дизайн-система (токены, компоненты) | [`DESIGN_SYSTEM.md`](DESIGN_SYSTEM.md) |
 
-3. **Первая синхронизация и beat**
-   Beat-расписание калибровано под **Base** WB-токен (orders/sales каждые 2-3 часа, stocks 2x/день, report_detail в 04:15 MSK ежедневно). Подробности в `WB_API_REFERENCE.md` § 3 + `sync/celery_app.py`. Для Personal-токена лимиты на порядок мягче — расписание можно ускорить.
+---
 
-4. **Bootstrap первого пользователя**
-   Открой `http://localhost:8080` — на пустой БД увидишь форму «Первый запуск», создашь admin (роль `director`). Дальше через `/users` создаёшь `head_of_sales` / `manager` и через `/brands` — назначаешь бренды менеджерам. Без назначения бренда manager увидит пустой дашборд.
+## Лицензия
 
-5. **Загрузка себестоимости**
-   На странице «Настройки» загрузите CSV в формате
-   `nmId;cost_rub;packaging_rub;fulfillment_rub`
-
-## WB API: какие категории прав на токене нужны
-- **Statistics** — orders, sales, stocks, reportDetailByPeriod (обязательно)
-- **Promotion** — рекламные кампании и статистика (обязательно)
-- **Finance** — баланс/выплаты (желательно; требует доп. соглашения в ЛК WB)
-
-## Что нужно от пользователя
-1. JWT WB-токен (создать в ЛК → Доступ к API)
-2. CSV с себестоимостью (опционально на старте)
-3. Налоговый режим и постоянные расходы — на странице «Настройки»
-4. VPS с Docker (2 vCPU / 4 GB / 40 GB)
-
-## Тесты
-```bash
-docker compose exec backend pytest
-```
-
-## Полезные команды
-```bash
-# создать новую миграцию
-docker compose exec backend alembic revision --autogenerate -m "msg"
-# применить миграции
-docker compose exec backend alembic upgrade head
-# логи воркера
-docker compose logs -f worker
-# перезапустить расписание
-docker compose restart beat
-```
-
-## Документация
-
-- [`CLAUDE.md`](CLAUDE.md) — архитектура, RBAC матрица, эндпоинты, подводные камни
-- [`OPERATIONS.md`](OPERATIONS.md) — команды (запуск, БД, бэкап, troubleshoot)
-- [`ADMIN_GUIDE.md`](ADMIN_GUIDE.md) — для администратора
-- [`MANAGER_GUIDE.md`](MANAGER_GUIDE.md) — для менеджеров команды
-- [`OWNER_GUIDE.md`](OWNER_GUIDE.md) — для собственника
-- [`WB_API_REFERENCE.md`](WB_API_REFERENCE.md) — справочник по WB API
-- [`ROADMAP.md`](ROADMAP.md) — что делать дальше
+Внутреннее использование. Не публикуется, не распространяется.
