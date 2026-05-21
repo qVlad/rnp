@@ -248,6 +248,14 @@ WB применяет penalty (расширенный cooldown) на уровн�
 
 **Response:** `List[Order]` — до ~80000 строк. Pagination: если пришло 80000 строк, делать следующий запрос с `dateFrom = max(lastChangeDate)` последней строки.
 
+**Key fields (для аналитики локализации, TASK-LEAD-052):**
+- `warehouseName` (string) — склад **отгрузки** WB. Маппится в `wb_orders.warehouse_name`.
+- `oblastOkrugName` (string) — федеральный округ покупателя (`Центральный федеральный округ` / `Приволжский` / etc.). → `wb_orders.oblast`.
+- `regionName` (string) — конкретный регион/область покупателя (`Москва`, `Татарстан`, `Беларусь` для INTL). → `wb_orders.region_name`.
+- `nmId`, `srid`, `chrtId`, `techSize`, `category`, `subject`, `brand`, `totalPrice`, `discountPercent`, `spp`, `priceWithDisc`, `finishedPrice`, `isCancel`, `cancelDate`, `isSupply`, `isRealization`.
+
+Эти поля **достаточны для расчёта % локализации** без дополнительных sync'ов. См. `services/localization.py` + `services/clusters.py` (28 крупных FBO + 78 СЦ → 7 округов РФ + INTL).
+
 **Rate limit:** 1/мин, burst 10 (Personal/Service). Реально — 1 запрос раз в 30+ мин для stability.
 
 **Notes:**

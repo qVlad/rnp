@@ -29,6 +29,7 @@ from app.api import (
     funnel,
     inventory,
     jam,
+    localization,
     managers_kpi,
     metric_templates,
     notifications,
@@ -252,6 +253,7 @@ app.include_router(abtest.router)
 app.include_router(abtest_uploads.router)
 app.include_router(extension.router)
 app.include_router(extension_lk_jobs.router)
+app.include_router(localization.router)
 app.include_router(managers_kpi.router)
 app.include_router(metric_templates.router)
 app.include_router(promo_calculator.router)

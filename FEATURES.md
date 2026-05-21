@@ -169,6 +169,7 @@
 | Фича | Описание | Путь в коде | Доступ |
 |---|---|---|---|
 | Supply страница | Velocity, days_to_stockout, рекомендация что заказать | `pages/Supply.tsx`, `services/supply_distribution.py` | brands-filter |
+| **Локализация заказов** (TASK-LEAD-052) | Страница `/localization`: % заказов отгружённых из склада в том же федеральном округе, что и регион покупателя. Низкая локализация = дальние перевозки + дорогая логистика. Источник: `wb_orders.warehouse_name/oblast/region_name` (уже синкается через `/supplier/orders`). Маппинг склад/oblast → 7 кластеров РФ + INTL в `services/clusters.py`. Hero-KPI + breakdown по кластеру/складу/бренду + Heatmap (склад × кластер покупателя) + Top-N SKU с худшей локализацией (мин. 5 заказов для статистической значимости). Cancelled orders исключены. | `pages/Localization.tsx`, `api/localization.py:GET /api/localization`, `services/localization.py:compute_localization`, меню «SKU и продажи» → «Локализация» | brands-filter |
 | Off-platform stock | Учёт остатков вне WB (свой склад) | `pages/RevenueCorrections.tsx`/`Off-platform`, `services/off_platform.py`, миграция 0009 | director, head |
 | Off-platform movements | Движения off-platform (приход/расход) | API: `/api/off-platform` | director, head |
 | WB stocks snapshot | Snapshot остатков WB 2× в день | `wb_stocks_snapshot`, beat task | — |

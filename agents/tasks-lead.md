@@ -1932,26 +1932,36 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 
 ### TASK-LEAD-052: Отчёт по локализации заказов + % локализации (P1 РОП-запрос, gap у обоих)
 
-- **Исполнитель:** Lead → Developer (backend WB API)
+- **Исполнитель:** Lead → Developer (backend WB API) → sub-agent E (worktree)
 - **Приоритет:** **P1** (РОП-запрос + дифференциатор)
 - **Оценка:** L (1-2 недели) — нужно WB API research + миграция + sync + UI
 - **Источник:** РОП-запрос 2026-05-21 (фича #4). Локализация = % заказов которые отгружены **из склада, к которому юзер ближе** (минимизация логистики). WB считает её закрыто (см. WB-кабинет «отчёт по локализации»), для бизнеса это критичный KPI (низкая локализация = высокие logistics costs).
+- **WB API research (выполнен 2026-05-21):** Источник данных — **уже в БД, миграция не нужна** (Вариант A). `WbOrder` / `WbSale` (sync через `GET /api/v1/supplier/orders` и `/sales`) уже содержат:
+  - `warehouse_name` (← `warehouseName`) — склад отгрузки
+  - `oblast` (← `oblastOkrugName`) — федеральный округ покупателя
+  - `region_name` (← `regionName`) — регион/область покупателя
+  Маппинг `warehouse_name → cluster` + `oblast → cluster` уже реализован в `services/clusters.py` (28 FBO + 78 СЦ покрыты, INTL для Беларусь/Казахстан/Узбекистан/Армения/Грузия). Локализация = `cluster_for_warehouse(warehouse_name) == cluster_for_oblast(oblast, region_name)`, OTHER/OTHER считаем НЕ локализованным (защита от false-positive при устаревшем маппинге).
 - **Описание:**
-  1. **Pre-flight research:** WB API endpoint `/api/v2/orders` имеет `region_to`/`warehouseName` поля? Если нет — нужен sync `/content/v2/get/cards/list` + cross-ref с `wb_warehouses`. См. `WB_API_REFERENCE.md`.
-  2. Миграция: `wb_order_localization(rid, ordered_dt, region_to, warehouse_from, is_localized)` — флаг локализации = warehouse_from находится в той же региональной зоне что region_to.
-  3. Sync-task: ежедневно обогащать orders регионами (или встроить в `sync_orders` если данные приходят сразу).
-  4. UI: новая страница `/localization` (или раздел в /supply):
-     - KPI: «% локализации за период»
-     - Heatmap: бренд × склад × % локализации
-     - Top SKU с самой низкой локализацией (кандидаты на ребаланс поставок)
+  1. ~~Pre-flight research~~ — выполнено выше.
+  2. ~~Миграция~~ — НЕ нужна (данные уже в `wb_orders`).
+  3. ~~Sync-task~~ — НЕ нужен (sync `wb_orders` уже включает поля).
+  4. Backend service `services/localization.py` — `compute_localization(session, tenant_id, period_from, period_to, brands=None, worst_sku_limit=10)`. Возвращает `LocalizationStats` (total / localized / pct + breakdown по кластеру / бренду / складу / worst-SKU + heatmap).
+  5. API `GET /api/localization?from=YYYY-MM-DD&to=YYYY-MM-DD&brand=&worst_sku_limit=` — brands-filter (manager видит свои).
+  6. UI `frontend/src/pages/Localization.tsx` + роут `/localization` + меню «SKU и продажи».
+     - Hero-KPI: «% локализации за период»
+     - Heatmap: склад × кластер покупателя (top-25 складов, цвет=зелёный/жёлтый/красный)
+     - Top-10 SKU с худшей локализацией (мин. 5 заказов, чтобы исключить шум)
+     - По кластеру покупателя + по складам — отдельные таблицы
 - **Критерии готовности:**
-  - [ ] WB API research выполнен, источник region/warehouse определён
-  - [ ] Миграция + sync-task
-  - [ ] Backend service `services/localization.py` — расчёт % локализации
-  - [ ] Frontend `pages/Localization.tsx`
-  - [ ] Документация в `WB_API_REFERENCE.md` + `FEATURES.md`
+  - [x] WB API research выполнен, источник region/warehouse определён (Вариант A — `wb_orders.warehouse_name/oblast/region_name`)
+  - [x] ~~Миграция~~ + ~~sync-task~~ — не понадобились (данные уже в БД)
+  - [x] Backend service `services/localization.py` — расчёт % локализации
+  - [x] Backend API `api/localization.py` — `GET /api/localization`
+  - [x] Frontend `pages/Localization.tsx` + route + меню
+  - [x] Unit-тесты `tests/test_localization.py` (pure `is_localized()` + integration `compute_localization()` happy-path / empty / worst-SKU min-5 / excludes cancelled)
+  - [x] Документация в `WB_API_REFERENCE.md` + `FEATURES.md`
 - **Зависимости:** нет (но requires WB API исследование сначала)
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-21 — sub-agent E (worktree). Деплой — Release Manager.
 
 ---
 

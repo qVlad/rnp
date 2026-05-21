@@ -1086,6 +1086,65 @@ paymentOrderDelete: (payment_order_id: string) =>
       };
     }>(`/api/funnel/by-sku?days=${days}`),
 
+  // TASK-LEAD-052 — Локализация заказов (склад ↔ покупатель по 7 округам)
+  localization: (params: {
+    from?: string;
+    to?: string;
+    brand?: string;
+    worstSkuLimit?: number;
+  } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
+    if (params.brand) qs.set("brand", params.brand);
+    if (params.worstSkuLimit) qs.set("worst_sku_limit", String(params.worstSkuLimit));
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return request<{
+      period_from: string;
+      period_to: string;
+      total_orders: number;
+      localized_orders: number;
+      localization_pct: number;
+      by_cluster: Array<{
+        cluster: string;
+        cluster_label: string;
+        orders: number;
+        localized_orders: number;
+        localization_pct: number;
+        revenue: number;
+      }>;
+      by_brand: Array<{
+        brand: string;
+        orders: number;
+        localized_orders: number;
+        localization_pct: number;
+      }>;
+      by_warehouse: Array<{
+        warehouse: string;
+        cluster: string;
+        cluster_label: string;
+        orders: number;
+        localized_orders: number;
+        localization_pct: number;
+      }>;
+      worst_skus: Array<{
+        nm_id: number;
+        vendor_code: string | null;
+        brand: string | null;
+        subject: string | null;
+        orders: number;
+        localized_orders: number;
+        localization_pct: number;
+      }>;
+      heatmap: Array<{
+        warehouse: string;
+        warehouse_cluster: string;
+        buyer_cluster: string;
+        orders: number;
+      }>;
+    }>(`/api/localization${suffix}`);
+  },
+
   pnlReconciliation: (weeks = 12, diff_threshold_pct = 1.0) =>
     request<{
       weeks_back: number;

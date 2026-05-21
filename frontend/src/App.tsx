@@ -43,6 +43,7 @@ import Features from "./pages/Features";
 import Checklist from "./pages/Checklist";
 import SeasonPlan from "./pages/SeasonPlan";
 import Jam from "./pages/Jam";
+import Localization from "./pages/Localization";
 import NewProducts from "./pages/NewProducts";
 import TransitCalculator from "./pages/TransitCalculator";
 import WeeklyReport from "./pages/WeeklyReport";
@@ -284,6 +285,7 @@ export default function App() {
             }
           />
           <Route path="jam" element={<Jam />} />
+          <Route path="localization" element={<Localization />} />
           <Route path="abtest" element={<AbTestList />} />
           <Route path="abtest/new" element={<AbTestNew />} />
           <Route path="abtest/:id" element={<AbTestDetail />} />
