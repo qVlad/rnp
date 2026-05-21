@@ -1,7 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
+import {
+  OpexAllocationsEditor,
+  type AllocationRow,
+} from "@/components/OpexAllocationsEditor";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -47,6 +51,12 @@ function Entries() {
   });
   const [editingId, setEditingId] = useState<number | null>(null);
   const [filterCat, setFilterCat] = useState<string>("");
+  // Drawer для редактирования allocations конкретного entry (TASK-LEAD-047).
+  const [allocFor, setAllocFor] = useState<{
+    id: number;
+    label: string;
+    initial: AllocationRow[];
+  } | null>(null);
 
   const cats = useQuery({
     queryKey: ["opex-cats"],
@@ -200,6 +210,7 @@ function Entries() {
                 <th className="text-left p-2">Категория</th>
                 <th className="text-right p-2">Сумма</th>
                 <th className="text-left p-2">В опер.прибыль</th>
+                <th className="text-left p-2">Распределение</th>
                 <th className="text-left p-2">Контрагент</th>
                 <th className="text-left p-2">Комментарий</th>
                 <th className="p-2"></th>
@@ -222,6 +233,27 @@ function Entries() {
                     ) : (
                       <span className="text-muted">только ДДС</span>
                     )}
+                  </td>
+                  <td className="p-2 text-xs">
+                    <button
+                      className="text-left hover:underline"
+                      onClick={() =>
+                        setAllocFor({
+                          id: row.id,
+                          label: `${row.entry_date} · ${
+                            row.category_name ?? "?"
+                          } · ${fmtRub(row.amount)}`,
+                          initial: (row.allocations ?? []).map((a: any) => ({
+                            scope_type: a.scope_type,
+                            scope_value: a.scope_value,
+                            weight: Number(a.weight) || 0,
+                          })),
+                        })
+                      }
+                      title="Редактировать распределение"
+                    >
+                      <AllocationsChip allocations={row.allocations ?? []} />
+                    </button>
                   </td>
                   <td className="p-2 text-muted">{row.contractor ?? ""}</td>
                   <td className="p-2 text-muted">{row.comment ?? ""}</td>
@@ -256,7 +288,116 @@ function Entries() {
           </table>
         )}
       </div>
+
+      {allocFor && (
+        <AllocationsDrawer
+          entry={allocFor}
+          onClose={() => setAllocFor(null)}
+        />
+      )}
     </>
+  );
+}
+
+// ---------- AllocationsDrawer ----------
+
+function AllocationsDrawer({
+  entry,
+  onClose,
+}: {
+  entry: { id: number; label: string; initial: AllocationRow[] };
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
+      <div className="flex-1 bg-black/40" />
+      <aside
+        className="w-[760px] max-w-full h-full bg-bg border-l border-border shadow-2xl flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between p-4 border-b border-border">
+          <div>
+            <div className="text-base font-semibold">
+              Распределение OPEX · запись #{entry.id}
+            </div>
+            <div className="text-tiny text-muted">{entry.label}</div>
+          </div>
+          <button
+            className="btn text-xs"
+            onClick={onClose}
+            aria-label="Закрыть"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4">
+          <OpexAllocationsEditor
+            entryId={entry.id}
+            initial={entry.initial}
+            entryLabel={entry.label}
+            onClose={onClose}
+          />
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+// ---------- AllocationsChip ----------
+
+function AllocationsChip({ allocations }: { allocations: any[] }) {
+  if (!allocations || allocations.length === 0) {
+    return (
+      <span className="px-2 py-0.5 rounded border border-border text-muted">
+        — не задано —
+      </span>
+    );
+  }
+  // Default tenant-only w=1.0
+  if (
+    allocations.length === 1 &&
+    allocations[0].scope_type === "tenant" &&
+    Math.abs(Number(allocations[0].weight) - 1) < 1e-4
+  ) {
+    return (
+      <span className="px-2 py-0.5 rounded border border-border text-muted">
+        весь tenant
+      </span>
+    );
+  }
+  const sum = allocations.reduce(
+    (s: number, a: any) => s + (Number(a.weight) || 0),
+    0,
+  );
+  const nonTenant = allocations.filter((a: any) => a.scope_type !== "tenant");
+  const isOver = sum > 1 + 1e-4;
+  const cls = isOver
+    ? "bg-red-500/10 border-red-500/40 text-red-300"
+    : sum < 1 - 1e-4
+    ? "bg-yellow-500/10 border-yellow-500/40 text-yellow-200"
+    : "bg-emerald-500/10 border-emerald-500/40 text-emerald-300";
+  return (
+    <span
+      className={`px-2 py-0.5 rounded border font-mono ${cls}`}
+      title={allocations
+        .map(
+          (a: any) =>
+            `${a.scope_type}${
+              a.scope_value ? `:${a.scope_value}` : ""
+            } = ${(Number(a.weight) * 100).toFixed(1)}%`,
+        )
+        .join("\n")}
+    >
+      {nonTenant.length} scope · Σ{(sum * 100).toFixed(0)}%
+    </span>
   );
 }
 

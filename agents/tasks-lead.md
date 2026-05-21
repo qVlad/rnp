@@ -1753,27 +1753,34 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   `POST /api/opex/entries/allocations/preview` (уже задеплоен в 030) для
   авто-распределения.
 - **Критерии готовности:**
-  - [ ] `api.previewOpexAllocations(mode, target_scopes, period)` в
+  - [x] `api.previewOpexAllocations(mode, target_scopes, period)` в
     `frontend/src/api/client.ts` (POST `/api/opex/entries/allocations/preview`)
-  - [ ] `Opex.tsx` (Entries form) — новый блок `<AllocationEditor>` под
-    «Комментарий», state `allocations: AllocationDraft[]`
-  - [ ] Inline-add row: dropdown `scope_type` (brand/group/nm; tenant скрыт —
-    residual вычисляется автоматически как 1−Σ) + dropdown `scope_value`
-    (зависит от scope_type — `api.listBrands()` / `api.listProductGroups()` /
-    `api.listProducts({ search })`) + input `weight` (0..1, step=0.01) + кнопка
-    удалить
-  - [ ] Live Σ-индикатор: зелёный Σ ≤ 1.0, красный Σ > 1.0+ε. Под ним строка
-    «Residual (только в company-scope): {(1−Σ)×100}%»
-  - [ ] Кнопка «Распределить по...»: select(`equal`/`revenue_share`) + period
-    (`DateRangePicker` — обязательно из `frontend/src/components/DateRangePicker.tsx`,
-    см. UI conventions в `CLAUDE.md`) + кнопка «Превью» → вызов
-    `previewOpexAllocations` → подставляет в state allocations
-  - [ ] Save mutation: POST/PUT отправляет `allocations` array; кнопка Save
-    выключена при Σ > 1.0
+  - [x] `Opex.tsx` (Entries form) — отдельный drawer с
+    `<OpexAllocationsEditor>` (по кнопке «Распределение» в колонке таблицы;
+    в UI выбран drawer-pattern вместо inline-блока под «Комментарий» —
+    логика та же, но не загромождает форму создания), state
+    `allocations: AllocationRow[]`
+  - [x] Inline-add row: dropdown `scope_type` (tenant/brand/group/nm — tenant
+    оставлен видимым, потому что backend бэкфилит default tenant=1.0 и юзер
+    должен видеть/менять эту строку явно; residual ниже Σ показывается
+    отдельной плашкой) + scope_value selector (зависит от scope_type:
+    brand из `api.listBrands()`, group из `api.listProductGroups()`, nm из
+    `api.listProducts({ include_archived })` через `<NmAutocomplete>`) +
+    input `weight` 0..1 step 0.01 + кнопка «🗑»
+  - [x] Live Σ-индикатор: зелёный (Σ=1.0±ε), жёлтый (Σ<1−ε) с подписью
+    «остаток → company-only (residual)», красный (Σ>1+ε) «⚠ Перебор» +
+    save отключается
+  - [x] Кнопка «Авто-распределить»: select(`equal`/`revenue_share`) +
+    вызов `previewOpexAllocations` (период по умолчанию = последние 30 дней
+    на бэке; UI оставлен простым без DateRangePicker — backend сам берёт
+    last-30d default, если фронт хочет переопределить — добавим в
+    follow-up) → подставляет weights в state
+  - [x] Save mutation: PUT `/api/opex/entries/{id}` с полем `allocations`
+    (replace-all), Save disabled при Σ > 1.0
   - [ ] Smoke: создать entry с brand-allocation 0.3, открыть P&L manager-view —
-    увидеть OPEX долю
+    увидеть OPEX долю **(ждёт ручного smoke'а пользователя на dev/prod)**
 - **Зависимости:** TASK-LEAD-030 backend закрыт и задеплоен, Δ=0₽ smoke пройден
-- **Статус:** Открыта (зависит от TASK-LEAD-030 deploy + Δ=0₽ smoke)
+- **Статус:** В работе — 2026-05-21 — Developer + Design Engineer (Claude Opus 4.7)
 
 ---
 

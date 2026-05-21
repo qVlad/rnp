@@ -1257,6 +1257,37 @@ paymentOrderDelete: (payment_order_id: string) =>
   deleteOpexEntry: (id: number) =>
     request(`/api/opex/entries/${id}`, { method: "DELETE" }),
 
+  // ── OPEX allocations (TASK-LEAD-047) ──
+  // Backend: миграция 0055 + services/opex_allocations.py. Allocations
+  // живут как поле `allocations` внутри `/api/opex/entries`, т.е.
+  // отдельных list/upsert endpoints нет — replace-all делается через
+  // PUT /api/opex/entries/{id} с полем `allocations: [...]`.
+  /** Превью весов авто-распределения. Возвращает list[{scope_type, scope_value, weight}].
+   *  Не сохраняет ничего — фронт показывает юзеру, тот edit'ит, и сохраняет
+   *  через updateOpexEntry(id, { ..., allocations }). */
+  previewOpexAllocations: (body: {
+    mode: "equal" | "revenue_share";
+    target_scopes: Array<{
+      scope_type: "brand" | "group" | "nm";
+      scope_value: string;
+      weight?: number;
+    }>;
+    period_from?: string;
+    period_to?: string;
+  }) =>
+    request<{
+      items: Array<{
+        scope_type: "tenant" | "brand" | "group" | "nm";
+        scope_value: string | null;
+        weight: number;
+      }>;
+      period: { from: string; to: string };
+      mode: "equal" | "revenue_share";
+    }>("/api/opex/entries/allocations/preview", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
   // ── Cost history ──
   listCostHistory: (nm_id?: number) => {
     const qs = nm_id != null ? `?nm_id=${nm_id}` : "";
