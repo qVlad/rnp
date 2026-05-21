@@ -9,8 +9,7 @@ import PnL from "./pages/PnL";
 import Redistribution from "./pages/Redistribution";
 import PnLReconciliation from "./pages/PnLReconciliation";
 import Reconciliation4Way from "./pages/Reconciliation4Way";
-import TaxReport from "./pages/TaxReport";
-import TaxReportAusn from "./pages/TaxReportAusn";
+import Taxes from "./pages/Taxes";
 import Supplies from "./pages/Supplies";
 import Units from "./pages/Units";
 import Funnel from "./pages/Funnel";
@@ -20,7 +19,6 @@ import Settings from "./pages/Settings";
 import RevenueCorrections from "./pages/RevenueCorrections";
 import AdsHeatmap from "./pages/AdsHeatmap";
 import PaymentCalendar from "./pages/PaymentCalendar";
-import TaxReportUsn, { TaxReportUsnVat5, TaxReportUsnVat7 } from "./pages/TaxReportUsn";
 import Notifications from "./pages/Notifications";
 import ExternalMarketing from "./pages/ExternalMarketing";
 import Opex from "./pages/Opex";
@@ -142,45 +140,28 @@ export default function App() {
             }
           />
           <Route path="redistribution" element={<Redistribution />} />
+          {/* TASK-LEAD-041: единая страница `/taxes` с табами. Старые URL */}
+          {/* делают back-compat redirect на `/taxes?mode=X` — для bookmark'ов. */}
+          <Route path="taxes" element={<Taxes />} />
           <Route
             path="tax-report"
-            element={
-              <DirectorOrHead>
-                <TaxReport />
-              </DirectorOrHead>
-            }
+            element={<Navigate to="/taxes?mode=base" replace />}
           />
           <Route
             path="tax-report-ausn"
-            element={
-              <DirectorOrHead>
-                <TaxReportAusn />
-              </DirectorOrHead>
-            }
+            element={<Navigate to="/taxes?mode=ausn" replace />}
           />
           <Route
             path="tax-report-usn"
-            element={
-              <DirectorOrHead>
-                <TaxReportUsn />
-              </DirectorOrHead>
-            }
+            element={<Navigate to="/taxes?mode=usn" replace />}
           />
           <Route
             path="tax-report-usn-vat5"
-            element={
-              <DirectorOrHead>
-                <TaxReportUsnVat5 />
-              </DirectorOrHead>
-            }
+            element={<Navigate to="/taxes?mode=usn-vat5" replace />}
           />
           <Route
             path="tax-report-usn-vat7"
-            element={
-              <DirectorOrHead>
-                <TaxReportUsnVat7 />
-              </DirectorOrHead>
-            }
+            element={<Navigate to="/taxes?mode=usn-vat7" replace />}
           />
           <Route
             path="supplies"

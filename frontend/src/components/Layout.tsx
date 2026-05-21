@@ -44,11 +44,9 @@ const GROUPS: Group[] = [
   {
     label: "Налоги и деньги",
     items: [
-      { to: "/tax-report", label: "Налог. отчёт", directorOrHead: true, bookkeeperOk: true },
-      { to: "/tax-report-ausn", label: "АУСН-Доходы 8%", directorOrHead: true, bookkeeperOk: true },
-      { to: "/tax-report-usn", label: "УСН-Доходы 6%", directorOrHead: true, bookkeeperOk: true },
-      { to: "/tax-report-usn-vat5", label: "УСН 6% + НДС 5%", directorOrHead: true, bookkeeperOk: true },
-      { to: "/tax-report-usn-vat7", label: "УСН 6% + НДС 7%", directorOrHead: true, bookkeeperOk: true },
+      // TASK-LEAD-041: 5 налоговых страниц объединены в одну `/taxes` с табами.
+      // Старые URL делают redirect → bookmark'и работают.
+      { to: "/taxes", label: "Налоги", directorOrHead: true, bookkeeperOk: true },
       { to: "/cash-flow", label: "ДДС", directorOrHead: true },
       { to: "/payment-calendar", label: "Платёжный календарь", directorOrHead: true, bookkeeperOk: true },
       { to: "/inventory", label: "Капитализация WB" },
@@ -119,6 +117,64 @@ const GROUPS: Group[] = [
 ];
 
 const COLLAPSED_KEY = "sidebar.collapsed.v1";
+const PROFILE_KEY = "sidebar.profile.v1";
+
+// TASK-LEAD-041: UX-режимы поверх RBAC. Это не доступ (URL остаётся), а
+// визуальный фильтр меню для собственника / менеджера / бухгалтера, чтобы
+// не показывать 47+ пунктов когда нужны 5-7.
+//
+// «Полный» — текущее поведение (RBAC как есть).
+// «owner» — главные 5-7 пунктов собственника (Dashboard / P&L / Сверка / Plans / Налоги).
+// «manager» — узкое меню менеджера (SKU + Plans read).
+// «bookkeeper» — эмуляция bookkeeper-режима (для director/head — посмотреть глазами бухгалтера).
+type Profile = "full" | "owner" | "manager" | "bookkeeper";
+
+const PROFILE_LABELS: Record<Profile, string> = {
+  full: "Полный",
+  owner: "Собственник",
+  manager: "Менеджер",
+  bookkeeper: "Бухгалтер",
+};
+
+// Whitelist of paths visible in each profile. «full» — no extra filter.
+const PROFILE_WHITELIST: Record<Exclude<Profile, "full">, Set<string>> = {
+  owner: new Set([
+    "/",
+    "/pnl",
+    "/pnl-reconciliation",
+    "/reconciliation-4way",
+    "/plans",
+    "/taxes",
+  ]),
+  manager: new Set([
+    "/",
+    "/units",
+    "/unit-plan",
+    "/abc",
+    "/supply",
+    "/plans",
+    "/redistribution",
+    "/product-groups",
+  ]),
+  bookkeeper: new Set([
+    "/audit",
+    "/taxes",
+    "/payment-calendar",
+    "/glossary",
+    "/docs",
+    "/features",
+  ]),
+};
+
+function readProfile(): Profile {
+  try {
+    const v = localStorage.getItem(PROFILE_KEY);
+    if (v === "full" || v === "owner" || v === "manager" || v === "bookkeeper") {
+      return v;
+    }
+  } catch {}
+  return "full";
+}
 
 export default function Layout() {
   const { user, logout } = useAuth();
@@ -140,6 +196,20 @@ export default function Layout() {
     } catch {}
   }, [collapsed]);
 
+  // TASK-LEAD-041: UX-режим («Полный» / «Собственник» / «Менеджер» / «Бухгалтер»).
+  // Доступен только для director/head — у них есть из чего выбирать. Для
+  // manager/bookkeeper меню и так узкое (RBAC), переключатель скрыт.
+  const profileVisible = sees_all_brands;
+  const [profile, setProfile] = useState<Profile>(() =>
+    profileVisible ? readProfile() : "full"
+  );
+  useEffect(() => {
+    if (!profileVisible) return;
+    try {
+      localStorage.setItem(PROFILE_KEY, profile);
+    } catch {}
+  }, [profile, profileVisible]);
+
   // Hotkey `[` toggles sidebar
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -156,8 +226,14 @@ export default function Layout() {
       // TASK-LEAD-040 frontend: для bookkeeper'а — whitelist через bookkeeperOk.
       // Без флага пункт скрыт (новые pages по default не показываем).
       if (isBookkeeper) return !!l.bookkeeperOk;
-      if (l.directorOnly) return isDirector;
-      if (l.directorOrHead) return sees_all_brands;
+      if (l.directorOnly && !isDirector) return false;
+      if (l.directorOrHead && !sees_all_brands) return false;
+      // TASK-LEAD-041: UX-профиль накладывается поверх RBAC. «Полный» —
+      // ничего не скрывает. Для остальных режимов — whitelist путей.
+      if (profileVisible && profile !== "full") {
+        const allowed = PROFILE_WHITELIST[profile];
+        if (!allowed.has(l.to)) return false;
+      }
       return true;
     });
 
@@ -225,6 +301,29 @@ export default function Layout() {
           </div>
         )}
         <div className="border-t border-border px-3 py-2 text-tiny">
+          {!collapsed && profileVisible && (
+            <div className="mb-2">
+              <label
+                htmlFor="sidebar-profile"
+                className="block text-faint uppercase tracking-wider text-[10px] mb-1"
+              >
+                Режим меню
+              </label>
+              <select
+                id="sidebar-profile"
+                className="input w-full text-xs py-1"
+                value={profile}
+                onChange={(e) => setProfile(e.target.value as Profile)}
+                title="UX-фильтр меню. Не меняет доступ — только что показано в сайдбаре."
+              >
+                {(Object.keys(PROFILE_LABELS) as Profile[]).map((p) => (
+                  <option key={p} value={p}>
+                    {PROFILE_LABELS[p]}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           {!collapsed && user && (
             <div className="text-muted leading-tight mb-2">
               <div className="text-fg truncate">{user.full_name || user.username}</div>

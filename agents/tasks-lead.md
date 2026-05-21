@@ -1577,13 +1577,26 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
      - На `/taxes` — selector «Режим:» (AUSN / USN / USN+5% / USN+7%), переключает frame внутри страницы (URL `?mode=ausn` persist'ит)
      - Все 4 сервиса в backend не меняются, только UI-обёртка
 - **Критерии готовности:**
-  - [ ] Toggle profile «Собственник vs Полный» работает, persist
-  - [ ] Sidebar в режиме «Собственник» — ≤6 пунктов
-  - [ ] `/taxes?mode=X` показывает соответствующий отчёт
-  - [ ] Все 4 старых URL делают redirect на `/taxes?mode=X` (back-compat)
-  - [ ] Bookmark'и собственника работают
+  - [x] Toggle profile «Собственник vs Полный» работает, persist (расширен до 4 режимов: full/owner/manager/bookkeeper — селектор виден только для director/head)
+  - [x] Sidebar в режиме «Собственник» — ≤6 пунктов (Dashboard / P&L / Сверка с WB / 4-way Сверка / План-Факт / Налоги)
+  - [x] `/taxes?mode=X` показывает соответствующий отчёт (5 табов: base/ausn/usn/usn-vat5/usn-vat7, default `ausn`)
+  - [x] Все 4 старых URL делают redirect на `/taxes?mode=X` (back-compat через `<Navigate replace>`)
+  - [x] Bookmark'и собственника работают
+  - [x] `tsc --noEmit` чисто (только pre-existing TS5101 baseUrl warning, не от этой задачи)
 - **Зависимости:** нет
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-21 — Design Engineer. Реализация:
+  - `frontend/src/pages/Taxes.tsx` (new, ~95 строк) — табы для 5 режимов через `?mode=`,
+    переиспользует существующие компоненты `TaxReport` / `TaxReportAusn` / `TaxReportUsn` /
+    `TaxReportUsnVat5` / `TaxReportUsnVat7` как монолитные children — без дублирования логики.
+  - `frontend/src/components/Layout.tsx` — 5 налоговых пунктов в группе «Налоги и деньги»
+    свернуты в один `/taxes` с `bookkeeperOk: true`. В footer добавлен `<select id="sidebar-profile">`
+    (виден только для director/head) с 4 режимами; persist в `localStorage["sidebar.profile.v1"]`.
+    `filterItems()` накладывает profile-whitelist поверх RBAC (RBAC всё ещё действует, profile —
+    UX-фильтр, не доступ).
+  - `frontend/src/App.tsx` — новый route `/taxes → <Taxes />`, старые 5 tax-report-* URL
+    превращены в `<Navigate to="/taxes?mode=X" replace />` для bookmark-back-compat.
+    Удалены неиспользуемые imports `TaxReport`/`TaxReportAusn`/`TaxReportUsn`/Vat5/Vat7
+    (они теперь подключаются только из `Taxes.tsx`).
 
 ---
 
