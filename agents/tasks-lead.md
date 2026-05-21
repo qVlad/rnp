@@ -19,11 +19,12 @@ Lead использует этот файл как master-view: сюда скл�
 > **В работе прямо сейчас:**
 > - **TASK-LEAD-030** (OPEX m2m) — другая Claude-сессия в другом окне
 > - **TASK-LEAD-040 backend** (Role bookkeeper) — sub-agent A (worktree, background)
-> - **TASK-LEAD-044 + TASK-LEAD-045** (README + QUICKSTART_OWNER) — sub-agent B (worktree, background)
-> - **TASK-UI-005** (PeriodContext) — main session (Claude), следующий после 042
+> - **TASK-UI-005** (PeriodContext) — main session (Claude), следующий
 >
-> **Завершено в этой сессии:**
-> - ✅ **TASK-LEAD-042** (default hybrid + WeekProfitHero) — main session, 2026-05-21
+> **Завершено в этой сессии 2026-05-21:**
+> - ✅ **TASK-LEAD-042** (default hybrid + WeekProfitHero) — main session, commit `2f7eda9`
+> - ✅ **TASK-LEAD-044** (README.md routing) — sub-agent B, merged commit `44df061`
+> - ✅ **TASK-LEAD-045** (QUICKSTART_OWNER.md) — sub-agent B, merged commit `44df061`
 
 
 > Цель: «удобство работы для собственных кабинетов» (internal tool, не SaaS).
@@ -1222,22 +1223,57 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Приоритет:** P2 (impactful, но высокий риск регрессии Δ=0₽ в Reconciliation)
 - **Оценка:** M (1-2 недели — рефактор P&L и тесты)
 - **Источник:** COMPETITIVE_TRUESTATS.md §«распределение OPEX many-to-many». Analyst+Lead+Strategist консенсус. Sprint+3 решение пользователя 2026-05-21.
-- **Описание:** Сейчас один `OpexEntry` = одна категория + опционально `nm_id`/`brand`. Цель — разнести расход пропорционально (revenue-share / equal / manual weights) на N scope'ов (бренд/группа/SKU). **Высокий риск регрессии Δ=0₽** — нужен extensive integration test всех 3 P&L scope'ов.
+- **Описание:** **Фактическое исходное состояние** (описание выше было
+  неточным): `OpexEntry` до миграции 0055 не имел `nm_id`/`brand` — был
+  полностью company-level, `pnl_builder.opex_for_period` для `manager_scope`
+  возвращал OPEX=0 (см. комментарий в pnl_builder.py:660 «not allocable to a
+  single brand without a meaningful pro-rata key»). Цель: разнести расход
+  пропорционально (revenue-share / equal / manual weights) на N scope'ов
+  (бренд/группа/SKU). **Высокий риск регрессии Δ=0₽** — нужен extensive
+  integration test всех 3 P&L scope'ов.
 - **Критерии готовности:**
-  - [ ] Миграция `0055_opex_allocations`: `opex_entry_allocations(opex_id FK, scope_type ENUM('nm','brand','group','tenant'), scope_value TEXT, weight NUMERIC(10,4))` + backward-compat (для существующих OpexEntry создать 1 allocation weight=1)
-  - [ ] Модель `OpexAllocation` + ORM relations
-  - [ ] `services/opex_allocations.py` — `compute_weights(opex, mode, period) -> list[Allocation]` (modes: `equal`/`revenue_share`/`manual`)
-  - [ ] **Рефактор** `pnl_builder.opex_for_period` на JOIN allocations + sum(amount × weight)
-  - [ ] Sum of weights ≤ 1.0 + 1e-9 (round-tolerance) — validation
-  - [ ] Расширение `test_pnl_builder_integration.py` + `test_pnl_pure.py` + `test_reconciliation_integration.py` новыми allocation-кейсами
-  - [ ] UI на `/opex` форма редактирования → таблица allocations + кнопка «авто-распределить по выручке»
-  - [ ] **Δ=0₽ smoke на проде после деплоя** (regression-чек по reconciliation на последней неделе)
-  - [ ] Audit_log на CUD allocations
-  - [ ] FEATURES.md обновлён + миграция 0055 в CLAUDE.md таблице
-- **Зависимости:** pre-deploy `pg_dump` обязательно (CLAUDE.md правило про миграции)
-- **Статус:** В работе — 2026-05-21 — Claude Opus 4.7 (main session). Backend этой
-  сессией (migration + ORM + service + pnl_builder + cash_flow + api + tests +
-  docs + deploy). **UI отложен** в отдельный TASK-LEAD (создаётся ниже).
+  - [x] Миграция `0055_opex_allocations`: `opex_entry_allocations(opex_id FK
+    CASCADE, scope_type ∈ {tenant,brand,group,nm}, scope_value TEXT NULL,
+    weight NUMERIC(10,4))` + CHECK constraints (weight∈[0,1], scope_type
+    whitelist, tenant↔scope_value=NULL consistency) + UNIQUE(opex_id, scope_type,
+    scope_value) + partial UNIQUE на (opex_id) WHERE scope_type='tenant'.
+    Backward-fill: 1 `tenant`-allocation weight=1.0 на каждый existing entry
+  - [x] Модель `OpexEntryAllocation` + relationship `OpexEntry.allocations`
+    (cascade="all, delete-orphan", lazy="selectin")
+  - [x] `services/opex_allocations.py` — `validate_allocations()` (правила
+    Σ≤1.0+ε / weight∈[0,1] / scope_value consistency),
+    `compute_weights_preview(mode='equal'|'revenue_share', target_scopes, period)`
+    для UI-превью, `manager_scope_effective_weights(user_brands)` для JOIN с
+    pnl_builder (резолв nm→brand, group→fraction)
+  - [x] **Рефактор** `pnl_builder.opex_for_period` — двухпутевой:
+    `company_scope` читает `SUM(amount)` БЕЗ JOIN (Δ=0₽ guard), `manager_scope`
+    JOIN'ит allocations через `manager_scope_effective_weights` и применяет
+    `amount × effective_weight`. `tenant`-allocations для manager не показываются
+    (residual остаётся в company-only)
+  - [x] Sum of weights ≤ 1.0 + 1e-9 (round-tolerance) — validation в
+    `validate_allocations()` + Pydantic `Field(ge=0, le=1)` на каждый weight
+  - [x] Тесты: `backend/tests/test_opex_allocations.py` — 25 кейсов: pure
+    validation (10), compute_weights_preview equal+revenue_share+empty (4),
+    manager_scope_effective_weights brand/nm/group/multiple/tenant (5),
+    build_pnl Δ=0₽ guard + manager_scope weighted + residual + zero-allocation (6)
+  - [ ] UI на `/opex` форма редактирования → таблица allocations + кнопка
+    «авто-распределить по выручке» — **отложено в TASK-LEAD-047** (отдельная
+    сессия после деплоя backend)
+  - [ ] **Δ=0₽ smoke на проде после деплоя** — после `./scripts/remote.sh deploy`
+    прогнать reconciliation на последней закрытой неделе, убедиться что Δ=0%
+    осталось (company-scope path не задел)
+  - [x] Audit_log на CUD allocations — snapshot allocations добавлен в
+    `before`/`after` JSON для create/update/delete entry
+  - [x] FEATURES.md обновлён + миграция 0055 в CLAUDE.md таблице
+- **Зависимости:** pre-deploy `pg_dump` обязательно (CLAUDE.md правило про миграции).
+  Локальный Docker не запущен — pg_dump делает `./scripts/remote.sh deploy`
+  автоматически перед миграцией на проде.
+- **Cash Flow** (`services/cash_flow.py`) дополнительно не правился — endpoint
+  всегда `require_director_or_head` (company-level), allocations не учитываются
+  by design. Docstring-комментарий обновлён.
+- **Статус:** ✅ Выполнено (backend) — 2026-05-21 — Claude Opus 4.7. UI отложен
+  в TASK-LEAD-047 после деплоя. Δ=0₽ smoke на проде — следующим шагом
+  после `remote.sh deploy`.
 
 ---
 
