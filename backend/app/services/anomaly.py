@@ -183,8 +183,10 @@ async def collect_alerts(
     if skus_with_sales:
         cogs_stmt = select(Cogs.nm_id).distinct()
         if brands is not None:
-            from app.db.models import Product  # local to keep top-of-module clean
-
+            # NB: убрали local `from app.db.models import Product` — он делал
+            # `Product` local-bound во всей функции (Python scope), и при
+            # `brands is None` все остальные usages Product (lines 606+) ловили
+            # UnboundLocalError. Используем global import (line 18).
             cogs_stmt = cogs_stmt.where(
                 Cogs.nm_id.in_(
                     select(Product.nm_id).where(Product.brand.in_(list(brands)))
