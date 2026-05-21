@@ -171,6 +171,43 @@ export default function Units() {
     try { localStorage.setItem("units.density.v1", density); } catch {}
   }, [density]);
   const cellPad = density === "dense" ? "p-1" : density === "compact" ? "p-1.5" : "p-2";
+
+  // TASK-LEAD-049: inline-редактор цены/скидки. РОП хочет «изменил цену →
+  // увидел новую маржу» за секунду. Persist в localStorage чтобы сценарии
+  // сохранялись между сессиями. Только frontend-computed: backend ничего не
+  // знает об этих overrides.
+  type PriceOverride = { price?: number; discount?: number };
+  const PRICE_OV_KEY = "units.price-overrides.v1";
+  const [priceOverrides, setPriceOverrides] = useState<Record<number, PriceOverride>>(() => {
+    try {
+      const raw = localStorage.getItem(PRICE_OV_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(PRICE_OV_KEY, JSON.stringify(priceOverrides)); } catch {}
+  }, [priceOverrides]);
+  const updateOverride = (nm: number, key: "price" | "discount", value: number | undefined) => {
+    setPriceOverrides((p) => {
+      const next = { ...p };
+      const cur = { ...(next[nm] ?? {}) };
+      if (value == null || Number.isNaN(value)) {
+        delete cur[key];
+      } else {
+        cur[key] = value;
+      }
+      if (Object.keys(cur).length === 0) {
+        delete next[nm];
+      } else {
+        next[nm] = cur;
+      }
+      return next;
+    });
+  };
+  const clearPriceOverrides = () => setPriceOverrides({});
+  const priceOverridesCount = Object.keys(priceOverrides).length;
   const [sizesModalFor, setSizesModalFor] = useState<number | null>(null);
   const [columnOrder, setColumnOrder] = useState<string[]>(() => {
     try {
@@ -693,8 +730,128 @@ export default function Units() {
           );
         },
       },
+      // TASK-LEAD-049 — Inline-редактор цены/скидки (P0 РОП-запрос).
+      // 3 колонки: «Новая цена», «Скидка %», «Новая маржа/ед» (computed).
+      // Без backend — frontend-only. Persist в localStorage.
+      {
+        header: () => (
+          <span title="Введи новую цену → автоматически пересчитает маржу. Сценарий — для подготовки к промо/изменению РРЦ.">
+            Новая цена ₽
+          </span>
+        ),
+        id: "new_price_override",
+        enableSorting: false,
+        cell: (c) => {
+          const row = c.row.original as UnitRow;
+          const ov = priceOverrides[row.nm_id];
+          return (
+            <input
+              type="number"
+              step="1"
+              min="0"
+              className="input text-xs"
+              style={{ width: 80 }}
+              placeholder={row.avg_price ? row.avg_price.toFixed(0) : "—"}
+              value={ov?.price ?? ""}
+              onChange={(e: any) => {
+                const v = e.target.value === "" ? undefined : Number(e.target.value);
+                updateOverride(row.nm_id, "price", v);
+              }}
+            />
+          );
+        },
+      },
+      {
+        header: () => (
+          <span title="Скидка к новой цене (или к текущей, если новая не задана). Например WB-акция -20%.">
+            Скидка %
+          </span>
+        ),
+        id: "new_discount_override",
+        enableSorting: false,
+        cell: (c) => {
+          const row = c.row.original as UnitRow;
+          const ov = priceOverrides[row.nm_id];
+          return (
+            <input
+              type="number"
+              step="1"
+              min="0"
+              max="90"
+              className="input text-xs"
+              style={{ width: 60 }}
+              placeholder="0"
+              value={ov?.discount ?? ""}
+              onChange={(e: any) => {
+                const v = e.target.value === "" ? undefined : Number(e.target.value);
+                updateOverride(row.nm_id, "discount", v);
+              }}
+            />
+          );
+        },
+      },
+      {
+        header: () => (
+          <span title="Computed-маржа с новой ценой/скидкой. Формула: effective_price − cogs − commission% × effective_price − logistics/ед − storage/ед − реклама/ед. Δ к текущей марже подсвечивается зелёным/красным.">
+            Новая маржа/ед
+          </span>
+        ),
+        id: "new_margin_unit",
+        enableSorting: false,
+        cell: (c) => {
+          const row = c.row.original as UnitRow;
+          const ov = priceOverrides[row.nm_id];
+          if (!ov || (ov.price == null && ov.discount == null)) {
+            return <span className="text-muted">—</span>;
+          }
+          const basePrice = row.avg_price || 0;
+          const newPrice = ov.price ?? basePrice;
+          const discountPct = ov.discount ?? 0;
+          const effectivePrice = newPrice * (1 - discountPct / 100);
+          const sold = row.units_sold;
+          if (!sold || sold <= 0) {
+            return <span className="text-muted">нет продаж</span>;
+          }
+          const commissionRate = (row.commission_pct ?? 0) / 100;
+          const logisticsPerUnit = (row.delivery || 0) / sold;
+          const storagePerUnit = (row.storage || 0) / sold;
+          const adPerUnit =
+            ((row.ad_cost || 0) + (row.external_ad_cost || 0) + (row.cashback || 0)) / sold;
+          const newMargin =
+            effectivePrice
+            - (row.cogs_unit || 0)
+            - commissionRate * effectivePrice
+            - logisticsPerUnit
+            - storagePerUnit
+            - adPerUnit;
+          const currentMargin = row.margin_unit || 0;
+          const deltaPct =
+            currentMargin !== 0
+              ? ((newMargin - currentMargin) / Math.abs(currentMargin)) * 100
+              : null;
+          const cls = newMargin >= 0 ? "text-success" : "text-danger";
+          const deltaCls =
+            deltaPct == null
+              ? "text-muted"
+              : deltaPct > 0
+                ? "text-success"
+                : deltaPct < 0
+                  ? "text-danger"
+                  : "text-muted";
+          return (
+            <div className="flex flex-col items-end text-xs leading-tight">
+              <span className={cls + " font-mono font-semibold"}>{fmtRub(newMargin)}</span>
+              {deltaPct != null && (
+                <span className={deltaCls + " font-mono"}>
+                  {deltaPct >= 0 ? "+" : ""}{deltaPct.toFixed(1)}%
+                </span>
+              )}
+            </div>
+          );
+        },
+      },
     ],
-    [archiveMut, unarchiveMut],
+    [archiveMut, unarchiveMut, priceOverrides],
   );
 
   const table = useReactTable({
@@ -746,6 +903,16 @@ export default function Units() {
             </select>
           )}
           <TagFilterDropdown storageKey="units.tag-filter.v1" />
+          {priceOverridesCount > 0 && (
+            <button
+              type="button"
+              className="btn text-xs"
+              onClick={clearPriceOverrides}
+              title="Сбросить все новые цены/скидки которые ты задал inline в таблице"
+            >
+              ✕ Сбросить цены ({priceOverridesCount})
+            </button>
+          )}
           <label className="flex items-center gap-2 text-xs text-muted self-center">
             <input
               type="checkbox"

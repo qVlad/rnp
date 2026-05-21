@@ -1858,12 +1858,14 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   4. Persist в localStorage (`units.price-overrides.v1` — `{nm_id: {price, discount}}`)
   5. Кнопка «Применить как сценарий» → создаёт snapshot в UnitPlan (опционально, если timeframe позволит)
 - **Критерии готовности:**
-  - [ ] `frontend/src/pages/Units.tsx` — 2 новые колонки (price-override, computed margin)
-  - [ ] Frontend-side calculation (без backend endpoint — формулу взять из `services/unit_economics.py`)
-  - [ ] Persist в localStorage
-  - [ ] tsc чисто + smoke на проде
+  - [x] `frontend/src/pages/Units.tsx` — 3 новые колонки: «Новая цена ₽», «Скидка %», «Новая маржа/ед» (с Δ% подсветкой)
+  - [x] Frontend-side calculation (formula: effective_price − cogs − commission% × eff_price − logistics/ед − storage/ед − реклама/ед)
+  - [x] Persist в localStorage (`units.price-overrides.v1` — `{nm_id: {price?, discount?}}`)
+  - [x] Кнопка «✕ Сбросить цены (N)» в шапке (показывается только если есть overrides)
+  - [x] `tsc --noEmit` чисто
+  - [ ] Smoke на проде (за пользователем — открыть `/units`, ввести цену, увидеть delta)
 - **Зависимости:** нет (использует существующие данные `units`)
-- **Статус:** Открыта
+- **Статус:** ✅ Выполнено — 2026-05-21 (main session, раунд 5)
 
 ---
 
