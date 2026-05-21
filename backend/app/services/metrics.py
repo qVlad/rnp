@@ -29,6 +29,40 @@ from app.db.models import (
 from app.services.periods import Period, PeriodKey, get_period
 
 Mode = Literal["preliminary", "final", "hybrid"]
+# TASK-LEAD-054 — ортогональный toggle. См. period_aggregates.ReportingMode.
+ReportingMode = Literal["operational", "financial"]
+
+
+def _rd_period_predicates(
+    start: datetime, end: datetime, reporting_mode: ReportingMode
+) -> tuple:
+    """Predicates для `WbReportDetail` по периоду с учётом reporting_mode.
+
+    operational (default) — по `sale_dt` (datetime), полуоткрытый интервал
+                            [start, end), как было раньше.
+    financial             — по `rr_dt` (Date), закрытый интервал
+                            [start.date(), end.date()-1day]. Конвертация
+                            `end` обратно в inclusive (end-1d) нужна потому
+                            что `sale_dt < end` это exclusive datetime, а
+                            `rr_dt <= ?` это inclusive Date.
+
+    Если `end` пришёл как 00:00 следующего дня (что и делает sale_dt_filter
+    при экспирации rd_end из period), то `end.date() - 1day` это последний
+    включённый календарный день — корректно.
+    """
+    if reporting_mode == "financial":
+        d_from = start.date()
+        # end — exclusive datetime в operational семантике; в financial
+        # переходим к inclusive date — последний полный день = end.date() - 1
+        d_to = end.date() - timedelta(days=1)
+        return (
+            WbReportDetail.rr_dt >= d_from,
+            WbReportDetail.rr_dt <= d_to,
+        )
+    return (
+        WbReportDetail.sale_dt >= start,
+        WbReportDetail.sale_dt < end,
+    )
 # Final-mode aggregations match the WB seller cabinet «Выкупы» / «Возвраты»
 # columns 1:1. Two pieces matter:
 #   1) Filter Продажа / Возврат on `supplier_oper_name` (not doc_type_name).
@@ -175,18 +209,21 @@ async def _final_orders_aggregate(
     start: datetime,
     end: datetime,
     brands: set[str] | None = None,
+    reporting_mode: ReportingMode = "operational",
 ) -> dict[str, float]:
-    """Final-mode orders: from wb_report_detail by sale_dt.
+    """Final-mode orders: from wb_report_detail.
 
-    Filter by **sale_dt** (date of physical buyout/return), not `rr_dt`.
-    The WB seller cabinet groups «Выкупы»/«Возвраты» by sale_dt — a return
-    that happens this week for a sale from previous week is shown in the
-    PREVIOUS week's bucket. Filtering by rr_dt would mix them.
+    Period filtering — см. `_rd_period_predicates`:
+      operational — by **sale_dt** (date of physical buyout/return). WB cabinet
+                    дашборда показывает «Выкупы»/«Возвраты» по sale_dt — возврат
+                    прошлой недели остаётся в bucket'е прошлой недели.
+      financial   — by **rr_dt** (когда платёжка попала в фин-отчёт). Для
+                    сверки с разделом «Финансы → Реализация» в WB-кабинете
+                    и с банковской выпиской.
 
     `report_detail` doesn't model "cancelled order" — only Продажа / Возврат
     rows. So orders = sales count, cancellations = 0.
     """
-    rd_start, rd_end = start.date(), end.date()
     revenue_field = func.coalesce(
         WbReportDetail.retail_price_withdisc_rub, WbReportDetail.retail_amount
     )
@@ -202,10 +239,7 @@ async def _final_orders_aggregate(
             - func.sum(case((is_compensation, WbReportDetail.ppvz_for_pay), else_=0)),
             0,
         ).label("revenue_gross"),
-    ).where(
-        WbReportDetail.sale_dt >= datetime.combine(rd_start, datetime.min.time(), tzinfo=timezone.utc),
-        WbReportDetail.sale_dt < datetime.combine(rd_end, datetime.min.time(), tzinfo=timezone.utc),
-    )
+    ).where(*_rd_period_predicates(start, end, reporting_mode))
     sub = _nm_id_subq(brands)
     if sub is not None:
         stmt = stmt.where(WbReportDetail.nm_id.in_(sub))
@@ -241,13 +275,14 @@ async def _final_sales_aggregate(
     start: datetime,
     end: datetime,
     brands: set[str] | None = None,
+    reporting_mode: ReportingMode = "operational",
 ) -> dict[str, float]:
     """Final-mode sales: count and net payout from wb_report_detail.
 
     Filtered on supplier_oper_name (not doc_type_name) — same logic as
-    _final_orders_aggregate.
+    _final_orders_aggregate. Period filtering via `_rd_period_predicates`
+    (sale_dt vs rr_dt — см. doc там).
     """
-    rd_start, rd_end = start.date(), end.date()
     is_sale = WbReportDetail.supplier_oper_name.in_(_SALE_NAMES)
     is_return = WbReportDetail.supplier_oper_name.in_(_RETURN_NAMES)
     stmt = select(
@@ -261,10 +296,7 @@ async def _final_sales_aggregate(
         func.coalesce(
             func.sum(case((is_return, WbReportDetail.ppvz_for_pay), else_=0)), 0
         ).label("for_pay_returns"),
-    ).where(
-        WbReportDetail.sale_dt >= datetime.combine(rd_start, datetime.min.time(), tzinfo=timezone.utc),
-        WbReportDetail.sale_dt < datetime.combine(rd_end, datetime.min.time(), tzinfo=timezone.utc),
-    )
+    ).where(*_rd_period_predicates(start, end, reporting_mode))
     sub = _nm_id_subq(brands)
     if sub is not None:
         stmt = stmt.where(WbReportDetail.nm_id.in_(sub))
@@ -282,6 +314,7 @@ async def _final_finance_aggregate(
     start: datetime,
     end: datetime,
     brands: set[str] | None = None,
+    reporting_mode: ReportingMode = "operational",
 ) -> dict[str, float]:
     """WB-кабинет «Доходы и расходы» по карточкам — финансовые поля.
 
@@ -300,7 +333,6 @@ async def _final_finance_aggregate(
     «Итог по товарам» = ppvz_net − (логистика+хранение+штрафы+удержания+эквайринг)
                       + доплаты — деньги на счёт за период.
     """
-    rd_start, rd_end = start.date(), end.date()
     is_sale = WbReportDetail.supplier_oper_name.in_(_SALE_NAMES)
     is_return = WbReportDetail.supplier_oper_name.in_(_RETURN_NAMES)
     revenue_field = func.coalesce(
@@ -335,10 +367,7 @@ async def _final_finance_aggregate(
             - func.sum(case((is_return, WbReportDetail.ppvz_for_pay), else_=0)),
             0,
         ).label("ppvz_net"),
-    ).where(
-        WbReportDetail.sale_dt >= datetime.combine(rd_start, datetime.min.time(), tzinfo=timezone.utc),
-        WbReportDetail.sale_dt < datetime.combine(rd_end, datetime.min.time(), tzinfo=timezone.utc),
-    )
+    ).where(*_rd_period_predicates(start, end, reporting_mode))
     sub = _nm_id_subq(brands)
     if sub is not None:
         stmt = stmt.where(WbReportDetail.nm_id.in_(sub))
@@ -393,13 +422,14 @@ async def _final_sold_units_and_cogs(
     end: datetime,
     cogs_map: dict[int, float],
     brands: set[str] | None = None,
+    reporting_mode: ReportingMode = "operational",
 ) -> tuple[float, float]:
     """Net sold quantity and COGS from wb_report_detail (sales − returns).
 
-    Filtered by sale_dt and supplier_oper_name to match the WB cabinet's
-    «Выкупы» and «Возвраты» buckets.
+    Filtered by supplier_oper_name to match the WB cabinet's «Выкупы» и
+    «Возвраты» buckets; период — sale_dt в operational режиме / rr_dt в
+    financial (см. `_rd_period_predicates`).
     """
-    rd_start, rd_end = start.date(), end.date()
     stmt = (
         select(
             WbReportDetail.nm_id,
@@ -411,10 +441,7 @@ async def _final_sold_units_and_cogs(
                 )
             ).label("units"),
         )
-        .where(
-            WbReportDetail.sale_dt >= datetime.combine(rd_start, datetime.min.time(), tzinfo=timezone.utc),
-            WbReportDetail.sale_dt < datetime.combine(rd_end, datetime.min.time(), tzinfo=timezone.utc),
-        )
+        .where(*_rd_period_predicates(start, end, reporting_mode))
         .group_by(WbReportDetail.nm_id)
     )
     sub = _nm_id_subq(brands)
@@ -610,16 +637,22 @@ async def _hybrid_orders_or_sales(
     end: datetime,
     brands: set[str] | None,
     cutoff: datetime | None,
+    reporting_mode: ReportingMode = "operational",
 ) -> dict[str, float]:
-    """Hybrid: для дат до cutoff — final, после — preliminary. Складываем."""
+    """Hybrid: для дат до cutoff — final, после — preliminary. Складываем.
+
+    `reporting_mode` влияет только на final-часть (wb_report_detail). Для
+    preliminary (wb_orders/wb_sales) у нас нет аналога rr_dt — preliminary
+    fn не принимает reporting_mode.
+    """
     if cutoff is None or cutoff <= start:
         # Все дни — preliminary (нет закрытых отчётов или они старше start)
         return await aggregate_fn_preliminary(session, start, end, brands)
     if cutoff >= end:
         # Все дни — final (cutoff покрывает весь период)
-        return await aggregate_fn_final(session, start, end, brands)
+        return await aggregate_fn_final(session, start, end, brands, reporting_mode=reporting_mode)
     # Mixed: [start, cutoff) — final; [cutoff, end) — preliminary
-    final_part = await aggregate_fn_final(session, start, cutoff, brands)
+    final_part = await aggregate_fn_final(session, start, cutoff, brands, reporting_mode=reporting_mode)
     prelim_part = await aggregate_fn_preliminary(session, cutoff, end, brands)
     return _merge_dicts(final_part, prelim_part)
 
@@ -631,13 +664,18 @@ async def _hybrid_sold_units_and_cogs(
     cogs_map: dict[int, float],
     brands: set[str] | None = None,
     cutoff: datetime | None = None,
+    reporting_mode: ReportingMode = "operational",
 ) -> tuple[int, float]:
     """Hybrid sold units + COGS — split по cutoff и суммируем."""
     if cutoff is None or cutoff <= start:
         return await _sold_units_and_cogs(session, start, end, cogs_map, brands=brands)
     if cutoff >= end:
-        return await _final_sold_units_and_cogs(session, start, end, cogs_map, brands=brands)
-    f_units, f_cogs = await _final_sold_units_and_cogs(session, start, cutoff, cogs_map, brands=brands)
+        return await _final_sold_units_and_cogs(
+            session, start, end, cogs_map, brands=brands, reporting_mode=reporting_mode,
+        )
+    f_units, f_cogs = await _final_sold_units_and_cogs(
+        session, start, cutoff, cogs_map, brands=brands, reporting_mode=reporting_mode,
+    )
     p_units, p_cogs = await _sold_units_and_cogs(session, cutoff, end, cogs_map, brands=brands)
     return f_units + p_units, f_cogs + p_cogs
 
@@ -647,21 +685,30 @@ async def compute_dashboard(
     period_or_key: "PeriodKey | Period",
     brands: set[str] | None = None,
     mode: Mode = "preliminary",
+    reporting_mode: ReportingMode = "operational",
 ) -> dict[str, Any]:
     """Build dashboard KPIs.
 
     `mode='preliminary'` (default) — orders/sales come from wb_orders/wb_sales,
     fast-updating but with cancellation noise on the right edge of the period.
 
-    `mode='final'` — read from wb_report_detail by rr_dt. Final WB numbers,
-    matches the WB seller cabinet exactly. Updated weekly, ~14 day lag for the
-    most recent week.
+    `mode='final'` — read from wb_report_detail. Final WB numbers, matches the
+    WB seller cabinet exactly. Updated weekly, ~14 day lag for the most recent
+    week.
 
     `mode='hybrid'` (10X-методика) — комбинированный: для уже закрытых
     WB-недель (где есть report_detail) берём final-цифры, для свежих
     дней — preliminary. Граница `cutoff = max(report_date_to) + 1d`.
     Если cutoff покрывает весь период → ведёт себя как final;
     если данных report_detail нет вообще → как preliminary.
+
+    `reporting_mode` (TASK-LEAD-054) — ортогональный toggle, влияет только
+    на final/hybrid (wb_report_detail). preliminary (orders/sales) от него
+    не зависит — у тех таблиц нет аналога rr_dt.
+      `operational` (default) — группировка по `sale_dt` (день выкупа), наш
+                                текущий канон, совпадает с дашбордом WB.
+      `financial`             — группировка по `rr_dt` (день платёжки), для
+                                бухгалтерской сверки с WB-«Финансы → Реализация».
     """
     period: Period = (
         period_or_key if isinstance(period_or_key, Period) else get_period(period_or_key)
@@ -685,24 +732,33 @@ async def compute_dashboard(
         sales_fn = None
         sold_fn = None
 
+    # `reporting_mode` важен только для final/hybrid (wb_report_detail).
+    # Для preliminary fn'ов (wb_orders/wb_sales) сигнатура не принимает его.
+    rm_kw_final = {"reporting_mode": reporting_mode}
     if mode == "hybrid":
         curr_orders = await _hybrid_orders_or_sales(
             _final_orders_aggregate, _orders_aggregate,
-            session, period.start, period.end, brands, cutoff,
+            session, period.start, period.end, brands, cutoff, reporting_mode=reporting_mode,
         )
         prev_orders = await _hybrid_orders_or_sales(
             _final_orders_aggregate, _orders_aggregate,
-            session, period.prev_start, period.prev_end, brands, cutoff,
+            session, period.prev_start, period.prev_end, brands, cutoff, reporting_mode=reporting_mode,
         )
         curr_sales = await _hybrid_orders_or_sales(
             _final_sales_aggregate, _sales_aggregate,
-            session, period.start, period.end, brands, cutoff,
+            session, period.start, period.end, brands, cutoff, reporting_mode=reporting_mode,
         )
         prev_sales = await _hybrid_orders_or_sales(
             _final_sales_aggregate, _sales_aggregate,
-            session, period.prev_start, period.prev_end, brands, cutoff,
+            session, period.prev_start, period.prev_end, brands, cutoff, reporting_mode=reporting_mode,
         )
+    elif mode == "final":
+        curr_orders = await orders_fn(session, period.start, period.end, brands, **rm_kw_final)
+        prev_orders = await orders_fn(session, period.prev_start, period.prev_end, brands, **rm_kw_final)
+        curr_sales = await sales_fn(session, period.start, period.end, brands, **rm_kw_final)
+        prev_sales = await sales_fn(session, period.prev_start, period.prev_end, brands, **rm_kw_final)
     else:
+        # preliminary — _orders_aggregate / _sales_aggregate, без reporting_mode
         curr_orders = await orders_fn(session, period.start, period.end, brands)
         prev_orders = await orders_fn(session, period.prev_start, period.prev_end, brands)
         curr_sales = await sales_fn(session, period.start, period.end, brands)
@@ -717,34 +773,53 @@ async def compute_dashboard(
     cogs_map = await _latest_cogs_map(session, brands=brands)
     if mode == "hybrid":
         sold_units, sold_cogs = await _hybrid_sold_units_and_cogs(
-            session, period.start, period.end, cogs_map, brands=brands, cutoff=cutoff,
+            session, period.start, period.end, cogs_map, brands=brands,
+            cutoff=cutoff, reporting_mode=reporting_mode,
         )
         _, prev_sold_cogs = await _hybrid_sold_units_and_cogs(
-            session, period.prev_start, period.prev_end, cogs_map, brands=brands, cutoff=cutoff,
+            session, period.prev_start, period.prev_end, cogs_map, brands=brands,
+            cutoff=cutoff, reporting_mode=reporting_mode,
+        )
+    elif mode == "final":
+        sold_units, sold_cogs = await sold_fn(
+            session, period.start, period.end, cogs_map, brands=brands,
+            reporting_mode=reporting_mode,
+        )
+        _, prev_sold_cogs = await sold_fn(
+            session, period.prev_start, period.prev_end, cogs_map, brands=brands,
+            reporting_mode=reporting_mode,
         )
     else:
         sold_units, sold_cogs = await sold_fn(
-            session, period.start, period.end, cogs_map, brands=brands
+            session, period.start, period.end, cogs_map, brands=brands,
         )
         _, prev_sold_cogs = await sold_fn(
-            session, period.prev_start, period.prev_end, cogs_map, brands=brands
+            session, period.prev_start, period.prev_end, cogs_map, brands=brands,
         )
     # Финансовые поля из wb_report_detail доступны в final и hybrid (берём
     # final-часть для closed-периода, для свежей части просто отсутствуют).
     if mode in ("final", "hybrid"):
         if mode == "hybrid" and cutoff is not None and cutoff > period.start and cutoff < period.end:
             # finance — только за final-часть [start, cutoff)
-            fin = await _final_finance_aggregate(session, period.start, cutoff, brands)
+            fin = await _final_finance_aggregate(
+                session, period.start, cutoff, brands, reporting_mode=reporting_mode,
+            )
             prev_fin_end = min(cutoff, period.prev_end)
             if prev_fin_end > period.prev_start:
                 prev_fin = await _final_finance_aggregate(
-                    session, period.prev_start, prev_fin_end, brands
+                    session, period.prev_start, prev_fin_end, brands,
+                    reporting_mode=reporting_mode,
                 )
             else:
                 prev_fin = _empty_finance()
         else:
-            fin = await _final_finance_aggregate(session, period.start, period.end, brands)
-            prev_fin = await _final_finance_aggregate(session, period.prev_start, period.prev_end, brands)
+            fin = await _final_finance_aggregate(
+                session, period.start, period.end, brands, reporting_mode=reporting_mode,
+            )
+            prev_fin = await _final_finance_aggregate(
+                session, period.prev_start, period.prev_end, brands,
+                reporting_mode=reporting_mode,
+            )
     else:
         fin = _empty_finance()
         prev_fin = _empty_finance()
@@ -758,12 +833,14 @@ async def compute_dashboard(
     pnl_from = period.start.date()
     pnl_to = (period.end - timedelta(days=1)).date()
     pnl_curr = await build_pnl(
-        session, date_from=pnl_from, date_to=pnl_to, granularity="month", brands=brands
+        session, date_from=pnl_from, date_to=pnl_to, granularity="month",
+        brands=brands, reporting_mode=reporting_mode,
     )
     pnl_prev_from = period.prev_start.date()
     pnl_prev_to = (period.prev_end - timedelta(days=1)).date()
     pnl_prev = await build_pnl(
-        session, date_from=pnl_prev_from, date_to=pnl_prev_to, granularity="month", brands=brands
+        session, date_from=pnl_prev_from, date_to=pnl_prev_to, granularity="month",
+        brands=brands, reporting_mode=reporting_mode,
     )
     net_profit = _f(pnl_curr.get("totals", {}).get("profit", 0))
     prev_net_profit = _f(pnl_prev.get("totals", {}).get("profit", 0))
@@ -1013,7 +1090,14 @@ async def revenue_timeseries(
     days: int = 30,
     brands: set[str] | None = None,
     mode: Mode = "preliminary",
+    reporting_mode: ReportingMode = "operational",
 ) -> list[dict[str, Any]]:
+    """Per-day revenue + orders + ad_cost.
+
+    `reporting_mode='financial'` (только для mode='final') группирует по rr_dt
+    вместо sale_dt — для бухгалтерской сверки. Для preliminary параметр
+    игнорируется (orders/sales без аналога rr_dt).
+    """
     end = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(
         days=1
     )
@@ -1023,12 +1107,17 @@ async def revenue_timeseries(
     ad_by_day = await _ad_cost_by_day(session, start, end, nm_sub)
 
     if mode == "final":
-        bucket = func.date_trunc("day", WbReportDetail.sale_dt).label("day")
         is_sale = WbReportDetail.supplier_oper_name.in_(_SALE_NAMES)
         is_compensation = WbReportDetail.supplier_oper_name.in_(_COMPENSATION_NAMES)
         revenue_field = func.coalesce(
             WbReportDetail.retail_price_withdisc_rub, WbReportDetail.retail_amount
         )
+        # operational: group_by date_trunc('day', sale_dt) — datetime column.
+        # financial:   group_by rr_dt (уже Date, кастить не надо).
+        if reporting_mode == "financial":
+            bucket = WbReportDetail.rr_dt.label("day")
+        else:
+            bucket = func.date_trunc("day", WbReportDetail.sale_dt).label("day")
         stmt = (
             select(
                 bucket,
@@ -1041,7 +1130,7 @@ async def revenue_timeseries(
                     func.sum(case((is_sale, WbReportDetail.quantity), else_=0)), 0
                 ).label("orders"),
             )
-            .where(WbReportDetail.sale_dt >= start, WbReportDetail.sale_dt < end)
+            .where(*_rd_period_predicates(start, end, reporting_mode))
             .group_by(bucket)
             .order_by(bucket)
         )
@@ -1104,7 +1193,13 @@ async def top_skus(
     brands: set[str] | None = None,
     mode: Mode = "preliminary",
     order: str = "desc",
+    reporting_mode: ReportingMode = "operational",
 ) -> list[dict[str, Any]]:
+    """Top SKUs.
+
+    `reporting_mode` влияет только на mode='final' (период по sale_dt vs rr_dt).
+    Для preliminary остаётся wb_orders.order_dt — игнорируется.
+    """
     period = (
         period_or_key if isinstance(period_or_key, Period) else get_period(period_or_key)
     )
@@ -1132,8 +1227,7 @@ async def top_skus(
                 ).label("orders"),
             )
             .where(
-                WbReportDetail.sale_dt >= period.start,
-                WbReportDetail.sale_dt < period.end,
+                *_rd_period_predicates(period.start, period.end, reporting_mode),
                 WbReportDetail.nm_id.is_not(None),
             )
             .group_by(WbReportDetail.nm_id)

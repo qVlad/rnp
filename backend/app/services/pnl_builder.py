@@ -37,6 +37,7 @@ from app.db.models import (
 from app.services.settings_timeline import load_timeline, value_for_date
 
 Granularity = Literal["day", "week", "month"]
+ReportingMode = Literal["operational", "financial"]
 
 
 def _f(v: Any) -> float:
@@ -406,6 +407,7 @@ async def build_pnl(
     date_to: date,
     granularity: Granularity = "day",
     brands: set[str] | None = None,
+    reporting_mode: "ReportingMode" = "operational",
 ) -> dict[str, Any]:
     """Per-period operating P&L.
 
@@ -415,6 +417,14 @@ async def build_pnl(
         * Drops company-level rows (nm_id IS NULL) and skips OPEX, fixed_costs,
           taxes/VAT — these are not allocable per-brand. The result is a
           contribution-margin view (revenue → COGS → ad → commission → margin).
+
+    `reporting_mode` (TASK-LEAD-054):
+        * `operational` (default) — `wb_report_detail` группируется по `sale_dt`
+          (день выкупа/возврата). Совпадает с дашбордом WB-кабинета.
+        * `financial` — группировка по `rr_dt` (день платёжки). Совпадает с
+          разделом «Финансы → Реализация» WB-кабинета и с банковской выпиской.
+          Только wb_report_detail-источник переключается; ad/OPEX/COGS остаются
+          на своих датах (для них rr_dt не применим).
     """
     nm_filter = (
         select(Product.nm_id).where(Product.brand.in_(list(brands)))
@@ -424,25 +434,29 @@ async def build_pnl(
     company_scope = brands is None  # keep OPEX/taxes/fixed only for org-wide view
 
     # ── A) WB report-detail aggregations (source of truth for revenue/commissions) ──
-    # Каноничные предикаты + дата (sale_dt) импортируются из period_aggregates,
+    # Каноничные предикаты + дата (sale_dt / rr_dt) импортируются из period_aggregates,
     # чтобы Dashboard / Units / Reconciliation использовали ТЕ ЖЕ формулы.
-    # Старый rr_dt-фильтр сдвигал возвраты на 1-2 недели вперёд относительно
-    # WB-кабинета и ломал сверку между страницами; sale_dt совпадает 1:1.
+    # operational mode = группировка по sale_dt (день выкупа, совпадает с
+    # дашбордом WB-кабинета); financial = по rr_dt (день платёжки, для
+    # бухгалтерской сверки с разделом «Финансы → Реализация»). TASK-LEAD-054.
     from app.services.period_aggregates import (
         OP_SALE,
         OP_RETURN,
         REVENUE_FIELD,
         acquiring_net_expr,
+        get_period_day,
+        get_period_filter,
         ppvz_net_expr,
         revenue_gross_expr,
         revenue_returns_expr,
-        sale_day,
-        sale_dt_filter,
     )
+
+    period_day = get_period_day(reporting_mode)
+    period_predicates = get_period_filter(date_from, date_to, reporting_mode)
 
     rd_stmt = (
         select(
-            sale_day().label("sale_day"),
+            period_day.label("sale_day"),
             revenue_gross_expr().label("revenue_gross"),
             revenue_returns_expr().label("revenue_returns"),
             ppvz_net_expr().label("ppvz_for_pay"),
@@ -476,9 +490,9 @@ async def build_pnl(
             func.sum(func.coalesce(WbReportDetail.paid_acceptance, 0)).label("paid_acceptance_total"),
             func.sum(func.coalesce(WbReportDetail.rebill_logistic_cost, 0)).label("rebill_logistic_total"),
         )
-        .where(*sale_dt_filter(date_from, date_to))
-        .group_by(sale_day())
-        .order_by(sale_day())
+        .where(*period_predicates)
+        .group_by(period_day)
+        .order_by(period_day)
     )
     if nm_filter is not None:
         rd_stmt = rd_stmt.where(WbReportDetail.nm_id.in_(nm_filter))
@@ -572,23 +586,28 @@ async def build_pnl(
 
         if brand_level_by_day:
             # Выручка manager-бренда по дням (из rd_rows что уже отфильтрованы)
-            # — берём sale_day и retail_price_withdisc_rub для Продаж.
+            # — берём period_day (sale_dt или rr_dt) и REVENUE_FIELD для Продаж.
             from app.services.period_aggregates import (  # noqa: WPS433
-                OP_SALE as _sale, REVENUE_FIELD as _rev, sale_day as _sd,
+                OP_SALE as _sale,
+                REVENUE_FIELD as _rev,
+                get_period_dt_column as _dt_col,
             )
+
             # rd_rows уже отфильтрованы по nm_filter (см. rd_stmt выше).
-            # Получаем по дням выручка-бренда.
+            # Получаем по дням выручка-бренда. NOT NULL guard на исходной
+            # date-колонке (sale_dt в operational, rr_dt в financial).
+            date_col = _dt_col(reporting_mode)
             br_rev_stmt = (
                 select(
-                    _sd().label("sale_day"),
+                    period_day.label("sale_day"),
                     func.sum(case((_sale, _rev), else_=0)).label("rev"),
                 )
                 .where(
-                    WbReportDetail.sale_dt.is_not(None),
+                    date_col.is_not(None),
                     WbReportDetail.nm_id.in_(nm_filter),
                 )
-                .where(*sale_dt_filter(date_from, date_to))
-                .group_by(_sd())
+                .where(*period_predicates)
+                .group_by(period_day)
             )
             br_rev = {
                 r.sale_day: _f(r.rev)
@@ -597,12 +616,12 @@ async def build_pnl(
             # Выручка всей компании по дням (без brand filter)
             co_rev_stmt = (
                 select(
-                    _sd().label("sale_day"),
+                    period_day.label("sale_day"),
                     func.sum(case((_sale, _rev), else_=0)).label("rev"),
                 )
-                .where(WbReportDetail.sale_dt.is_not(None))
-                .where(*sale_dt_filter(date_from, date_to))
-                .group_by(_sd())
+                .where(date_col.is_not(None))
+                .where(*period_predicates)
+                .group_by(period_day)
             )
             co_rev = {
                 r.sale_day: _f(r.rev)

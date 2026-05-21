@@ -36,6 +36,7 @@ import TodayVsYesterdayStrip from "@/components/TodayVsYesterdayStrip";
 import WeekProfitHero from "@/components/WeekProfitHero";
 import WeeklyChangesFeed from "@/components/WeeklyChangesFeed";
 import { usePeriod } from "@/contexts/PeriodContext";
+import { useReportingMode } from "@/contexts/ReportingModeContext";
 import ViewPresetsBar from "@/components/ViewPresetsBar";
 import { exportToPdf, exportToPng } from "@/lib/exportPdf";
 import { Icon } from "@/components/Icon";
@@ -75,6 +76,10 @@ export default function Dashboard() {
   // Dashboard preset (day/week/month) совпадает с PeriodContext preset.
   // При init читаем из context, при changes пишем обратно.
   const { period: ctxPeriod, setPeriod: ctxSetPeriod } = usePeriod();
+  // TASK-LEAD-054 — глобальный режим отчётности (operational/financial).
+  // Передаём в API-запросы; смена в Layout-toggle инвалидирует queries
+  // через queryKey (см. ниже).
+  const { reportingMode } = useReportingMode();
   const [mode, setMode] = useState<Mode>(() => {
     if (ctxPeriod.kind === "custom") {
       return { kind: "custom", start: ctxPeriod.from, end: ctxPeriod.to };
@@ -118,7 +123,7 @@ export default function Dashboard() {
     ? `${comparePeriods.a.from}:${comparePeriods.a.to}|${comparePeriods.b.from}:${comparePeriods.b.to}`
     : null;
   const compareQ = useQuery({
-    queryKey: ["dashboard-compare", compareKey, dataMode],
+    queryKey: ["dashboard-compare", compareKey, dataMode, reportingMode],
     queryFn: () =>
       api.dashboardCompare(
         comparePeriods!.a.from,
@@ -126,6 +131,7 @@ export default function Dashboard() {
         comparePeriods!.b.from,
         comparePeriods!.b.to,
         dataMode,
+        reportingMode,
       ),
     enabled: !!comparePeriods,
   });
@@ -138,22 +144,22 @@ export default function Dashboard() {
     mode.kind === "preset" ? `p:${mode.period}` : `c:${mode.start}:${mode.end}`;
 
   const dashQ = useQuery({
-    queryKey: ["dashboard", rangeKey, dataMode],
-    queryFn: () => api.dashboard(range, dataMode) as Promise<any>,
+    queryKey: ["dashboard", rangeKey, dataMode, reportingMode],
+    queryFn: () => api.dashboard(range, dataMode, reportingMode) as Promise<any>,
   });
   const tsQ = useQuery({
-    queryKey: ["timeseries", tsDays, dataMode],
-    queryFn: () => api.timeseries(tsDays, dataMode),
+    queryKey: ["timeseries", tsDays, dataMode, reportingMode],
+    queryFn: () => api.timeseries(tsDays, dataMode, reportingMode),
   });
   const topQ = useQuery({
-    queryKey: ["top", rangeKey, topBy, dataMode],
+    queryKey: ["top", rangeKey, topBy, dataMode, reportingMode],
     queryFn: () => {
       // worst_margin = по марже + сортировка asc (худшие сверху). Quick-win 3
       // из ревью c8f6609: «Top-5 проблемных SKU» — кандидаты на удаление /
       // ребренд / снижение закупки.
       const by = topBy === "worst_margin" ? "margin" : topBy;
       const order = topBy === "worst_margin" ? "asc" : "desc";
-      return api.topSkus(range, by, 5, dataMode, order) as Promise<any>;
+      return api.topSkus(range, by, 5, dataMode, order, reportingMode) as Promise<any>;
     },
   });
   const alertsQ = useQuery({ queryKey: ["alerts"], queryFn: () => api.alerts() });

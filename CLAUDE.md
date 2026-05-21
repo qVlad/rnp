@@ -485,6 +485,32 @@ exclusive `end` — даст лишний день рекламы в Units (бы
 
 `build_pnl` использует те же формулы что `_final_*_aggregate` — `ppvz_net` и `acquiring_net` через case (Продажа − Возврат), не общая sum. Reconciliation тоже на `retail_price_withdisc_rub` + supplier_oper_name → Δ 0% по всем неделям.
 
+### Режим отчётности — operational vs financial (TASK-LEAD-054)
+
+Поверх `mode=preliminary|final|hybrid` (источник данных) есть **ортогональный**
+глобальный toggle `reporting_mode` — по какой дате группируется
+`wb_report_detail`:
+
+- **operational** (default) — `sale_dt` (день физического выкупа/возврата),
+  совпадает с дашбордом WB-кабинета и нашим прежним поведением. «Управленческий»
+  взгляд — менеджер/собственник видит когда деньги фактически отрабатывают.
+- **financial** — `rr_dt` (день когда WB зафиксировал строку в финансовом
+  отчёте, она же дата платёжки). Совпадает с разделом WB-«Финансы → Реализация».
+  Для бухгалтерской сверки с банком и УПД-выписками.
+
+Toggle в Layout-footer (виден всем кроме `bookkeeper` — там и так зашит rr_dt
+в налоговых отчётах). Persist в `localStorage["reportingMode.v1"]`. Frontend
+читает через `useReportingMode()` (`contexts/ReportingModeContext.tsx`) и
+передаёт в API. Backend: `services/period_aggregates.get_period_filter(d_from,
+d_to, reporting_mode)` + `get_period_day(reporting_mode)` — универсальные
+helpers, используются в `metrics.py` (compute_dashboard / revenue_timeseries
+/ top_skus) и `pnl_builder.py` (build_pnl).
+
+`reporting_mode` влияет только на final-источник (wb_report_detail).
+Preliminary остаётся на `order_dt`/`sale_dt` orders/sales — у этих таблиц нет
+аналога `rr_dt`, переключатель для preliminary это no-op. Для hybrid — final-
+часть переключается, preliminary-часть нет.
+
 ## Audit log
 
 Подключён через `services/audit.audit_log()` в:

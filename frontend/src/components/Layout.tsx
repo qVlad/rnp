@@ -8,6 +8,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { useReportingMode } from "@/contexts/ReportingModeContext";
 import VersionBadge from "@/components/VersionBadge";
 import { Icon, IconName } from "@/components/Icon";
 import CommandPalette from "@/components/CommandPalette";
@@ -182,6 +183,7 @@ function readProfile(): Profile {
 
 export default function Layout() {
   const { user, logout, availableTenants, activeTenantId, switchTenant } = useAuth();
+  const { reportingMode, setReportingMode } = useReportingMode();
   const isDirector = user?.role === "director";
   const isHead = user?.role === "head_of_sales";
   const isBookkeeper = user?.role === "bookkeeper";
@@ -336,6 +338,35 @@ export default function Layout() {
                     {t.name}
                   </option>
                 ))}
+              </select>
+            </div>
+          )}
+          {/* TASK-LEAD-054 — глобальный toggle режима отчётности
+              (operational / financial). Виден всем кроме bookkeeper'а
+              (у того доступ только к налоговой части — там rr_dt
+              уже жёстко зашит). Manager увидит — может пригодиться
+              для сверки с бухгалтерскими отчётами своего бренда. */}
+          {!collapsed && !isBookkeeper && (
+            <div className="mb-2">
+              <label
+                htmlFor="sidebar-reporting-mode"
+                className="block text-faint uppercase tracking-wider text-[10px] mb-1"
+              >
+                Режим отчётности
+              </label>
+              <select
+                id="sidebar-reporting-mode"
+                className="input w-full text-xs py-1"
+                value={reportingMode}
+                onChange={(e) => setReportingMode(e.target.value as "operational" | "financial")}
+                title={
+                  "Группировка строк wb_report_detail. " +
+                  "Управленческий = по дню выкупа (sale_dt), как на дашборде WB. " +
+                  "Финансовый = по дню платёжки (rr_dt), как в разделе WB-«Финансы → Реализация» — для сверки с банком."
+                }
+              >
+                <option value="operational">Управленческий (заказ)</option>
+                <option value="financial">Финансовый (выплата)</option>
               </select>
             </div>
           )}

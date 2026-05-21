@@ -17,6 +17,11 @@ from app.services.period_aggregates import (
     SALE_NAMES,
     RETURN_NAMES,
     COMPENSATION_RETURN_NAMES,
+    get_period_day,
+    get_period_dt_column,
+    get_period_filter,
+    rr_day,
+    rr_dt_filter,
     sale_day,
     sale_dt_filter,
 )
@@ -86,3 +91,80 @@ def test_sale_day_is_date_cast():
     expr = sale_day()
     rendered = str(expr)
     assert "DATE" in rendered.upper() or "date" in rendered.lower()
+
+
+# ── TASK-LEAD-054: reporting_mode operational/financial ───────────────────
+
+
+def test_rr_dt_filter_uses_inclusive_bounds():
+    """`rr_dt_filter` — закрытый интервал по `Date` (`>=` и `<=` обе границы).
+
+    В отличие от `sale_dt_filter` (полуоткрытый), `rr_dt` это `Date` (не
+    datetime), поэтому `<=` корректно включает день `date_to`. Если бы это
+    был `<`, последний день периода терялся бы при сверке.
+    """
+    preds = rr_dt_filter(date(2026, 4, 1), date(2026, 4, 30))
+    assert len(preds) == 2
+    left, right = preds
+    left_sql = str(left.compile(compile_kwargs={"literal_binds": True}))
+    right_sql = str(right.compile(compile_kwargs={"literal_binds": True}))
+    assert ">=" in left_sql
+    assert "<=" in right_sql
+    assert "rr_dt" in left_sql.lower()
+    assert "rr_dt" in right_sql.lower()
+    # Границы — 2026-04-01 / 2026-04-30 (без +1 day, как в sale_dt_filter)
+    assert "2026-04-01" in left_sql
+    assert "2026-04-30" in right_sql
+
+
+def test_get_period_filter_dispatches_by_reporting_mode():
+    """operational → sale_dt_filter (полуоткрытый, +1d справа);
+    financial   → rr_dt_filter (закрытый, без +1d)."""
+    op = get_period_filter(date(2026, 4, 1), date(2026, 4, 30), "operational")
+    fi = get_period_filter(date(2026, 4, 1), date(2026, 4, 30), "financial")
+    op_sql = " ".join(
+        str(p.compile(compile_kwargs={"literal_binds": True})) for p in op
+    )
+    fi_sql = " ".join(
+        str(p.compile(compile_kwargs={"literal_binds": True})) for p in fi
+    )
+    # operational оперирует на sale_dt с полуоткрытым интервалом
+    assert "sale_dt" in op_sql.lower()
+    assert "2026-05-01" in op_sql  # +1 day exclusive
+    # financial — на rr_dt без +1d
+    assert "rr_dt" in fi_sql.lower()
+    assert "2026-04-30" in fi_sql
+    assert "2026-05-01" not in fi_sql
+
+
+def test_get_period_filter_default_is_operational():
+    """Дефолт без аргумента — operational (текущее поведение, не ломаем
+    callers'ов которые не передают reporting_mode)."""
+    default_preds = get_period_filter(date(2026, 4, 1), date(2026, 4, 30))
+    op_preds = get_period_filter(date(2026, 4, 1), date(2026, 4, 30), "operational")
+    # SQL текст должен совпасть
+    assert [str(a) for a in default_preds] == [str(b) for b in op_preds]
+
+
+def test_get_period_day_returns_sale_vs_rr_dt():
+    """operational → DATE(sale_dt); financial → rr_dt (уже Date, без кастa)."""
+    op_day = get_period_day("operational")
+    fi_day = get_period_day("financial")
+    op_sql = str(op_day).lower()
+    fi_sql = str(fi_day).lower()
+    assert "sale_dt" in op_sql
+    assert "rr_dt" in fi_sql
+
+
+def test_get_period_dt_column_returns_correct_column():
+    """For direct WHERE col >= ... usage in callers that bypass the helper."""
+    op_col = get_period_dt_column("operational")
+    fi_col = get_period_dt_column("financial")
+    assert op_col.name == "sale_dt"
+    assert fi_col.name == "rr_dt"
+
+
+def test_rr_day_is_just_rr_dt_column():
+    """rr_dt уже `Date` — кастить через func.date не нужно. rr_day == column."""
+    expr = rr_day()
+    assert expr.name == "rr_dt"

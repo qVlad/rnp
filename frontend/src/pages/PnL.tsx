@@ -11,6 +11,7 @@ import { DateRangePicker } from "@/components/DateRangePicker";
 import PnLCardsView from "@/components/PnLCardsView";
 import PnLByBrandView from "@/components/PnLByBrandView";
 import { usePeriod } from "@/contexts/PeriodContext";
+import { useReportingMode } from "@/contexts/ReportingModeContext";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const daysAgo = (n: number) => {
@@ -169,6 +170,8 @@ export default function PnL() {
 
   // TASK-UI-005: глобальный период.
   const { range, setPeriod } = usePeriod();
+  // TASK-LEAD-054: глобальный режим отчётности operational/financial.
+  const { reportingMode } = useReportingMode();
   const from = range.from;
   const to = range.to;
   const [granularity, setGranularity] = useState<"day" | "week" | "month">("day");
@@ -189,9 +192,9 @@ export default function PnL() {
   const { isHidden: rowHidden } = useColumnVisibility("pnl.rows.hidden.v1");
 
   const q = useQuery({
-    queryKey: ["pnl", from, to, granularity, compare, drillBrandsParam],
+    queryKey: ["pnl", from, to, granularity, compare, drillBrandsParam, reportingMode],
     queryFn: () =>
-      api.pnl(from, to, granularity, compare, drillBrands) as Promise<any>,
+      api.pnl(from, to, granularity, compare, drillBrands, reportingMode) as Promise<any>,
   });
 
   const isBrandsScope = q.data?.scope === "brands";

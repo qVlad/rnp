@@ -21,10 +21,23 @@ data и используется отдельно как база УСН-дох�
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+from typing import Literal
 
 from sqlalchemy import case, func
 
 from app.db.models import WbReportDetail
+
+
+# Режим отчётности — ортогонален mode=preliminary|final|hybrid.
+# operational (default) = группировка по sale_dt (когда WB зафиксировал
+#                         физический выкуп/возврат); совпадает с дашбордом WB
+#                         и с тем, как видит ситуацию менеджер/собственник.
+# financial            = группировка по rr_dt (когда платёжка по этой строке
+#                         попала в финансовый отчёт WB); совпадает с разделом
+#                         «Финансы → Реализация» в кабинете WB. Бухгалтер
+#                         сверяется с банком и УПД именно по rr_dt.
+# Подробности — TASK-LEAD-054 (truestats-reanalysis-2026-05-21 § «Режимы»).
+ReportingMode = Literal["operational", "financial"]
 
 
 # ── Предикаты supplier_oper_name ──────────────────────────────────────
@@ -75,6 +88,72 @@ def sale_day():
     """SQL-выражение `DATE(sale_dt)` для group_by/order_by/select. Используется
     как замена прежнему `rr_dt` в `group_by` в P&L-агрегациях."""
     return func.date(WbReportDetail.sale_dt)
+
+
+def rr_dt_filter(date_from: date, date_to: date) -> tuple:
+    """Financial-mode фильтр периода: `WHERE rr_dt BETWEEN date_from AND date_to`.
+
+    Используется когда `reporting_mode='financial'` — нужна сверка с
+    разделом «Финансы → Реализация» в кабинете WB и с банковской платёжкой.
+    `rr_dt` — это `Date` (не datetime, нет tz), поэтому фильтр inclusive
+    с обеих сторон (закрытый интервал) — в отличие от полуоткрытого
+    `sale_dt_filter`.
+
+    Каноничный комментарий из CLAUDE.md «Каноничное поле даты — sale_dt»
+    остаётся в силе: operational режим = sale_dt = выкуп; financial =
+    rr_dt = деньги. Не путать.
+    """
+    return (
+        WbReportDetail.rr_dt >= date_from,
+        WbReportDetail.rr_dt <= date_to,
+    )
+
+
+def rr_day():
+    """SQL-выражение для group_by по rr_dt. `rr_dt` уже `Date`, кастить не
+    нужно — это `func.date(...)` over date вернёт ту же дату."""
+    return WbReportDetail.rr_dt
+
+
+def get_period_filter(
+    date_from: date, date_to: date, reporting_mode: ReportingMode = "operational"
+) -> tuple:
+    """Универсальный period-фильтр, переключается между sale_dt и rr_dt.
+
+    operational → `sale_dt_filter(date_from, date_to)` (наш текущий канон,
+                  полуоткрытый интервал по datetime).
+    financial   → `rr_dt_filter(date_from, date_to)` (закрытый интервал по
+                  `Date` rr_dt). Для бухгалтерской сверки с WB-кабинетом.
+
+    Все сервисы которым нужен toggle `reporting_mode` — Dashboard, P&L,
+    Reconciliation — должны пользоваться этим helper'ом, а не дублировать
+    if-else локально.
+    """
+    if reporting_mode == "financial":
+        return rr_dt_filter(date_from, date_to)
+    return sale_dt_filter(date_from, date_to)
+
+
+def get_period_day(reporting_mode: ReportingMode = "operational"):
+    """SQL-выражение для group_by/order_by по дню — sale_day или rr_day
+    в зависимости от reporting_mode. Используется вместе с get_period_filter."""
+    if reporting_mode == "financial":
+        return rr_day()
+    return sale_day()
+
+
+def get_period_dt_column(reporting_mode: ReportingMode = "operational"):
+    """Колонка-источник даты для прямых `.where(col >= ...)` запросов в
+    metrics.py (там фильтр инлайн, не через helper). operational → sale_dt,
+    financial → rr_dt.
+
+    Возвращает Column'у, на которой можно делать сравнения. В financial
+    режиме это `Date`, поэтому caller должен передавать `date`-bound'ы
+    (не datetime). Для operational — `DateTime(tz)`, передавать datetime.
+    """
+    if reporting_mode == "financial":
+        return WbReportDetail.rr_dt
+    return WbReportDetail.sale_dt
 
 
 # ── Канонические aggregate-выражения ──────────────────────────────────

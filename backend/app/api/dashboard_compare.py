@@ -56,6 +56,7 @@ async def compare_periods(
     b_from: Annotated[date, Query(description="Period B start (inclusive)")],
     b_to: Annotated[date, Query(description="Period B end (inclusive)")],
     mode: Literal["preliminary", "final", "hybrid"] = "preliminary",
+    reporting_mode: Literal["operational", "financial"] = "operational",
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
@@ -65,11 +66,16 @@ async def compare_periods(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    dash_a = await compute_dashboard(session, p_a, brands=brands, mode=mode)
-    dash_b = await compute_dashboard(session, p_b, brands=brands, mode=mode)
+    dash_a = await compute_dashboard(
+        session, p_a, brands=brands, mode=mode, reporting_mode=reporting_mode,
+    )
+    dash_b = await compute_dashboard(
+        session, p_b, brands=brands, mode=mode, reporting_mode=reporting_mode,
+    )
 
     return {
         "mode": mode,
+        "reporting_mode": reporting_mode,
         "period_a": dash_a,
         "period_b": dash_b,
         "delta_pct": _build_delta_map(dash_a.get("kpis", []), dash_b.get("kpis", [])),

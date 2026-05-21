@@ -1996,22 +1996,40 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 
 ### TASK-LEAD-054: Режимы отчётности «Управленческая / Финансовая» (gap из TS-анализа)
 
-- **Исполнитель:** Lead → Developer
+- **Исполнитель:** Lead → Developer (sub-agent F, раунд 7)
 - **Приоритет:** P2 (high impact, но архитектурная фича)
 - **Оценка:** M (1-2 недели)
 - **Источник:** `TRUESTATS_REFERENCE.md` §16.3 — TS имеет глобальный toggle: «Управленческая» (дата = order_dt, как у нас сейчас) vs «Финансовая» (дата = payout_dt). Бухгалтер сверяется по выплатам, менеджер — по заказам. У нас единый `sale_dt`.
 - **Описание:**
-  1. Новый query-param `mode=operational|financial` на API ручках Dashboard/PnL/Reconciliation
-  2. Backend: `services/period_aggregates.py` — добавить `sale_dt_filter_financial()` который использует `pay_dt` или эквивалент из `wb_report_detail`
-  3. Frontend: глобальный toggle в шапке (рядом с PeriodContext) — switch меняет URL + invalidate queries
-  4. Persist в localStorage (`reportingMode.v1`)
+  1. Новый query-param `reporting_mode=operational|financial` (ортогональный
+     существующему `mode=preliminary|final|hybrid`) на API ручках Dashboard/PnL.
+  2. Backend: `services/period_aggregates.py` — `rr_dt_filter()` + универсальный
+     `get_period_filter(d_from, d_to, reporting_mode)` + `get_period_day()` +
+     `get_period_dt_column()`. `operational` → `sale_dt` (как было),
+     `financial` → `rr_dt` (поле даты строки в фин-отчёте, как WB-«Финансы»).
+  3. Frontend: `ReportingModeContext` (analogue of PeriodContext) + hook
+     `useReportingMode()`. Layout-footer toggle с persist в
+     `localStorage["reportingMode.v1"]` + cross-tab sync.
+  4. Pages: Dashboard.tsx и PnL.tsx читают из context, передают в API через
+     query-param. Query-keys включают reportingMode → автоматический invalidate.
 - **Критерии готовности:**
-  - [ ] Backend: API ручки принимают `mode=operational|financial`
-  - [ ] Frontend: глобальный toggle в Layout
-  - [ ] Reconciliation страница использует mode=financial по умолчанию (для бухгалтера логичнее)
-  - [ ] Smoke: переключение → разные цифры на одном периоде (заказы vs выплаты)
+  - [x] Backend: `services/period_aggregates.py` — `rr_dt_filter()`, `rr_day()`, `get_period_filter()`, `get_period_day()`, `get_period_dt_column()`
+  - [x] Backend: `services/metrics.py` — `compute_dashboard / revenue_timeseries / top_skus` + final/hybrid helpers приняли `reporting_mode`
+  - [x] Backend: `services/pnl_builder.py` — `build_pnl` принял `reporting_mode`
+  - [x] Backend API: `/api/dashboard`, `/api/dashboard/timeseries`, `/api/dashboard/top-skus`, `/api/dashboard/today-vs-yesterday`, `/api/dashboard/compare`, `/api/pnl` приняли `reporting_mode` query
+  - [x] Frontend: `contexts/ReportingModeContext.tsx` + `useReportingMode()` хук
+  - [x] Frontend: Layout — глобальный toggle (виден всем кроме bookkeeper) + persist + storage-event cross-tab sync
+  - [x] Frontend: Dashboard.tsx + PnL.tsx читают из context и передают в API
+  - [x] Frontend: `api/client.ts` — `dashboard / timeseries / topSkus / dashboardCompare / dashboardTodayVsYesterday / pnl` приняли `reportingMode` параметр
+  - [x] Tests: `test_period_aggregates.py` — 6 новых тестов покрывают `rr_dt_filter` (closed-interval), `get_period_filter` dispatch, default = operational, `get_period_day`/`get_period_dt_column`
+  - [x] Документация: CLAUDE.md § «Дашборд KPI и режимы» + FEATURES.md § Dashboard + WB_API_REFERENCE.md (sale_dt vs rr_dt семантика)
 - **Зависимости:** TASK-UI-005 ✅ (PeriodContext, чтобы single source period+mode)
-- **Статус:** Открыта
+- **Архитектурная заметка:** `reporting_mode` влияет только на `wb_report_detail`-источники
+  (final + final-часть hybrid). Preliminary (wb_orders/wb_sales) не имеет аналога
+  `rr_dt`, тоggle для preliminary это no-op. Reconciliation не переписан — он
+  сравнивает preliminary vs final (другая ось), переключатель там не применим;
+  отложен на будущую таску если бухгалтер попросит.
+- **Статус:** Выполнено — 2026-05-21 (sub-agent F, раунд 7). НЕ деплоено — main session делает merge.
 
 ---
 

@@ -32,6 +32,14 @@ async def get_pnl(
             "же длины, сдвинутый назад. Для сравнения «текущий vs предыдущий»."
         ),
     ),
+    reporting_mode: Literal["operational", "financial"] = Query(
+        default="operational",
+        description=(
+            "TASK-LEAD-054: 'operational' (default) — группировка по sale_dt "
+            "(день выкупа, как в дашборде WB); 'financial' — по rr_dt (день "
+            "платёжки, как в WB-«Финансы → Реализация», для сверки с банком)."
+        ),
+    ),
     brands_param: str | None = Query(
         default=None,
         alias="brands",
@@ -68,8 +76,10 @@ async def get_pnl(
         date_to=date_to,
         granularity=granularity,
         brands=brands,
+        reporting_mode=reporting_mode,
     )
     out["scope"] = "company" if brands is None else "brands"
+    out["reporting_mode"] = reporting_mode
     if requested_brands is not None:
         out["filter_brands"] = sorted(brands) if brands else []
 
@@ -85,6 +95,7 @@ async def get_pnl(
             date_to=prev_to,
             granularity=granularity,
             brands=brands,
+            reporting_mode=reporting_mode,
         )
         # Не возвращаем `rows` для прошлого периода — UI рисует только totals
         # в дополнительной колонке. Это бережёт payload и кеш.

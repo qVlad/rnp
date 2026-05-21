@@ -62,6 +62,7 @@ async def get_dashboard(
     start_date: Annotated[date | None, Query()] = None,
     end_date: Annotated[date | None, Query()] = None,
     mode: Literal["preliminary", "final", "hybrid"] = "preliminary",
+    reporting_mode: Literal["operational", "financial"] = "operational",
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
@@ -70,6 +71,7 @@ async def get_dashboard(
         _resolve_period(period, start_date, end_date),
         brands=brands,
         mode=mode,
+        reporting_mode=reporting_mode,
     )
 
 
@@ -77,13 +79,17 @@ async def get_dashboard(
 async def get_timeseries(
     days: Annotated[int, Query(ge=1, le=365)] = 30,
     mode: Literal["preliminary", "final", "hybrid"] = "preliminary",
+    reporting_mode: Literal["operational", "financial"] = "operational",
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
     return {
         "days": days,
         "mode": mode,
-        "rows": await revenue_timeseries(session, days=days, brands=brands, mode=mode),
+        "reporting_mode": reporting_mode,
+        "rows": await revenue_timeseries(
+            session, days=days, brands=brands, mode=mode, reporting_mode=reporting_mode,
+        ),
     }
 
 
@@ -96,6 +102,7 @@ async def get_top_skus(
     order: Literal["desc", "asc"] = "desc",
     limit: Annotated[int, Query(ge=1, le=50)] = 5,
     mode: Literal["preliminary", "final", "hybrid"] = "preliminary",
+    reporting_mode: Literal["operational", "financial"] = "operational",
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
@@ -104,8 +111,10 @@ async def get_top_skus(
     p = _resolve_period(period, start_date, end_date)
     return {
         "mode": mode,
+        "reporting_mode": reporting_mode,
         "items": await top_skus(
             session, p, by=by, limit=limit, brands=brands, mode=mode, order=order,
+            reporting_mode=reporting_mode,
         ),
     }
 
@@ -219,6 +228,7 @@ async def unack_alert(
 @router.get("/today-vs-yesterday")
 async def get_today_vs_yesterday(
     mode: Literal["preliminary", "final", "hybrid"] = "preliminary",
+    reporting_mode: Literal["operational", "financial"] = "operational",
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
@@ -234,8 +244,12 @@ async def get_today_vs_yesterday(
     p_today = period_from_range(today, today)
     p_yesterday = period_from_range(yesterday, yesterday)
 
-    d_today = await compute_dashboard(session, p_today, brands=brands, mode=mode)
-    d_yesterday = await compute_dashboard(session, p_yesterday, brands=brands, mode=mode)
+    d_today = await compute_dashboard(
+        session, p_today, brands=brands, mode=mode, reporting_mode=reporting_mode,
+    )
+    d_yesterday = await compute_dashboard(
+        session, p_yesterday, brands=brands, mode=mode, reporting_mode=reporting_mode,
+    )
 
     # Build delta KPIs zip-aligned by `.key`
     by_key_today = {k["key"]: k for k in d_today.get("kpis", [])}

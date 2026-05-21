@@ -605,33 +605,45 @@ export const api = {
   dashboard: (
     range: { period: "day" | "week" | "month" } | { start: string; end: string },
     mode: "preliminary" | "final" | "hybrid" = "preliminary",
+    reportingMode: "operational" | "financial" = "operational",
   ) => {
     const qs =
       "period" in range
         ? `period=${range.period}`
         : `start_date=${range.start}&end_date=${range.end}`;
-    return request(`/api/dashboard?${qs}&mode=${mode}`);
+    return request(
+      `/api/dashboard?${qs}&mode=${mode}&reporting_mode=${reportingMode}`,
+    );
   },
-  timeseries: (days: number, mode: "preliminary" | "final" | "hybrid" = "preliminary") =>
+  timeseries: (
+    days: number,
+    mode: "preliminary" | "final" | "hybrid" = "preliminary",
+    reportingMode: "operational" | "financial" = "operational",
+  ) =>
     request<{
       days: number;
       mode: "preliminary" | "final" | "hybrid";
+      reporting_mode?: "operational" | "financial";
       rows: { date: string; revenue: number; orders: number; ad_cost: number }[];
-    }>(`/api/dashboard/timeseries?days=${days}&mode=${mode}`),
+    }>(
+      `/api/dashboard/timeseries?days=${days}&mode=${mode}&reporting_mode=${reportingMode}`,
+    ),
   dashboardCompare: (
     aFrom: string,
     aTo: string,
     bFrom: string,
     bTo: string,
     mode: "preliminary" | "final" | "hybrid" = "preliminary",
+    reportingMode: "operational" | "financial" = "operational",
   ) =>
     request<{
       mode: "preliminary" | "final" | "hybrid";
+      reporting_mode?: "operational" | "financial";
       period_a: { kpis: any[]; period: any; mode: string };
       period_b: { kpis: any[]; period: any; mode: string };
       delta_pct: Record<string, number | null>;
     }>(
-      `/api/dashboard/compare?a_from=${aFrom}&a_to=${aTo}&b_from=${bFrom}&b_to=${bTo}&mode=${mode}`,
+      `/api/dashboard/compare?a_from=${aFrom}&a_to=${aTo}&b_from=${bFrom}&b_to=${bTo}&mode=${mode}&reporting_mode=${reportingMode}`,
     ),
   topSkus: (
     range: { period: "day" | "week" | "month" } | { start: string; end: string },
@@ -639,13 +651,14 @@ export const api = {
     limit = 5,
     mode: "preliminary" | "final" | "hybrid" = "preliminary",
     order: "desc" | "asc" = "desc",
+    reportingMode: "operational" | "financial" = "operational",
   ) => {
     const qs =
       "period" in range
         ? `period=${range.period}`
         : `start_date=${range.start}&end_date=${range.end}`;
     return request(
-      `/api/dashboard/top-skus?${qs}&by=${by}&order=${order}&limit=${limit}&mode=${mode}`,
+      `/api/dashboard/top-skus?${qs}&by=${by}&order=${order}&limit=${limit}&mode=${mode}&reporting_mode=${reportingMode}`,
     );
   },
   alerts: () =>
@@ -675,6 +688,7 @@ export const api = {
     granularity: "day" | "week" | "month",
     compare: boolean = false,
     brands?: string[] | null,
+    reportingMode: "operational" | "financial" = "operational",
   ) => {
     const brandsQ = brands && brands.length > 0
       ? `&brands=${encodeURIComponent(brands.join(","))}`
@@ -682,7 +696,7 @@ export const api = {
     return request(
       `/api/pnl?from=${from}&to=${to}&granularity=${granularity}${
         compare ? "&compare=true" : ""
-      }${brandsQ}`,
+      }${brandsQ}&reporting_mode=${reportingMode}`,
     );
   },
 
@@ -2100,8 +2114,13 @@ paymentOrderDelete: (payment_order_id: string) =>
     return request(`/api/ads/heatmap?${qs}`);
   },
 
-  dashboardTodayVsYesterday: (mode: "preliminary" | "final" | "hybrid" = "preliminary") =>
-    request(`/api/dashboard/today-vs-yesterday?mode=${mode}`),
+  dashboardTodayVsYesterday: (
+    mode: "preliminary" | "final" | "hybrid" = "preliminary",
+    reportingMode: "operational" | "financial" = "operational",
+  ) =>
+    request(
+      `/api/dashboard/today-vs-yesterday?mode=${mode}&reporting_mode=${reportingMode}`,
+    ),
 
   // TASK-DEV-012: фид «что изменилось с прошлой недели». Кеш Redis 1ч на бекенде.
   dashboardWeeklyChanges: () =>
