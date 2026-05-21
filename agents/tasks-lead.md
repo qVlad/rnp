@@ -1293,7 +1293,36 @@ Lead использует этот файл как master-view: сюда скл�
   - [ ] 3 файла обновлены, UI Engineer явно в списке «не бампает / handoff на release-manager»
   - [ ] `CLAUDE.md` «Где искать что» — опционально строка про UI Engineer (только если решим что нужна)
 - **Зависимости:** TASK-LEAD-028 закоммичен и запушен (чтобы не наступить на WIP)
-- **Статус:** Открыта
+- **Статус:** Снято TASK-LEAD-037'ом (Release Manager как роль удалён, апдейтить нечего)
+
+---
+
+### TASK-LEAD-037: Реструктур ролевой системы (–Release Manager, +PM/SRE/Security, merges)
+
+- **Исполнитель:** Lead → сам
+- **Приоритет:** P1 (организационный долг — backlog overflow, отсутствие ops/security ownership, дублирование ролей)
+- **Оценка:** M (один заход) — фактически 1 сессия
+- **Источник:** диалог 2026-05-21 «оптимальна ли эта структура» — анализ показал дублирование (Designer+ArtDir, 4 персоны, Strategist+Analyst, QA boundary-tests vs Persona-Manager) и gap'ы (нет SRE, нет Security Auditor, нет PM-роли для backlog grooming). Release Manager в одноюзерной сессии = искусственная «смена шляпы».
+- **Описание:**
+  1. **Удалить Release Manager** как роль. Mutex (`scripts/lock.sh` + git-branch `release-lock`) сохраняется как операционный инструмент. Любая роль с контекстом может выполнить release-checklist.
+  2. **Добавить Product Manager** (`product-manager.md`) — backlog grooming, приоритизация, integration of Strategist + Analyst output, ownership ROADMAP.md и `tasks-lead.md`.
+  3. **Добавить SRE / Operator** (`sre.md`) — мониторинг, бэкап-верификация, capacity, incident response, **owns release-execution** (унаследованное от Release Manager). Для prod-сервиса с одним сервером это критично.
+  4. **Добавить Security Auditor** (`security-auditor.md`) — audit_log coverage gaps (artificial_orders, external_ad_costs, plans, off_platform — все TODO из CLAUDE.md), tenant isolation regression, secret rotation, RBAC depth.
+  5. **Слить Designer + Art Director → UI/UX Designer** (`ui-ux-designer.md`). UI Engineer (только что введённый параллельной сессией) остаётся — он implementation-арм для visual code. Получаем clean 2-role design.
+  6. **Слить Strategist + Analyst → Product Strategist** (`product-strategist.md`) — рынок + продуктовая аналитика + feedback-review + hypotheses.
+  7. **Слить 4 персоны → UX-Validator** (`ux-validator.md`) с модами `--as accountant|seller|rop|manager`.
+  8. Обновить `README.md`, `RULES.md` (правила 2.5, 2.6, 2.7), `CLAUDE.md` (убрать Release Manager упоминания, обновить handoff-flow).
+- **Критерии готовности:**
+  - [x] Новые роли: `product-manager.md`, `sre.md`, `security-auditor.md`, `ui-ux-designer.md`, `product-strategist.md`, `ux-validator.md` + соответствующие `tasks-*.md`
+  - [x] Удалены: `release-manager.md`, `tasks-release-manager.md`, `art-director.md`, `tasks-art.md`, `designer.md`, `tasks-designer.md`, `strategist.md`, `tasks-strategist.md`, `analyst.md`, `tasks-analyst.md`, `persona-{accountant,seller,rop,manager}.md`, `tasks-persona-*` (4 шт.)
+  - [x] Bug-файлы сохранены: `bugs-designer.md` → `bugs-ui-ux-designer.md` (rename, история багов не теряется), `bugs-developer.md` без изменений
+  - [x] Открытые задачи из удаляемых `tasks-*.md` перенесены в новые соответствующие файлы (`tasks-ui-ux-designer.md`, `tasks-product-strategist.md`, `tasks-ux-validator.md`)
+  - [x] `README.md` — новая таблица ролей (10 ролей), новый flow-diagram без Release Manager
+  - [x] `RULES.md` — Правило 2.5 (feedback-loop): UX-Validator + Product Strategist + Lead + PM. Правило 2.6: tooling сохранён, ownership = SRE (типично). Правило 2.7: заменено на release-checklist (any role).
+  - [x] `CLAUDE.md` — убраны жёсткие callout'ы «только Release Manager бампает». Релиз-секция в «Стиле работы» → general checklist. «Где искать что» обновлено.
+  - [x] `DEPLOY_LOCK.md` — без изменений (уже journal/UI, mutex в git-ветке)
+- **Зависимости:** нет
+- **Статус:** Выполнено — 2026-05-21
 
 ---
 

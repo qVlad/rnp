@@ -29,40 +29,42 @@
 
 ## Документы команды
 
+> Реструктур ролей 2026-05-21 (TASK-LEAD-037): удалён Release Manager,
+> добавлены PM / SRE / Security Auditor, слиты Designer+ArtDir → UI/UX
+> Designer, Strategist+Analyst → Product Strategist, 4 персоны → UX-Validator.
+> Подробности — `agents/README.md` § «История реструктура».
+
 ### Продуктовая команда
 | Файл | Назначение |
 |---|---|
 | `agents/RULES.md` | Этот файл — общие правила |
 | `agents/README.md` | Описание ролей + диаграмма взаимодействия |
 | `agents/lead.md` | Lead / Architect |
-| `agents/developer.md` | Full-stack Developer |
-| `agents/designer.md` | UX Designer |
-| `agents/art-director.md` | Art Director |
+| `agents/product-manager.md` | Product Manager — backlog grooming, приоритеты, ROADMAP |
+| `agents/developer.md` | Full-stack Developer (backend + бизнес-логика frontend) |
+| `agents/ui-ux-designer.md` | UI/UX Designer — UX-спеки + бренд + DESIGN_SYSTEM |
+| `agents/ui-engineer.md` | UI Engineer — реализация UI-кода + DESIGN_SYSTEM compliance |
 | `agents/qa.md` | QA Engineer |
-| `agents/release-manager.md` | Release Manager — единственный исполнитель bump+deploy (single-instance через `DEPLOY_LOCK.md`) |
-| `agents/tasks-lead.md` … `tasks-qa.md`, `tasks-release-manager.md` | Задачи по ролям |
-| `agents/bugs-developer.md`, `bugs-designer.md` | Баги по ролям |
+| `agents/sre.md` | SRE / Operator — monitoring, backup, incident, release execution |
+| `agents/security-auditor.md` | Security Auditor — RBAC depth, audit gaps, secret hygiene |
+| `agents/tasks-*.md` | Задачи по ролям |
+| `agents/bugs-developer.md`, `bugs-ui-ux-designer.md`, `bugs-ui-engineer.md` | Баги по ролям |
 
-### Стратегия и аналитика
+### Стратегия и продукт
 | Файл | Назначение |
 |---|---|
-| `agents/strategist.md` | Business Strategist (рынок, GTM, ICP, конкуренты) |
-| `agents/tasks-strategist.md` | Задачи стратега |
+| `agents/product-strategist.md` | Product Strategist — рынок (конкуренты, ICP, GTM) + продукт (feedback-разбор, гипотезы, data-quality). Слияние прежних Strategist + Analyst. |
+| `agents/tasks-product-strategist.md` | Backlog |
 | `agents/references/market/` | Output: стратегические исследования |
-| `agents/analyst.md` | Product / Data Analyst (продуктовая аналитика, гипотезы, разбор feedback'а) |
-| `agents/tasks-analyst.md` | Задачи аналитика |
 | `agents/references/feedback-reviews/` | Output: разборы feedback'а после фичей |
 | `agents/references/hypotheses/` | Output: проверяемые гипотезы (HYP-NNN) |
 
-### Юзер-персоны (валидация)
+### Валидация продукта (read-only)
 | Файл | Назначение |
 |---|---|
-| `agents/persona-accountant.md` | Бухгалтер селлера |
-| `agents/persona-seller.md` | Селлер-собственник |
-| `agents/persona-manager.md` | Менеджер WB |
-| `agents/persona-rop.md` | РОП (head of sales) |
-| `agents/tasks-persona-*.md` | Задачи на проверку |
-| `agents/references/persona-reports/` | Output: отчёты персон |
+| `agents/ux-validator.md` | UX-Validator с modes (`accountant` / `seller` / `rop` / `manager`). Слияние 4 прежних персон. |
+| `agents/tasks-ux-validator.md` | Задачи на проверку |
+| `agents/references/persona-reports/` | Output: отчёты UX-Validator'а |
 
 ---
 
@@ -89,10 +91,10 @@
 
 - **Новая фича / улучшение** → запись в подходящий `agents/tasks-<role>.md`
   в формате `TASK-<ROLE>-NNN` (см. «Формат задачи» внизу файла).
-- **Обнаружен баг** (свой или чужой) → запись в `agents/bugs-developer.md`
-  или `agents/bugs-designer.md` в формате `BUG-<DEV|DES>-NNN`. Баг фиксируется
-  **сразу** в момент обнаружения, даже если планируешь чинить через 5 минут —
-  без записи он забудется.
+- **Обнаружен баг** (свой или чужой) → запись в `agents/bugs-developer.md`,
+  `agents/bugs-ui-ux-designer.md` или `agents/bugs-ui-engineer.md` в формате
+  `BUG-<DEV|UX|UI>-NNN`. Баг фиксируется **сразу** в момент обнаружения,
+  даже если планируешь чинить через 5 минут — без записи он забудется.
 - **Хотфикс на проде / прод-инцидент** → сначала минимальная запись
   (`BUG-DEV-NNN: одна строка + приоритет P0 + Статус: В работе`), потом фикс.
   Дополнить описание можно после деплоя, но запись должна существовать ДО правки.
@@ -151,49 +153,50 @@
 ## Правило 2.5 — Post-feature review loop (КРИТИЧНО)
 
 **После того как фича помечена `Выполнено` и задеплоена** — её обязательно
-смотрят и оставляют feedback четыре роли, а потом три аналитических роли
-превращают этот feedback в гипотезы и конкретные задачи. Без прохождения
-полного цикла фича считается выкаченной, но **не отревьюенной**.
+смотрят и оставляют feedback, а затем Product Strategist + Lead + PM
+превращают сырой feedback в гипотезы и приоритезированные задачи. Без
+прохождения полного цикла фича считается выкаченной, но **не отревьюенной**.
 
-### Шаг 1 — Feedback (QA + 3 персоны)
+### Шаг 1 — Feedback (QA + UX-Validator в 3 mode'ах)
 
-В течение 1-3 дней после деплоя по фиче проходит четыре роли:
+В течение 1-3 дней после деплоя:
 
-| Роль | Что смотрит | Куда пишет |
+| Источник | Что смотрит | Куда пишет |
 |---|---|---|
-| **QA** | smoke на проде, сверка цифр, RBAC, регресс соседних фичей | `agents/qa.md` § daily-log + при поломке → `bugs-developer.md`/`bugs-designer.md` |
-| **Persona — Селлер (Собственник)** | бизнес-смысл, маржинальный взгляд, drill-down | `agents/references/persona-reports/seller-<feature>-YYYY-MM-DD.md` |
-| **Persona — РОП** | менеджер-центричный view, план/факт, KPI | `agents/references/persona-reports/rop-<feature>-YYYY-MM-DD.md` |
-| **Persona — Менеджер WB** | дневной workflow менеджера, удобство ввода | `agents/references/persona-reports/manager-<feature>-YYYY-MM-DD.md` |
+| **QA** | smoke на проде, сверка цифр, RBAC, регресс соседних фичей | `agents/tasks-qa.md` § daily-log + при поломке → `bugs-developer.md` / `bugs-ui-ux-designer.md` |
+| **UX-Validator** `--as seller` | бизнес-смысл, маржинальный взгляд, drill-down | `agents/references/persona-reports/seller-<feature>-YYYY-MM-DD.md` |
+| **UX-Validator** `--as rop` | менеджер-центричный view, план/факт, KPI | `agents/references/persona-reports/rop-<feature>-YYYY-MM-DD.md` |
+| **UX-Validator** `--as manager` | дневной workflow менеджера, удобство | `agents/references/persona-reports/manager-<feature>-YYYY-MM-DD.md` |
 
 Формат feedback'а — короткий отчёт: что попробовал, что понравилось,
-что не работает / неудобно, что хочется (свободной формой). Это **не
-готовые задачи**, это сырьё — мнения, факты, наблюдения вперемешку.
+что не работает / неудобно (свободной формой). Это **не готовые задачи**,
+это сырьё.
 
-Персоны работают **read-only** (см. Правило 9.5) — они не заводят
-TASK / BUG напрямую, только пишут отчёты.
+UX-Validator работает **read-only** — не заводит TASK / BUG напрямую, только
+пишет отчёты. Mode `--as accountant` подключается выборочно (когда фича
+затрагивает налоги / УПД / cash-basis).
 
-### Шаг 2 — Анализ (Lead + Strategist + Analyst)
+### Шаг 2 — Анализ (Product Strategist + Lead + PM)
 
-После того как все четверо прислали feedback, три аналитических роли его
-разбирают **параллельно** с разными углами:
+После сбора feedback'а три роли разбирают его параллельно:
 
 | Роль | Угол анализа | Output |
 |---|---|---|
-| **Analyst** | продуктовая аналитика, гипотезы, метрики, разбор feedback'а в группы фактов/мнений/гипотез | `agents/references/feedback-reviews/<feature>-YYYY-MM-DD.md` + при необходимости `references/hypotheses/HYP-NNN-*.md` |
-| **Strategist** | рыночный угол: что из feedback'а намекает на новый ICP-сегмент / конкурентное преимущество / угрозу | `agents/references/market/feedback-<feature>-YYYY-MM-DD.md` (если есть что сказать) |
-| **Lead** | технический scope, приоритеты, разделение «фикс vs новая задача vs гипотеза» | `agents/tasks-lead.md` — новые TASK-LEAD-NNN |
+| **Product Strategist** | разбор feedback'а в факты / мнения / гипотезы + рыночный угол (намекает ли на новый ICP / конкурентное преимущество / угрозу) | `agents/references/feedback-reviews/<feature>-YYYY-MM-DD.md` + при необходимости `references/hypotheses/HYP-NNN-*.md` + при market-релевантности `references/market/feedback-<feature>-YYYY-MM-DD.md` |
+| **Lead** | технический scope, разделение «фикс vs новая задача vs гипотеза», архитектурный impact | конкретный scope для каждой кандидат-задачи |
+| **PM** | приоритет в общем backlog'е, что сейчас / следующий sprint / отброшено | `agents/tasks-lead.md` — новые TASK-LEAD-NNN с правильным priority-tag и распределением по ролям |
 
 Выход всех трёх ролей **обязательно** превращается в одну из категорий:
 
 1. **Гипотеза** — для проверяемого утверждения. Идёт в
-   `references/hypotheses/HYP-NNN-<slug>.md` (формат — см. `analyst.md`).
+   `references/hypotheses/HYP-NNN-<slug>.md` (формат — см. `product-strategist.md`).
    Не превращается в TASK пока не подтверждена данными.
 2. **TASK на исполнение** — если scope понятен. Идёт в
-   `tasks-developer.md` / `tasks-designer.md` / `tasks-art.md` /
-   `tasks-qa.md` (через Lead'а как координатора).
+   `tasks-developer.md` / `tasks-ui-ux-designer.md` / `tasks-ui-engineer.md` /
+   `tasks-qa.md` / `tasks-sre.md` / `tasks-security-auditor.md` (через Lead +
+   PM как координаторов).
 3. **BUG** — если feedback указывает на поломку. Идёт в
-   `bugs-developer.md` / `bugs-designer.md`.
+   `bugs-developer.md` / `bugs-ui-ux-designer.md` / `bugs-ui-engineer.md`.
 4. **Отброшено с обоснованием** — если решили не делать (за рамками
    скоупа, противоречит другим целям, цена > ценность). Записать в
    feedback-review с пометкой «Отброшено: <причина>».
@@ -203,18 +206,18 @@ TASK / BUG напрямую, только пишут отчёты.
 
 ### Шаг 3 — Закрытие review
 
-Когда все три аналитических роли отработали — Analyst добавляет в свой
+Когда все три роли отработали — Product Strategist добавляет в
 `feedback-reviews/<feature>-YYYY-MM-DD.md` финальную секцию `## Итог` со
-списком: какие TASK-NNN заведены, какие гипотезы зарегистрированы, что
-отброшено. После этого review считается закрытым, цикл фичи завершён.
+списком: какие TASK-NNN заведены (PM записал в backlog с приоритетом),
+какие гипотезы зарегистрированы, что отброшено. После этого review считается
+закрытым, цикл фичи завершён.
 
 ### Why
 
 Цель — не терять обратную связь от тех кто реально пользуется фичей
-(QA + три персоны), и при этом не превращать каждое мнение в задачу
-бездумно. Lead + Strategist + Analyst фильтруют, типизируют и
-приоретизируют. Без этого слоя backlog забивается «хотелками», которые
-никто не реализует.
+(QA + UX-Validator в нескольких mode'ах), и при этом не превращать каждое
+мнение в задачу бездумно. Product Strategist разбирает + Lead описывает
+scope + PM приоритизирует. Без этого слоя backlog забивается «хотелками».
 
 Применимо к **каждой** завершённой фиче — мелкие копирайт-правки и
 рефакторинги без user-visible изменений можно пропустить (на усмотрение
@@ -222,12 +225,22 @@ Lead'а).
 
 ---
 
-## Правило 2.6 — Release lock через git-branch (координация деплоев)
+## Правило 2.6 — Release-checklist + git-branch mutex (operational)
 
-**Замок теперь в git, не в `DEPLOY_LOCK.md`.** Файловый mutex слишком часто
-ломался: параллельные сессии перебивали друг друга молча, stale-locks
-висели «занятыми» вечно, git merge-конфликты при одновременном editing'е.
-Реальный mutex — атомарный push в ветку `release-lock` на origin.
+**Release-execution — операционный чек-лист, не выделенная роль.** Раньше
+этим занимался Release Manager (роль удалена 2026-05-21, TASK-LEAD-037).
+Любая роль с контекстом задачи может выполнить чек-лист — типично SRE.
+Single-instance защита от параллельных сессий — через атомарный push в
+git-ветку `release-lock` на origin.
+
+### Кто выполняет
+
+- **SRE — основной owner.** В `sre.md` § «Release execution» описаны шаги.
+- **Любая роль с контекстом** — если SRE недоступен и фича готова. Главное:
+  читай чек-лист ниже до конца, не пропускай шаги.
+- **НЕ выполняет:** UX-Validator, Security Auditor (отдельная роль не
+  блокирует release, но если на проде security incident — координация
+  между Security Auditor + SRE параллельно).
 
 ### Tooling
 
@@ -299,92 +312,108 @@ git push origin --delete release-lock
 
 ---
 
-## Правило 2.7 — Release Manager: единственный исполнитель bump+deploy (КРИТИЧНО)
+## Правило 2.7 — Release-checklist (КРИТИЧНО)
 
-**Только роль Release Manager** (см. `agents/release-manager.md`) имеет право:
+> **Изменение 2026-05-21 (TASK-LEAD-037):** прежний Release Manager как роль
+> удалён. Release-execution — это **operational checklist**, который может
+> выполнить любая роль с контекстом задачи. Single-instance гарантия —
+> через git-mutex `release-lock` (см. § Правило 2.6), не через выделенную роль.
+>
+> Почему отказались от выделенной роли:
+> - В однопользовательской сессии Claude это была искусственная «смена шляпы»
+> - В команде из 1-2 человек dedicated release-инженер избыточен
+> - Главную проблему (гонка bump'а / deploy'я) решает git-mutex, не роль
 
-1. Бампать версии в `backend/pyproject.toml` + `frontend/package.json` +
-   `extension/package.json` (все три синхронно, на одну версию).
-2. Запускать `./scripts/remote.sh deploy` в любом варианте
-   (`FORCE=1`, `FAST=1`, `WAIT_MAX_SEC=N`).
-3. Ставить и снимать замок в `DEPLOY_LOCK.md`.
+### Чек-лист (выполняет SRE типично; любая роль с контекстом — fallback)
 
-Остальные роли (Lead, Developer, UX Designer, Art Director, QA, Strategist,
-Analyst, Persona-*) этого **НЕ делают**. После того как задача в
-`tasks-<role>.md` помечена `Выполнено — YYYY-MM-DD`, ответственный за неё
-агент пишет в логе задачи «Готово к релизу, передаю Release Manager'у» и
-останавливается. Release Manager (или новый запуск Claude'а с этой ролью)
-подхватывает.
+1. **Pre-flight:**
+   ```bash
+   ./scripts/lock.sh status                    # 🟢 / 🔴
+   git fetch origin main && git status -sb     # своих uncommitted нет
+   ls agents/claims/                           # чужих claim'ов нет
+   ```
+   Если 🔴 / есть чужой WIP — стоп, см. Правило 2.8.
 
-### Зачем — что ломалось без этого правила
+2. **Решить тип bump'а (SemVer):**
+   - `feat` / новая функциональность           → minor (0.7.0 → 0.8.0)
+   - `fix` / `chore` / `docs` (user-visible)   → patch (0.7.0 → 0.7.1)
+   - Breaking change                           → major (0.7.0 → 1.0.0)
 
-- **Гонка bump'а:** два агента после своих параллельных задач одновременно
-  бампают версии в один и тот же шаг — git merge-конфликт, один релиз
-  теряется или версии разъезжаются между тремя файлами.
-- **Гонка deploy'я:** два `./scripts/remote.sh deploy` параллельно — rsync
-  поверх rsync, `docker build` конфликтует, Celery warm-shutdown (до 30 мин)
-  ждёт первого деплоя, второй убивает worker'ы.
-- **Half-bumped state:** агент бампнул backend+frontend, забыл extension —
-  `/api/version` отдаёт одно, popup расширения — другое.
+3. **Бамп — через `./scripts/bump.sh`** (НЕ редактировать version поля руками):
+   ```bash
+   ./scripts/bump.sh patch    # или minor / major / X.Y.Z
+   ```
+   Скрипт синхронно обновляет 4 файла: `/VERSION` + `backend/pyproject.toml`
+   + `frontend/package.json` + `extension/package.json`.
 
-Все три проблемы решаются одним правилом: **единая точка ответственности +
-файловый замок + single-instance enforcement**.
+4. **Pre-commit checks:**
+   ```bash
+   python3 -c "import ast; ast.parse(open('<changed.py>').read())"  # syntax
+   cd frontend && npx tsc --noEmit                                  # 0 ошибок
+   ```
+   LSP-warnings про `react` / `@tanstack` / JSX — игнорируем.
 
-### Single-instance enforcement
+5. **Commit (conventional-commits prefix):**
+   ```bash
+   git add <конкретные файлы задачи> /VERSION backend/pyproject.toml \
+           frontend/package.json extension/package.json agents/tasks-*.md
+   git commit -m "feat(<scope>): <что сделано> (vX.Y.Z) (TASK-NNN)"
+   ```
+   НЕ `git add -A` (риск .env / секретов).
 
-Только **один** экземпляр Release Manager может быть в state «работаю над
-релизом» в любой момент времени. Гарантия — через два видимых сигнала:
+6. **Push:**
+   ```bash
+   git push origin main
+   ```
 
-1. **`DEPLOY_LOCK.md` = `🔴 Занято`** — основной замок. Ставится **до**
-   bump'а (т.е. в начале release-flow, а не только перед `remote.sh deploy`),
-   снимается **после** деплоя.
-2. **`tasks-release-manager.md`** — у активной записи `RELEASE-NNN` (если
-   создавали) `**Статус:** В работе`. Fallback-сигнал.
+7. **Deploy:**
+   ```bash
+   ./scripts/remote.sh deploy
+   # FORCE=1   — пропустить pre-flight диалог (если нет активных celery)
+   # FAST=1    — быстрый kill вместо warm-shutdown (для срочных UI-fix'ов)
+   # NO_LOCK=1 — bypass git-mutex (emergency, ты сам отвечаешь за race)
+   ```
+   Скрипт **сам** захватывает `release-lock` в начале, делает pre-deploy
+   `pg_dump`, import-check, rsync, build, `up -d`, отпускает lock через
+   `trap EXIT`. Не нужно вручную `lock.sh acquire/release`.
 
-Если второй агент хочет запустить Release Manager и видит `🔴 Занято`:
+8. **Smoke на проде** (или передать QA):
+   - `/api/health` отвечает 200
+   - `/api/version` отдаёт новую `X.Y.Z`
+   - Главная грузится без 5xx
+   - Если фича — открыть её страницу и проверить базовый сценарий
 
-- **Дождаться** разблокировки (если деплой явно в процессе — по timestamp'у
-  замка и git-активности).
-- **Переспросить пользователя** если замок выглядит «зависшим» (>1 час без
-  активности, нет коммита со снятием).
-- **НЕ запускать второй параллельный bump+deploy ни при каких условиях** —
-  даже «срочный hotfix» ждёт. Если ситуация критическая, эскалировать
-  пользователю запросом «можно ли force-unlock?», но не делать самостоятельно.
+9. **Закрыть задачу:**
+   - `[x]` на критериях готовности в `tasks-<role>.md`
+   - Статус `Выполнено — YYYY-MM-DD`
+   - Опционально: запись в `CONTINUE_HERE.md` верхней строкой (если релиз
+     содержит значимое изменение)
 
-### Workflow Release Manager'а
+### Когда release-checklist НЕ требуется
 
-См. полный workflow в `agents/release-manager.md` §«Workflow». Краткое
-содержание:
-
-1. Проверить `DEPLOY_LOCK.md` (🟢 / 🔴).
-2. Поставить замок (отдельный коммит `chore(deploy): lock — vX.Y.Z`).
-3. Бампнуть 3 файла на единую SemVer-версию.
-4. `git add` точечно (без `-A`), commit с conventional-commit prefix.
-5. `git push origin main`.
-6. `./scripts/remote.sh deploy`.
-7. Снять замок (`chore(deploy): unlock — vX.Y.Z OK` или `FAIL: <причина>`).
-8. Опционально — строка в журнал внизу `DEPLOY_LOCK.md`.
-
-### Исключения (когда Release Manager НЕ требуется)
-
-- **WIP / черновик** — фича ещё не в `Выполнено`. Release Manager
-  подключается только после закрытия задачи.
+- **WIP / черновик** — фича ещё не в `Выполнено`. Не релизим в процессе.
 - **Чистый рефакторинг без user-visible изменений** — bump опционален.
-  Lead в комментарии к задаче решает: «можно без релиза» / «нужен patch-bump».
-- **Правки документации без кода/конфига** — patch-bump опционален,
-  `remote.sh deploy` можно пропустить (нет runtime-impact). Если делаем
-  bump — всё равно через Release Manager, чтобы 3 файла остались синхронными.
+  Lead решает в комментарии задачи: «можно без релиза» / «patch-bump».
+- **Правки документации без кода/конфига** — `remote.sh deploy` можно
+  пропустить (нет runtime-impact). Bump опционален; если бампаем — всё
+  равно `./scripts/bump.sh` чтобы 3 файла остались синхронными.
 
-### Что если у меня нет «отдельного агента Release Manager»
+### Single-instance защита
 
-В однопользовательской сессии Claude'а это та же сессия — просто **смена
-шляпы**. Закончил работу как Developer (TASK-DEV-NNN → Выполнено) → дальше
-действуй **как Release Manager**: читай `agents/release-manager.md`,
-ставь замок, бампай, коммить, пушь, деплой, снимай замок. Single-instance
-гарантия не нарушается — параллельных сессий нет.
+Раньше — через выделенную роль + `DEPLOY_LOCK.md`. Теперь — через git-mutex
+`release-lock` + git-fetch на коммите. Параллельные сессии не могут
+одновременно успешно push'нуть в `release-lock` — у второго `! [rejected]`,
+release abort'ится.
 
-Если параллельная сессия (другой агент / второй экземпляр Claude) уже взяла
-release — увидишь это по `DEPLOY_LOCK.md` и подождёшь.
+Если `lock.sh status` показывает `🔴 Занято` свежий замок (< 30 мин) —
+дождаться. Если stale (> 30 мин) — `./scripts/lock.sh break-stale` и
+повторить. Если зависший вне TTL и непонятно что — спросить пользователя.
+
+### Что если git-mutex недоступен
+
+Если github offline / `lock.sh` не работает: `NO_LOCK=1 ./scripts/remote.sh deploy`.
+В этом случае ты сам отвечаешь за отсутствие параллельной сессии — это
+emergency-bypass, не для рутины.
 
 ---
 
@@ -415,7 +444,8 @@ release — увидишь это по `DEPLOY_LOCK.md` и подождёшь.
 
 - `agents/tasks-*.md`, `agents/bugs-*.md` — нумерация задач/багов, статусы
 - `backend/pyproject.toml`, `frontend/package.json`, `extension/package.json`,
-  `VERSION` — версии (бампает Release Manager через `scripts/bump.sh`)
+  `VERSION` — версии (бамп через `./scripts/bump.sh`, выполняет SRE или
+  любая роль с контекстом — см. § Правило 2.7)
 - `backend/app/db/models.py` — конфликты SQLAlchemy классов
 - `backend/app/db/migrations/versions/` — нумерация миграций
 - `frontend/src/api/client.ts` — все API-методы в одном файле
@@ -626,29 +656,38 @@ CLAUDE.md содержит «known gotchas». Перед действием ко
 
 ---
 
-## Правило 9.5 — Класс агента диктует выходы (Strategist / Persona / Команда)
+## Правило 9.5 — Класс агента диктует выходы
 
-Три класса агентов имеют разные права и каналы выхода работы:
+Роли имеют разные права и каналы выхода работы. Три класса:
 
-### Продуктовая команда (Lead/Developer/Designer/Art/QA)
+### Продуктовая команда (Lead, PM, Developer, UI/UX Designer, UI Engineer, QA, SRE, Security Auditor)
 - Может править код, тесты, БД (под бэкап), документы команды
 - Output: коммиты в `main`, обновления `tasks-*.md` / `bugs-*.md` / гайдов
 - Каналы коммуникации: внутри команды через `tasks-*.md`
+- **Лимиты:**
+  - QA — обычно read-only на проде (см. `qa.md`), CUD только при согласовании
+  - Security Auditor — НЕ пишет production-код (только TASK-DEV / BUG-DEV)
+  - PM — НЕ пишет код (приоритизирует backlog, обновляет `ROADMAP.md` /
+    `tasks-lead.md`)
+  - UI/UX Designer — НЕ пишет imp-код (пишет спеки, передаёт UI Engineer)
 
-### Strategist
+### Product Strategist
 - НЕ правит код, не правит БД
-- Output: документы в `agents/references/market/<slug>.md`
-- Передача результатов в работу: только через `tasks-lead.md` (Lead решает «делаем / нет»)
+- Output: документы в `agents/references/market/<slug>.md`,
+  `feedback-reviews/<feature>-YYYY-MM-DD.md`, `hypotheses/HYP-NNN-*.md`
+- Передача результатов в работу: через PM (приоритизация) → Lead'у (декомпозиция)
 - Спрашивает пользователя при стратегических развилках
 
-### Persona (Accountant/Seller/Manager/ROP)
+### UX-Validator (modes: accountant / seller / rop / manager)
 - **Read-only** на проде/локали под соответствующей RBAC-ролью
-- НЕ правит код, БД, файлы агентов **других** ролей
-- Output: отчёт в `agents/references/persona-reports/<role>-YYYY-MM-DD.md`
-- Передача результатов: только через **QA** (QA читает отчёты, конвертирует в BUG-* / TASK-*)
-- Persona НЕ заводит тикеты напрямую — иначе теряется триаж и дублирование
+- НЕ правит код, БД, файлы агентов других ролей
+- Output: отчёт в `agents/references/persona-reports/<mode>-<slug>-YYYY-MM-DD.md`
+- Передача результатов: только через **QA** (QA читает отчёты, конвертирует
+  в BUG-* / TASK-*)
+- UX-Validator НЕ заводит тикеты напрямую — иначе теряется триаж и дублирование
 
-Нарушение этого разделения (например, Persona правит код или Strategist коммитит) — блокер. Возвращай задачу пользователю / Lead'у.
+Нарушение этого разделения (например, UX-Validator правит код, или Product
+Strategist коммитит) — блокер. Возвращай задачу пользователю / Lead'у.
 
 ---
 
