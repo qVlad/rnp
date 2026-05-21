@@ -45,6 +45,7 @@ import SeasonPlan from "./pages/SeasonPlan";
 import Jam from "./pages/Jam";
 import NewProducts from "./pages/NewProducts";
 import TransitCalculator from "./pages/TransitCalculator";
+import WeeklyReport from "./pages/WeeklyReport";
 import AbTestList from "./pages/AbTestList";
 import AbTestNew from "./pages/AbTestNew";
 import AbTestDetail from "./pages/AbTestDetail";
@@ -293,6 +294,7 @@ export default function App() {
             }
           />
           <Route path="transit-calculator" element={<TransitCalculator />} />
+          <Route path="weekly-report" element={<WeeklyReport />} />
           <Route
             path="settings"
             element={

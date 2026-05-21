@@ -1911,12 +1911,16 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   4. Export PDF через `exportToPdf` (уже есть в Dashboard)
   5. Опционально: автоматическая публикация в TG-чат компании каждый понедельник 09:00 (Celery beat)
 - **Критерии готовности:**
-  - [ ] `frontend/src/pages/WeeklyReport.tsx`
-  - [ ] Backend endpoint `GET /api/weekly-report?week_start=YYYY-MM-DD&brand=...` — переиспользует существующие services
-  - [ ] PDF-export работает (через существующий `exportToPdf`)
-  - [ ] Smoke под manager на проде
+  - [x] `frontend/src/pages/WeeklyReport.tsx` (frontend-only, использует существующие endpoint'ы)
+  - [x] Backend endpoint **не нужен** — переиспользуем `api.dashboard()` + `api.topSkus()` + `api.alerts()`
+  - [x] PDF-export через `exportToPdf` (a4 landscape) — кнопка «PDF» в шапке
+  - [x] Навигация по неделям (◀ предыдущая / ⏎ текущая закрытая / ▶ следующая)
+  - [x] Поле «Комментарий менеджера» persist в `localStorage["weekly-report.comment.<week_start>"]`
+  - [x] Route `/weekly-report` + пункт меню «Еженедельный отчёт» в группе «Контроль»
+  - [x] tsc чисто
+  - [ ] Smoke под manager на проде (за пользователем)
 - **Зависимости:** нет
-- **Статус:** Открыта
+- **Статус:** ✅ Выполнено — 2026-05-21 (main session, раунд 5)
 
 ---
 
