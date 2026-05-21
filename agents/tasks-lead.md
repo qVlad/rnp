@@ -1326,6 +1326,31 @@ Lead использует этот файл как master-view: сюда скл�
 
 ---
 
+### TASK-LEAD-038: Слияние UI/UX Designer + UI Engineer → Design Engineer
+
+- **Исполнитель:** Lead → сам
+- **Приоритет:** P2 (follow-up TASK-LEAD-037 — выяснилось при ревью что три дизайн-роли избыточны для команды из 1-2 человек)
+- **Оценка:** 30 мин (один заход)
+- **Источник:** диалог 2026-05-21 после TASK-LEAD-037 — пользователь спросил «может тоже слить UI Engineer и UI/UX Designer». Анализ: после слияния Designer + Art Director мост к Developer'у стал короче — UI Engineer как отдельная роль избыточна. В команде из 1-2 человек паттерн **Design Engineer** (Linear / Vercel / Stripe) — спека → код → compliance в одной голове, без hand-off'а.
+- **Описание:**
+  1. Создать `agents/design-engineer.md` (слияние `ui-ux-designer.md` + `ui-engineer.md`)
+  2. Создать `agents/tasks-design-engineer.md` (слияние двух tasks-файлов, сохранить Sprint 1-3 backlog UI Engineer'а)
+  3. Переименовать `bugs-ui-ux-designer.md` → `bugs-design-engineer.md`, добавить секцию BUG-UI из `bugs-ui-engineer.md`
+  4. Удалить старые файлы: `ui-ux-designer.md`, `tasks-ui-ux-designer.md`, `ui-engineer.md`, `tasks-ui-engineer.md`, `bugs-ui-engineer.md`
+  5. Обновить `README.md` (9 ролей вместо 10), `RULES.md` (упоминания), `CLAUDE.md`
+- **Критерии готовности:**
+  - [x] `design-engineer.md` создан — full scope: UX + бренд + visual code + compliance
+  - [x] `tasks-design-engineer.md` — Sprint 1-3 (TASK-UI-001..020) сохранён, шаблон TASK-UX добавлен, исторический TASK-ART-001 в архиве
+  - [x] `bugs-design-engineer.md` — секция BUG-UI добавлена, шаблон обновлён, история BUG-DES-001..005 сохранена
+  - [x] Удалены: `ui-ux-designer.md`, `tasks-ui-ux-designer.md`, `ui-engineer.md`, `tasks-ui-engineer.md`, `bugs-ui-engineer.md`
+  - [x] `README.md` — таблица 9 ролей, история реструктура расширена
+  - [x] `RULES.md` — все ссылки на старые файлы обновлены, Правило 9.5 (классы агентов) обновлено
+  - [x] `CLAUDE.md` — «Где искать что» обновлено
+- **Зависимости:** TASK-LEAD-037 (закрыт) — нужно было сначала слить Designer + ArtDir, потом стало очевидно что UI Engineer тоже лишний
+- **Статус:** Выполнено — 2026-05-21
+
+---
+
 ## Формат / Жизненный цикл
 
 См. `RULES.md` §«Формат задачи».

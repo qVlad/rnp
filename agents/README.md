@@ -1,7 +1,7 @@
 # Agents — РНП (WB-аналитика)
 
-Мультиагентная система для разработки и поддержки сервиса РНП. Десять
-ролей в трёх классах: **продуктовая команда** (делает), **стратегия + продукт**
+Мультиагентная система для разработки и поддержки сервиса РНП. Девять ролей
+в трёх классах: **продуктовая команда** (делает), **стратегия + продукт**
 (думает), **валидация** (read-only).
 
 ## Зачем
@@ -29,6 +29,11 @@
   - **Слиты:** Designer + Art Director → UI/UX Designer (бренд + UX в одной
     роли); Strategist + Analyst → Product Strategist (рынок + продукт);
     4 персоны → UX-Validator (modes: accountant / seller / rop / manager)
+- **2026-05-21 (TASK-LEAD-038)** — добавочное слияние:
+  - **UI/UX Designer + UI Engineer → Design Engineer.** В команде из 1-2
+    человек разделение «пишу спеку» vs «пишу визуальный код» искусственно
+    (Linear / Vercel / Stripe-паттерн «Design Engineer»). Один человек
+    end-to-end: спека → код → compliance. Без hand-off'а.
 
 ## Скоуп (read first)
 
@@ -48,8 +53,7 @@
 | **Lead / Architect** | [`lead.md`](lead.md) | [`tasks-lead.md`](tasks-lead.md) | — | Архитектура, декомпозиция, code review, RBAC consistency, защита скоупа |
 | **Product Manager** | [`product-manager.md`](product-manager.md) | [`tasks-product-manager.md`](tasks-product-manager.md) | — | Backlog grooming, приоритизация P0/P1/P2, ownership `ROADMAP.md`, интеграция входящего (Strategist + UX-Validator + user) |
 | **Developer** (full-stack) | [`developer.md`](developer.md) | [`tasks-developer.md`](tasks-developer.md) | [`bugs-developer.md`](bugs-developer.md) | Backend (FastAPI/SQL/Celery/WB) + бизнес-логика frontend (data, mutations, state). НЕ чисто-визуал. |
-| **UI/UX Designer** | [`ui-ux-designer.md`](ui-ux-designer.md) | [`tasks-ui-ux-designer.md`](tasks-ui-ux-designer.md) | [`bugs-ui-ux-designer.md`](bugs-ui-ux-designer.md) | UX-спеки + бренд + Design System. Слияние прежних Designer + Art Director. Держит [`DESIGN_SYSTEM.md`](../DESIGN_SYSTEM.md). |
-| **UI Engineer** | [`ui-engineer.md`](ui-engineer.md) | [`tasks-ui-engineer.md`](tasks-ui-engineer.md) | [`bugs-ui-engineer.md`](bugs-ui-engineer.md) | Реализует UI-код по спекам UI/UX Designer'а + DESIGN_SYSTEM compliance. Мост между UI/UX Designer и Developer. |
+| **Design Engineer** | [`design-engineer.md`](design-engineer.md) | [`tasks-design-engineer.md`](tasks-design-engineer.md) | [`bugs-design-engineer.md`](bugs-design-engineer.md) | UX-спеки + бренд + DESIGN_SYSTEM + реализация визуального кода + compliance audit'ы. End-to-end дизайн: от спеки до production-кода. Слияние прежних Designer + Art Director + UI Engineer. Держит [`DESIGN_SYSTEM.md`](../DESIGN_SYSTEM.md). |
 | **QA** | [`qa.md`](qa.md) | [`tasks-qa.md`](tasks-qa.md) | (заводит в bugs-dev/ux) | Smoke на проде, сверка цифр, RBAC, регресс. Триаж наблюдений UX-Validator'а. |
 | **SRE / Operator** | [`sre.md`](sre.md) | [`tasks-sre.md`](tasks-sre.md) | — | Monitoring, backup verification, incident response, capacity planning, **release execution** (унаследовано от удалённого Release Manager). |
 | **Security Auditor** | [`security-auditor.md`](security-auditor.md) | [`tasks-security-auditor.md`](tasks-security-auditor.md) | — | RBAC depth audits, tenant isolation, audit_log coverage, secret hygiene. Output: audit-report'ы + TASK-DEV / BUG-DEV. |
@@ -104,9 +108,9 @@ TASK-LEAD).
                          │ распределение
                          ▼
        ┌────────────────────────────────────────────────────────┐
-       │  Developer  UI/UX Designer  UI Engineer  QA  SRE  SEC  │
-       │  (бизнес-логика / UX-спеки + бренд /                   │
-       │   визуал-код / тесты / ops / security)                 │
+       │  Developer  Design Engineer  QA  SRE  Security Auditor │
+       │  (бизнес-логика / UX-спеки+бренд+визуал-код /          │
+       │   тесты / ops / security)                              │
        └────────────────────┬───────────────────────────────────┘
                             │ task: Выполнено → handoff
                             ▼
@@ -178,8 +182,7 @@ TASK-LEAD).
 |---|---|
 | Lead | `clean-architect`, `wb-api-specialist` |
 | Developer | `wb-api-specialist`, `clean-architect`, `integration-analyst` |
-| UI/UX Designer | `visual-design-lead` |
-| UI Engineer | `visual-design-lead` (WCAG аудиты), `clean-architect` (новые primitive-компоненты) |
+| Design Engineer | `visual-design-lead` (WCAG аудиты, токены), `clean-architect` (новые primitive-компоненты) |
 | QA | `qa-tester`, `integration-analyst` |
 | SRE | — (работает с прод напрямую) |
 | Security Auditor | `clean-architect` (tenant isolation), `qa-tester` (boundary), `integration-analyst` (WB-token leaks) |

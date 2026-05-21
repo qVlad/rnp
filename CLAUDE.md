@@ -225,7 +225,7 @@ Uncommitted `M`-файлы, которые ты в этой сессии **са�
 | Работаешь с WB API (rate-limits, sunset, retry) | [`WB_API_REFERENCE.md`](WB_API_REFERENCE.md) |
 | План на следующие сессии | [`ROADMAP.md`](ROADMAP.md) |
 | Свежая сессия, надо войти в курс | [`CONTINUE_HERE.md`](CONTINUE_HERE.md) |
-| Роле-система агентов (10 ролей: Lead/PM/Developer/UI-UX Designer/UI Engineer/QA/SRE/Security Auditor/Product Strategist/UX-Validator) + backlog задач/багов | [`agents/README.md`](agents/README.md), [`agents/RULES.md`](agents/RULES.md) |
+| Роле-система агентов (9 ролей: Lead/PM/Developer/Design Engineer/QA/SRE/Security Auditor/Product Strategist/UX-Validator) + backlog задач/багов | [`agents/README.md`](agents/README.md), [`agents/RULES.md`](agents/RULES.md) |
 | Расчёт АУСН-Доходы 8% по методике бухгалтера (cash-basis) | [`TAX_AUSN_BANK.md`](TAX_AUSN_BANK.md) |
 | Расчёт УСН-Доходы 6% (без НДС / + НДС 5% / + НДС 7%) | [`TAX_USN_BANK.md`](TAX_USN_BANK.md) |
 | Ручное исключение отчётов из налоговой базы (per-regime флаги) | [`TAX_BOOKKEEPER_OVERRIDES.md`](TAX_BOOKKEEPER_OVERRIDES.md) |

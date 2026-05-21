@@ -42,13 +42,12 @@
 | `agents/lead.md` | Lead / Architect |
 | `agents/product-manager.md` | Product Manager — backlog grooming, приоритеты, ROADMAP |
 | `agents/developer.md` | Full-stack Developer (backend + бизнес-логика frontend) |
-| `agents/ui-ux-designer.md` | UI/UX Designer — UX-спеки + бренд + DESIGN_SYSTEM |
-| `agents/ui-engineer.md` | UI Engineer — реализация UI-кода + DESIGN_SYSTEM compliance |
+| `agents/design-engineer.md` | Design Engineer — UX-спеки + бренд + DESIGN_SYSTEM + визуальный код + compliance (слияние UI/UX Designer + UI Engineer 2026-05-21) |
 | `agents/qa.md` | QA Engineer |
 | `agents/sre.md` | SRE / Operator — monitoring, backup, incident, release execution |
 | `agents/security-auditor.md` | Security Auditor — RBAC depth, audit gaps, secret hygiene |
 | `agents/tasks-*.md` | Задачи по ролям |
-| `agents/bugs-developer.md`, `bugs-ui-ux-designer.md`, `bugs-ui-engineer.md` | Баги по ролям |
+| `agents/bugs-developer.md`, `bugs-design-engineer.md` | Баги по ролям |
 
 ### Стратегия и продукт
 | Файл | Назначение |
@@ -91,10 +90,10 @@
 
 - **Новая фича / улучшение** → запись в подходящий `agents/tasks-<role>.md`
   в формате `TASK-<ROLE>-NNN` (см. «Формат задачи» внизу файла).
-- **Обнаружен баг** (свой или чужой) → запись в `agents/bugs-developer.md`,
-  `agents/bugs-ui-ux-designer.md` или `agents/bugs-ui-engineer.md` в формате
-  `BUG-<DEV|UX|UI>-NNN`. Баг фиксируется **сразу** в момент обнаружения,
-  даже если планируешь чинить через 5 минут — без записи он забудется.
+- **Обнаружен баг** (свой или чужой) → запись в `agents/bugs-developer.md`
+  или `agents/bugs-design-engineer.md` в формате `BUG-<DEV|UX|UI>-NNN`.
+  Баг фиксируется **сразу** в момент обнаружения, даже если планируешь чинить
+  через 5 минут — без записи он забудется.
 - **Хотфикс на проде / прод-инцидент** → сначала минимальная запись
   (`BUG-DEV-NNN: одна строка + приоритет P0 + Статус: В работе`), потом фикс.
   Дополнить описание можно после деплоя, но запись должна существовать ДО правки.
@@ -163,7 +162,7 @@
 
 | Источник | Что смотрит | Куда пишет |
 |---|---|---|
-| **QA** | smoke на проде, сверка цифр, RBAC, регресс соседних фичей | `agents/tasks-qa.md` § daily-log + при поломке → `bugs-developer.md` / `bugs-ui-ux-designer.md` |
+| **QA** | smoke на проде, сверка цифр, RBAC, регресс соседних фичей | `agents/tasks-qa.md` § daily-log + при поломке → `bugs-developer.md` / `bugs-design-engineer.md` |
 | **UX-Validator** `--as seller` | бизнес-смысл, маржинальный взгляд, drill-down | `agents/references/persona-reports/seller-<feature>-YYYY-MM-DD.md` |
 | **UX-Validator** `--as rop` | менеджер-центричный view, план/факт, KPI | `agents/references/persona-reports/rop-<feature>-YYYY-MM-DD.md` |
 | **UX-Validator** `--as manager` | дневной workflow менеджера, удобство | `agents/references/persona-reports/manager-<feature>-YYYY-MM-DD.md` |
@@ -192,11 +191,11 @@ UX-Validator работает **read-only** — не заводит TASK / BUG �
    `references/hypotheses/HYP-NNN-<slug>.md` (формат — см. `product-strategist.md`).
    Не превращается в TASK пока не подтверждена данными.
 2. **TASK на исполнение** — если scope понятен. Идёт в
-   `tasks-developer.md` / `tasks-ui-ux-designer.md` / `tasks-ui-engineer.md` /
+   `tasks-developer.md` / `tasks-design-engineer.md` /
    `tasks-qa.md` / `tasks-sre.md` / `tasks-security-auditor.md` (через Lead +
    PM как координаторов).
 3. **BUG** — если feedback указывает на поломку. Идёт в
-   `bugs-developer.md` / `bugs-ui-ux-designer.md` / `bugs-ui-engineer.md`.
+   `bugs-developer.md` / `bugs-design-engineer.md`.
 4. **Отброшено с обоснованием** — если решили не делать (за рамками
    скоупа, противоречит другим целям, цена > ценность). Записать в
    feedback-review с пометкой «Отброшено: <причина>».
@@ -660,7 +659,7 @@ CLAUDE.md содержит «known gotchas». Перед действием ко
 
 Роли имеют разные права и каналы выхода работы. Три класса:
 
-### Продуктовая команда (Lead, PM, Developer, UI/UX Designer, UI Engineer, QA, SRE, Security Auditor)
+### Продуктовая команда (Lead, PM, Developer, Design Engineer, QA, SRE, Security Auditor)
 - Может править код, тесты, БД (под бэкап), документы команды
 - Output: коммиты в `main`, обновления `tasks-*.md` / `bugs-*.md` / гайдов
 - Каналы коммуникации: внутри команды через `tasks-*.md`
@@ -669,7 +668,9 @@ CLAUDE.md содержит «known gotchas». Перед действием ко
   - Security Auditor — НЕ пишет production-код (только TASK-DEV / BUG-DEV)
   - PM — НЕ пишет код (приоритизирует backlog, обновляет `ROADMAP.md` /
     `tasks-lead.md`)
-  - UI/UX Designer — НЕ пишет imp-код (пишет спеки, передаёт UI Engineer)
+  - Design Engineer — НЕ пишет backend / API / бизнес-логику frontend
+    (data-fetching, mutations) — это Developer. Дизайн end-to-end:
+    спека + DESIGN_SYSTEM + визуальный код.
 
 ### Product Strategist
 - НЕ правит код, не правит БД
