@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   CartesianGrid,
@@ -30,6 +30,7 @@ import PeriodComparePicker, {
 } from "@/components/PeriodComparePicker";
 import DashboardCompareView from "@/components/DashboardCompareView";
 import TodayVsYesterdayStrip from "@/components/TodayVsYesterdayStrip";
+import WeekProfitHero from "@/components/WeekProfitHero";
 import WeeklyChangesFeed from "@/components/WeeklyChangesFeed";
 import ViewPresetsBar from "@/components/ViewPresetsBar";
 import { exportToPdf, exportToPng } from "@/lib/exportPdf";
@@ -67,7 +68,20 @@ export default function Dashboard() {
     try { localStorage.setItem("dashboard.owner-view.v1", next ? "1" : "0"); } catch {}
   };
   const [mode, setMode] = useState<Mode>({ kind: "preset", period: "day" });
-  const [dataMode, setDataMode] = useState<DataMode>("preliminary");
+  // TASK-LEAD-042: default — hybrid (closed weeks=final, fresh days=preliminary),
+  // выбор persist'ится в localStorage.
+  const [dataMode, setDataMode] = useState<DataMode>(() => {
+    try {
+      const v = localStorage.getItem("dashboard.dataMode.v1");
+      if (v === "preliminary" || v === "hybrid" || v === "final") return v;
+    } catch {}
+    return "hybrid";
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("dashboard.dataMode.v1", dataMode);
+    } catch {}
+  }, [dataMode]);
   const [customStart, setCustomStart] = useState(daysAgo(6));
   const [customEnd, setCustomEnd] = useState(today());
   const [tsDays, setTsDays] = useState(30);
@@ -149,6 +163,7 @@ export default function Dashboard() {
   return (
     <div className="flex flex-col gap-4" ref={dashboardRef}>
       <AlertsBar alerts={alertsQ.data?.alerts ?? []} />
+      <WeekProfitHero />
       {user?.role === "manager" && <ManagerPlanProgressCard />}
       {user?.role === "director" && (
         <div className="flex items-center gap-2 -mb-1">

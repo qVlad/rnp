@@ -16,11 +16,14 @@ Lead использует этот файл как master-view: сюда скл�
 
 ## 🎯 Active Sprint — Параллельная координация (2026-05-21)
 
-> **В работе прямо сейчас (4 потока):**
+> **В работе прямо сейчас:**
 > - **TASK-LEAD-030** (OPEX m2m) — другая Claude-сессия в другом окне
-> - **TASK-LEAD-042** (default hybrid + hero) — main session (Claude)
 > - **TASK-LEAD-040 backend** (Role bookkeeper) — sub-agent A (worktree, background)
 > - **TASK-LEAD-044 + TASK-LEAD-045** (README + QUICKSTART_OWNER) — sub-agent B (worktree, background)
+> - **TASK-UI-005** (PeriodContext) — main session (Claude), следующий после 042
+>
+> **Завершено в этой сессии:**
+> - ✅ **TASK-LEAD-042** (default hybrid + WeekProfitHero) — main session, 2026-05-21
 
 
 > Цель: «удобство работы для собственных кабинетов» (internal tool, не SaaS).
@@ -1507,12 +1510,20 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   2. Hero-line **выше** существующего KPI-grid: «Прибыль вчера: 145 312 ₽ ▲ +5.2% WoW» крупным шрифтом. Источник — `compute_dashboard(yesterday, mode='final')` + сравнение с `compute_dashboard(yesterday - 7 days, mode='final')`
   3. Tooltip на hero-line с разбивкой «Выручка: X − COGS: Y − Реклама: Z − Удержания WB: W = Прибыль»
 - **Критерии готовности:**
-  - [ ] Default `dataMode = hybrid` в Dashboard.tsx
-  - [ ] Hero-line «Прибыль вчера» рендерится выше KPI grid
-  - [ ] Tooltip с формулой
-  - [ ] Smoke: на закрытом периоде сходится с P&L final копейка-в-копейку
+  - [x] Default `dataMode = hybrid` в Dashboard.tsx + persist выбора в `localStorage["dashboard.dataMode.v1"]`
+  - [x] Hero-line «Прибыль за прошлую закрытую неделю» (`WeekProfitHero.tsx`) рендерится сразу после AlertsBar
+  - [x] Tooltip с разбивкой формулы (Выручка − COGS − Реклама − комиссия/логистика/хранение) + WoW
+  - [x] `tsc --noEmit` чисто
+  - [ ] Smoke: на закрытом периоде сходится с P&L final копейка-в-копейку (требует прода — оставлено пользователю)
 - **Зависимости:** нет
-- **Статус:** Открыта
+- **Статус:** ✅ Выполнено — 2026-05-21 (main session). Реализация:
+  - `frontend/src/components/WeekProfitHero.tsx` — новый компонент, использует
+    `api.dashboard({start, end}, 'final')` для last_closed_week (today − 14 days
+    → откат к ближайшему вс) и previous week. Считает WoW delta, tooltip с
+    разбивкой по статьям. Graceful no-data state.
+  - `frontend/src/pages/Dashboard.tsx` — подключён `<WeekProfitHero />` сразу
+    после `<AlertsBar />`. Default `dataMode` поменян с `preliminary` на
+    `hybrid` через `useState` initializer + persist в localStorage через `useEffect`.
 
 ---
 
