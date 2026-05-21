@@ -10,14 +10,15 @@ wb_stocks_snapshot, summed across all warehouses.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Product, WbSale, WbStockSnapshot
+from app.db.models import BrandAssignment, Product, User, WbSale, WbStockSnapshot
+from app.services.cogs_weighted import compute_weighted_avg_cogs
 
 
 def _f(v: Any) -> float:
@@ -116,6 +117,42 @@ async def build_stockout_forecast(
     )
 
     nm_set = set(velocity_by_nm.keys()) | set(stock_by_nm.keys())
+
+    # TASK-DEV-021: COGS per unit (weighted avg) — для CSV-выгрузки в 1С.
+    # Берём supplies на дату генерации прогноза. paid_only=False — для
+    # планирования закупок учитываем и неоплаченные поставки, иначе COGS
+    # окажется заниженной если последняя крупная закупка ещё не оплачена.
+    cogs_by_nm: dict[int, dict[str, float]] = {}
+    if nm_set:
+        cogs_by_nm = await compute_weighted_avg_cogs(
+            session,
+            nm_ids=nm_set,
+            period_end=date.today(),
+            paid_only=False,
+        )
+
+    # TASK-DEV-021: manager_name per brand. Если у бренда ровно 1 manager —
+    # подставляем его ФИО (для согласования заявки РОПом). Если 0 или ≥2 —
+    # пусто (РОП доберёт контакт сам).
+    ba_stmt = (
+        select(BrandAssignment.brand, User.full_name, User.username)
+        .join(User, User.id == BrandAssignment.user_id)
+        .where(User.is_active.is_(True))
+    )
+    if brands is not None:
+        ba_stmt = ba_stmt.where(BrandAssignment.brand.in_(list(brands)))
+    ba_rows = (await session.execute(ba_stmt)).all()
+    managers_by_brand_raw: dict[str, list[str]] = {}
+    for r in ba_rows:
+        name = (r.full_name or r.username or "").strip()
+        if not name:
+            continue
+        managers_by_brand_raw.setdefault(r.brand, []).append(name)
+    manager_by_brand: dict[str, str | None] = {
+        b: (names[0] if len(names) == 1 else None)
+        for b, names in managers_by_brand_raw.items()
+    }
+
     if archived_nm_ids:
         nm_set -= archived_nm_ids
     items: list[dict[str, Any]] = []
@@ -135,12 +172,21 @@ async def build_stockout_forecast(
 
         urgency = _classify_urgency(days_to_zero, warning_days)
 
+        cogs_per_unit = cogs_by_nm.get(nm, {}).get("avg_cost")
+        cogs_total = (
+            round(cogs_per_unit * recommended, 2)
+            if cogs_per_unit is not None and recommended > 0
+            else None
+        )
+        brand_name = prod.brand if prod else None
+        manager_name = manager_by_brand.get(brand_name) if brand_name else None
+
         items.append(
             {
                 "nm_id": nm,
                 "vendor_code": prod.vendor_code if prod else None,
                 "subject": prod.subject if prod else None,
-                "brand": prod.brand if prod else None,
+                "brand": brand_name,
                 "stock": stock,
                 "available": stock_info.get("available", 0),
                 "in_way_to_client": stock_info.get("in_way_to_client", 0),
@@ -149,6 +195,10 @@ async def build_stockout_forecast(
                 "days_to_zero": round(days_to_zero, 1) if days_to_zero is not None else None,
                 "recommended_supply_qty": recommended,
                 "urgency": urgency,
+                # TASK-DEV-021: для CSV-выгрузки в 1С / согласования с РОПом
+                "cogs_per_unit": round(cogs_per_unit, 2) if cogs_per_unit is not None else None,
+                "cogs_total": cogs_total,
+                "manager_name": manager_name,
             }
         )
 

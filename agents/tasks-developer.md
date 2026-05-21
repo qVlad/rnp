@@ -257,13 +257,19 @@
   (как в Dashboard). Backend `/api/pnl/by-brand` уже принимает диапазон
   через `months` но не from/to — добавить опциональные `date_from`/`date_to`.
 - **Критерии готовности:**
-  - [ ] Backend: `date_from`/`date_to` опциональны, если оба заданы —
-        перекрывают `months`
-  - [ ] Frontend: `DateRangePicker` сверху + кнопки-пресеты (Этот квартал,
-        Прошлый квартал, YTD) рядом
-  - [ ] Не нарушает существующее поведение без параметров
+  - [x] Backend: `date_from`/`date_to` опциональны, если оба заданы —
+        перекрывают `months`. Snap к границам месяца (1-е → последний день)
+        так как build_pnl с granularity="month" режет month-aligned.
+  - [x] Frontend: `DateRangePicker` сверху + 4 пресета («Этот квартал /
+        Прошлый квартал / YTD / 12 мес.») рядом
+  - [x] Не нарушает существующее поведение без параметров — `months` остаётся
+        дефолтом 6, query попадает только если `from && to` оба заданы.
+        Persist выбора в `localStorage['pnl-by-brand.range.v1']`.
 - **Зависимости:** TASK-DEV-002
-- **Статус:** Открыта
+- **Статус:** ✅ Выполнено 2026-05-21 (`api/pnl.py:get_pnl_by_brand` принимает
+  date_from/date_to, snap'ит к границам месяца; `components/PnLByBrandView.tsx`
+  переписан на DateRangePicker + 4 пресета, `api/client.ts:pnlByBrand`
+  поддерживает 3 параметра)
 
 ---
 
@@ -312,12 +318,20 @@
   выгружает: бренды с |Δ revenue| > 15% MoM, SKU с DRR>20% впервые за месяц,
   выход в просадку плана. Manager видит только свой scope.
 - **Критерии готовности:**
-  - [ ] Backend: `api/dashboard.py:weekly_changes` — sql + правила, не ML
-  - [ ] Каждый item: `{kind, severity, text, link?}` где link — deep-link
-  - [ ] Skeleton-load (5 строк) пока считается
-  - [ ] Кешируется в Redis на 1ч (`ttl=3600`)
+  - [x] Backend: `services/weekly_changes.py:build_weekly_changes` —
+        3 правила (brand revenue ±15% WoW, DRR>20% впервые за месяц,
+        plan_slip >15pp). Sql + numpy-free. Cap 8 items.
+  - [x] Каждый item: `{kind, severity, text, link?}` — link на /pnl?brands=…,
+        /units?search={nm_id}, /plans
+  - [x] Skeleton-load (5 строк) пока считается — `WeeklyChangesFeed.tsx`
+  - [x] Кешируется в Redis на 1ч (`weekly_changes:{tenant_id}:{scope}`,
+        scope = sha1(sorted brands)[:12] или "all" для director)
 - **Зависимости:** нет
-- **Статус:** Открыта
+- **Статус:** ✅ Выполнено 2026-05-21 (`services/weekly_changes.py`,
+  `api/dashboard.py:get_weekly_changes`, `components/WeeklyChangesFeed.tsx`,
+  встроен в `Dashboard.tsx` после `TodayVsYesterdayStrip`).
+  Follow-up: точный JOIN product_group_assignments для plan_slip с
+  group-scope планами (сейчас огрублено — суммирует fact всех видимых SKU).
 
 ---
 
@@ -534,12 +548,18 @@
   («Заявка», «Контактные лица»). Решить с РОПом — CSV или XLSX
   (предпочтительно расширенный CSV, чтобы не тянуть xlsx-lib).
 - **Критерии готовности:**
-  - [ ] CSV: 4 новых колонки, BOM сохранён
-  - [ ] COGS из `cogs_weighted` (средневзвешенная) на дату экспорта
-  - [ ] manager_name: если у бренда 1 manager — его ФИО, иначе пусто
-  - [ ] Заголовок-строка локализована
+  - [x] CSV: 4 новых колонки (Бренд, Себест. ₽/шт, Себест. итого ₽, Менеджер).
+        BOM сохранён, `;`-separator, кавычки для строк с разделителями
+  - [x] COGS из `cogs_weighted.compute_weighted_avg_cogs` (paid_only=False —
+        для планирования закупок включаем неоплаченные supplies, иначе COGS
+        окажется заниженной если последняя крупная закупка ещё не оплачена)
+  - [x] manager_name: если у бренда ровно 1 manager — его full_name/username,
+        иначе пусто (0 или ≥2 — РОП доберёт контакт сам)
+  - [x] Заголовок-строка локализована (русские заголовки колонок)
 - **Зависимости:** TASK-DEV-005
-- **Статус:** Открыта
+- **Статус:** ✅ Выполнено 2026-05-21 (`services/forecast.py` обогащает items
+  полями `cogs_per_unit`/`cogs_total`/`manager_name`; `pages/Supply.tsx:exportToCsv`
+  добавляет 4 колонки в CSV)
 
 ---
 

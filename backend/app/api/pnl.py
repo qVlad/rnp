@@ -199,30 +199,53 @@ async def get_pnl_timeseries(
 @router.get("/by-brand")
 async def get_pnl_by_brand(
     months: int = Query(default=6, ge=1, le=24),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
     session: AsyncSession = Depends(get_db_tenant_scoped),
     user: CurrentUser = Depends(get_current_user),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict[str, Any]:
     """TASK-DEV-002 — матрица «бренд × месяц × маржа» для drill-down в P&L.
 
-    Возвращает по каждому бренду помесячные revenue_net и net_margin_pct
-    за последние N месяцев. UI отрисовывает как heatmap и подсвечивает
-    красным маржу < 15% (это пороговое значение для маркетплейса).
+    Возвращает по каждому бренду помесячные revenue_net и net_margin_pct.
+    UI отрисовывает как heatmap и подсвечивает красным маржу < 15%
+    (это пороговое значение для маркетплейса).
+
+    Параметры:
+      - `months` — N последних месяцев включая текущий (default 6). Используется,
+        если `date_from`/`date_to` не заданы.
+      - `date_from`/`date_to` (TASK-DEV-010) — произвольный период для
+        квартальных / YTD-срезов. Если оба заданы — перекрывают `months`.
+        Даты snap'ятся к границам месяца (1-е → последний день).
 
     Доступ — обычная brand-фильтрация: director/head видят все бренды,
     manager — только свои.
     """
     today = date.today()
-    # N последних месяцев включая текущий, начало с 1 числа N-1 месяцев назад
-    cur_y, cur_m = today.year, today.month
-    start_y = cur_y
-    start_m = cur_m - (months - 1)
-    while start_m <= 0:
-        start_m += 12
-        start_y -= 1
-    date_from = date(start_y, start_m, 1)
-    last_day = monthrange(cur_y, cur_m)[1]
-    date_to = date(cur_y, cur_m, last_day)
+    if date_from is not None and date_to is not None:
+        # TASK-DEV-010: произвольный период. Snap к границам месяца чтобы
+        # матрица была month-aligned (build_pnl с granularity="month" так и
+        # будет резать). Гарантируем from ≤ to.
+        if date_from > date_to:
+            date_from, date_to = date_to, date_from
+        start_y, start_m = date_from.year, date_from.month
+        end_y, end_m = date_to.year, date_to.month
+        date_from = date(start_y, start_m, 1)
+        last_day = monthrange(end_y, end_m)[1]
+        date_to = date(end_y, end_m, last_day)
+        months = (end_y - start_y) * 12 + (end_m - start_m) + 1
+        cur_y, cur_m = end_y, end_m
+    else:
+        # N последних месяцев включая текущий
+        cur_y, cur_m = today.year, today.month
+        start_y = cur_y
+        start_m = cur_m - (months - 1)
+        while start_m <= 0:
+            start_m += 12
+            start_y -= 1
+        date_from = date(start_y, start_m, 1)
+        last_day = monthrange(cur_y, cur_m)[1]
+        date_to = date(cur_y, cur_m, last_day)
 
     # Список брендов: если manager — берём из его фильтра, иначе DISTINCT из products
     if brands is None:

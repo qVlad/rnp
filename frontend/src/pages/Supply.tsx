@@ -165,9 +165,12 @@ export default function Supply() {
   });
 
   const exportToCsv = () => {
+    // TASK-DEV-021: добавлены Бренд, Себест./шт, Себест. итого ₽, Менеджер —
+    // для согласования заявки РОПом и импорта в 1С.
     const headers = [
       "Артикул WB (nm_id)",
       "Артикул селлера",
+      "Бренд",
       "Срочность",
       "Остаток (шт)",
       "В пути к клиенту",
@@ -175,12 +178,17 @@ export default function Supply() {
       "Скорость (шт/день)",
       "Дней до 0",
       "К отгрузке (шт)",
+      "Себест. ₽/шт",
+      "Себест. итого, ₽",
+      "Менеджер",
     ];
     const escape = (v: any): string => {
       if (v == null) return "";
       const s = String(v).replace(/"/g, '""');
       return /[;\n\r"]/.test(s) ? `"${s}"` : s;
     };
+    const fmtNum2 = (v: any): string =>
+      v == null ? "" : Number(v).toFixed(2).replace(".", ",");
     const lines = [headers.join(";")];
     for (const it of items) {
       const s = URGENCY_STYLE[it.urgency]?.label ?? it.urgency;
@@ -188,6 +196,7 @@ export default function Supply() {
         [
           it.nm_id,
           it.vendor_code,
+          it.brand ?? "",
           s,
           it.stock,
           it.in_way_to_client,
@@ -195,6 +204,9 @@ export default function Supply() {
           (it.velocity_per_day ?? 0).toFixed(2).replace(".", ","),
           it.days_to_zero ?? "",
           it.recommended_supply_qty,
+          fmtNum2((it as any).cogs_per_unit),
+          fmtNum2((it as any).cogs_total),
+          (it as any).manager_name ?? "",
         ]
           .map(escape)
           .join(";"),

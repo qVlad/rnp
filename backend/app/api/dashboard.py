@@ -1,23 +1,32 @@
+import hashlib
+import json
 from datetime import date, timedelta
 from typing import Annotated, Literal
 
+import redis.asyncio as redis_async
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
+from app.core.logging import get_logger
 from app.db.models import AlertAcknowledgement
 from app.db.session import get_db
 from app.services.auth import (
     CurrentUser,
     current_brands_filter,
+    current_tenant_id,
     get_current_user,
     get_db_tenant_scoped,
 )
 from app.services.anomaly import collect_alerts
 from app.services.metrics import compute_dashboard, revenue_timeseries, top_skus
 from app.services.periods import Period, get_period, period_from_range
+from app.services.weekly_changes import build_weekly_changes
+
+log = get_logger(__name__)
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -217,3 +226,56 @@ async def get_today_vs_yesterday(
         "mode": mode,
         "kpis": deltas,
     }
+
+
+# ── TASK-DEV-012: WeeklyChangesFeed ─────────────────────────────────────
+
+def _weekly_changes_cache_key(tenant_id: int, brands: set[str] | None) -> str:
+    """Стабильный ключ Redis: tenant + sorted brands. None (director/head) и
+    set(...) (manager) дают разные кеши — это намеренно, scope разный."""
+    if brands is None:
+        scope = "all"
+    else:
+        scope = hashlib.sha1("|".join(sorted(brands)).encode("utf-8")).hexdigest()[:12]
+    return f"weekly_changes:{tenant_id}:{scope}"
+
+
+@router.get("/weekly-changes")
+async def get_weekly_changes(
+    tenant_id: int = Depends(current_tenant_id),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
+) -> dict:
+    """3-5 (cap 8) буллетов «что изменилось с прошлой недели».
+
+    Сторителлинг для Owner/Manager: бренды с резкими движениями выручки,
+    SKU впервые жгущие рекламу >20% DRR, планы отстающие от темпа месяца.
+
+    Кеш Redis 1 час (`weekly_changes:{tenant_id}:{scope}`). Manager и
+    director получают разные ключи, scope разный.
+    """
+    cache_key = _weekly_changes_cache_key(tenant_id, brands)
+    redis_client: redis_async.Redis | None = None
+    try:
+        redis_client = redis_async.from_url(settings.redis_url, decode_responses=True)
+        cached = await redis_client.get(cache_key)
+        if cached:
+            return {"items": json.loads(cached), "cached": True}
+    except Exception as e:  # noqa: BLE001 — Redis недоступен → пересчитываем без кеша
+        log.warning("weekly_changes cache read failed: %s", e)
+        redis_client = None
+
+    items = await build_weekly_changes(session, brands)
+
+    if redis_client is not None:
+        try:
+            await redis_client.setex(cache_key, 3600, json.dumps(items, ensure_ascii=False))
+        except Exception as e:  # noqa: BLE001
+            log.warning("weekly_changes cache write failed: %s", e)
+        finally:
+            try:
+                await redis_client.aclose()
+            except Exception:  # noqa: BLE001
+                pass
+
+    return {"items": items, "cached": False}

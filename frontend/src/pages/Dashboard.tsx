@@ -26,6 +26,7 @@ import {
 } from "@/components/ColumnVisibility";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import TodayVsYesterdayStrip from "@/components/TodayVsYesterdayStrip";
+import WeeklyChangesFeed from "@/components/WeeklyChangesFeed";
 import ViewPresetsBar from "@/components/ViewPresetsBar";
 import { exportToPdf, exportToPng } from "@/lib/exportPdf";
 import { Icon } from "@/components/Icon";
@@ -141,6 +142,7 @@ export default function Dashboard() {
       {user?.role === "director" && ownerView && <OwnerCockpitView />}
       <CustomMetricsCard period="week" />
       <TodayVsYesterdayStrip />
+      <WeeklyChangesFeed />
 
       <div className="flex items-center justify-between">
         <div className="flex items-baseline gap-3 flex-wrap">

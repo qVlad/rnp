@@ -8,11 +8,16 @@
  *
  * Manager видит только свои бренды (backend сам отфильтрует через
  * current_brands_filter).
+ *
+ * TASK-DEV-010: Вместо жёстких пресетов 3/6/12 — `<DateRangePicker>` с
+ * квартальными / YTD пресетами. Backend принимает `date_from`/`date_to`
+ * опционально, snap'ит к границам месяца (матрица всегда month-aligned).
  */
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub, fmtPct } from "@/lib/format";
+import { DateRangePicker, type DateRange } from "@/components/DateRangePicker";
 
 function marginColor(pct: number): string {
   if (pct >= 15) return "bg-success/10 text-success";
@@ -27,29 +32,77 @@ function monthLabel(yyyymm: string): string {
   return `${months[m - 1]} ${String(y).slice(2)}`;
 }
 
+function iso(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function quarterRange(qOffset: number): DateRange {
+  // qOffset=0 → этот квартал, -1 → прошлый. Q1=янв-мар.
+  const t = new Date();
+  const curQ = Math.floor(t.getMonth() / 3);
+  const targetQ = curQ + qOffset;
+  const y = t.getFullYear() + Math.floor(targetQ / 4);
+  const q = ((targetQ % 4) + 4) % 4;
+  const from = new Date(y, q * 3, 1);
+  const to = new Date(y, q * 3 + 3, 0); // последний день квартала
+  return { from: iso(from), to: iso(to) };
+}
+
+function ytdRange(): DateRange {
+  const t = new Date();
+  return { from: `${t.getFullYear()}-01-01`, to: iso(t) };
+}
+
+function lastNMonthsRange(n: number): DateRange {
+  const t = new Date();
+  const from = new Date(t.getFullYear(), t.getMonth() - (n - 1), 1);
+  const to = new Date(t.getFullYear(), t.getMonth() + 1, 0); // последний день текущего месяца
+  return { from: iso(from), to: iso(to) };
+}
+
+const STORAGE_KEY = "pnl-by-brand.range.v1";
+
 export default function PnLByBrandView() {
-  const [months, setMonths] = useState(6);
   // TASK-DEV-019 — фильтр по менеджеру для drill-down РОПа.
-  // "" = все · "__unassigned__" = только бренды без назначения · иначе ФИО.
   const [managerFilter, setManagerFilter] = useState<string>("");
 
+  // Default — последние 6 месяцев. Persist в localStorage.
+  const [range, setRange] = useState<DateRange>(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed.from && parsed.to) return parsed as DateRange;
+      }
+    } catch {}
+    return lastNMonthsRange(6);
+  });
+
+  // Persist выбора пользователя.
+  useMemo(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(range));
+    } catch {}
+  }, [range]);
+
   const q = useQuery({
-    queryKey: ["pnl-by-brand", months],
-    queryFn: () => api.pnlByBrand(months),
+    queryKey: ["pnl-by-brand", range.from, range.to],
+    queryFn: () => api.pnlByBrand(6, range.from, range.to),
   });
 
   const data = q.data;
 
-  // Уникальные менеджеры из rows для фильтр-dropdown.
-  const allManagers = (() => {
+  const allManagers = useMemo(() => {
     if (!data) return [] as string[];
     const set = new Set<string>();
     for (const r of data.rows) {
       for (const m of r.managers ?? []) set.add(m);
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b, "ru"));
-  })();
-  const hasUnassigned = (data?.rows ?? []).some((r) => (r.managers ?? []).length === 0);
+  }, [data]);
+  const hasUnassigned = (data?.rows ?? []).some(
+    (r) => (r.managers ?? []).length === 0,
+  );
 
   const filteredRows = (data?.rows ?? []).filter((r) => {
     if (!managerFilter) return true;
@@ -57,20 +110,53 @@ export default function PnLByBrandView() {
     return (r.managers ?? []).includes(managerFilter);
   });
 
+  const applyPreset = (r: DateRange) => setRange(r);
+
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-2 text-sm">
-        <span className="text-muted">Глубина:</span>
-        {[3, 6, 12].map((n) => (
+      <div className="flex items-center gap-2 text-sm flex-wrap">
+        <span className="text-muted">Период:</span>
+        <DateRangePicker
+          from={range.from}
+          to={range.to}
+          onChange={setRange}
+          compact
+        />
+        {/* TASK-DEV-010: квартальные / YTD пресеты */}
+        <div className="flex items-center gap-1">
           <button
-            key={n}
             type="button"
-            className={`btn text-xs ${months === n ? "border-accent text-accent" : ""}`}
-            onClick={() => setMonths(n)}
+            className="btn text-xs"
+            onClick={() => applyPreset(quarterRange(0))}
+            title="С 1-го числа текущего квартала"
           >
-            {n} мес.
+            Этот квартал
           </button>
-        ))}
+          <button
+            type="button"
+            className="btn text-xs"
+            onClick={() => applyPreset(quarterRange(-1))}
+            title="Прошлый календарный квартал"
+          >
+            Прошлый квартал
+          </button>
+          <button
+            type="button"
+            className="btn text-xs"
+            onClick={() => applyPreset(ytdRange())}
+            title="С 1 января по сегодня (YTD)"
+          >
+            YTD
+          </button>
+          <button
+            type="button"
+            className="btn text-xs"
+            onClick={() => applyPreset(lastNMonthsRange(12))}
+            title="Последние 12 месяцев"
+          >
+            12 мес.
+          </button>
+        </div>
         {(allManagers.length > 0 || hasUnassigned) && (
           <>
             <span className="text-muted ml-3">Менеджер:</span>

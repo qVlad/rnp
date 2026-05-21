@@ -37,6 +37,74 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## 2026-05-21 — **Dashboard storytelling + PnL DateRangePicker + Supply CSV расширение** (v0.18.0)
+
+Закрыли три задачи (TASK-DEV-010, TASK-DEV-012, TASK-DEV-021) одним релизом.
+
+### TASK-DEV-012 — WeeklyChangesFeed на Dashboard
+
+Новый блок «Что изменилось с прошлой недели» под `TodayVsYesterdayStrip`.
+Сторителлинг для Owner/Manager — 3-5 буллетов вместо разбора 16 KPI.
+
+Три правила (sql-based, без ML):
+- **Brand revenue ±15% WoW** — сравнение `WbOrder` за последние 7 дней vs
+  предыдущие 7 дней по бренду; |Δ%| > 15% → item. Шумоподавление: бренды
+  с выручкой <1000₽ в обе недели не считаем.
+- **DRR spike впервые** — SKU с DRR>20% за последнюю неделю И DRR≤20% за
+  предыдущие 3 недели. Это «впервые жжёт», а не «постоянно жирно льёт».
+- **Plan slip >15pp** — план месяца (nm-scope) где
+  `completion_pct < expected_pct - 15`. Не запускается в первые 5 дней
+  месяца (отставание ещё непоказательно).
+
+Backend: `services/weekly_changes.py` + `api/dashboard.py:get_weekly_changes`.
+Кеш Redis 1ч (`weekly_changes:{tenant_id}:{scope}`), scope =
+sha1(sorted brands)[:12] для manager или "all" для director — разные scope'ы
+получают разные кеши намеренно.
+
+Frontend: `components/WeeklyChangesFeed.tsx` со skeleton-load, deep-link
+на /pnl?brands=X, /units?search={nm_id}, /plans. Если пуст — карточка
+скрывается.
+
+### TASK-DEV-010 — DateRangePicker в PnL-by-brand
+
+`/api/pnl/by-brand` теперь принимает опциональные `date_from`/`date_to`.
+Если оба заданы — snap к границам месяца (1-е → последний день) и
+перекрываем `months`. Matrix month-aligned (build_pnl с
+granularity="month").
+
+`PnLByBrandView.tsx` переписан: `<DateRangePicker>` + 4 пресета («Этот
+квартал / Прошлый квартал / YTD / 12 мес.»). Выбор persist в
+`localStorage['pnl-by-brand.range.v1']`. Без параметров — дефолт 6 мес.
+
+### TASK-DEV-021 — Supply CSV: COGS + Бренд + Менеджер
+
+`build_stockout_forecast` обогащает items 3 новыми полями:
+`cogs_per_unit` (`compute_weighted_avg_cogs` с `paid_only=False` —
+для планирования включаем неоплаченные supplies, иначе занижение если
+последняя крупная закупка ещё не оплачена), `cogs_total`
+(`cogs_per_unit * recommended_qty`), `manager_name` (full_name/username
+если у бренда ровно 1 active manager в `brand_assignments`, иначе null).
+
+CSV в `Supply.tsx:exportToCsv` теперь 13 колонок (раньше 9): добавлены
+Бренд, Себест. ₽/шт, Себест. итого ₽, Менеджер.
+
+### Изменённые файлы
+- `backend/app/services/forecast.py` — enrichment items
+- `backend/app/services/weekly_changes.py` — новый модуль (3 правила)
+- `backend/app/api/dashboard.py` — endpoint `/weekly-changes` + Redis-кеш
+- `backend/app/api/pnl.py` — `get_pnl_by_brand` принимает date_from/to
+- `frontend/src/api/client.ts` — `pnlByBrand(months, from?, to?)` +
+  `dashboardWeeklyChanges()` (уже залились с v0.17.0)
+- `frontend/src/components/PnLByBrandView.tsx` — переписан под DateRangePicker
+- `frontend/src/components/WeeklyChangesFeed.tsx` — новый компонент
+- `frontend/src/pages/Dashboard.tsx` — встроен WeeklyChangesFeed
+- `frontend/src/pages/Supply.tsx` — exportToCsv 4 новые колонки
+
+### Версия
+0.17.0 → 0.18.0 (minor — 3 feat, новый endpoint + Redis-кеш + UI-блок)
+
+---
+
 ## 2026-05-21 — **Multi-tenant bot + clean-bind через код** (v0.17.0)
 
 Закрыли P0-долг «bot single-tenant» — теперь бот корректно работает с
