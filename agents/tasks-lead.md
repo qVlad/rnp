@@ -21,10 +21,12 @@ Lead использует этот файл как master-view: сюда скл�
 >
 > Multi-cabinet workspace полностью готов end-to-end (backend + frontend).
 >
-> **Раунд 5 — новый backlog (РОП-приоритеты + TS-анализ):**
-> - 5 фич РОПа → TASK-LEAD-049..053 (см. секцию «🔥 РОП-приоритеты» ниже)
-> - 3 новых gap из обновлённого `TRUESTATS_REFERENCE.md` → TASK-LEAD-054..056
-> - Стартовый recommended order: 049 → 051 → 053 → 050 → 052
+> **Раунд 5 запущен (2026-05-21 evening — 3 потока):**
+> - 🔄 **TASK-LEAD-049** Inline edit Units (P0 РОП) — main session
+> - 🔄 **TASK-LEAD-050** Калькулятор WB-акций (P1) — sub-agent D, worktree, background
+> - 🔄 **TASK-LEAD-052** Локализация заказов (P1) — sub-agent E, worktree, background
+>
+> После завершения раунда — TASK-LEAD-051 (Weekly digest) и TASK-LEAD-053 (Транзит) в следующем заходе.
 >
 > **Завершено в этой сессии 2026-05-21 (раунд 2):**
 > - ✅ **TASK-LEAD-040 frontend** (Layout bookkeeper visibility, whitelist через `bookkeeperOk`) — main, commit `808e28e`
