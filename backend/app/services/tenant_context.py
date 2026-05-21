@@ -36,9 +36,17 @@ async with task_session_scope() as session:
 
 **Что НЕ фильтруется:**
 - Raw SQL (`session.execute(text("..."))`)
-- Запросы к таблицам без `TenantScopedMixin` (`tenants`, `wb_tariff_categories`)
+- Запросы к таблицам без `TenantScopedMixin` (`tenants`, `wb_tariff_categories`,
+  `user_tenant_access`)
 - Сессии без `session.info["tenant_id"]` — это **намеренно**, для админских
   Celery dispatchers которые видят all tenants.
+
+**Multi-cabinet (TASK-LEAD-048):** `set_tenant()` теперь принимает
+`active_tenant_id` (резолвится middleware'ом `services/active_tenant.py`),
+а не строго `user.tenant_id`. `get_db_tenant_scoped` в `services/auth.py`
+сам выбирает источник: `request.state.active_tenant_id` (приоритет) →
+fallback на `user.tenant_id`. Listener изменения не требует — он по-прежнему
+читает `session.info["tenant_id"]`.
 """
 from __future__ import annotations
 

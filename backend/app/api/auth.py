@@ -9,8 +9,11 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Tenant, User
+from app.core.config import settings as cfg
+from app.db.models import Tenant, User, UserTenantAccess
 from app.db.session import get_db
+from app.services.active_tenant import ACTIVE_TENANT_COOKIE
+from app.services.audit import actor_from_request, audit_log
 from app.services.auth import (
     CurrentUser,
     ROLES,
@@ -95,6 +98,17 @@ async def bootstrap(
         tenant_id=1,
     )
     session.add(user)
+    await session.flush()
+    # Multi-cabinet (миграция 0056): создаём запись в user_tenant_access,
+    # иначе middleware вернёт 403 (нет access ни к одному tenant'у).
+    session.add(
+        UserTenantAccess(
+            user_id=user.id,
+            tenant_id=user.tenant_id,
+            role=user.role,
+            granted_by=user.id,
+        )
+    )
     await session.commit()
     await session.refresh(user)
 
@@ -177,6 +191,16 @@ async def signup(
         tenant_id=tenant.id,
     )
     session.add(user)
+    await session.flush()
+    # Multi-cabinet (миграция 0056): создаём запись в user_tenant_access.
+    session.add(
+        UserTenantAccess(
+            user_id=user.id,
+            tenant_id=tenant.id,
+            role=user.role,
+            granted_by=user.id,
+        )
+    )
     await session.commit()
     await session.refresh(user)
 
@@ -229,6 +253,16 @@ async def login(
 @router.post("/logout")
 async def logout(response: Response) -> dict[str, str]:
     clear_session_cookie(response)
+    # Multi-cabinet (TASK-LEAD-048): чистим active-tenant cookie тоже —
+    # иначе при next login юзер получит cookie указывающую на tenant,
+    # к которому может уже не быть access (revoked / другой user).
+    response.delete_cookie(
+        key=ACTIVE_TENANT_COOKIE,
+        path="/",
+        secure=cfg.auth_cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
     return {"status": "logged out"}
 
 
@@ -270,3 +304,115 @@ async def me(
 @router.get("/roles")
 async def list_roles() -> dict[str, list[str]]:
     return {"roles": list(ROLES)}
+
+
+# ─── Multi-cabinet workspace (TASK-LEAD-048 / TASK-LEAD-039 Фаза B) ───────
+
+
+class SwitchTenantPayload(BaseModel):
+    tenant_id: int
+
+
+@router.get("/available-tenants")
+async def available_tenants(
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """Список tenant'ов, к которым у user'а есть access.
+
+    Используется UI'ем для dropdown'а «Кабинет: A ▼». Ordered by
+    `last_active_at DESC NULLS LAST` — последний выбранный сверху,
+    новые (без switch'а) внизу.
+
+    Response: [{tenant_id, name, role, last_active_at}].
+    """
+    rows = (
+        await session.execute(
+            select(UserTenantAccess, Tenant.name)
+            .join(Tenant, UserTenantAccess.tenant_id == Tenant.id)
+            .where(UserTenantAccess.user_id == user.id)
+            .order_by(
+                UserTenantAccess.last_active_at.desc().nullslast(),
+                UserTenantAccess.tenant_id.asc(),
+            )
+        )
+    ).all()
+    return [
+        {
+            "tenant_id": int(access.tenant_id),
+            "name": name,
+            "role": access.role,
+            "last_active_at": (
+                access.last_active_at.isoformat()
+                if access.last_active_at
+                else None
+            ),
+        }
+        for access, name in rows
+    ]
+
+
+@router.post("/switch-tenant")
+async def switch_tenant(
+    payload: SwitchTenantPayload,
+    request: Request,
+    response: Response,
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Переключить активный tenant для текущей сессии.
+
+    Body: `{tenant_id: int}` — выбранный из `/available-tenants`.
+
+    Side effects:
+      1. Set-Cookie `rnp_active_tenant=<id>` (HttpOnly, Lax, 30d).
+      2. UPDATE `user_tenant_access.last_active_at = NOW()` для (user, tid).
+      3. Audit log entry `tenant.switch` (action=update).
+
+    Response: `{ok: true, tenant_id, role}`.
+    Если access нет — 403.
+    """
+    new_tid = int(payload.tenant_id)
+    access = (
+        await session.execute(
+            select(UserTenantAccess).where(
+                UserTenantAccess.user_id == user.id,
+                UserTenantAccess.tenant_id == new_tid,
+            )
+        )
+    ).scalar_one_or_none()
+    if access is None:
+        raise HTTPException(403, "Нет доступа к этому кабинету")
+
+    old_tid = getattr(request.state, "active_tenant_id", None) or user.tenant_id
+
+    access.last_active_at = datetime.now(timezone.utc)
+
+    # Audit-log (в БД через AuditLog, tenant-scoped). Пишем в активный tenant
+    # (НОВЫЙ tid) — так аудит видим директорам того кабинета, в который
+    # переключились. Если нужно знать «откуда» — фиксируем в before.
+    from app.services.tenant_context import set_tenant  # local — избегаем цикла
+
+    set_tenant(session, new_tid)
+    await audit_log(
+        session,
+        table_name="user_tenant_access",
+        op="update",
+        entity_id=str(new_tid),
+        before={"from_tenant_id": int(old_tid)},
+        after={"to_tenant_id": new_tid, "role": access.role},
+        actor=actor_from_request(request),
+        comment="tenant.switch",
+    )
+    await session.commit()
+
+    response.set_cookie(
+        key=ACTIVE_TENANT_COOKIE,
+        value=str(new_tid),
+        max_age=86400 * 30,  # 30 дней
+        httponly=True,
+        secure=cfg.auth_cookie_secure,
+        samesite="lax",
+        path="/",
+    )
+    return {"ok": True, "tenant_id": new_tid, "role": access.role}

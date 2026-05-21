@@ -59,6 +59,7 @@ from app.api import (
 )
 from app.core.config import settings as cfg
 from app.core.logging import configure_logging, get_logger
+from app.services.active_tenant import active_tenant_middleware
 from app.services.auth import PUBLIC_PATHS, decode_session_token
 
 log = get_logger(__name__)
@@ -115,6 +116,16 @@ app.add_middleware(
     allow_headers=["*"],
     allow_credentials=True,
 )
+
+
+# Multi-cabinet (TASK-LEAD-048): active-tenant middleware.
+# ORDER NOTE: в FastAPI/Starlette `@app.middleware("http")` декораторы
+# складываются так что ПОСЛЕДНИЙ добавленный — внешний (запускается первым
+# на request, последним на response). Поэтому `active_tenant_middleware`
+# объявлен ДО `auth_gate` — значит на request `auth_gate` отрабатывает
+# первым (проверяет cookie), потом `active_tenant_middleware` резолвит
+# `request.state.active_tenant_id`.
+app.middleware("http")(active_tenant_middleware)
 
 
 @app.middleware("http")

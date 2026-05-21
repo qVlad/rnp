@@ -574,6 +574,78 @@ class User(Base, TenantScopedMixin):
         DateTime(timezone=True), server_default=func.now()
     )
 
+    # Multi-cabinet (TASK-LEAD-048, миграция 0056): M:N user↔tenant access.
+    # `tenant_access[]` — все кабинеты, к которым у user'а есть доступ
+    # (включая legacy записи из users.tenant_id, перенесённые backfill'ом).
+    # `foreign_keys` ограничивает relationship одной стороной — иначе SA
+    # запутается между UserTenantAccess.user_id и UserTenantAccess.granted_by
+    # (оба FK на users.id).
+    tenant_access: Mapped[list["UserTenantAccess"]] = relationship(
+        "UserTenantAccess",
+        foreign_keys="UserTenantAccess.user_id",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+
+class UserTenantAccess(Base):
+    """Many-to-many user ↔ tenant access (TASK-LEAD-048, миграция 0056).
+
+    Один user может иметь доступ к N кабинетам (`tenants`), плюс per-tenant
+    роль (в одной компании user может быть director'ом, в другой — manager'ом).
+
+    **NOT TenantScopedMixin** — таблица сама связывает несколько tenant'ов,
+    auto-tenant-filter поломал бы запросы вида «все available для user X».
+
+    `last_active_at` — timestamp последнего switch'а user'а в этот tenant.
+    Используется для сортировки dropdown'а «Кабинеты» (последний выбранный
+    показывается первым).
+
+    `granted_by` — кто добавил access. Для backfill — это сам user (legacy
+    users.id). Для новых записей через UI — director текущего tenant'а.
+
+    Composite PK `(user_id, tenant_id)` — у одного user'а не может быть две
+    разные роли в одном tenant'е.
+    """
+
+    __tablename__ = "user_tenant_access"
+
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    granted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    granted_by: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    last_active_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    user: Mapped["User"] = relationship(
+        "User",
+        foreign_keys=[user_id],
+        back_populates="tenant_access",
+    )
+    tenant: Mapped["Tenant"] = relationship("Tenant", foreign_keys=[tenant_id])
+
+    __table_args__ = (
+        Index("ix_user_tenant_access_user_id", "user_id"),
+        Index("ix_user_tenant_access_tenant_id", "tenant_id"),
+    )
+
 
 class BrandAssignment(Base, TenantScopedMixin):
     """Maps a WB brand (text from products.brand) to a responsible user.

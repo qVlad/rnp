@@ -244,31 +244,48 @@ require_director_head_or_bookkeeper = require_role(
 
 
 async def get_db_tenant_scoped(
+    request: Request,
     user: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> AsyncSession:
     """FastAPI dependency: вернуть session с уже выставленным tenant_id.
 
     Все ORM SELECT через эту сессию автоматически фильтруются по
-    `tenant_id` текущего юзера (event listener в `tenant_context.py`).
-    Новые объекты тоже получают tenant_id автоматически (before_flush).
+    `tenant_id` текущего активного tenant'а (event listener в
+    `tenant_context.py`). Новые объекты тоже получают tenant_id
+    автоматически (before_flush).
+
+    **Источник tenant_id** (multi-cabinet, TASK-LEAD-048):
+    1. `request.state.active_tenant_id` (если middleware
+       `active_tenant_middleware` отработал и user имеет access).
+    2. Fallback: `user.tenant_id` (legacy JWT-claim) — для случаев когда
+       middleware не отработал (broken state, тест, public-path).
 
     Используй вместо `Depends(get_db)` во **всех** protected endpoints,
     кроме `/api/auth/*` — там tenant ещё не известен.
     """
     from app.services.tenant_context import set_tenant  # noqa: WPS433
 
-    set_tenant(session, user.tenant_id)
+    active_tid = getattr(request.state, "active_tenant_id", None)
+    tid = int(active_tid) if active_tid is not None else int(user.tenant_id)
+    set_tenant(session, tid)
     return session
 
 
-async def current_tenant_id(user: CurrentUser = Depends(get_current_user)) -> int:
-    """Хелпер: возвращает tenant_id текущего юзера из JWT.
+async def current_tenant_id(
+    request: Request,
+    user: CurrentUser = Depends(get_current_user),
+) -> int:
+    """Хелпер: возвращает tenant_id для текущего request'а.
+
+    Multi-cabinet (TASK-LEAD-048): сначала смотрит на
+    `request.state.active_tenant_id`, fallback на `user.tenant_id`.
 
     Удобно подключать как `Depends(current_tenant_id)` в API endpoint'ах
     и использовать в фильтрах SQL: `.where(Model.tenant_id == tenant_id)`.
     """
-    return user.tenant_id
+    active_tid = getattr(request.state, "active_tenant_id", None)
+    return int(active_tid) if active_tid is not None else int(user.tenant_id)
 
 
 async def current_brands_filter(

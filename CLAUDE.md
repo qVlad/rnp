@@ -290,7 +290,7 @@ docker-compose.yml
 .claude/settings.json   permissions для агента
 ```
 
-## Миграции БД (49 шт., 0001-0055)
+## Миграции БД (50 шт., 0001-0056)
 
 > Полный список с деталями — в [`FEATURES.md`](FEATURES.md) → «Миграции». Здесь — топ-уровневое.
 
@@ -331,6 +331,7 @@ docker-compose.yml
 | **0053** | **plan_edit_requests** — заявки manager'а на правку плана (TASK-DEV-017). Workflow: pending → accepted (= apply + audit) / rejected (= close с note). Whitelist полей: planned_* (без metadata). TG-broadcast директорам через `services/tg_broadcast.py` (multi-recipient). Endpoints `/api/plan-edit-requests` (POST + GET) + `/{id}/accept` + `/{id}/reject`. |
 | **0054** | **users.tg_chat_id** — per-user Telegram binding для multi-recipient broadcast'а. Раньше TG-нотификации шли только в `AppSetting.tg_chat_id` тенанта. Теперь `services/tg_broadcast.broadcast_to_directors` сначала шлёт всем `User.tg_chat_id IS NOT NULL` подходящей роли, fallback на legacy AppSetting. UI: /settings → «Мой Telegram-чат». |
 | **0055** | **opex_entry_allocations** — many-to-many распределение OPEX (TASK-LEAD-030). Каждый `OpexEntry` → N scope'ов с весами 0..1 (`scope_type ∈ tenant/brand/group/nm`, Σweights ≤ 1.0). Backfill: 1 `tenant`-allocation weight=1.0 на каждый existing entry → **Δ=0₽ guard** для company-scope (читает `SUM(amount)` без JOIN). Manager-scope P&L теперь видит свою долю OPEX через `services/opex_allocations.manager_scope_effective_weights` (резолв nm→brand, group→fraction). API `POST /api/opex/entries/allocations/preview` (mode=`equal`/`revenue_share`) для UI-превью. UI в /opex — отдельная задача после деплоя backend. |
+| **0056** | **user_tenant_access** — M:N user↔tenant для multi-cabinet workspace (TASK-LEAD-048 / TASK-LEAD-039 Фаза B). Composite PK `(user_id, tenant_id)` + per-tenant `role` (в одной компании user может быть director'ом, в другой — manager'ом). `last_active_at` для сортировки dropdown'а. Backfill: 1 запись на каждого existing user'а из его `users.tenant_id` + `users.role`. `users.tenant_id` колонка остаётся **read-only legacy** (drop отложен в Фазу D). Middleware `services/active_tenant.py` резолвит active tenant (cookie `rnp_active_tenant` → header `X-Tenant-ID` → fallback). API `GET /api/auth/available-tenants` + `POST /api/auth/switch-tenant`. Audit-log событие `tenant.switch`. |
 
 ## Роли и RBAC
 
@@ -366,6 +367,54 @@ Helper `app.services.auth.current_brands_filter()` возвращает `set[str
 (None = unrestricted). **Для bookkeeper — кидает 403** (узкий scope, нет
 brand-аналитики). Helper `current_brands_filter_with_bookkeeper()` — на
 эндпоинтах, явно разрешённых для bookkeeper, возвращает None.
+
+**Per-tenant role (TASK-LEAD-048):** реальная роль теперь живёт в
+`user_tenant_access.role`, а не только в `users.role`. В каждом кабинете
+user может иметь свою роль (в одной компании — director, в другой —
+manager). `users.role` остаётся как «легаси-роль» из JWT (используется
+fallback'ом, когда middleware не отработал — в Celery / public-paths).
+Middleware пишет `request.state.effective_role` — но guard'ы пока
+читают `user.role` (post-Фаза B можно перевести на effective_role,
+тогда переключение кабинета будет менять и видимые разделы UI).
+
+## Multi-cabinet workspace (TASK-LEAD-048, 2026-05-21)
+
+**Проблема:** один user часто работает с несколькими WB-кабинетами
+(2-3 юрлица). Раньше для просмотра другого кабинета — logout/login
+под отдельным аккаунтом.
+
+**Решение (Фаза B, backend):** таблица `user_tenant_access` (миграция
+0056) — M:N связь user↔tenant с per-tenant ролью. Middleware
+`services/active_tenant.py` резолвит активный tenant для каждого
+request'а по приоритету:
+
+1. cookie `rnp_active_tenant=<int>` (HttpOnly, Lax, 30d) — основной
+   источник правды. Устанавливается через `POST /api/auth/switch-tenant`.
+2. header `X-Tenant-ID: <int>` — для extension / API-токенов.
+3. Fallback — первый available из `user_tenant_access` (sorted by
+   `last_active_at DESC NULLS LAST, tenant_id ASC`).
+
+Если cookie/header указывает на forbidden tenant — 403 с кодом
+`tenant_forbidden`. Если у user'а нет ни одного access — 403.
+
+**API:**
+- `GET /api/auth/available-tenants` → `[{tenant_id, name, role, last_active_at}]`
+- `POST /api/auth/switch-tenant {tenant_id}` → Set-Cookie + audit-log
+  событие `tenant.switch` + UPDATE `last_active_at = NOW()`.
+
+**Backward-compat:** `users.tenant_id` колонка **остаётся** как read-only
+legacy. JWT по-прежнему содержит `t` claim — он используется fallback'ом
+в `get_db_tenant_scoped` если middleware не отработал (Celery, public-
+paths, broken state). Drop колонки — Фаза D (после стабилизации).
+
+**Backfill миграции 0056:** на каждого existing user'а создаётся одна
+`user_tenant_access` строка из его `users.tenant_id` + `users.role`.
+Логин-flow продолжает работать прозрачно — single-tenant сценарий
+эквивалентен поведению до миграции.
+
+**Frontend (Фаза C, отдельно):** AuthContext.availableTenants +
+activeTenantId + switchTenant(). Layout dropdown «Кабинет ▼» в шапке.
+`queryClient.removeQueries()` при switch (invalidate всех queries).
 
 ## API endpoints (по группам)
 

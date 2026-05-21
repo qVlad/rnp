@@ -339,8 +339,11 @@
 | Tenants | Multi-tenant на 22+ таблицах через `tenant_id` FK | миграция 0016, `db/models.py:TenantScopedMixin` | — |
 | Signup | Регистрация нового кабинета | `pages/Signup.tsx`, `api/auth.py` | публ. |
 | Auto-tenant-filter | SQLAlchemy event listener `do_orm_execute` добавляет WHERE tenant_id | `services/tenant_context.py` | — |
+| **Multi-cabinet (M:N user↔tenant)** | Один user работает с N кабинетами без logout/login (TASK-LEAD-048). Per-tenant role в `user_tenant_access` — в одной компании user — director, в другой — manager. Backfill из existing users (миграция 0056). `users.tenant_id` остаётся read-only legacy. | миграция 0056, `db/models.py:UserTenantAccess` | — |
+| **Active-tenant middleware** | Резолв `request.state.active_tenant_id` для каждого request'а (cookie `rnp_active_tenant` → header `X-Tenant-ID` → fallback по `last_active_at`). 403 на forbidden tenant. | `services/active_tenant.py` | — |
+| **Switch tenant API** | `POST /api/auth/switch-tenant {tenant_id}` — Set-Cookie + audit-log `tenant.switch` + UPDATE `last_active_at`. `GET /api/auth/available-tenants` для dropdown'а. | `api/auth.py:switch_tenant, available_tenants` | authenticated |
 | Users CRUD | Управление пользователями (4 роли) | `pages/Users.tsx`, `api/users.py`, миграция 0012 | director |
-| Roles | director / head_of_sales / manager / **bookkeeper** (TASK-LEAD-040) | `services/auth.py` | — |
+| Roles | director / head_of_sales / manager / **bookkeeper** (TASK-LEAD-040). Per-tenant — в `user_tenant_access.role`; legacy `users.role` fallback'ом. | `services/auth.py` | — |
 | **Bookkeeper guard** | `require_director_head_or_bookkeeper` / `require_director_or_bookkeeper` / `require_bookkeeper` — узкий scope бухгалтера: налоговые отчёты, payment-orders, выкупы, audit-mode (read), setting_timeline (read). НЕ видит Dashboard / P&L / OPEX / users / settings mutations / A/B. | `services/auth.py:require_*bookkeeper*` | bookkeeper |
 | Brand assignments | Один бренд → один manager | `pages/Brands.tsx`, `api/brands.py`, миграция 0013 | director, head |
 | Brand-scoped filter | Helper `current_brands_filter()` → `set[str] | None`. **Для bookkeeper кидает 403** — он не должен видеть brand-scoped аналитику. Вариант `current_brands_filter_with_bookkeeper()` для tax-report (возвращает None для bookkeeper'а). | `services/auth.py:current_brands_filter` | — |
