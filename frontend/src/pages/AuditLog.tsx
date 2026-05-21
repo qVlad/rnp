@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { DateRangePicker } from "@/components/DateRangePicker";
+import { usePeriod } from "@/contexts/PeriodContext";
 
 const isoToday = () => new Date().toISOString().slice(0, 10);
 
@@ -10,8 +11,13 @@ export default function AuditLog() {
   const [actor, setActor] = useState("");
   const [op, setOp] = useState("");
   const [entityId, setEntityId] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  // TASK-UI-005: глобальный период через PeriodContext. AuditLog по умолчанию
+  // не фильтрует по дате (передаёт undefined в API), но при изменении picker'а
+  // обновляет global period.
+  const { range, setPeriod } = usePeriod();
+  const [useGlobalPeriod, setUseGlobalPeriod] = useState(false);
+  const dateFrom = useGlobalPeriod ? range.from : "";
+  const dateTo = useGlobalPeriod ? range.to : "";
   const [limit, setLimit] = useState(200);
 
   const tablesQ = useQuery({
@@ -40,8 +46,7 @@ export default function AuditLog() {
     setActor("");
     setOp("");
     setEntityId("");
-    setDateFrom("");
-    setDateTo("");
+    setUseGlobalPeriod(false);
   };
 
   return (
@@ -102,11 +107,24 @@ export default function AuditLog() {
             />
           </Field>
           <Field label="Период">
-            <DateRangePicker
-              from={dateFrom || isoToday()}
-              to={dateTo || isoToday()}
-              onChange={(r) => { setDateFrom(r.from); setDateTo(r.to); }}
-            />
+            <div className="flex items-center gap-2">
+              <DateRangePicker
+                from={dateFrom || range.from || isoToday()}
+                to={dateTo || range.to || isoToday()}
+                onChange={(r) => {
+                  setPeriod({ kind: "custom", from: r.from, to: r.to });
+                  setUseGlobalPeriod(true);
+                }}
+              />
+              <label className="text-xs text-muted flex items-center gap-1 whitespace-nowrap">
+                <input
+                  type="checkbox"
+                  checked={useGlobalPeriod}
+                  onChange={(e: any) => setUseGlobalPeriod(e.target.checked)}
+                />
+                фильтр
+              </label>
+            </div>
           </Field>
           <Field label="Лимит">
             <select

@@ -1,15 +1,8 @@
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
 import { DateRangePicker } from "@/components/DateRangePicker";
-
-const today = () => new Date().toISOString().slice(0, 10);
-const startOfMonth = () => {
-  const d = new Date();
-  d.setDate(1);
-  return d.toISOString().slice(0, 10);
-};
+import { usePeriod } from "@/contexts/PeriodContext";
 
 const SECTION_META: Record<string, { color: string; hint: string }> = {
   operating: {
@@ -27,8 +20,10 @@ const SECTION_META: Record<string, { color: string; hint: string }> = {
 };
 
 export default function CashFlow() {
-  const [from, setFrom] = useState(startOfMonth());
-  const [to, setTo] = useState(today());
+  // TASK-UI-005: глобальный период.
+  const { range, setPeriod } = usePeriod();
+  const from = range.from;
+  const to = range.to;
 
   const q = useQuery({
     queryKey: ["cash-flow", from, to],
@@ -45,7 +40,7 @@ export default function CashFlow() {
             <DateRangePicker
               from={from}
               to={to}
-              onChange={(r) => { setFrom(r.from); setTo(r.to); }}
+              onChange={(r) => setPeriod({ kind: "custom", from: r.from, to: r.to })}
             />
           </div>
         </div>

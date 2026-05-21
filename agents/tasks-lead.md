@@ -16,19 +16,23 @@ Lead использует этот файл как master-view: сюда скл�
 
 ## 🎯 Active Sprint — Параллельная координация (2026-05-21)
 
-> **В работе прямо сейчас:**
-> - **TASK-UI-005** (PeriodContext) — main session (Claude), следующий
+> **В работе прямо сейчас (main session):**
+> - **TASK-LEAD-046** (QUICKSTART_BOOKKEEPER.md)
+> - **TASK-LEAD-039 Lead-спека** (Multi-cabinet)
 >
-> **Завершено в этой сессии 2026-05-21:**
-> - ✅ **TASK-LEAD-030 backend** (OPEX many-to-many) — параллельная сессия, commit `34bf27a` (v0.20.0)
-> - ✅ **TASK-LEAD-040 backend** (Role bookkeeper + RBAC guards + 17 unit-тестов) — sub-agent A, merged commit `0399c10`
-> - ✅ **TASK-LEAD-042** (default hybrid + WeekProfitHero) — main session, commit `2f7eda9`
-> - ✅ **TASK-LEAD-044** (README.md routing) — sub-agent B, merged commit `44df061`
-> - ✅ **TASK-LEAD-045** (QUICKSTART_OWNER.md) — sub-agent B, merged commit `44df061`
+> **Завершено в этой сессии 2026-05-21 (раунд 2):**
+> - ✅ **TASK-LEAD-040 frontend** (Layout bookkeeper visibility, whitelist через `bookkeeperOk`) — main, commit `808e28e`
+> - ✅ **Release v0.20.1 deploy** (pack: 030 backend + 040 backend + 042 + 040 frontend) — commit `30311dd`
+> - ✅ **TASK-LEAD-041** (Sidebar profile selector + слияние /taxes) — sub-agent A, merged commit `6b0f48d`
+> - ✅ **TASK-LEAD-047** (UI на /opex allocations + preview Δ) — sub-agent B, merged commit `8fe9d97`
+> - ✅ **TASK-UI-005** (PeriodContext миграция 8 простых pages: Inventory, AuditLog, CashFlow, TaxReport, TaxReportAusn, TaxReportUsn, AdsHeatmap, PnL) — main session
+>
+> **Завершено в раунде 1:**
+> - ✅ TASK-LEAD-030 backend, TASK-LEAD-040 backend, TASK-LEAD-042, TASK-LEAD-044, TASK-LEAD-045
 >
 > **Открытые follow-up'ы:**
-> - **TASK-LEAD-040 frontend** — Layout.tsx visibility для bookkeeper (по дизайну sub-agent A оставил для main session)
-> - **TASK-LEAD-046** (QUICKSTART_BOOKKEEPER.md) — разблокирована (зависела от 040)
+> - **TASK-UI-005 продолжение** — Dashboard.tsx + Units.tsx (сложный preset+custom Mode type, требует two-way sync, defer на следующий раунд)
+> - **TASK-LEAD-043** — Cross-source сводка + Reconciliation explainer (после стабилизации UI-005)
 
 
 > Цель: «удобство работы для собственных кабинетов» (internal tool, не SaaS).

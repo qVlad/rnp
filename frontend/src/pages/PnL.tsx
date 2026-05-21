@@ -10,6 +10,7 @@ import {
 import { DateRangePicker } from "@/components/DateRangePicker";
 import PnLCardsView from "@/components/PnLCardsView";
 import PnLByBrandView from "@/components/PnLByBrandView";
+import { usePeriod } from "@/contexts/PeriodContext";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const daysAgo = (n: number) => {
@@ -166,8 +167,10 @@ export default function PnL() {
     ? drillBrandsParam.split(",").map((s) => s.trim()).filter(Boolean)
     : null;
 
-  const [from, setFrom] = useState(daysAgo(29));
-  const [to, setTo] = useState(today());
+  // TASK-UI-005: глобальный период.
+  const { range, setPeriod } = usePeriod();
+  const from = range.from;
+  const to = range.to;
   const [granularity, setGranularity] = useState<"day" | "week" | "month">("day");
   const [compare, setCompare] = useState(false);
   const [view, setView] = useState<ViewMode>(() => {
@@ -262,7 +265,7 @@ export default function PnL() {
                 <DateRangePicker
                   from={from}
                   to={to}
-                  onChange={(r) => { setFrom(r.from); setTo(r.to); }}
+                  onChange={(r) => setPeriod({ kind: "custom", from: r.from, to: r.to })}
                 />
               </div>
               <div className="flex gap-1">

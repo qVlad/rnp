@@ -4,6 +4,7 @@ import { api } from "@/api/client";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import PaymentOrdersTable from "@/components/PaymentOrdersTable";
 import { fmtRub } from "@/lib/format";
+import { usePeriod } from "@/contexts/PeriodContext";
 
 function isoDate(d: Date) {
   return d.toISOString().slice(0, 10);
@@ -22,8 +23,12 @@ function UsnPage({ vatRate, title }: { vatRate: number; title: string }) {
     return isoDate(d);
   }, [today]);
 
-  const [from, setFrom] = useState(defaultFrom);
-  const [to, setTo] = useState(defaultTo);
+  // TASK-UI-005: глобальный период.
+  const { range, setPeriod } = usePeriod();
+  const from = range.from;
+  const to = range.to;
+  void defaultFrom;
+  void defaultTo;
   const [taxRate, setTaxRate] = useState<string>("6");
   const [showPaymentOrders, setShowPaymentOrders] = useState(false);
 
@@ -99,10 +104,9 @@ function UsnPage({ vatRate, title }: { vatRate: number; title: string }) {
           <DateRangePicker
             from={from}
             to={to}
-            onChange={(r) => {
-              setFrom(r.from);
-              setTo(r.to);
-            }}
+            onChange={(r) =>
+              setPeriod({ kind: "custom", from: r.from, to: r.to })
+            }
           />
         </div>
         <label className="flex flex-col gap-1">

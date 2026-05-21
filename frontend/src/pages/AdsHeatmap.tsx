@@ -3,13 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
-
-const today = () => new Date().toISOString().slice(0, 10);
-const daysAgo = (n: number) => {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
-};
+import { usePeriod } from "@/contexts/PeriodContext";
 
 type Metric =
   | "drr"
@@ -85,8 +79,10 @@ function cellColor(metric: Metric, val: number | null): string {
 }
 
 export default function AdsHeatmap() {
-  const [from, setFrom] = useState(daysAgo(30));
-  const [to, setTo] = useState(today());
+  // TASK-UI-005: глобальный период.
+  const { range, setPeriod } = usePeriod();
+  const from = range.from;
+  const to = range.to;
   const [metric, setMetric] = useState<Metric>("drr");
 
   const q = useQuery<any>({
@@ -121,10 +117,9 @@ export default function AdsHeatmap() {
           <DateRangePicker
             from={from}
             to={to}
-            onChange={(r) => {
-              setFrom(r.from);
-              setTo(r.to);
-            }}
+            onChange={(r) =>
+              setPeriod({ kind: "custom", from: r.from, to: r.to })
+            }
           />
         </div>
         <div className="flex flex-col gap-1">

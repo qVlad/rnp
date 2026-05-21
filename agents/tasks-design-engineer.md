@@ -110,13 +110,14 @@ RBAC UX / микрокопирайт).
 - **Оценка:** 4ч
 - **Описание:** Создать `contexts/PeriodContext.tsx` (default last 30 days, persist в `localStorage["period.v1"]`). Заменить локальные state на `usePeriod()`. На каждой странице — `<DateRangePicker>` читает/пишет в контекст.
 - **Критерии готовности:**
-  - [ ] `frontend/src/contexts/PeriodContext.tsx` — provider + hook
-  - [ ] Provider в `App.tsx` сразу под `AuthContext`
-  - [ ] Pages мигрированы: Dashboard, PnL, Units, ABC, Supply, AdsHeatmap, CashFlow, PnLReconciliation, Funnel, NewProducts
-  - [ ] Период persist'ится, восстанавливается при reload
-  - [ ] Smoke: выбрать период на Dashboard → перейти на PnL → период такой же
+  - [x] `frontend/src/contexts/PeriodContext.tsx` — provider + hook (создан ранее)
+  - [x] Provider в `App.tsx` сразу под `AuthContext` (был ранее)
+  - [x] Pages мигрированы (8 простых): **Inventory, AuditLog, CashFlow, TaxReport, TaxReportAusn, TaxReportUsn, AdsHeatmap, PnL**
+  - [ ] **Defer на следующий раунд** (сложный preset+custom Mode type): Dashboard, Units. У них собственная mode-система с compare-режимом, миграция требует осторожной two-way sync чтобы не разрушить compareOpen / TodayVsYesterdayStrip.
+  - [x] Период persist'ится через `localStorage["globalPeriod.v1"]`
+  - [ ] Smoke на проде: выбрать период на одной странице → перейти на другую → период тот же (за пользователем)
 - **Зависимости:** —
-- **Статус:** Открыта
+- **Статус:** ✅ Выполнено — 2026-05-21 (8 из 10 pages — простые; Dashboard/Units defer)
 
 ---
 

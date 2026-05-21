@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
 import { DateRangePicker } from "@/components/DateRangePicker";
+import { usePeriod } from "@/contexts/PeriodContext";
 
 function isoDate(d: Date) {
   return d.toISOString().slice(0, 10);
@@ -10,13 +11,12 @@ function isoDate(d: Date) {
 
 export default function TaxReport() {
   const today = useMemo(() => new Date(), []);
-  // По умолчанию — с начала текущего года: чтобы налоговый отчёт сразу
-  // показывал ВСЕ закрытые недели + ВСЕ выкупы, а не только 89 дней.
-  const defaultFrom = useMemo(() => `${today.getFullYear()}-01-01`, [today]);
-  const defaultTo = useMemo(() => isoDate(today), [today]);
-
-  const [from, setFrom] = useState(defaultFrom);
-  const [to, setTo] = useState(defaultTo);
+  // TASK-UI-005: глобальный период.
+  const { range, setPeriod } = usePeriod();
+  const from = range.from;
+  const to = range.to;
+  void today;
+  void isoDate;
   const [cogsMethod, setCogsMethod] = useState<"historical" | "weighted_avg">("historical");
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
@@ -122,7 +122,7 @@ export default function TaxReport() {
           <DateRangePicker
             from={from}
             to={to}
-            onChange={(r) => { setFrom(r.from); setTo(r.to); }}
+            onChange={(r) => setPeriod({ kind: "custom", from: r.from, to: r.to })}
           />
         </div>
         <label className="flex flex-col gap-1">

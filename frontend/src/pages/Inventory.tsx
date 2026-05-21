@@ -20,6 +20,7 @@ import { api } from "@/api/client";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import { fmtRub, fmtNum } from "@/lib/format";
 import { chartTheme } from "@/lib/chartTheme";
+import { usePeriod } from "@/contexts/PeriodContext";
 
 type Scope = "brand" | "group" | "warehouse";
 
@@ -27,16 +28,11 @@ function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function defaultRange(): { from: string; to: string } {
-  const t = new Date();
-  const from = new Date(t.getFullYear(), t.getMonth() - 5, t.getDate());
-  return { from: from.toISOString().slice(0, 10), to: todayIso() };
-}
-
 export default function Inventory() {
   const [onDate, setOnDate] = useState<string>(todayIso());
   const [scope, setScope] = useState<Scope>("brand");
-  const [range, setRange] = useState<{ from: string; to: string }>(defaultRange());
+  // TASK-UI-005: глобальный период через PeriodContext (вместо локального state).
+  const { range, setPeriod } = usePeriod();
   const [freq, setFreq] = useState<"week" | "month">("week");
 
   const snapQ = useQuery({
@@ -103,7 +99,7 @@ export default function Inventory() {
             <DateRangePicker
               from={range.from}
               to={range.to}
-              onChange={(r) => setRange(r)}
+              onChange={(r) => setPeriod({ kind: "custom", from: r.from, to: r.to })}
             />
             <label className="flex flex-col gap-1">
               <span className="text-xs text-muted uppercase tracking-wide">
