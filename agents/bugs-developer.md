@@ -84,11 +84,15 @@
   - `extension/src/background/index.ts` (`maybeAutoConnectLk` дедуп)
   - `extension/src/content/wb-shifts-content.ts` (`maybeForwardLkAutoConnect` дедуп)
 - **Критерии исправления:**
-  - [ ] Дедуп считает hash от пары `(AuthV3.slice(-12) + ":" + WbSellerLk.slice(-12))` — обновление любого из двух токенов триггерит отправку
-  - [ ] `STORAGE_LK_LAST_HASH` хранит композитный hash (рекомендуется переименовать → `rnp.lk.lastTokensHash`, оставить старый ключ для миграции)
-  - [ ] При первой загрузке после reload расширения content script отправляет токены даже если `lastSentAuthV3Hash` сбрасывается на null (текущее поведение — ок)
-  - [ ] Smoke на проде: после reload `wb_seller_lk_exp` в БД должен обновляться каждые 5-10 мин пока юзер активно работает в LK
-- **Статус:** Открыт
+  - [x] Дедуп считает hash от пары `(AuthV3.slice(-12) + ":" + WbSellerLk.slice(-12))` — обновление любого из двух токенов триггерит отправку
+  - [x] `STORAGE_LK_LAST_HASH` хранит композитный hash (переименован в `rnp.lk.lastTokensHash`, legacy ключ `rnp.lk.lastAuthV3Hash` чистится при первом успехе)
+  - [x] При первой загрузке после reload расширения content script отправляет токены даже если `lastSentAuthV3Hash` сбрасывается на null (текущее поведение — ок)
+  - [x] Smoke на проде: после reload SW DevTools показывает `LK auto-connected (token=Bnwhob0dplXQ:WNsKYVhOBMDQ)` → backend ответил 200, hash записан с обоими токенами, UI `/redistribution` показывает «LK WB подключено»
+- **Доп. фиксы по ходу:**
+  - URL-фильтр `isWbApiUrl()` в `wb-shifts-interceptor-main.ts` отбрасывал fetch'и со всех WB-субдоменов кроме `seller-weekly-report` и `seller.wildberries.ru/ns/`. На `/supplies-management/all-supplies` interceptCount был 0. Фильтр снят полностью — теперь критерий «есть `AuthorizeV3` или `Wb-Seller-Lk` в headers».
+  - В `manifest.config.ts` добавлен `seller-weekly-report.wildberries.ru/*` к matches (был только seller.wildberries.ru).
+  - Расширён `rnp:debug-status` для диагностики (`tokenKind`, `lkLastResult`, `interceptCount` по вкладкам).
+- **Статус:** Исправлено — 2026-05-21 (extension v0.6.1 + v0.9.1 + v0.12.1, commits `eefb1f8`, `092c91d`, `1a3ca02`)
 
 ---
 
