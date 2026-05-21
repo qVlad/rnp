@@ -2161,6 +2161,45 @@ class AlertAcknowledgement(Base, TenantScopedMixin):
     )
 
 
+class ReconciliationImport(Base, TenantScopedMixin):
+    """Импортированные XLSX от бухгалтера для 4-way Reconciliation
+    (миграция 0051). Бухгалтер шлёт еженедельную/месячную сводку из 1С,
+    юзер аплоадит на /reconciliation-4way, парсер сохраняет суммы.
+
+    `source` сейчас всегда 'bookkeeper', но колонка готова к расширению
+    (можно использовать для ручных загрузок WB ЛК если sync упал).
+    UNIQUE(tenant_id, source, period_from, period_to) обеспечивает
+    идемпотентный re-upload (повторная загрузка того же периода обновит
+    значения, не создаст дубль).
+    """
+
+    __tablename__ = "reconciliation_imports"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    period_from: Mapped[date] = mapped_column(Date, nullable=False)
+    period_to: Mapped[date] = mapped_column(Date, nullable=False)
+    revenue_gross_rub: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    revenue_returns_rub: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    commission_rub: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    payout_rub: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    note: Mapped[str | None] = mapped_column(Text)
+    filename: Mapped[str | None] = mapped_column(String(255))
+    imported_by_user_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    imported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "source", "period_from", "period_to",
+            name="uq_recon_imports_tenant_source_period",
+        ),
+    )
+
+
 class MetricTemplate(Base, TenantScopedMixin):
     """Пользовательская формула KPI (миграция 0050, TASK-DEV-011).
 

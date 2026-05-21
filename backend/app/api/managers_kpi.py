@@ -15,14 +15,18 @@ Query — приемлемо для первой итерации. Если бу
 
 from __future__ import annotations
 
+import json
 from calendar import monthrange
 from datetime import date
 from typing import Annotated, Any, Literal
 
+import redis.asyncio as redis_async
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
+from app.core.logging import get_logger
 from app.db.models import BrandAssignment, User
 from app.db.session import get_db
 from app.services.auth import (
@@ -34,7 +38,44 @@ from app.services.auth import (
 from app.services.metrics import compute_dashboard
 from app.services.periods import period_from_range
 
+log = get_logger(__name__)
+
 router = APIRouter(prefix="/api", tags=["managers-kpi"])
+
+# TASK-LEAD-023 — Redis cache. N×6 fan-out в _month_revenue_margin делает
+# 30-60 sequential dashboard-вызовов. Кешируем целиком response: вторая и
+# последующие просмотры за тот же месяц — < 50ms вместо 5-30 сек.
+_CACHE_TTL_SECONDS = 1800  # 30 минут
+
+
+def _cache_key(tenant_id: int, year: int, month: int, mode: str) -> str:
+    return f"managers_kpi:{tenant_id}:{year}:{month}:{mode}"
+
+
+def _redis() -> redis_async.Redis:
+    return redis_async.from_url(settings.redis_url, decode_responses=True)
+
+
+async def _cache_get(key: str) -> dict[str, Any] | None:
+    try:
+        r = _redis()
+        raw = await r.get(key)
+        await r.aclose()
+        if not raw:
+            return None
+        return json.loads(raw)
+    except Exception as e:  # noqa: BLE001 — fail-open, compute заново
+        log.warning("managers_kpi cache GET failed: %s", e)
+        return None
+
+
+async def _cache_set(key: str, value: dict[str, Any]) -> None:
+    try:
+        r = _redis()
+        await r.setex(key, _CACHE_TTL_SECONDS, json.dumps(value, default=str))
+        await r.aclose()
+    except Exception as e:  # noqa: BLE001 — fail-open
+        log.warning("managers_kpi cache SET failed: %s", e)
 
 
 _KPI_KEYS = (
@@ -84,9 +125,18 @@ async def managers_kpi(
     year: Annotated[int, Query(ge=2020, le=2100)],
     month: Annotated[int, Query(ge=1, le=12)],
     mode: Literal["preliminary", "final", "hybrid"] = "hybrid",
+    nocache: bool = Query(default=False, description="Bypass Redis-кеш (force-recompute)"),
     user: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
+    # TASK-LEAD-023 — fast-path: cached response.
+    ck = _cache_key(user.tenant_id, year, month, mode)
+    if not nocache:
+        cached = await _cache_get(ck)
+        if cached is not None:
+            cached["cache"] = "hit"
+            return cached
+
     last_day = monthrange(year, month)[1]
     period = period_from_range(date(year, month, 1), date(year, month, last_day))
 
@@ -213,10 +263,14 @@ async def managers_kpi(
         key=lambda x: (-1 if x["no_brands"] else 0, -float(x["revenue_net_rub"])),
     )
 
-    return {
+    response = {
         "year": year,
         "month": month,
         "mode": mode,
         "period": {"from": period.start.date().isoformat(), "to": (period.end.date()).isoformat()},
         "items": items,
+        "cache": "miss",
     }
+    # Write-through. Fail-open: ошибка Redis не валит запрос.
+    await _cache_set(ck, response)
+    return response

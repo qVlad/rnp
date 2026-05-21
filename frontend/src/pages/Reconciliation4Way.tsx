@@ -12,12 +12,13 @@
  *
  * Доступ: director + head_of_sales (защищено DirectorOrHead в App.tsx).
  */
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub, fmtPct } from "@/lib/format";
 
-function diffColor(pct: number): string {
+function diffColor(pct: number | null | undefined): string {
+  if (pct == null) return "text-muted";
   const a = Math.abs(pct);
   if (a < 0.5) return "text-success";
   if (a < 2) return "text-warning";
@@ -25,11 +26,41 @@ function diffColor(pct: number): string {
 }
 
 export default function Reconciliation4Way() {
+  const qc = useQueryClient();
   const [weeks, setWeeks] = useState(8);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importResult, setImportResult] = useState<{
+    imported: number;
+    errors: string[];
+    sheet_name?: string;
+    header_row?: number;
+    filename?: string;
+  } | null>(null);
+
   const q = useQuery({
     queryKey: ["reconciliation-4way", weeks],
     queryFn: () => api.reconciliation4way(weeks),
   });
+
+  const importMut = useMutation({
+    mutationFn: (file: File) => api.reconciliationImport(file, "bookkeeper"),
+    onSuccess: (data) => {
+      setImportResult(data);
+      qc.invalidateQueries({ queryKey: ["reconciliation-4way"] });
+    },
+    onError: (err: any) => {
+      setImportResult({
+        imported: 0,
+        errors: [err?.message || String(err)],
+      });
+    },
+  });
+
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) importMut.mutate(f);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -59,10 +90,73 @@ export default function Reconciliation4Way() {
         / <strong className="text-fg">WB Cabinet</strong> (wb_report_detail)
         / <strong className="text-fg">WB Documents</strong> (уведомления о выкупе
         + акты взаимозачёта)
-        / <strong className="text-fg">Бухгалтер</strong> (импорт XLSX —{" "}
-        <em>пока не реализован, planned</em>).
+        / <strong className="text-fg">Бухгалтер</strong> (импорт XLSX из 1С/учёта).
         Зелёное = расхождение &lt;0.5%, жёлтое 0.5-2%, красное &gt;2%.
       </div>
+
+      {/* Bookkeeper XLSX upload */}
+      <div className="card flex items-center justify-between flex-wrap gap-3">
+        <div className="text-sm">
+          <div className="font-medium">Импорт от бухгалтера</div>
+          <div className="text-xs text-muted mt-0.5 leading-relaxed">
+            XLSX с колонками: Период с / Период по / Выручка / Возвраты /
+            Комиссия / К выплате. Re-upload того же периода обновит значения.
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx"
+            onChange={handleFile}
+            className="hidden"
+          />
+          <button
+            type="button"
+            className="btn-primary text-xs"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={importMut.isPending}
+          >
+            {importMut.isPending ? "Импортирую…" : "📥 Загрузить XLSX"}
+          </button>
+        </div>
+      </div>
+
+      {importResult && (
+        <div
+          className={`card text-xs ${
+            importResult.imported > 0
+              ? "border-success/30 bg-success/5"
+              : "border-red-500/30 bg-red-500/5"
+          }`}
+        >
+          {importResult.imported > 0 ? (
+            <div className="text-success font-medium">
+              ✓ Импортировано строк: {importResult.imported}
+              {importResult.filename && (
+                <span className="text-muted ml-2 font-normal">
+                  ({importResult.filename}, лист «{importResult.sheet_name}»,
+                  заголовок в строке {importResult.header_row})
+                </span>
+              )}
+            </div>
+          ) : (
+            <div className="text-red-400 font-medium">
+              ✗ Не удалось импортировать
+            </div>
+          )}
+          {importResult.errors.length > 0 && (
+            <ul className="mt-1 list-disc list-inside text-muted">
+              {importResult.errors.slice(0, 5).map((e, i) => (
+                <li key={i}>{e}</li>
+              ))}
+              {importResult.errors.length > 5 && (
+                <li>… и ещё {importResult.errors.length - 5} ошибок</li>
+              )}
+            </ul>
+          )}
+        </div>
+      )}
 
       {q.isLoading && <div className="text-muted">Загрузка…</div>}
       {q.isError && (
@@ -94,7 +188,7 @@ export default function Reconciliation4Way() {
                 <th colSpan={3} className="text-center p-2 border-l border-border bg-success/5">
                   WB Documents
                 </th>
-                <th colSpan={2} className="text-center p-2 border-l border-border bg-warning/5">
+                <th colSpan={3} className="text-center p-2 border-l border-border bg-warning/5">
                   Бухгалтер
                 </th>
               </tr>
@@ -111,8 +205,9 @@ export default function Reconciliation4Way() {
                 <th className="text-right p-1">Акты ₽</th>
                 <th className="text-right p-1">Всего</th>
                 {/* Bookkeeper */}
-                <th className="text-right p-1 border-l border-border">Выручка</th>
+                <th className="text-right p-1 border-l border-border">Выручка ₽</th>
                 <th className="text-right p-1">Комис.</th>
+                <th className="text-right p-1">Δ vs WB</th>
               </tr>
             </thead>
             <tbody>
@@ -164,15 +259,27 @@ export default function Reconciliation4Way() {
                   <td className="p-2 text-right font-medium">
                     {fmtRub(p.wb_documents.total_rub)}
                   </td>
-                  {/* Бухгалтер — placeholder */}
-                  <td className="p-2 text-right border-l border-border text-muted text-xs">
+                  {/* Бухгалтер */}
+                  <td className="p-2 text-right border-l border-border text-xs">
                     {p.bookkeeper.available
                       ? fmtRub(p.bookkeeper.revenue_gross || 0)
-                      : "—"}
+                      : <span className="text-muted">—</span>}
                   </td>
-                  <td className="p-2 text-right text-muted text-xs">
+                  <td className="p-2 text-right text-xs">
                     {p.bookkeeper.available
                       ? fmtRub(p.bookkeeper.commission || 0)
+                      : <span className="text-muted">—</span>}
+                  </td>
+                  <td
+                    className={`p-2 text-right text-xs font-mono ${diffColor(p.bookkeeper.diff_vs_wb_pct)}`}
+                    title={
+                      p.bookkeeper.imported_at
+                        ? `Импортировано ${p.bookkeeper.imported_at.slice(0, 16)}`
+                        : "Нет импорта за этот период"
+                    }
+                  >
+                    {p.bookkeeper.available && p.bookkeeper.diff_vs_wb_pct != null
+                      ? `${p.bookkeeper.diff_vs_wb_pct > 0 ? "+" : ""}${fmtPct(p.bookkeeper.diff_vs_wb_pct)}`
                       : "—"}
                   </td>
                 </tr>
@@ -183,11 +290,10 @@ export default function Reconciliation4Way() {
       )}
 
       <div className="card text-xs text-muted leading-relaxed">
-        <strong className="text-fg">Coming soon:</strong> импорт XLSX от
-        бухгалтера. Бухгалтер выгружает 1С → загружает XLSX → 4-я колонка
-        заполняется и подсвечивается дельта с нашим P&L и WB-кабинетом.
-        Это закроет последний gap для CFO-сегмента: «вы единственные, у кого
-        WB + наш расчёт + бух сводятся копейка в копейку».
+        Импорт от бухгалтера активен ✓. Если 4-я колонка не заполнена за
+        неделю — значит за этот период XLSX ещё не загружен. Один файл может
+        содержать любое количество строк (недель/месяцев) — UPSERT по (период,
+        источник) дедуплицирует повторные загрузки.
       </div>
     </div>
   );

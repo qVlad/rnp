@@ -1260,7 +1260,37 @@ paymentOrderDelete: (payment_order_id: string) =>
       }>;
     }>(`/api/managers-kpi?year=${year}&month=${month}&mode=${mode}`),
 
-  // ── Reconciliation 4-way (Stratege ставка #2 MVP) ──
+  // ── Reconciliation 4-way (Stratege ставка #2) ──
+  reconciliationImport: async (file: File, source: string = "bookkeeper") => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const resp = await fetch(
+      `/api/reconciliation/import?source=${encodeURIComponent(source)}`,
+      { method: "POST", body: fd, credentials: "include" },
+    );
+    if (!resp.ok) throw new Error(await resp.text());
+    return resp.json() as Promise<{
+      imported: number;
+      errors: string[];
+      sheet_name: string;
+      header_row: number;
+      source: string;
+      filename: string;
+    }>;
+  },
+  reconciliationListImports: (source: string = "bookkeeper") =>
+    request<{
+      items: Array<{
+        id: number;
+        period_from: string;
+        period_to: string;
+        revenue_gross_rub: number;
+        commission_rub: number;
+        filename: string | null;
+        imported_at: string | null;
+      }>;
+    }>(`/api/reconciliation/imports?source=${encodeURIComponent(source)}`),
+
   reconciliation4way: (weeks: number = 8) =>
     request<{
       weeks: number;
@@ -1291,6 +1321,10 @@ paymentOrderDelete: (payment_order_id: string) =>
         bookkeeper: {
           revenue_gross: number | null;
           commission: number | null;
+          payout: number | null;
+          returns: number | null;
+          diff_vs_wb_pct: number | null;
+          imported_at: string | null;
           available: boolean;
         };
       }>;
