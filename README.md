@@ -29,10 +29,15 @@ sync → COGS → дашборд → сверка → Telegram).
 
 ### Я бухгалтер
 
-Пока работает как `director`-доступ (отдельная роль в разработке). Читай
-[`OWNER_GUIDE.md`](OWNER_GUIDE.md) § 5.3 «Налоги» + [`TAX_AUSN_BANK.md`](TAX_AUSN_BANK.md)
-(АУСН-Доходы 8%) или [`TAX_USN_BANK.md`](TAX_USN_BANK.md) (УСН 6% ±НДС 5/7%). Для
-ручного исключения отчётов из налоговой базы — [`TAX_BOOKKEEPER_OVERRIDES.md`](TAX_BOOKKEEPER_OVERRIDES.md).
+Отдельная роль `bookkeeper` (с 2026-05-21, TASK-LEAD-040). Скоуп: налоги +
+УПД-реестры + Documents API WB. Никаких OPEX/RBAC/дашборда/P&L.
+
+**Старт:** [`QUICKSTART_BOOKKEEPER.md`](QUICKSTART_BOOKKEEPER.md) — первый
+день бухгалтера (логин → `/taxes` → sync buybacks → сдача декларации).
+
+**Методика расчёта:** [`TAX_AUSN_BANK.md`](TAX_AUSN_BANK.md) (АУСН-Доходы 8%) /
+[`TAX_USN_BANK.md`](TAX_USN_BANK.md) (УСН 6% ±НДС 5/7%). Per-regime exclusion
+flags — [`TAX_BOOKKEEPER_OVERRIDES.md`](TAX_BOOKKEEPER_OVERRIDES.md).
 
 ### Я разработчик / AI-сессия
 

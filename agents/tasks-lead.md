@@ -1708,13 +1708,13 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   4. Per-regime exclusion flags — когда исключать платёжку
   5. Что НЕ может — OPEX, brand_assignments, users, settings (403)
 - **Критерии готовности:**
-  - [ ] `QUICKSTART_BOOKKEEPER.md` в корне репо
-  - [ ] Workflow daily / weekly / monthly / quarterly
-  - [ ] Скриншоты налоговых страниц (опционально, если есть статичные)
-  - [ ] Ссылка из `README.md`
-  - [ ] Ссылка из самого UI (на `/tax-report-ausn` баннер «Бухгалтер? Читай QUICKSTART_BOOKKEEPER.md»)
-- **Зависимости:** TASK-LEAD-040 (роль должна быть готова), TASK-LEAD-044 (для ссылки из README)
-- **Статус:** Открыта (заблокирована TASK-LEAD-040)
+  - [x] `QUICKSTART_BOOKKEEPER.md` в корне репо (~200 строк)
+  - [x] Workflow daily / weekly / monthly / quarterly (раздел «Месячная рутина бухгалтера»)
+  - [ ] Скриншоты налоговых страниц — defer (статичные не делаем, dev-server на ходу)
+  - [x] Ссылка из `README.md` — расширена секция «Я бухгалтер»
+  - [ ] Ссылка из UI (баннер на `/taxes`) — defer на следующий раунд (минорная UX-фича)
+- **Зависимости:** TASK-LEAD-040 ✅, TASK-LEAD-044 ✅
+- **Статус:** ✅ Выполнено — 2026-05-21
 
 ---
 
