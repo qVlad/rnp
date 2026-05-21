@@ -131,6 +131,61 @@ Workflow коротко (детали — [`agents/RULES.md`](agents/RULES.md) �
 См. раздел «Стиль работы» ниже. Без этих трёх шагов фича **не считается завершённой**.
 Применимо как к человеку-разработчику, так и к Claude в новых сессиях.
 
+## ⚠️ ОБЯЗАТЕЛЬНОЕ ПРАВИЛО: параллельные сессии — claim + WIP-detector
+
+**В репо могут быть параллельные AI-сессии. Прежде чем коснуться любой
+правки кода/документа — pre-flight чеклист.** Без него сессия 2026-05-21
+дважды произвела одну и ту же работу (per-brand outliers, /bind, funnel
+tag-filter), потому что одна обнаружила незакоммиченный WIP другой и
+«дочинила». Детали — [`agents/RULES.md`](agents/RULES.md) § Правило 2.8.
+
+### В начале каждой сессии — pre-flight:
+
+```bash
+git fetch origin main
+git status -sb
+ls agents/claims/ 2>/dev/null
+```
+
+1. **`git status` чистый, `agents/claims/` пустая** → ok, работаем.
+2. **Есть `M`-файлы в working tree** (uncommitted WIP):
+   - Проверь `agents/claims/` — если claim есть и не твой → **СТОП.** Спроси
+     пользователя: «Активен claim X у agent Y, что делать?».
+   - Если claim'а нет, но WIP уже в tree → это параллельная сессия или
+     твой старый WIP. **НЕ ПРОДОЛЖАЙ молча.** Спроси: «Вижу WIP в X, Y,
+     Z без claim'а. Это твоё или параллельной сессии?».
+3. **`git fetch` принёс новые коммиты** → перечитай `CONTINUE_HERE.md`
+   и `tasks-*.md` прежде чем планировать. Может, твоя задача уже сделана.
+
+### Перед правкой «горячего файла» — claim обязателен:
+
+Горячие файлы (см. полный список в Правиле 2.8): `tasks-*.md`,
+`bugs-*.md`, `models.py`, `client.ts`, `VERSION` + version-файлы,
+`CLAUDE.md` / `RULES.md` / `CONTINUE_HERE.md` / `FEATURES.md`,
+`backend/app/main.py`, alembic-миграции.
+
+```bash
+CLAIM_AGENT="Claude Opus 4.7 — main session" CLAIM_EXPECTED_MINUTES=30 \
+  ./scripts/claim.sh acquire TASK-X-NNN "<что делаешь>"
+# работаешь
+./scripts/claim.sh release TASK-X-NNN
+```
+
+### Категорический запрет — чужой WIP
+
+Uncommitted `M`-файлы, которые ты в этой сессии **сам не редактировал**, —
+НЕ ТРОГАТЬ. Не дочинивать, не коммитить, не откатывать. Эти файлы
+принадлежат своему автору до коммита. Исключение — явная команда
+пользователя «забери чужой WIP» после проверки `claim.sh status`.
+
+### Перед коммитом — `git fetch origin main`:
+
+Если `origin/main` опередил локаль — разобраться (rebase / abandon /
+спросить пользователя) прежде чем `git push`. Никогда `--force` без
+явного запроса.
+
+---
+
 ## ⚠️ ОБЯЗАТЕЛЬНОЕ ПРАВИЛО: бэкап перед изменениями
 
 **Любое из перечисленного требует pg_dump БЕЗУСЛОВНО, до начала работы:**
@@ -541,6 +596,16 @@ fallback на `Authorization: Bearer <jwt>` если cookie не валидна.
 
 ## Стиль работы
 
+- **В начале сессии — pre-flight на параллельные сессии.** `git fetch
+  origin main && git status -sb && ls agents/claims/`. Если есть `M`-файлы
+  без claim'а — **СПРОСИТЬ ПОЛЬЗОВАТЕЛЯ**, не продолжать молча. Категорически
+  не «дочинивать» чужой WIP. См. ⚠️ ОБЯЗАТЕЛЬНОЕ ПРАВИЛО выше.
+- **Перед правкой «горячего файла»** (tasks-*.md / bugs-*.md / models.py /
+  client.ts / version + CLAUDE.md / RULES.md / FEATURES.md / main.py /
+  alembic-миграции) — `./scripts/claim.sh acquire TASK-X-NNN "<что делаешь>"`.
+- **Перед `git commit`** — `git fetch origin main` + проверить что origin
+  не опередил. Если опередил — разобраться (rebase / abandon / спросить),
+  не `push --force`.
 - Много мелких фич, чем одна большая.
 - Списки/таблицы, не сплошной текст.
 - Smoke-test после каждой фичи.
