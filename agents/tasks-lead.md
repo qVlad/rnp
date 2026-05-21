@@ -16,6 +16,13 @@ Lead использует этот файл как master-view: сюда скл�
 
 ## 🎯 Active Sprint — Параллельная координация (2026-05-21)
 
+> **В работе прямо сейчас (4 потока):**
+> - **TASK-LEAD-030** (OPEX m2m) — другая Claude-сессия в другом окне
+> - **TASK-LEAD-042** (default hybrid + hero) — main session (Claude)
+> - **TASK-LEAD-040 backend** (Role bookkeeper) — sub-agent A (worktree, background)
+> - **TASK-LEAD-044 + TASK-LEAD-045** (README + QUICKSTART_OWNER) — sub-agent B (worktree, background)
+
+
 > Цель: «удобство работы для собственных кабинетов» (internal tool, не SaaS).
 > Источник: UX-Validator seller-daily-workflow report 2026-05-21 + явные запросы
 > пользователя (multi-cabinet, bookkeeper role).
@@ -1225,7 +1232,9 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] Audit_log на CUD allocations
   - [ ] FEATURES.md обновлён + миграция 0055 в CLAUDE.md таблице
 - **Зависимости:** pre-deploy `pg_dump` обязательно (CLAUDE.md правило про миграции)
-- **Статус:** Открыта
+- **Статус:** В работе — 2026-05-21 — Claude Opus 4.7 (main session). Backend этой
+  сессией (migration + ORM + service + pnl_builder + cash_flow + api + tests +
+  docs + deploy). **UI отложен** в отдельный TASK-LEAD (создаётся ниже).
 
 ---
 
