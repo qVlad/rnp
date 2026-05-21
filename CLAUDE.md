@@ -711,6 +711,11 @@ fallback на `Authorization: Bearer <jwt>` если cookie не валидна.
   без user-facing изменений — patch-бамп опционален, на усмотрение.
 - Перед нетривиальными WB-правками — `WB_API_REFERENCE.md` § 3 (limits) и § 9 (sunset).
 - Финансовые правки → прогон qa-tester subagent'а.
+- **Подбор model и effort под задачу** — не каждой задаче нужен Opus + полная
+  глубина проработки. См. `agents/RULES.md` § Правило 11: таблица model
+  (haiku / sonnet / opus) × тип задачи + рекомендации по effort (без subagent /
+  Explore quick/medium/thorough / Plan agent / параллель). Принцип: «минимум
+  достаточный effort» — лишний Plan agent на typo это шум.
 
 ## UI conventions (обязательно)
 
