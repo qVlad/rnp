@@ -37,6 +37,61 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## 2026-05-21 — **Архитектурный долг #2: 5 closures** (v0.15.0)
+
+Закрыли 5 пунктов тех-долга после Sprint+2.
+
+### 1. Multi-recipient TG broadcast (TASK-DEV-014/017 follow-up)
+- Миграция **0054** добавляет `users.tg_chat_id` (varchar(64), nullable, index).
+- `services/tg_broadcast.broadcast_to_directors(session, text, roles=...)` —
+  asyncio.gather на всех `User.tg_chat_id IS NOT NULL` с подходящей ролью
+  (default director + head_of_sales). Fallback на legacy `AppSetting.tg_chat_id`
+  если ни один user не привязан.
+- `supply_send.py` и `plan_edit_requests.py` переписаны на broadcast.
+- Endpoints `GET/PUT /api/settings/telegram/me` — каждый юзер сам ставит/снимает.
+- UI: новая subsection в Settings → Telegram → «Мой Telegram-чат» с
+  paste-input и кнопкой «Отвязать».
+
+### 2. Reject modal вместо prompt() (TASK-DEV-017 follow-up)
+- `Plans.tsx`: replaced `prompt("Причина отказа")` с полноценной модалкой
+  (textarea, обязательное поле, Cancel/Reject кнопки). UX лучше — можно
+  скопировать заранее заготовленный текст, видна полная история написания.
+
+### 3. AppSetting-tuning UI для outlier-порогов (TASK-LEAD-026 follow-up)
+- `outlier_z_threshold` (2.0) и `outlier_iqr_multiplier` (1.5) добавлены
+  в `KNOWN_KEYS` + `SettingsPayload` в `backend/app/api/settings.py`.
+- Settings UI: 2 input'а в секции порогов алертов с тултипами о смысле.
+
+### 4. Header-фильтр по тегам в ABC (TASK-DEV-024 follow-up)
+- `AbcAnalysis.tsx`: `useTagFilter("abc.tag-filter.v1")` + `TagFilterDropdown`
+  в шапке. Filter теперь по 3 осям: classFilter (ABC-combo) + tag + brand-scope.
+
+### 5. Per-brand revenue outlier-детектор (TASK-LEAD-026 follow-up)
+- `anomaly_statistical._detect_per_brand_outliers` — GROUP BY (Product.brand,
+  sale_dt) → for each brand compute z-score → если |z|>threshold → alert
+  с `<b>бренд X</b>` в message. Top-5 по σ чтобы не спамить на тенантах
+  с 30+ брендов после распродажи. Wire в `detect_outliers` после общих
+  revenue/drr/buyout. Skip брендов с <14 ненулевыми днями (мало истории).
+
+### Версия
+0.14.0 → 0.15.0 (minor — 5 improvements + 1 миграция 0054)
+
+### Изменённые файлы
+- backend: 0054 migration, `db/models.py` (User.tg_chat_id),
+  `services/tg_broadcast.py` (new), `api/supply_send.py` + `plan_edit_requests.py`
+  переписаны на broadcast, `api/settings.py` (per-user TG endpoints +
+  outlier_* keys), `services/anomaly_statistical.py` (per-brand)
+- frontend: `lib/useTagFilter.ts` в `AbcAnalysis.tsx`, Settings.tsx
+  (outlier inputs + `MyTgSubsection`), `Plans.tsx` (reject modal),
+  `api/client.ts` (myTgGet/Put)
+
+### Известный долг (новый)
+- Bot /start auto-bind user.tg_chat_id если юзер логинится через DM
+- DRR/buyout per-brand детекторы (сейчас только revenue per-brand)
+- Email-канал нотификаций (сейчас только TG)
+
+---
+
 ## 2026-05-21 — **TASK-DEV-014 supply→TG + TASK-DEV-017 plan-edit-requests** (v0.14.0)
 
 Закрыли 2 последние P2 задачи из Sprint+2 backlog'а.

@@ -40,6 +40,8 @@ export default function Settings() {
   const [revenueDipDod, setRevenueDipDod] = useState("");
   const [turnoverDropWow, setTurnoverDropWow] = useState("");
   const [newSkuNoSalesDays, setNewSkuNoSalesDays] = useState("");
+  const [outlierZ, setOutlierZ] = useState("");
+  const [outlierIqr, setOutlierIqr] = useState("");
   const [uploadResult, setUploadResult] = useState<string | null>(null);
   const [syncResult, setSyncResult] = useState<string | null>(null);
 
@@ -59,6 +61,8 @@ export default function Settings() {
     setRevenueDipDod(s.revenue_dip_dod_pct ?? "");
     setTurnoverDropWow(s.turnover_drop_wow_pct ?? "");
     setNewSkuNoSalesDays(s.new_sku_no_sales_days ?? "");
+    setOutlierZ(s.outlier_z_threshold ?? "");
+    setOutlierIqr(s.outlier_iqr_multiplier ?? "");
   }, [settingsQ.data]);
 
   const saveMut = useMutation({
@@ -78,6 +82,8 @@ export default function Settings() {
         revenue_dip_dod_pct: revenueDipDod ? Number(revenueDipDod) : null,
         turnover_drop_wow_pct: turnoverDropWow ? Number(turnoverDropWow) : null,
         new_sku_no_sales_days: newSkuNoSalesDays ? Number(newSkuNoSalesDays) : null,
+        outlier_z_threshold: outlierZ ? Number(outlierZ) : null,
+        outlier_iqr_multiplier: outlierIqr ? Number(outlierIqr) : null,
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
   });
@@ -641,6 +647,28 @@ export default function Settings() {
               title="Алерт для SKU старше N дней без единого заказа"
             />
           </Field>
+          <Field label="Z-порог outlier-детектора">
+            <input
+              type="number"
+              step="0.1"
+              value={outlierZ}
+              onChange={(e) => setOutlierZ(e.target.value)}
+              placeholder="2.0"
+              className="input"
+              title="TASK-LEAD-026 — порог z-score для статистических аномалий выручки/DRR/выкупа. По умолчанию 2.0 (=отклонение раз в 20 дней). Снизить = больше алертов, повысить = реже."
+            />
+          </Field>
+          <Field label="IQR-множитель Tukey-fence">
+            <input
+              type="number"
+              step="0.1"
+              value={outlierIqr}
+              onChange={(e) => setOutlierIqr(e.target.value)}
+              placeholder="1.5"
+              className="input"
+              title="TASK-LEAD-026 — множитель Tukey-fence (1.5×IQR). По умолчанию 1.5. Влияет на ширину коридора нормальных значений."
+            />
+          </Field>
         </div>
 
         <button
@@ -756,6 +784,8 @@ export default function Settings() {
             </div>
           </div>
         )}
+
+        <MyTgSubsection />
       </section>
 
       <section className="card">
@@ -2592,5 +2622,69 @@ function ExtensionTokensSection() {
         </table>
       )}
     </section>
+  );
+}
+
+// TASK-DEV-014/017 follow-up — per-user TG-binding
+function MyTgSubsection() {
+  const qc = useQueryClient();
+  const meTgQ = useQuery({
+    queryKey: ["my-tg"],
+    queryFn: () => api.myTgGet(),
+  });
+  const [chatInput, setChatInput] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(() => {
+    setChatInput(meTgQ.data?.chat_id ?? "");
+  }, [meTgQ.data]);
+
+  const saveMut = useMutation({
+    mutationFn: (cid: string | null) => api.myTgPut(cid),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["my-tg"] });
+      setMsg("✓ Сохранено");
+      setTimeout(() => setMsg(null), 4000);
+    },
+  });
+
+  return (
+    <div className="mt-4 pt-3 border-t border-border/60">
+      <div className="font-medium text-sm mb-2">
+        Мой Telegram-чат (multi-recipient broadcast)
+      </div>
+      <div className="text-xs text-muted mb-2 leading-relaxed">
+        Привяжите свой chat_id чтобы получать broadcast-уведомления
+        (заявки на закупку, правки планов). Узнать chat_id: написать{" "}
+        <code>/start</code> боту — он ответит вашим chat_id. Если поле пусто —
+        вы НЕ получаете broadcast, но AppSetting tenant-чат (выше) продолжает
+        работать как fallback.
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          value={chatInput}
+          onChange={(e) => setChatInput(e.target.value)}
+          placeholder="123456789 (chat_id из бота)"
+          className="input text-sm w-72"
+        />
+        <button
+          className="btn text-xs"
+          onClick={() =>
+            saveMut.mutate(chatInput.trim() ? chatInput.trim() : null)
+          }
+          disabled={saveMut.isPending}
+        >
+          {saveMut.isPending ? "Сохранение…" : "Сохранить"}
+        </button>
+        {meTgQ.data?.chat_id && (
+          <button
+            className="btn text-xs text-red-400"
+            onClick={() => saveMut.mutate(null)}
+          >
+            Отвязать
+          </button>
+        )}
+        {msg && <span className="text-xs text-success">{msg}</span>}
+      </div>
+    </div>
   );
 }

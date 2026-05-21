@@ -32,7 +32,7 @@ from typing import Any
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import WbAdStatsDaily, WbOrder, WbReportDetail
+from app.db.models import Product, WbAdStatsDaily, WbOrder, WbReportDetail
 from app.services.period_aggregates import (
     OP_RETURN,
     OP_SALE,
@@ -193,6 +193,15 @@ async def detect_outliers(
         session, window_start, observation_day, z_threshold, iqr_multiplier
     )
     alerts.extend(buyout_alerts)
+
+    # ── Per-brand revenue-детектор ───────────────────────────────────────
+    # Для каждого активного бренда — отдельная outlier-проверка по выручке.
+    # Это позволяет ROP'у видеть «бренд X просел резко» даже если общая
+    # компанейская выручка в норме (один бренд может быть = 5% от total).
+    brand_alerts = await _detect_per_brand_outliers(
+        session, window_start, observation_day, z_threshold, iqr_multiplier
+    )
+    alerts.extend(brand_alerts)
 
     return alerts
 
@@ -363,3 +372,90 @@ async def _detect_buyout_outlier(
             }
         )
     return alerts
+
+
+async def _detect_per_brand_outliers(
+    session: AsyncSession,
+    window_start: date,
+    observation_day: date,
+    z_threshold: float,
+    iqr_multiplier: float,
+) -> list[dict[str, Any]]:
+    """Per-brand revenue outlier-детектор.
+
+    Группируем выручку по (brand, sale_dt) за окно 28+1 дней. Для каждого
+    бренда с достаточной историей (хотя бы 14 ненулевых точек) считаем
+    z-score текущего дня. Если |z| > threshold → отдельный алерт с brand
+    в коде/сообщении.
+
+    Не дублирует общий revenue_outlier — там сумма по тенанту, здесь
+    per-brand. Один бренд может просесть, общий total — нет.
+    """
+    alerts: list[dict[str, Any]] = []
+
+    stmt = (
+        select(
+            Product.brand.label("brand"),
+            WbReportDetail.sale_dt.label("d"),
+            func.sum(
+                case(
+                    (WbReportDetail.supplier_oper_name == OP_SALE, REVENUE_FIELD),
+                    (WbReportDetail.supplier_oper_name == OP_RETURN, -REVENUE_FIELD),
+                    else_=0,
+                )
+            ).label("rev"),
+        )
+        .join(Product, Product.nm_id == WbReportDetail.nm_id)
+        .where(sale_dt_filter(window_start, observation_day))
+        .where(Product.brand.isnot(None))
+        .group_by(Product.brand, WbReportDetail.sale_dt)
+    )
+    rows = (await session.execute(stmt)).all()
+    if not rows:
+        return alerts
+
+    # Группируем: brand → {date: rev}
+    by_brand: dict[str, dict[date, float]] = {}
+    for r in rows:
+        if r.d is None or r.brand is None:
+            continue
+        by_brand.setdefault(str(r.brand), {})[r.d] = float(r.rev or 0)
+
+    for brand, day_map in by_brand.items():
+        # 28 точек назад + текущий день. Заполняем нулями там где нет данных.
+        history = [
+            day_map.get(window_start + timedelta(days=i), 0.0)
+            for i in range(WINDOW_DAYS)
+        ]
+        current = day_map.get(observation_day, 0.0)
+        # Skip brands с почти пустой историей: < 14 ненулевых дней
+        if sum(1 for v in history if v > 0) < 14:
+            continue
+        # Skip если current=0 — обычно WB просто ещё не дослал отчёт
+        if current == 0 and history[-1] == 0 and history[-2] == 0:
+            continue
+        mean, std = _basic_stats(history)
+        z = _z_score(current, mean, std)
+        if z is None or abs(z) <= z_threshold:
+            continue
+        direction = "ниже" if z < 0 else "выше"
+        level = "danger" if abs(z) > 3 else "warning"
+        alerts.append(
+            {
+                "level": level,
+                "code": f"brand_revenue_outlier_z",  # noqa: F541
+                "message": (
+                    f"Бренд <b>{brand}</b> за {observation_day.isoformat()}: "
+                    f"{current:,.0f}₽ — {direction} 28-дневного среднего "
+                    f"({mean:,.0f}₽) на {abs(z):.1f}σ. Проверь /pnl → «По брендам»."
+                ),
+            }
+        )
+
+    # Не спамим — top-5 по абсолютной σ. Иначе на тенанте с 30+ брендов
+    # после публичной распродажи может прийти 15 алертов сразу.
+    alerts.sort(
+        key=lambda a: float(a.get("message", "").split(" на ")[-1].split("σ")[0]),
+        reverse=True,
+    )
+    return alerts[:5]

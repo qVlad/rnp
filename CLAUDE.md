@@ -266,7 +266,8 @@ docker-compose.yml
 | **0050** | metric_templates — custom-метрики через формулы (TASK-DEV-011). UNIQUE (tenant, name). Safe-eval Python AST в `services/custom_metrics.py`. |
 | **0051** | reconciliation_imports — журнал импортов в reconciliation (параллельная задача). |
 | **0052** | **product_tags + product_tag_assignments** — эмодзи-теги на nm_id (TASK-DEV-024). 6 preset-тегов (🏆/⭐/📦/🆕/🚨/🔥) seed-ятся при создании tenant'а. M-к-N через UNIQUE на (tenant, nm_id, tag_id). Endpoints `/api/product-tags` CRUD (director) + `/api/products/{nm_id}/tags` GET/PUT (brand-scope). |
-| **0053** | **plan_edit_requests** — заявки manager'а на правку плана (TASK-DEV-017). Workflow: pending → accepted (= apply + audit) / rejected (= close с note). Whitelist полей: planned_* (без metadata). TG-notify директорам через `AppSetting.tg_chat_id`. Endpoints `/api/plan-edit-requests` (POST + GET) + `/{id}/accept` + `/{id}/reject`. |
+| **0053** | **plan_edit_requests** — заявки manager'а на правку плана (TASK-DEV-017). Workflow: pending → accepted (= apply + audit) / rejected (= close с note). Whitelist полей: planned_* (без metadata). TG-broadcast директорам через `services/tg_broadcast.py` (multi-recipient). Endpoints `/api/plan-edit-requests` (POST + GET) + `/{id}/accept` + `/{id}/reject`. |
+| **0054** | **users.tg_chat_id** — per-user Telegram binding для multi-recipient broadcast'а. Раньше TG-нотификации шли только в `AppSetting.tg_chat_id` тенанта. Теперь `services/tg_broadcast.broadcast_to_directors` сначала шлёт всем `User.tg_chat_id IS NOT NULL` подходящей роли, fallback на legacy AppSetting. UI: /settings → «Мой Telegram-чат». |
 
 ## Роли и RBAC
 

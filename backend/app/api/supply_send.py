@@ -18,13 +18,10 @@ from typing import Annotated, Any
 
 import redis.asyncio as redis_async
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.db.models import AppSetting
-from app.integrations.telegram import send_message
 from app.services.audit import audit_log
 from app.services.auth import (
     CurrentUser,
@@ -33,6 +30,7 @@ from app.services.auth import (
     get_db_tenant_scoped,
 )
 from app.services.forecast import build_stockout_forecast
+from app.services.tg_broadcast import broadcast_to_directors
 
 
 log = get_logger(__name__)
@@ -133,23 +131,7 @@ async def send_recommendations(
             detail=f"Можно отправлять не чаще раза в час. Подождите {ttl // 60 + 1} мин.",
         )
 
-    # 2) Получатель — `tg_chat_id` AppSetting тенанта
-    row = (
-        await session.execute(
-            select(AppSetting.value).where(AppSetting.key == "tg_chat_id")
-        )
-    ).first()
-    if not row or not row[0]:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Telegram-чат не привязан к тенанту. Директор должен сначала "
-                "написать /start боту, чтобы получать сообщения."
-            ),
-        )
-    chat_id = row[0]
-
-    # 3) Собрать актуальные рекомендации (одна точка истины с UI)
+    # 2) Собрать актуальные рекомендации (одна точка истины с UI)
     forecast = await build_stockout_forecast(
         session,
         velocity_window=velocity_window,
@@ -171,12 +153,16 @@ async def send_recommendations(
         + _format_recommendations(items, top_n=12)
     )
 
-    # 5) Send
-    ok_tg = await send_message(chat_id, body, parse_mode="HTML")
-    if not ok_tg:
+    # 5) Send — broadcast всем директорам с привязанным tg_chat_id
+    #    (fallback на legacy AppSetting.tg_chat_id если ни один не привязан).
+    bcast = await broadcast_to_directors(session, body, parse_mode="HTML")
+    if bcast["sent"] == 0:
         raise HTTPException(
-            status_code=502,
-            detail="Не удалось отправить в Telegram. Проверьте, что бот запущен.",
+            status_code=400,
+            detail=(
+                "Ни один директор не привязал Telegram. Зайдите в "
+                "/settings → Telegram, либо попросите директора это сделать."
+            ),
         )
 
     # 6) Audit
@@ -202,7 +188,8 @@ async def send_recommendations(
 
     return {
         "ok": True,
-        "sent_to_chat_id": chat_id,
+        "recipients_count": bcast["sent"],
+        "failed_count": bcast["failed"],
         "items_count": len(items),
         "next_allowed_in_sec": 3600,
     }

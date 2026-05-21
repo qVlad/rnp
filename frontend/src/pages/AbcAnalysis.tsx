@@ -2,6 +2,8 @@ import { Fragment, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub, fmtNum, fmtPct } from "@/lib/format";
+import { useTagFilter } from "@/lib/useTagFilter";
+import TagFilterDropdown from "@/components/TagFilterDropdown";
 
 const METRICS = [
   { value: "revenue", label: "Выручка" },
@@ -51,8 +53,10 @@ export default function AbcAnalysis() {
     queryFn: () => api.abcAnalysis(days, metric),
   });
 
+  const { matchTag } = useTagFilter("abc.tag-filter.v1");
   const items = (q.data?.items ?? []).filter(
-    (it: any) => !classFilter || it.combo_class === classFilter,
+    (it: any) =>
+      (!classFilter || it.combo_class === classFilter) && matchTag(it.nm_id),
   );
   const summary = q.data?.abc_summary ?? {};
   const matrix = q.data?.matrix ?? {};
@@ -94,6 +98,10 @@ export default function AbcAnalysis() {
               ))}
             </select>
           </label>
+          <div className="flex flex-col text-xs text-muted">
+            Тег
+            <TagFilterDropdown storageKey="abc.tag-filter.v1" />
+          </div>
         </div>
       </div>
 

@@ -566,6 +566,8 @@ class User(Base, TenantScopedMixin):
     full_name: Mapped[str | None] = mapped_column(String(128))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # TASK-DEV-014/017 follow-up — per-user Telegram chat для multi-recipient
+    tg_chat_id: Mapped[str | None] = mapped_column(String(64), index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

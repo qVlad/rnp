@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings as cfg
 from app.db.models import AppSetting, Cogs, Product, SettingTimeline, SyncCheckpoint
 from app.db.session import get_db
-from app.services.auth import get_db_tenant_scoped
+from app.services.auth import CurrentUser, get_current_user, get_db_tenant_scoped
 from app.integrations.telegram import get_me as tg_get_me, send_message as tg_send
 from app.integrations.wb import cooldown as wb_cooldown
 from app.services.audit import actor_from_request, audit_log
@@ -56,6 +56,9 @@ KNOWN_KEYS = {
     "revenue_dip_dod_pct",
     "turnover_drop_wow_pct",
     "new_sku_no_sales_days",
+    # TASK-LEAD-026 — statistical outlier detection
+    "outlier_z_threshold",
+    "outlier_iqr_multiplier",
 }
 
 
@@ -75,6 +78,9 @@ class SettingsPayload(BaseModel):
     revenue_dip_dod_pct: float | None = None
     turnover_drop_wow_pct: float | None = None
     new_sku_no_sales_days: float | None = None
+    # TASK-LEAD-026 — statistical outlier detection (z-score / IQR Tukey)
+    outlier_z_threshold: float | None = None
+    outlier_iqr_multiplier: float | None = None
 
 
 @router.get("", dependencies=[Depends(require_director)])
@@ -581,3 +587,42 @@ async def unlink_telegram_chat(session: AsyncSession = Depends(get_db_tenant_sco
         await session.delete(chat_row)
         await session.commit()
     return {"status": "unlinked"}
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Per-user Telegram binding (TASK-DEV-014/017 follow-up — multi-recipient)
+# ────────────────────────────────────────────────────────────────────────────
+
+
+class MyTgPayload(BaseModel):
+    chat_id: str | None = None  # None = unlink
+
+
+@router.get("/telegram/me")
+async def get_my_telegram(
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Возвращает мой `tg_chat_id` (через users.tg_chat_id). Любой юзер."""
+    from app.db.models import User as _User
+
+    u = await session.get(_User, user.id)
+    return {"chat_id": u.tg_chat_id if u else None}
+
+
+@router.put("/telegram/me")
+async def put_my_telegram(
+    payload: MyTgPayload,
+    user: "CurrentUser" = Depends(get_current_user),  # noqa: F821
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Привязать / отвязать свой chat_id для broadcast-уведомлений."""
+    from app.db.models import User as _User
+
+    u = await session.get(_User, user.id)
+    if not u:
+        raise HTTPException(status_code=404, detail="user not found")
+    chat_id = payload.chat_id.strip() if payload.chat_id else None
+    u.tg_chat_id = chat_id or None
+    await session.commit()
+    return {"ok": True, "chat_id": u.tg_chat_id}

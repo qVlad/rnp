@@ -1309,6 +1309,14 @@ paymentOrderDelete: (payment_order_id: string) =>
     }),
   tgUnlinkChat: () =>
     request("/api/settings/telegram/chat", { method: "DELETE" }),
+  // TASK-DEV-014/017 follow-up — per-user TG binding (multi-recipient broadcast)
+  myTgGet: () =>
+    request<{ chat_id: string | null }>("/api/settings/telegram/me"),
+  myTgPut: (chat_id: string | null) =>
+    request<{ ok: boolean; chat_id: string | null }>(
+      "/api/settings/telegram/me",
+      { method: "PUT", body: JSON.stringify({ chat_id }) },
+    ),
 
   // ── Calculator reference ──
   calcCategories: () =>

@@ -24,9 +24,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
-from app.db.models import AppSetting, PlanEditRequest, SalesPlan, User
-from app.integrations.telegram import send_message
+from app.db.models import PlanEditRequest, SalesPlan, User
 from app.services.audit import audit_log
+from app.services.tg_broadcast import broadcast_to_directors
 from app.services.auth import (
     CurrentUser,
     current_brands_filter,
@@ -124,28 +124,23 @@ async def create_request(
     await session.commit()
     await session.refresh(req)
 
-    # TG-notification директорам тенанта (через AppSetting.tg_chat_id)
+    # TG-broadcast всем директорам тенанта (multi-recipient).
+    # Не блокируем main-flow если рассылка упала — заявка уже создана.
     try:
-        row = (
-            await session.execute(
-                select(AppSetting.value).where(AppSetting.key == "tg_chat_id")
-            )
-        ).first()
-        if row and row[0]:
-            sender = user.full_name or user.username
-            msg = (
-                f"<b>Заявка на правку плана</b>\n\n"
-                f"От: {sender} ({user.role})\n"
-                f"Plan ID: {plan.id} ({plan.scope_type} #{plan.scope_id})\n"
-                f"Поле: <code>{body.field_name}</code>\n"
-                f"Текущее: {current_value or '—'}\n"
-                f"Запрос: <b>{body.requested_value}</b>\n"
-                + (f"\nКомментарий: {body.comment}" if body.comment else "")
-                + f"\n\nОткрыть в РНП: /plans → заявки (#{req.id})"
-            )
-            await send_message(row[0], msg, parse_mode="HTML")
+        sender = user.full_name or user.username
+        msg = (
+            f"<b>Заявка на правку плана</b>\n\n"
+            f"От: {sender} ({user.role})\n"
+            f"Plan ID: {plan.id} ({plan.scope_type} #{plan.scope_id})\n"
+            f"Поле: <code>{body.field_name}</code>\n"
+            f"Текущее: {current_value or '—'}\n"
+            f"Запрос: <b>{body.requested_value}</b>\n"
+            + (f"\nКомментарий: {body.comment}" if body.comment else "")
+            + f"\n\nОткрыть в РНП: /plans → заявки (#{req.id})"
+        )
+        await broadcast_to_directors(session, msg, parse_mode="HTML")
     except Exception as e:  # noqa: BLE001
-        log.warning("plan_edit_requests TG notify failed: %s", e)
+        log.warning("plan_edit_requests TG broadcast failed: %s", e)
 
     return _row(req, None, None) | {
         "id": req.id,

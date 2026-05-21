@@ -83,14 +83,17 @@ export default function Plans() {
       qc.invalidateQueries({ queryKey: ["plans"] });
     },
   });
+  // Reject через модалку (не prompt) — TASK-DEV-014/017 follow-up
+  const [rejectFor, setRejectFor] = useState<number | null>(null);
+  const [rejectNote, setRejectNote] = useState("");
   const rejectReqMut = useMutation({
-    mutationFn: (id: number) => {
-      const note = prompt("Причина отказа (обязательно):") || "";
-      if (!note.trim()) throw new Error("Нужна причина");
-      return api.planEditRequestReject(id, note);
+    mutationFn: ({ id, note }: { id: number; note: string }) =>
+      api.planEditRequestReject(id, note),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["plan-edit-requests"] });
+      setRejectFor(null);
+      setRejectNote("");
     },
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ["plan-edit-requests"] }),
   });
 
   const plansQ = useQuery({
@@ -270,7 +273,7 @@ export default function Plans() {
                   </button>
                   <button
                     className="btn text-xs text-red-400"
-                    onClick={() => rejectReqMut.mutate(r.id)}
+                    onClick={() => setRejectFor(r.id)}
                     disabled={rejectReqMut.isPending}
                     title="Отклонить с причиной"
                   >
@@ -279,6 +282,45 @@ export default function Plans() {
                 </span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* TASK-DEV-017 follow-up: Director reject modal */}
+      {rejectFor !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="card max-w-md w-full p-4 flex flex-col gap-3">
+            <div className="font-medium">Отклонить заявку #{rejectFor}</div>
+            <label className="flex flex-col text-xs">
+              Причина отказа (обязательно)
+              <textarea
+                value={rejectNote}
+                onChange={(e) => setRejectNote(e.target.value)}
+                className="input mt-1 h-24"
+                placeholder="Объяснение для manager'а почему правка не подходит"
+                autoFocus
+              />
+            </label>
+            <div className="flex gap-2 justify-end">
+              <button
+                className="btn text-xs"
+                onClick={() => {
+                  setRejectFor(null);
+                  setRejectNote("");
+                }}
+              >
+                Отмена
+              </button>
+              <button
+                className="btn text-xs text-red-400"
+                disabled={!rejectNote.trim() || rejectReqMut.isPending}
+                onClick={() =>
+                  rejectReqMut.mutate({ id: rejectFor, note: rejectNote.trim() })
+                }
+              >
+                {rejectReqMut.isPending ? "Отклоняем…" : "✕ Отклонить"}
+              </button>
+            </div>
           </div>
         </div>
       )}
