@@ -18,6 +18,7 @@ import { Icon } from "@/components/Icon";
 import TagFilterDropdown from "@/components/TagFilterDropdown";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
 import { useTagFilter } from "@/lib/useTagFilter";
+import { usePeriod } from "@/contexts/PeriodContext";
 
 const COL_VIS_KEY = "units.columnVisibility.v2";
 const COL_ORDER_KEY = "units.columnOrder.v1";
@@ -129,9 +130,24 @@ const UNITS_NO_BRAND = "__no_brand__";
 
 export default function Units() {
   const qc = useQueryClient();
-  const [mode, setMode] = useState<Mode>({ kind: "preset", period: "month" });
-  const [customStart, setCustomStart] = useState(daysAgo(30));
-  const [customEnd, setCustomEnd] = useState(today());
+  // TASK-UI-005 continuation: two-way sync с PeriodContext.
+  const { period: ctxPeriod, setPeriod: ctxSetPeriod } = usePeriod();
+  const [mode, setMode] = useState<Mode>(() => {
+    if (ctxPeriod.kind === "custom") {
+      return { kind: "custom", start: ctxPeriod.from, end: ctxPeriod.to };
+    }
+    const p =
+      ctxPeriod.preset === "day" || ctxPeriod.preset === "week" || ctxPeriod.preset === "month"
+        ? ctxPeriod.preset
+        : "month";
+    return { kind: "preset", period: p };
+  });
+  const [customStart, setCustomStart] = useState(
+    ctxPeriod.kind === "custom" ? ctxPeriod.from : daysAgo(30),
+  );
+  const [customEnd, setCustomEnd] = useState(
+    ctxPeriod.kind === "custom" ? ctxPeriod.to : today(),
+  );
   const [includeArchived, setIncludeArchived] = useState(false);
   const [sorting, setSorting] = useState<SortingState>([{ id: "rev_sale", desc: true }]);
   const [filter, setFilter] = useState("");
@@ -232,6 +248,12 @@ export default function Units() {
     if (!customStart || !customEnd) return;
     if (customEnd < customStart) return;
     setMode({ kind: "custom", start: customStart, end: customEnd });
+    ctxSetPeriod({ kind: "custom", from: customStart, to: customEnd });
+  };
+
+  const setModePreset = (p: Period) => {
+    setMode({ kind: "preset", period: p });
+    ctxSetPeriod({ kind: "preset", preset: p });
   };
 
   const COL_TOOLTIPS: Record<string, string> = {
@@ -739,7 +761,7 @@ export default function Units() {
                 className={`btn ${
                   mode.kind === "preset" && mode.period === p ? "border-accent text-accent" : ""
                 }`}
-                onClick={() => setMode({ kind: "preset", period: p })}
+                onClick={() => setModePreset(p)}
               >
                 {periodLabels[p]}
               </button>

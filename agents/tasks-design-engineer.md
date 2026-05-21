@@ -112,12 +112,11 @@ RBAC UX / микрокопирайт).
 - **Критерии готовности:**
   - [x] `frontend/src/contexts/PeriodContext.tsx` — provider + hook (создан ранее)
   - [x] Provider в `App.tsx` сразу под `AuthContext` (был ранее)
-  - [x] Pages мигрированы (8 простых): **Inventory, AuditLog, CashFlow, TaxReport, TaxReportAusn, TaxReportUsn, AdsHeatmap, PnL**
-  - [ ] **Defer на следующий раунд** (сложный preset+custom Mode type): Dashboard, Units. У них собственная mode-система с compare-режимом, миграция требует осторожной two-way sync чтобы не разрушить compareOpen / TodayVsYesterdayStrip.
+  - [x] Pages мигрированы (10 из 10): **Inventory, AuditLog, CashFlow, TaxReport, TaxReportAusn, TaxReportUsn, AdsHeatmap, PnL** (простые, прямая замена), **Dashboard, Units** (сложные, two-way sync — context инициализирует mode при mount, setModePreset/applyCustom пишут обратно).
   - [x] Период persist'ится через `localStorage["globalPeriod.v1"]`
   - [ ] Smoke на проде: выбрать период на одной странице → перейти на другую → период тот же (за пользователем)
 - **Зависимости:** —
-- **Статус:** ✅ Выполнено — 2026-05-21 (8 из 10 pages — простые; Dashboard/Units defer)
+- **Статус:** ✅ Выполнено — 2026-05-21 (полная миграция 10/10 pages)
 
 ---
 

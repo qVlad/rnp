@@ -32,6 +32,7 @@ import DashboardCompareView from "@/components/DashboardCompareView";
 import TodayVsYesterdayStrip from "@/components/TodayVsYesterdayStrip";
 import WeekProfitHero from "@/components/WeekProfitHero";
 import WeeklyChangesFeed from "@/components/WeeklyChangesFeed";
+import { usePeriod } from "@/contexts/PeriodContext";
 import ViewPresetsBar from "@/components/ViewPresetsBar";
 import { exportToPdf, exportToPng } from "@/lib/exportPdf";
 import { Icon } from "@/components/Icon";
@@ -67,7 +68,21 @@ export default function Dashboard() {
     setOwnerView(next);
     try { localStorage.setItem("dashboard.owner-view.v1", next ? "1" : "0"); } catch {}
   };
-  const [mode, setMode] = useState<Mode>({ kind: "preset", period: "day" });
+  // TASK-UI-005 continuation: two-way sync с PeriodContext.
+  // Dashboard preset (day/week/month) совпадает с PeriodContext preset.
+  // При init читаем из context, при changes пишем обратно.
+  const { period: ctxPeriod, setPeriod: ctxSetPeriod } = usePeriod();
+  const [mode, setMode] = useState<Mode>(() => {
+    if (ctxPeriod.kind === "custom") {
+      return { kind: "custom", start: ctxPeriod.from, end: ctxPeriod.to };
+    }
+    // PeriodContext preset "quarter" нет в Dashboard — fallback на month
+    const p =
+      ctxPeriod.preset === "day" || ctxPeriod.preset === "week" || ctxPeriod.preset === "month"
+        ? ctxPeriod.preset
+        : "month";
+    return { kind: "preset", period: p };
+  });
   // TASK-LEAD-042: default — hybrid (closed weeks=final, fresh days=preliminary),
   // выбор persist'ится в localStorage.
   const [dataMode, setDataMode] = useState<DataMode>(() => {
@@ -82,8 +97,12 @@ export default function Dashboard() {
       localStorage.setItem("dashboard.dataMode.v1", dataMode);
     } catch {}
   }, [dataMode]);
-  const [customStart, setCustomStart] = useState(daysAgo(6));
-  const [customEnd, setCustomEnd] = useState(today());
+  const [customStart, setCustomStart] = useState(
+    ctxPeriod.kind === "custom" ? ctxPeriod.from : daysAgo(6),
+  );
+  const [customEnd, setCustomEnd] = useState(
+    ctxPeriod.kind === "custom" ? ctxPeriod.to : today(),
+  );
   const [tsDays, setTsDays] = useState(30);
   const [showRevenue, setShowRevenue] = useState(true);
   const [showOrders, setShowOrders] = useState(true);
@@ -140,6 +159,14 @@ export default function Dashboard() {
     if (!customStart || !customEnd) return;
     if (customEnd < customStart) return;
     setMode({ kind: "custom", start: customStart, end: customEnd });
+    // TASK-UI-005: write-through в global PeriodContext
+    ctxSetPeriod({ kind: "custom", from: customStart, to: customEnd });
+  };
+
+  // TASK-UI-005: preset-кнопки тоже синхронизируем (выше есть три кнопки).
+  const setModePreset = (p: Period) => {
+    setMode({ kind: "preset", period: p });
+    ctxSetPeriod({ kind: "preset", preset: p });
   };
 
   const dashboardRef = useRef<HTMLDivElement>(null);
@@ -245,7 +272,7 @@ export default function Dashboard() {
                     ? "border-accent text-accent"
                     : ""
                 }`}
-                onClick={() => setMode({ kind: "preset", period: p })}
+                onClick={() => setModePreset(p)}
               >
                 {periodLabels[p]}
               </button>
