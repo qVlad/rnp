@@ -203,6 +203,20 @@ async def detect_outliers(
     )
     alerts.extend(brand_alerts)
 
+    # ── Per-brand DRR + buyout outliers ──────────────────────────────────
+    # Расширение TASK-LEAD-026: те же z-score правила, но на (brand, day).
+    # DRR-rise alert: один бренд начал жечь рекламу аномально много.
+    # Buyout-drop alert: SKU конкретного бренда стали часто возвращать.
+    brand_drr_alerts = await _detect_per_brand_drr_outliers(
+        session, window_start, observation_day, z_threshold
+    )
+    alerts.extend(brand_drr_alerts)
+
+    brand_buyout_alerts = await _detect_per_brand_buyout_outliers(
+        session, window_start, observation_day, z_threshold
+    )
+    alerts.extend(brand_buyout_alerts)
+
     return alerts
 
 
@@ -454,6 +468,182 @@ async def _detect_per_brand_outliers(
 
     # Не спамим — top-5 по абсолютной σ. Иначе на тенанте с 30+ брендов
     # после публичной распродажи может прийти 15 алертов сразу.
+    alerts.sort(
+        key=lambda a: float(a.get("message", "").split(" на ")[-1].split("σ")[0]),
+        reverse=True,
+    )
+    return alerts[:5]
+
+
+async def _detect_per_brand_drr_outliers(
+    session: AsyncSession,
+    window_start: date,
+    observation_day: date,
+    z_threshold: float,
+) -> list[dict[str, Any]]:
+    """Per-brand DRR outlier — алертит только при росте (z>+threshold)."""
+    alerts: list[dict[str, Any]] = []
+
+    ad_stmt = (
+        select(
+            Product.brand.label("brand"),
+            WbAdStatsDaily.stat_date.label("d"),
+            func.sum(WbAdStatsDaily.sum_spent).label("spent"),
+        )
+        .join(Product, Product.nm_id == WbAdStatsDaily.nm_id)
+        .where(
+            WbAdStatsDaily.stat_date >= window_start,
+            WbAdStatsDaily.stat_date <= observation_day,
+            Product.brand.isnot(None),
+            WbAdStatsDaily.nm_id.isnot(None),
+        )
+        .group_by(Product.brand, WbAdStatsDaily.stat_date)
+    )
+    spent: dict[tuple[str, date], float] = {}
+    for r in (await session.execute(ad_stmt)).all():
+        if r.brand and r.d:
+            spent[(str(r.brand), r.d)] = float(r.spent or 0)
+
+    order_day = func.date(WbOrder.order_dt).label("d")
+    ord_stmt = (
+        select(
+            Product.brand.label("brand"),
+            order_day,
+            func.sum(
+                WbOrder.total_price * (1 - WbOrder.discount_percent / 100.0)
+            ).label("rev"),
+        )
+        .join(Product, Product.nm_id == WbOrder.nm_id)
+        .where(
+            func.date(WbOrder.order_dt) >= window_start,
+            func.date(WbOrder.order_dt) <= observation_day,
+            WbOrder.is_cancel.is_(False),
+            Product.brand.isnot(None),
+        )
+        .group_by(Product.brand, order_day)
+    )
+    rev: dict[tuple[str, date], float] = {}
+    for r in (await session.execute(ord_stmt)).all():
+        if r.brand and r.d:
+            rev[(str(r.brand), r.d)] = float(r.rev or 0)
+
+    drr_by_brand: dict[str, dict[date, float]] = {}
+    for (brand, d), s in spent.items():
+        r = rev.get((brand, d), 0.0)
+        if r > 0:
+            drr_by_brand.setdefault(brand, {})[d] = (s / r) * 100
+
+    for brand, day_map in drr_by_brand.items():
+        if observation_day not in day_map:
+            continue
+        days_data = [day_map[d] for d in sorted(day_map.keys()) if d < observation_day]
+        if len(days_data) < 14:
+            continue
+        current = day_map[observation_day]
+        mean, std = _basic_stats(days_data)
+        z = _z_score(current, mean, std)
+        if z is None or z <= z_threshold:
+            continue
+        level = "danger" if z > 3 else "warning"
+        alerts.append({
+            "level": level,
+            "code": "brand_drr_outlier_z",
+            "message": (
+                f"ДРР бренда <b>{brand}</b> за {observation_day.isoformat()}: "
+                f"{current:.1f}% — выше 28-дневного среднего ({mean:.1f}%) "
+                f"на {z:.1f}σ. Реклама бренда жжёт выручку. Проверь /ads."
+            ),
+        })
+
+    alerts.sort(
+        key=lambda a: float(a.get("message", "").split(" на ")[-1].split("σ")[0]),
+        reverse=True,
+    )
+    return alerts[:5]
+
+
+async def _detect_per_brand_buyout_outliers(
+    session: AsyncSession,
+    window_start: date,
+    observation_day: date,
+    z_threshold: float,
+) -> list[dict[str, Any]]:
+    """Per-brand buyout — алертит только при падении (z<-threshold)."""
+    alerts: list[dict[str, Any]] = []
+
+    order_day = func.date(WbOrder.order_dt).label("d")
+    ord_stmt = (
+        select(
+            Product.brand.label("brand"),
+            order_day,
+            func.count(WbOrder.srid).label("orders"),
+        )
+        .join(Product, Product.nm_id == WbOrder.nm_id)
+        .where(
+            func.date(WbOrder.order_dt) >= window_start,
+            func.date(WbOrder.order_dt) <= observation_day,
+            WbOrder.is_cancel.is_(False),
+            Product.brand.isnot(None),
+        )
+        .group_by(Product.brand, order_day)
+    )
+    orders: dict[tuple[str, date], int] = {}
+    for r in (await session.execute(ord_stmt)).all():
+        if r.brand and r.d:
+            orders[(str(r.brand), r.d)] = int(r.orders or 0)
+
+    sale_stmt = (
+        select(
+            Product.brand.label("brand"),
+            WbReportDetail.sale_dt.label("d"),
+            func.sum(
+                case(
+                    (WbReportDetail.supplier_oper_name == OP_SALE, 1),
+                    (WbReportDetail.supplier_oper_name == OP_RETURN, -1),
+                    else_=0,
+                )
+            ).label("sales"),
+        )
+        .join(Product, Product.nm_id == WbReportDetail.nm_id)
+        .where(
+            sale_dt_filter(window_start, observation_day),
+            Product.brand.isnot(None),
+        )
+        .group_by(Product.brand, WbReportDetail.sale_dt)
+    )
+    sales: dict[tuple[str, date], int] = {}
+    for r in (await session.execute(sale_stmt)).all():
+        if r.brand and r.d:
+            sales[(str(r.brand), r.d)] = max(int(r.sales or 0), 0)
+
+    buyout_by_brand: dict[str, dict[date, float]] = {}
+    for (brand, d), ord_n in orders.items():
+        if ord_n > 0:
+            sale_n = sales.get((brand, d), 0)
+            buyout_by_brand.setdefault(brand, {})[d] = (sale_n / ord_n) * 100
+
+    for brand, day_map in buyout_by_brand.items():
+        if observation_day not in day_map:
+            continue
+        days_data = [day_map[d] for d in sorted(day_map.keys()) if d < observation_day]
+        if len(days_data) < 14:
+            continue
+        current = day_map[observation_day]
+        mean, std = _basic_stats(days_data)
+        z = _z_score(current, mean, std)
+        if z is None or z >= -z_threshold:
+            continue
+        level = "danger" if z < -3 else "warning"
+        alerts.append({
+            "level": level,
+            "code": "brand_buyout_outlier_z",
+            "message": (
+                f"Выкуп бренда <b>{brand}</b> за {observation_day.isoformat()}: "
+                f"{current:.1f}% — ниже 28-дневного среднего ({mean:.1f}%) "
+                f"на {abs(z):.1f}σ. SKU бренда стали возвращать чаще."
+            ),
+        })
+
     alerts.sort(
         key=lambda a: float(a.get("message", "").split(" на ")[-1].split("σ")[0]),
         reverse=True,

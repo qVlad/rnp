@@ -17,7 +17,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.bot.digest import build_alerts, build_now, build_pnl_short
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.db.models import AppSetting
+from app.db.models import AppSetting, User
 from app.db.session import task_session_scope
 from app.integrations.telegram import get_me, get_updates, send_message
 from app.services.tenant_context import set_tenant
@@ -30,8 +30,66 @@ HELP = (
     "/now — KPI сегодня / неделя / месяц\n"
     "/alerts — текущие пороговые алерты\n"
     "/pnl — короткий P&L за неделю и месяц\n"
+    "/bind <username> — привязать свой логин РНП (для multi-recipient уведомлений)\n"
+    "/unbind — отвязать свой логин\n"
     "/help — это сообщение"
 )
+
+
+async def _bind_user(chat_id: int, username: str) -> str:
+    """Привязать chat_id к User.tg_chat_id (TASK-DEV-014/017 follow-up).
+
+    Любой залогиненный юзер РНП может привязать свой Telegram, не только
+    owner. Это нужно для multi-recipient broadcast'а (заявки на закупку,
+    правки планов → всем директорам сразу).
+    """
+    tid = settings.bot_tenant_id
+    async with task_session_scope() as session:
+        set_tenant(session, tid)
+        user = (
+            await session.execute(
+                select(User).where(
+                    User.tenant_id == tid,
+                    User.username == username,
+                    User.is_active.is_(True),
+                )
+            )
+        ).scalar_one_or_none()
+        if not user:
+            return (
+                f"🚫 Пользователь <b>{username}</b> не найден или заблокирован.\n"
+                f"Проверьте username — это тот же что вы используете для входа в РНП."
+            )
+        user.tg_chat_id = str(chat_id)
+        await session.commit()
+        return (
+            f"✅ Привязано: <b>{user.full_name or user.username}</b> ({user.role}).\n\n"
+            f"Теперь вы будете получать персональные уведомления:\n"
+            f"• Заявки на закупку от менеджеров (если вы director/head)\n"
+            f"• Заявки на правку планов\n"
+            f"• Результаты ваших заявок (если вы manager)"
+        )
+
+
+async def _unbind_user(chat_id: int) -> str:
+    tid = settings.bot_tenant_id
+    async with task_session_scope() as session:
+        set_tenant(session, tid)
+        users = (
+            await session.execute(
+                select(User).where(
+                    User.tenant_id == tid,
+                    User.tg_chat_id == str(chat_id),
+                )
+            )
+        ).scalars().all()
+        if not users:
+            return "У этого чата нет привязанных аккаунтов."
+        for u in users:
+            u.tg_chat_id = None
+        await session.commit()
+        names = ", ".join(u.username for u in users)
+        return f"✅ Отвязано: {names}"
 
 
 async def _save_setting(key: str, value: str) -> None:
@@ -102,6 +160,27 @@ async def _handle_command(chat_id: int, text: str) -> None:
             await send_message(chat_id, "✅ Владелец сменён на этот чат.")
         else:
             await send_message(chat_id, "🚫 Только текущий владелец может сменить привязку.")
+        return
+
+    # /bind и /unbind — открытые для всех (любой залогиненный юзер РНП
+    # может привязать свой Telegram, не только tenant-owner). Используется
+    # для multi-recipient broadcast'а заявок (см. services/tg_broadcast.py).
+    if cmd == "/bind":
+        if not args:
+            await send_message(
+                chat_id,
+                "Использование: <code>/bind &lt;ваш-username-в-РНП&gt;</code>\n\n"
+                "username — тот же что вы используете для входа в РНП.\n"
+                "Найти можно в /settings → ваш профиль.",
+            )
+            return
+        msg = await _bind_user(chat_id, args[0].strip())
+        await send_message(chat_id, msg)
+        return
+
+    if cmd == "/unbind":
+        msg = await _unbind_user(chat_id)
+        await send_message(chat_id, msg)
         return
 
     # All other commands require auth

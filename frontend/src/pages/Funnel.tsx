@@ -14,6 +14,8 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtNum, fmtPct } from "@/lib/format";
+import { useTagFilter } from "@/lib/useTagFilter";
+import TagFilterDropdown from "@/components/TagFilterDropdown";
 
 type SortKey =
   | "views"
@@ -50,15 +52,17 @@ export default function Funnel() {
     queryFn: () => api.funnelBySku(days),
   });
 
+  const { matchTag } = useTagFilter("funnel.tag-filter.v1");
+
   const items = useMemo(() => {
-    const arr = [...(q.data?.items ?? [])];
+    const arr = (q.data?.items ?? []).filter((it) => matchTag(it.nm_id));
     arr.sort((a, b) => {
       const av = Number((a as any)[sortKey] ?? 0);
       const bv = Number((b as any)[sortKey] ?? 0);
       return sortDir === "desc" ? bv - av : av - bv;
     });
     return arr;
-  }, [q.data, sortKey, sortDir]);
+  }, [q.data, sortKey, sortDir, matchTag]);
 
   const totals = q.data?.totals;
 
@@ -73,7 +77,7 @@ export default function Funnel() {
     <div className="flex flex-col gap-4">
       <div className="flex items-end justify-between flex-wrap gap-3">
         <h1 className="text-xl font-semibold">Воронка продаж — per SKU</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs text-muted">Период:</span>
           {[7, 14, 30].map((n) => (
             <button
@@ -85,6 +89,7 @@ export default function Funnel() {
               {n} дн
             </button>
           ))}
+          <TagFilterDropdown storageKey="funnel.tag-filter.v1" />
         </div>
       </div>
 

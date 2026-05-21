@@ -37,6 +37,57 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## 2026-05-21 — **Арх-долг #3: bot /bind + per-brand DRR/buyout + funnel tag-filter** (v0.16.0)
+
+Закрыли 3 оставшихся пункта (без email-канала — отложен).
+
+### 1. Bot `/bind <username>` + `/unbind` для multi-recipient TG
+
+Раньше юзер мог получать TG-уведомления только если был tenant-owner-ом
+(один `AppSetting.tg_chat_id`). Сделали multi-recipient (миграция 0054), но
+manager не знал куда писать свой chat_id. Теперь:
+
+- В бот добавлены 2 открытые команды (без owner-check):
+  - `/bind <username>` — бот ищет User с этим username в bot_tenant_id,
+    ставит `User.tg_chat_id = chat_id` если найден и active. Возвращает
+    ФИО + роль + список уведомлений которые юзер начнёт получать.
+  - `/unbind` — снимает привязку для всех User с этим chat_id.
+- Workflow: юзер логинится в РНП → видит свой username в /settings →
+  пишет `/bind <username>` в бот → бот привязывает → broadcast работает.
+
+### 2. Per-brand DRR + buyout outlier-детекторы
+
+Расширение TASK-LEAD-026 (раньше per-brand был только на revenue).
+
+- `_detect_per_brand_drr_outliers`: JOIN `WbAdStatsDaily.nm_id → Product.brand`
+  + JOIN `WbOrder.nm_id → Product.brand`. Per (brand, day) считаем DRR.
+  Алертит ТОЛЬКО при росте (z>+threshold). Top-5 по σ.
+- `_detect_per_brand_buyout_outliers`: JOIN orders + WbReportDetail на brand.
+  Алертит ТОЛЬКО при падении (z<-threshold). Top-5 по σ.
+- Skip брендов с <14 ненулевыми днями. Wire в `detect_outliers` после
+  per-brand revenue.
+
+### 3. Header-фильтр по тегам в /funnel
+
+`Funnel.tsx`: `useTagFilter("funnel.tag-filter.v1")` + `TagFilterDropdown`
+рядом с period-selector. Теперь все 4 страницы (Supply / Units / UnitPlan /
+ABC / Funnel) имеют одинаковый tag-filter UI.
+
+### Версия
+0.15.3 → 0.16.0 (minor — 3 feat: bot + per-brand detectors + tag-filter)
+
+### Изменённые файлы
+- `backend/app/bot/main.py` — /bind + /unbind + helper'ы `_bind_user`/`_unbind_user`
+- `backend/app/services/anomaly_statistical.py` — 2 новые функции
+  `_detect_per_brand_drr_outliers` + `_detect_per_brand_buyout_outliers`,
+  wire в `detect_outliers`
+- `frontend/src/pages/Funnel.tsx` — useTagFilter + TagFilterDropdown
+
+### Остаток долга
+- Email-канал нотификаций (отложен пользователем)
+
+---
+
 ## 2026-05-21 — **TG back-loop для plan_edit_requests** (v0.15.2)
 
 Замкнули workflow TASK-DEV-017. Раньше:
