@@ -540,14 +540,26 @@
   🆕 Новинка / 🚨 Проблема / 🔥 Хит. Custom-теги — director может
   заводить свои в Settings. Фильтр по тегу в заголовке каждой страницы.
 - **Критерии готовности:**
-  - [ ] Миграция 0051 `product_tags` + `product_tag_assignments` (tenant-scoped)
-  - [ ] API: `/api/product-tags` CRUD (director) + `/api/products/{nm_id}/tags`
-        (manager в brand-scope) PUT/DELETE
-  - [ ] Frontend: chip-компонент с emoji-picker (header-фильтр в Units /
-        Unit-Plan / Supply / ABC)
-  - [ ] Preset-теги seed-нутся при создании tenant'а
+  - [x] Миграция **0052** `product_tags` + `product_tag_assignments`
+        (0051 был занят параллельной сессией под `reconciliation_imports`).
+        `product_tags`: UNIQUE (tenant, name). `product_tag_assignments`:
+        UNIQUE (tenant, nm_id, tag_id) + индексы по nm и tag
+  - [x] Preset-теги seed'ятся в `upgrade()` через CROSS JOIN tenants ×
+        6 preset (🏆 Лидер / ⭐ Звезда / 📦 Архив / 🆕 Новинка / 🚨 Проблема /
+        🔥 Хит) с `is_preset=true`. Удалять preset'ы нельзя (409 в API).
+  - [x] Backend API `api/product_tags.py`:
+        - `GET /api/product-tags` (любой залогиненный, с usage_count)
+        - `POST/PATCH/DELETE /api/product-tags` (director only)
+        - `GET/PUT /api/products/{nm_id}/tags` (brand-scope check для manager)
+  - [x] Frontend `components/ProductTagChips.tsx` — chips + popover-палитра.
+        Click-toggle с TanStack mutation. compact-режим для embed в таблицу.
+  - [ ] Header-фильтр в Units / Unit-Plan / Supply / ABC — оставил
+        follow-up'ом (TASK-DEV-NNN). Сейчас chips можно навешивать; фильтрация
+        по тегу — отдельная UX-итерация.
 - **Зависимости:** нет
-- **Статус:** Открыта
+- **Статус:** ✅ Закрыта 2026-05-21 (миграция 0052, model `ProductTag` +
+  `ProductTagAssignment`, API в `product_tags.py`, frontend chip-component).
+  Header-фильтр по тегу — follow-up.
 
 ---
 

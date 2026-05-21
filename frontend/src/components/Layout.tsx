@@ -55,6 +55,7 @@ const GROUPS: Group[] = [
     label: "SKU и продажи",
     items: [
       { to: "/units", label: "Юнит-экономика" },
+      { to: "/funnel", label: "Воронка" },
       { to: "/unit-plan", label: "Плановая юнит-эк." },
       { to: "/abc", label: "ABC-анализ" },
       { to: "/plans", label: "План-Факт" },

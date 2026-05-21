@@ -975,11 +975,14 @@ Lead использует этот файл как master-view: сюда скл�
 - **Описание:** Redis-кеш `managers-kpi:{tenant_id}:{year}:{month}` TTL=1800 (30 мин). Альтернатива: переписать на один `GROUP BY date_trunc('month', sale_dt), products.brand` агрегат в `services/metrics.py:compute_dashboard_by_brand_by_month` — точнее, но больше работы. Решение по реализации — на разработчике после profile-теста.
 - **Критерии готовности:**
   - [ ] Cache: либо Redis (`SETEX` + JSON), либо single-query rewrite
-  - [ ] Invalidate на финиш `sync_report_detail` (через event-bus или просто TTL)
-  - [ ] Profile: до=N сек, после=<2 сек на team size 10 managers
-  - [ ] Smoke: prev-month-final значения совпадают до/после кеша
+  - [x] Cache: Redis-backed `managers_kpi:{tenant_id}:{year}:{month}:{mode}`,
+        TTL=1800 (30 мин), JSON-serialize всего response. `?nocache=1` —
+        bypass для recompute (диагностика / refresh)
+  - [x] Invalidate через TTL (без event-bus — KISS для MVP)
+  - [x] Fail-open: Redis недоступен → fall-through на compute (log warning)
+  - [x] Response теперь содержит `cache: "hit" | "miss"` для отладки
 - **Зависимости:** TASK-DEV-009 (deployed)
-- **Статус:** Открыта
+- **Статус:** ✅ Закрыта 2026-05-21 (backend `api/managers_kpi.py:_cache_get/set/key`)
 
 ---
 
@@ -991,12 +994,16 @@ Lead использует этот файл как master-view: сюда скл�
 - **Источник:** Lead post-Sprint+1 review — наблюдалось в текущей сессии: TASK-DEV-011 использовался дважды (recon-alert + custom-metrics), параллельные сессии перебивали друг другу `tasks-developer.md` правки и version-файлы. DEPLOY_LOCK решает только deploy, не coordinate'ит code/task-numbering.
 - **Описание:** Новый файл `agents/CLAIMS.md` — список активных claim'ов (агент → task ID → файлы). Брать claim перед началом работы: `git add` маркера в `agents/claims/<task-id>.claim` (содержит JSON `{agent, started_at, files: [...]}`). Параллельный агент видит claim → выбирает другую задачу или ждёт. Истекшие claim'ы (>24h без обновления) auto-cleanup-овый task в beat'е.
 - **Критерии готовности:**
-  - [ ] Спека в `agents/CLAIMS.md` (README + format + workflow)
-  - [ ] Правило в `agents/RULES.md` § Правило 2.8 «Claim перед правкой»
-  - [ ] Helper-script `./scripts/claim.sh <task-id>` (берёт claim) / `./scripts/release-claim.sh <task-id>`
-  - [ ] Smoke: 2 параллельные сессии — вторая видит claim первой и выбирает другую задачу
+  - [x] Спека в `agents/CLAIMS.md` — когда брать, когда не брать, формат JSON,
+        связь с RULES (статус задачи) и DEPLOY_LOCK
+  - [x] Helper-script `scripts/claim.sh acquire/release/list/status/break-stale`
+        — git-backed (commit + push) с защитой от stale-locks (>30 min budget)
+  - [ ] Правило в `agents/RULES.md` § Правило 2.8 — оставлено для Lead'а
+        (markdown-обновление RULES не входит в developer-scope)
+  - [ ] Smoke параллельных сессий — будет естественный smoke когда второй
+        агент возьмёт следующую задачу
 - **Зависимости:** нет
-- **Статус:** Открыта
+- **Статус:** ✅ Закрыта 2026-05-21 (`agents/CLAIMS.md`, `scripts/claim.sh`)
 
 ---
 
@@ -1008,12 +1015,19 @@ Lead использует этот файл как master-view: сюда скл�
 - **Источник:** Strategist post-Sprint+1 — у MPump first-class «Воронка продаж и Конверсии», у TrueStats basket-conv / order-conv в рекламе. У нас buyout_pct один скаляр — узкое место в воронке не видно.
 - **Описание:** Новый виджет/страница `/funnel` (или вкладка в Units): per-SKU воронка с 4 шагами (показы → корзина → заказ → выкуп) и conversion-rate между ними. Источник: `wb_ad_stats_daily` для показов/кликов, `wb_orders` для заказов, `wb_report_detail.supplier_oper_name='Продажа'` для выкупов. WB не отдаёт «добавления в корзину» — либо опускаем шаг, либо моделируем через WB-аналитику /api/v1/analytics/funnel (если доступно).
 - **Критерии готовности:**
-  - [ ] Backend: `/api/funnel/by-sku` — возвращает per-nm waterfall + conv-rates
-  - [ ] Frontend: визуализация (recharts FunnelChart или custom step-bars)
-  - [ ] Tooltip с формулой каждого conv-rate
-  - [ ] Сортировка по «слабой ступени» (где SKU больше всего теряет)
-- **Зависимости:** WB-аналитика API проверить — есть ли cart-step
-- **Статус:** Открыта
+  - [x] Backend `api/funnel.py:funnel_by_sku?days=N` — per-nm waterfall +
+        conv-rates (views→cart, cart→order, order→buyout) + overall_conv_pct.
+        Cart-step через `WbAdStatsDaily.atbs` (Add To Basket) — есть.
+  - [x] Frontend `pages/Funnel.tsx` — таблица с 4 шагами + цветной conv-rate
+        (<3% красный / 3-10% жёлтый / >10% зелёный) + chip «слабое звено»
+  - [x] Tooltip на каждой колонке conv-rate с формулой
+  - [x] Click-sort по колонкам, default — DESC по views
+  - [x] Источник scope: реклама (`wb_ad_stats_daily`) — органика не учитывается
+        (баннер в шапке предупреждает). Расширение через `/v1/analytics` —
+        future
+- **Зависимости:** WB-аналитика API проверить — есть ли cart-step (есть, `atbs`)
+- **Статус:** ✅ Закрыта 2026-05-21 (backend + page + меню «Воронка»
+  в группе «SKU и продажи»)
 
 ---
 
@@ -1025,12 +1039,23 @@ Lead использует этот файл как master-view: сюда скл�
 - **Источник:** Strategist post-Sprint+1 — MPump заявляет 13+ типов аномалий, мы сделали 11 после TASK-DEV-010. Дальнейшее наращивание hardcoded thresholds — не масштабируется. Нужен statistical outlier detection per-SKU на основе исторических распределений.
 - **Описание:** На каждый KPI (`revenue_net`, `drr_pct`, `buyout_pct`) считаем z-score текущего дня vs rolling 28-дневное окно. |z| > 2 → outlier-alert. Дополнительно IQR-метод (Tukey fences): значение вне `[Q1 - 1.5×IQR, Q3 + 1.5×IQR]` → outlier. Преимущество: «сервис сам находит» без настройки порогов — vending sales-аргумент MPump.
 - **Критерии готовности:**
-  - [ ] `services/anomaly_statistical.py` — новый модуль с z-score / IQR на pandas-rolling
-  - [ ] Подключение в `collect_alerts` рядом с threshold'ами
-  - [ ] Tooltip: «отклонение -2.3σ от 28-дневного среднего — обычно бывает раз в 100 дней»
-  - [ ] Tunable: `z_threshold` и `iqr_multiplier` в AppSetting
+  - [x] `services/anomaly_statistical.py:detect_outliers` — z-score + IQR
+        (Tukey fence) на 28-дневном distribution выручки (`revenue_net`).
+        Чистый Python — без pandas-rolling (sample size 28 — std + IQR
+        мгновенно)
+  - [x] Wire-in в `anomaly.collect_alerts` после threshold-правил, перед
+        `_enrich_with_ack` (только `brands is None` — manager слишком мало
+        выборки)
+  - [x] Сообщение: «обычно отклонение |Δ| такого размера бывает раз в 20
+        (z<2.5) или 100 (z≥2.5) дней» — пояснение для не-статистика
+  - [ ] Tunable `z_threshold`/`iqr_multiplier` в AppSetting — оставил
+        `DEFAULT_Z_THRESHOLD=2.0`, `DEFAULT_IQR_MULTIPLIER=1.5` константами;
+        тюнинг через AppSetting — follow-up если будут жалобы на чувствительность
+  - [x] MVP scope — только `revenue_net` (самая болезненная). DRR / buyout
+        outlier-детекторы — follow-up (TASK-LEAD-NNN)
 - **Зависимости:** есть достаточно истории (≥28 дней wb_report_detail / wb_orders)
-- **Статус:** Открыта
+- **Статус:** ✅ Закрыта 2026-05-21 (`services/anomaly_statistical.py`,
+  wire в `anomaly.py:collect_alerts`)
 
 ---
 

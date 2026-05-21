@@ -263,6 +263,9 @@ docker-compose.yml
 | **0047** | unit_plan_snapshot_config — freeze global_config в момент snapshot'а (UNIT_PLAN.md §10), чтобы diff не показывал false-positive при изменении констант после snapshot'а |
 | **0048** | extension_api_tokens — long-lived токены `rnpext_<32-hex>` для Chrome-расширения (вместо 12-часового JWT в cookie). UI в /settings → «Токены для Chrome-расширения». |
 | **0049** | **alert_acknowledgements** — серверный ack для AlertsBar (TASK-DEV-020). Заменяет `localStorage["alerts.dismissed.v2"]` на таблицу `(tenant_id, user_id, alert_code, signature, acknowledged_at)` с UNIQUE на `(tenant_id, signature)`. Один ack глушит алерт для всей команды; ФИО+время видны при разворачивании «Прочитанные». Signature = sha1(`code|message`)[:32] — если message меняется (например recon на новую неделю), новый ack не унаследуется. Endpoints `POST /api/dashboard/alerts/ack` + `DELETE /api/dashboard/alerts/ack/{signature}`. |
+| **0050** | metric_templates — custom-метрики через формулы (TASK-DEV-011). UNIQUE (tenant, name). Safe-eval Python AST в `services/custom_metrics.py`. |
+| **0051** | reconciliation_imports — журнал импортов в reconciliation (параллельная задача). |
+| **0052** | **product_tags + product_tag_assignments** — эмодзи-теги на nm_id (TASK-DEV-024). 6 preset-тегов (🏆/⭐/📦/🆕/🚨/🔥) seed-ятся при создании tenant'а. M-к-N через UNIQUE на (tenant, nm_id, tag_id). Endpoints `/api/product-tags` CRUD (director) + `/api/products/{nm_id}/tags` GET/PUT (brand-scope). |
 
 ## Роли и RBAC
 

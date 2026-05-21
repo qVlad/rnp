@@ -677,4 +677,19 @@ async def collect_alerts(
             "items_truncated": len(new_skus_rows) > 10,
         })
 
+    # ── TASK-LEAD-026 — Statistical outlier detection ──────────────────
+    # Z-score + IQR на 28-дневном distribution выручки. В отличие от
+    # threshold-правил выше, это «сервис сам находит» без настройки —
+    # parity-feature vs MPump (13+ типов). Только director_or_head scope:
+    # для manager выборка слишком мала, шум.
+    if brands is None:
+        try:
+            from app.services.anomaly_statistical import detect_outliers  # noqa: WPS433
+            stat_alerts = await detect_outliers(session, brands=brands)
+            alerts.extend(stat_alerts)
+        except Exception as e:  # noqa: BLE001
+            # Stat-детектор не должен валить весь endpoint
+            from app.core.logging import get_logger as _gl
+            _gl(__name__).warning("statistical outlier detection failed: %s", e)
+
     return await _enrich_with_ack(session, alerts)

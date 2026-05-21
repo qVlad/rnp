@@ -86,6 +86,8 @@
 | Column visibility | Скрыть/показать колонки в Units | `components/ColumnVisibility.tsx` | all |
 | DnD reorder колонок | Перетаскивание колонок таблицы | `components/DraggableHeader.tsx` (@dnd-kit) | all |
 | Реальная WB-комиссия | Считается из `wb_report_detail`: `(retail_with_disc − ppvz) / retail × 100` | `unit_economics.py:commission_by_nm` | — |
+| **Воронка views→cart→order→buyout per-SKU** (TASK-LEAD-025) | Страница `/funnel`: 4-шаговый funnel за окно 7/14/30 дн с conv-rates между ступенями + chip «слабое звено». Источник — реклама (`wb_ad_stats_daily.views/atbs/orders` + выкупы из `wb_report_detail`). Цвет conv: <3% красный, 3-10% жёлтый, >10% зелёный. Click-sort по любой колонке. Parity vs MPump «Воронка и Конверсии». | `pages/Funnel.tsx`, `api/funnel.py:funnel_by_sku`, меню «SKU и продажи» → «Воронка» | brands-filter |
+| **Эмодзи-теги на SKU** (TASK-DEV-024) | M-к-N теги с эмодзи на nm_id. Preset'ы при создании tenant'а: 🏆 Лидер / ⭐ Звезда / 📦 Архив / 🆕 Новинка / 🚨 Проблема / 🔥 Хит (нельзя удалить). Director может создавать custom-теги в Settings. Любой залогиненный юзер в brand-scope назначает теги своим SKU. Chip-component с popover-палитрой. Parity vs MPump tag-системы. | миграция 0052, `model.ProductTag` + `ProductTagAssignment`, `api/product_tags.py`, `components/ProductTagChips.tsx` | tenant-scoped (manager в brand-scope) |
 
 ---
 
@@ -303,6 +305,7 @@
 | Anomaly detection | Сервис обнаружения аномалий (TODO: расширить до 13+ типов) | `services/anomaly.py` | — |
 | **Server-side alerts ack** (TASK-DEV-020) | Серверный ack для AlertsBar — заменяет localStorage. Один ack на `(tenant_id, signature)` глушит для всей команды; ФИО+время видны при разворачивании. Signature = sha1(`code\|message`) — при изменении message (recon на новую неделю) ack не уносится. | миграция 0049, модель `AlertAcknowledgement`, `services/anomaly.py:alert_signature/_enrich_with_ack`, endpoints `POST/DELETE /api/dashboard/alerts/ack`, `components/AlertsBar.tsx` | tenant-scoped |
 | **Recon-drift alert** (TASK-DEV-023, перенум. с 011) | Авто-warning в AlertsBar если на одной из последних 4 закрытых недель `|Δ revenue_gross%|` > 1% (warning) или > 3% (danger). Owner раньше узнавал о расхождении WB↔наша P&L только зайдя в `/pnl-reconciliation` вручную. Алерт содержит `link: "/pnl-reconciliation"` для deep-link, AlertsBar рендерит кнопку «открыть →». Только для director_or_head (`brands is None`). | `services/anomaly.py` блок `# 6) Reconciliation drift`, `components/AlertsBar.tsx:Link` | director_or_head |
+| **Statistical outlier detection** (TASK-LEAD-026) | Z-score (\|z\|>2) + IQR Tukey-fence (1.5×) на 28-дневном distribution дневной выручки. В отличие от threshold-правил «сервис сам находит» без настройки. Severity: warning при z>2, danger при z>3. Сообщение поясняет частоту наблюдения («раз в 100 дней при z>2.5»). | `services/anomaly_statistical.py:detect_outliers`, wire в `anomaly.collect_alerts` | director_or_head |
 
 ---
 

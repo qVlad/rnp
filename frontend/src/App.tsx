@@ -13,6 +13,7 @@ import TaxReport from "./pages/TaxReport";
 import TaxReportAusn from "./pages/TaxReportAusn";
 import Supplies from "./pages/Supplies";
 import Units from "./pages/Units";
+import Funnel from "./pages/Funnel";
 import UnitPlan from "./pages/UnitPlan";
 import Tariffs from "./pages/Tariffs";
 import Settings from "./pages/Settings";
@@ -189,6 +190,7 @@ export default function App() {
             }
           />
           <Route path="units" element={<Units />} />
+          <Route path="funnel" element={<Funnel />} />
           <Route path="unit-plan" element={<UnitPlan />} />
           <Route path="tariffs" element={<Tariffs />} />
           <Route

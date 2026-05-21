@@ -14,6 +14,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, declared_attr, mapped_column, relationship
@@ -2231,4 +2232,51 @@ class MetricTemplate(Base, TenantScopedMixin):
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "name", name="uq_metric_templates_tenant_name"),
+    )
+
+
+class ProductTag(Base, TenantScopedMixin):
+    """Tag для SKU (TASK-DEV-024, миграция 0052).
+
+    Преднастроенные: 🏆 Лидер / ⭐ Звезда / 📦 Архив / 🆕 Новинка /
+    🚨 Проблема / 🔥 Хит. Custom-теги — director может создавать.
+    """
+
+    __tablename__ = "product_tags"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    emoji: Mapped[str] = mapped_column(String(8), nullable=False, default="🏷️")
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    color: Mapped[str | None] = mapped_column(String(16))
+    is_preset: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_product_tags_tenant_name"),
+    )
+
+
+class ProductTagAssignment(Base, TenantScopedMixin):
+    """SKU ↔ Tag M-к-N (TASK-DEV-024, миграция 0052)."""
+
+    __tablename__ = "product_tag_assignments"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    nm_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    tag_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("product_tags.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    assigned_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "nm_id", "tag_id",
+            name="uq_product_tag_assignments_unique",
+        ),
     )

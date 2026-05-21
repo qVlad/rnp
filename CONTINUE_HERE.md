@@ -37,6 +37,78 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## 2026-05-21 — **Sprint+2 batch-2: 5 задач из Lead/Strategist плана** (v0.12.0)
+
+Закрыли 5 задач из backlog'а единым коммитом (миграция 0052 + 2 новых
+endpoint'а + 2 новых service-модуля + 1 страница + chip-компонент + Redis-кеш):
+
+- **TASK-LEAD-023** — **Redis-кеш для `/api/managers-kpi`**. Ключ
+  `managers_kpi:{tenant_id}:{year}:{month}:{mode}`, TTL=1800. JSON-serialize
+  всего response. Fail-open: Redis недоступен → fall-through на compute.
+  Response теперь содержит `cache: "hit" | "miss"` для отладки.
+  `?nocache=1` — bypass. Разблокирует Owner cockpit performance: 60 SQL
+  → < 50ms при cache-hit.
+- **TASK-LEAD-024** — **`agents/CLAIMS.md` + `scripts/claim.sh`**. Markdown-
+  координация параллельных сессий: `acquire/release/list/status/break-stale`.
+  Stale-claim (>budget+60min) auto-cleanup'ится через `break-stale`.
+  Не mutex (git-based, не атомарный), но даёт явный сигнал «занято».
+- **TASK-LEAD-025** — **Воронка views→cart→order→buyout per-SKU**. Новая
+  страница `/funnel` + endpoint `/api/funnel/by-sku?days=N`. Источник —
+  `wb_ad_stats_daily.atbs` (Add To Basket) для cart-step + выкупы из
+  `wb_report_detail`. Chip «слабое звено» (наименьший из 3 conv-rate'ов).
+  Цвет conv: <3% красный / 3-10% жёлтый / >10% зелёный. Click-sort.
+  Parity vs MPump «Воронка продаж и Конверсии».
+- **TASK-LEAD-026** — **Statistical outlier detection** (`services/anomaly_statistical.py`).
+  Z-score (|z|>2) + IQR Tukey-fence (1.5×) на 28-дневном распределении
+  дневной выручки. Wire в `collect_alerts` после threshold-правил, перед
+  enrich-with-ack. Только director_or_head. Сообщение: «отклонение -2.3σ
+  от 28-дневного среднего — обычно бывает раз в 100 дней». Догон MPump
+  13+ типов аномалий через **другой класс защиты** (auto-discovery vs
+  hardcoded).
+- **TASK-DEV-024** — **Эмодзи-теги на SKU**. Миграция 0052 (`product_tags` +
+  `product_tag_assignments`, M-к-N через UNIQUE на (tenant, nm_id, tag_id)).
+  Seed 6 preset'ов при создании tenant'а: 🏆/⭐/📦/🆕/🚨/🔥. Director
+  может создавать custom, нельзя удалить preset (409). API
+  `/api/product-tags` + `/api/products/{nm_id}/tags`. Manager в brand-scope
+  (RBAC). Frontend `ProductTagChips.tsx` — chip + popover-палитра.
+  Header-фильтр по тегу — follow-up (отложили).
+
+**Изменённые файлы:**
+- `backend/app/api/managers_kpi.py` — Redis-кеш TTL=1800
+- `backend/app/services/anomaly_statistical.py` (new) — z-score + IQR
+- `backend/app/services/anomaly.py` — wire stat-detector
+- `backend/app/api/funnel.py` (new) — `/api/funnel/by-sku`
+- `backend/app/api/product_tags.py` (new) — CRUD + assignments
+- `backend/app/db/models.py` — `ProductTag` + `ProductTagAssignment`, `text` import
+- `backend/app/db/migrations/versions/0052_product_tags.py` (new)
+- `backend/app/main.py` — include funnel + product_tags routers
+- `frontend/src/api/client.ts` — 8 новых методов (tags + funnel)
+- `frontend/src/pages/Funnel.tsx` (new)
+- `frontend/src/components/ProductTagChips.tsx` (new)
+- `frontend/src/App.tsx` + `Layout.tsx` — route + menu
+- `agents/CLAIMS.md` (new) + `scripts/claim.sh` (new, +x)
+- `agents/tasks-developer.md` / `tasks-lead.md` — 5 задач закрыты
+- `FEATURES.md` — 4 новые строки
+- 4 version-файла: 0.11.0 → 0.12.0 через `scripts/bump.sh minor`
+
+**Подводный камень:**
+- Миграция 0051 уже была занята параллельным `reconciliation_imports` →
+  взял 0052. Параллельная сессия активна (бамп с 0.11.0 → 0.10.1 / 0.10.1)
+  — нужно следить за `git status` перед каждым add.
+
+**Архитектурный долг:**
+- Header-фильтр по тегам в Units/Unit-Plan/Supply — отдельная UX-итерация
+- DRR / buyout outlier-детекторы — follow-up MVP (только revenue_net пока)
+- AppSetting-tuning для z_threshold / iqr_multiplier — follow-up
+- `RULES.md` § Правило 2.8 «Claim перед правкой» — оставлено Lead'у
+
+**Что в следующих сессиях:**
+- Header-фильтр по тегам (продолжение TASK-DEV-024)
+- DRR/buyout outlier-детекторы (расширение TASK-LEAD-026)
+- TASK-DEV-014 supply→TG, TASK-DEV-017 plan edit requests
+
+---
+
 ## 2026-05-21 (ночь) — **Sprint+2 start: TASK-DEV-018 + 019 + 008** (v0.11.0)
 
 После Lead/Analyst/Strategist-планирования на следующий спринт — закрыли

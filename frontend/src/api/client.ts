@@ -920,6 +920,75 @@ paymentOrderDelete: (payment_order_id: string) =>
       { method: "DELETE" },
     ),
 
+  // TASK-DEV-024 — product tags (эмодзи-палитра на nm_id)
+  productTagsList: () =>
+    request<{
+      items: Array<{
+        id: number;
+        emoji: string;
+        name: string;
+        color: string | null;
+        is_preset: boolean;
+        usage_count: number;
+      }>;
+    }>("/api/product-tags"),
+  productTagCreate: (body: { emoji: string; name: string; color?: string | null }) =>
+    request<{ id: number; emoji: string; name: string; color: string | null }>(
+      "/api/product-tags",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  productTagPatch: (
+    tag_id: number,
+    body: { emoji?: string; name?: string; color?: string | null },
+  ) =>
+    request(`/api/product-tags/${tag_id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  productTagDelete: (tag_id: number) =>
+    request(`/api/product-tags/${tag_id}`, { method: "DELETE" }),
+  productSkuTagsGet: (nm_id: number) =>
+    request<{ nm_id: number; tag_ids: number[] }>(
+      `/api/products/${nm_id}/tags`,
+    ),
+  productSkuTagsSet: (nm_id: number, tag_ids: number[]) =>
+    request<{ nm_id: number; tag_ids: number[] }>(
+      `/api/products/${nm_id}/tags`,
+      { method: "PUT", body: JSON.stringify({ tag_ids }) },
+    ),
+
+  // TASK-LEAD-025 — funnel views→cart→order→buyout per-SKU
+  funnelBySku: (days: number = 14) =>
+    request<{
+      days: number;
+      from: string;
+      to: string;
+      items: Array<{
+        nm_id: number;
+        vendor_code: string | null;
+        subject: string | null;
+        brand: string | null;
+        views: number;
+        atbs: number;
+        orders: number;
+        buyouts: number;
+        ctr_pct: number;
+        cart_rate_pct: number;
+        buyout_rate_pct: number;
+        weakest_step: "views→cart" | "cart→order" | "order→buyout";
+      }>;
+      totals: {
+        views: number;
+        atbs: number;
+        orders: number;
+        buyouts: number;
+        ctr_pct: number;
+        cart_rate_pct: number;
+        buyout_rate_pct: number;
+        overall_conv_pct: number;
+      };
+    }>(`/api/funnel/by-sku?days=${days}`),
+
   pnlReconciliation: (weeks = 12, diff_threshold_pct = 1.0) =>
     request<{
       weeks_back: number;

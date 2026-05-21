@@ -25,6 +25,7 @@ from app.api import (
     extension_lk_jobs,
     external_ad_costs,
     features_doc,
+    funnel,
     jam,
     managers_kpi,
     metric_templates,
@@ -34,6 +35,7 @@ from app.api import (
     plans,
     pnl,
     product_groups,
+    product_tags,
     products,
     reconciliation_4way,
     redistribution,
@@ -207,6 +209,7 @@ app.include_router(wb_token.router)
 app.include_router(excel.router)
 app.include_router(off_platform.router)
 app.include_router(product_groups.router)
+app.include_router(product_tags.router)
 app.include_router(audit.router)
 app.include_router(auth_api.router)
 app.include_router(users.router)
@@ -222,6 +225,7 @@ app.include_router(supplies.router)
 app.include_router(checklist.router)
 app.include_router(season_plan.router)
 app.include_router(jam.router)
+app.include_router(funnel.router)
 app.include_router(sync_status.router)
 app.include_router(features_doc.router)
 app.include_router(abtest.router)
