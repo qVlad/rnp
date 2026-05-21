@@ -1206,14 +1206,24 @@ function UnitPlanDesktop() {
       return raw ? (JSON.parse(raw).stockoutMaxDays ?? "") : "";
     } catch { return ""; }
   });
+  // TASK-DEV-022: AND / OR комбинатор. Default AND — обратная совместимость
+  // с поведением до 0.x. "ИЛИ" нужно когда РОП ищет SKU попадающие под любую
+  // из проблем (маржа<5% ИЛИ дней до стокаута<7).
+  const [quickFilterMode, setQuickFilterMode] = useState<"and" | "or">(() => {
+    try {
+      const raw = localStorage.getItem(QUICK_FILTERS_KEY);
+      const v = raw ? JSON.parse(raw).mode : null;
+      return v === "or" ? "or" : "and";
+    } catch { return "and"; }
+  });
   useEffect(() => {
     try {
       localStorage.setItem(
         QUICK_FILTERS_KEY,
-        JSON.stringify({ marginMaxPct, roiMaxPct, stockoutMaxDays }),
+        JSON.stringify({ marginMaxPct, roiMaxPct, stockoutMaxDays, mode: quickFilterMode }),
       );
     } catch {}
-  }, [marginMaxPct, roiMaxPct, stockoutMaxDays]);
+  }, [marginMaxPct, roiMaxPct, stockoutMaxDays, quickFilterMode]);
   const clearQuickFilters = () => {
     setMarginMaxPct("");
     setRoiMaxPct("");
@@ -1426,23 +1436,25 @@ function UnitPlanDesktop() {
       ? null : Number(roiMaxPct) / 100;
     const stockoutThreshold = stockoutMaxDays.trim() === ""
       ? null : Number(stockoutMaxDays);
+    const checks: Array<(r: UnitPlanRow) => boolean> = [];
     if (marginThreshold != null && !Number.isNaN(marginThreshold)) {
-      rows = rows.filter(
-        (r) => r.margin_pct != null && r.margin_pct < marginThreshold,
-      );
+      checks.push((r) => r.margin_pct != null && r.margin_pct < marginThreshold);
     }
     if (roiThreshold != null && !Number.isNaN(roiThreshold)) {
-      rows = rows.filter(
-        (r) => r.roi_pct != null && r.roi_pct < roiThreshold,
-      );
+      checks.push((r) => r.roi_pct != null && r.roi_pct < roiThreshold);
     }
     if (stockoutThreshold != null && !Number.isNaN(stockoutThreshold)) {
-      rows = rows.filter(
+      checks.push(
         (r) => r.days_to_stockout != null && r.days_to_stockout < stockoutThreshold,
       );
     }
+    if (checks.length > 0) {
+      rows = quickFilterMode === "or"
+        ? rows.filter((r) => checks.some((fn) => fn(r)))
+        : rows.filter((r) => checks.every((fn) => fn(r)));
+    }
     return rows;
-  }, [data, search, marginMaxPct, roiMaxPct, stockoutMaxDays, matchSkuTag]);
+  }, [data, search, marginMaxPct, roiMaxPct, stockoutMaxDays, quickFilterMode, matchSkuTag]);
 
   const quickFilterActive =
     marginMaxPct.trim() !== "" ||
@@ -1616,6 +1628,30 @@ function UnitPlanDesktop() {
             title="Показать SKU которые закончатся быстрее N дней"
           />
         </label>
+        <div
+          className="flex items-center gap-1 text-xs"
+          title="Объединять условия через И (все одновременно) или ИЛИ (хотя бы одно)"
+        >
+          <span className="text-muted">Объединить:</span>
+          <button
+            type="button"
+            onClick={() => setQuickFilterMode("and")}
+            className={`btn text-xs px-2 py-0.5 ${
+              quickFilterMode === "and" ? "bg-accent text-white" : ""
+            }`}
+          >
+            И
+          </button>
+          <button
+            type="button"
+            onClick={() => setQuickFilterMode("or")}
+            className={`btn text-xs px-2 py-0.5 ${
+              quickFilterMode === "or" ? "bg-accent text-white" : ""
+            }`}
+          >
+            ИЛИ
+          </button>
+        </div>
         {quickFilterActive && (
           <button
             type="button"
@@ -1628,7 +1664,8 @@ function UnitPlanDesktop() {
         )}
         {quickFilterActive && (
           <span className="text-xs text-warning">
-            Активен фильтр: показано {items.length} из {data?.items.length ?? 0} SKU
+            {quickFilterMode === "or" ? "Любое условие" : "Все условия"}: подсвечено{" "}
+            {items.length} из {data?.items.length ?? 0} SKU
           </span>
         )}
       </div>

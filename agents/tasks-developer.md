@@ -167,12 +167,15 @@
   добавлен в Layout. Здесь — расширение: на Dashboard для manager —
   карточка «Ваши планы» с прогрессом по каждому SKU/группе из его scope.
 - **Критерии готовности:**
-  - [ ] Компонент `ManagerPlanProgressCard` рендерится только для
-        `user.role === "manager"`
-  - [ ] Использует `api.planFact()` с фильтром по своим nm_id
-  - [ ] Цветная полоска прогресса (зелён/жёлт/красн) — visually scannable
+  - [x] Компонент `ManagerPlanProgressCard` рендерится только для
+        `user.role === "manager"` (`Dashboard.tsx:128`)
+  - [x] Использует `api.planFact(year, month)` — backend сам отфильтровывает
+        планы по brand_assignments менеджера, store-scope drop'ятся
+  - [x] Цветная полоска прогресса: ≥90% зелёная / 60-89% жёлтая / <60%
+        красная (`pctColor` helper), топ-5 планов по `sales_revenue.plan` DESC,
+        empty-state ведёт на `/plans`
 - **Зависимости:** TASK-DEV-001 (managers-kpi backend пригодится)
-- **Статус:** Открыта
+- **Статус:** ✅ Закрыта 2026-05-21 (`components/ManagerPlanProgressCard.tsx`, подключён в `Dashboard.tsx`)
 
 ---
 
@@ -538,12 +541,12 @@
 - **Описание:** Сейчас quick-filters AND-объединены. Добавить toggle
   «AND / OR» рядом с фильтрами. Persist в `unit-plan.quick-filters.v1`.
 - **Критерии готовности:**
-  - [ ] Радио-кнопка «И / ИЛИ» рядом с фильтрами
-  - [ ] OR-логика: row подсвечен если ХОТЬ ОДНО условие истинно
-  - [ ] Counter «N из M подсвечено» рядом — чтобы видеть охват
-  - [ ] Default — AND (обратная совместимость)
+  - [x] Toggle И / ИЛИ (2 chip-кнопки, active = accent-bg) рядом с фильтрами
+  - [x] OR-логика через `checks.some(fn => fn(r))`; AND через `checks.every(...)`
+  - [x] Counter `"{Любое условие|Все условия}: подсвечено N из M SKU"`
+  - [x] Default — `"and"` (persist в `unit-plan.quick-filters.v1.mode`)
 - **Зависимости:** TASK-DEV-004
-- **Статус:** Открыта
+- **Статус:** ✅ Закрыта 2026-05-21 (`UnitPlan.tsx`: добавлен `quickFilterMode` state с persist, логика фильтрации через массив checks + .some/.every, UI И/ИЛИ chip-toggle)
 
 ---
 
