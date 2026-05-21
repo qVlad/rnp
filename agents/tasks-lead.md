@@ -1482,8 +1482,9 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] RBAC соблюдается per-tenant (manager в A не видит данные B)
   - [ ] FEATURES.md обновлён
   - [ ] CLAUDE.md обновлён (новая миграция в таблице)
-- **Зависимости:** TASK-LEAD-040 (bookkeeper-role) — параллельно, но multi-cabinet важнее
-- **Статус:** Открыта
+- **Зависимости:** TASK-LEAD-040 ✅ (bookkeeper-role в Role enum)
+- **Lead-спека готова:** `agents/references/spec-multi-cabinet-039.md` — детальная архитектурная спека на 3 фазы (B backend ~5д / C frontend ~3-5д / D cleanup). Sub-agent backend Фазы B может стартовать сразу со спекой.
+- **Статус:** Открыта (Lead-спека готова — TASK-LEAD-048 «039 Фаза B backend» можно завести и запустить sub-agent'ом)
 
 ---
 
