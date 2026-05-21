@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtNum } from "@/lib/format";
+import { useTagFilter } from "@/lib/useTagFilter";
+import TagFilterDropdown from "@/components/TagFilterDropdown";
 
 const URGENCY_STYLE: Record<string, { label: string; color: string }> = {
   critical: { label: "Критично", color: "bg-red-700/40 text-red-200" },
@@ -93,10 +95,14 @@ export default function Supply() {
   const brandMatches = (it: any, b: string) =>
     b === NO_BRAND ? !it.brand : it.brand === b;
 
+  // TASK-DEV-024 follow-up: фильтр по тегу.
+  const { matchTag: matchSkuTag } = useTagFilter("supply.tag-filter.v1");
+
   const items = (q.data?.items ?? []).filter(
     (it: any) =>
       (!filter || it.urgency === filter) &&
-      (!brandFilter || brandMatches(it, brandFilter)),
+      (!brandFilter || brandMatches(it, brandFilter)) &&
+      matchSkuTag(it.nm_id),
   );
   // Если выбран бренд — пересчитываем сводку client-side из brand-only items
   // (без учёта urgency-фильтра, чтобы карточки урагентности оставались точными).
@@ -269,29 +275,32 @@ export default function Supply() {
         </div>
       </div>
 
-      {brands.length > 1 && (
-        <div className="flex items-center gap-2 flex-wrap text-sm">
-          <span className="text-xs text-muted">Бренд:</span>
-          <button
-            type="button"
-            className={`btn text-xs ${brandFilter === "" ? "border-accent text-accent" : ""}`}
-            onClick={() => setBrandFilter("")}
-          >
-            Все ({brands.length})
-          </button>
-          {brands.map((b) => (
+      <div className="flex items-center gap-2 flex-wrap text-sm">
+        {brands.length > 1 && (
+          <>
+            <span className="text-xs text-muted">Бренд:</span>
             <button
-              key={b}
               type="button"
-              className={`btn text-xs ${brandFilter === b ? "border-accent text-accent" : ""}`}
-              onClick={() => setBrandFilter(brandFilter === b ? "" : b)}
-              title={b === NO_BRAND ? "SKU без проставленного бренда в карточке" : b}
+              className={`btn text-xs ${brandFilter === "" ? "border-accent text-accent" : ""}`}
+              onClick={() => setBrandFilter("")}
             >
-              {b === NO_BRAND ? "Без бренда" : b}
+              Все ({brands.length})
             </button>
-          ))}
-        </div>
-      )}
+            {brands.map((b) => (
+              <button
+                key={b}
+                type="button"
+                className={`btn text-xs ${brandFilter === b ? "border-accent text-accent" : ""}`}
+                onClick={() => setBrandFilter(brandFilter === b ? "" : b)}
+                title={b === NO_BRAND ? "SKU без проставленного бренда в карточке" : b}
+              >
+                {b === NO_BRAND ? "Без бренда" : b}
+              </button>
+            ))}
+          </>
+        )}
+        <TagFilterDropdown storageKey="supply.tag-filter.v1" className="ml-auto" />
+      </div>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         {(["critical", "warning", "ok", "no_sales"] as const).map((k) => {

@@ -89,6 +89,10 @@ DEFAULT_THRESHOLDS = {
     "revenue_dip_dod_pct": 30.0,  # выручка сегодня vs вчера: алерт если -30% и больше
     "turnover_drop_wow_pct": 25.0,  # заказов на этой неделе vs прошлой: алерт -25%
     "new_sku_no_sales_days": 14.0,  # SKU старше N дней без единой продажи = не зашёл
+    # TASK-LEAD-026 — statistical outlier detection (z-score / IQR).
+    # Tunable: понизить z_threshold → больше алертов / повысить → реже.
+    "outlier_z_threshold": 2.0,
+    "outlier_iqr_multiplier": 1.5,
 }
 
 
@@ -685,7 +689,12 @@ async def collect_alerts(
     if brands is None:
         try:
             from app.services.anomaly_statistical import detect_outliers  # noqa: WPS433
-            stat_alerts = await detect_outliers(session, brands=brands)
+            stat_alerts = await detect_outliers(
+                session,
+                brands=brands,
+                z_threshold=float(th.get("outlier_z_threshold", 2.0)),
+                iqr_multiplier=float(th.get("outlier_iqr_multiplier", 1.5)),
+            )
             alerts.extend(stat_alerts)
         except Exception as e:  # noqa: BLE001
             # Stat-детектор не должен валить весь endpoint

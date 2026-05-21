@@ -46,6 +46,31 @@ class TagPatch(BaseModel):
     color: str | None = Field(default=None, max_length=16)
 
 
+@router.get("/product-tags/assignments")
+async def list_assignments(
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
+) -> dict:
+    """Map nm_id → tag_ids[] для header-фильтра в Units / Unit-Plan / Supply.
+
+    Возвращает только SKU из brand-scope (manager — свои). Большие тенанты
+    (>10k SKU) → размер payload ~100KB JSON. Можно кешировать в TanStack
+    на 5 мин — теги меняются не каждую минуту.
+    """
+    q = select(ProductTagAssignment.nm_id, ProductTagAssignment.tag_id)
+    if brands is not None:
+        q = q.where(
+            ProductTagAssignment.nm_id.in_(
+                select(Product.nm_id).where(Product.brand.in_(list(brands)))
+            )
+        )
+    rows = (await session.execute(q)).all()
+    by_nm: dict[int, list[int]] = {}
+    for nm_id, tag_id in rows:
+        by_nm.setdefault(int(nm_id), []).append(int(tag_id))
+    return {"by_nm": by_nm}
+
+
 @router.get("/product-tags")
 async def list_tags(
     session: AsyncSession = Depends(get_db_tenant_scoped),

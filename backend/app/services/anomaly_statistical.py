@@ -32,7 +32,7 @@ from typing import Any
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import WbReportDetail
+from app.db.models import WbAdStatsDaily, WbOrder, WbReportDetail
 from app.services.period_aggregates import (
     OP_RETURN,
     OP_SALE,
@@ -177,4 +177,189 @@ async def detect_outliers(
                     }
                 )
 
+    # ── DRR-детектор ────────────────────────────────────────────────────
+    # DRR = ad_spent / revenue. Per-day из wb_ad_stats_daily / wb_report_detail.
+    # Aномалия: DRR резко вырос (реклама сжигает выручку). Прирост важнее
+    # снижения — здесь не оба хвоста, а только верхний.
+    drr_alerts = await _detect_drr_outlier(
+        session, window_start, observation_day, z_threshold, iqr_multiplier
+    )
+    alerts.extend(drr_alerts)
+
+    # ── Buyout-детектор ─────────────────────────────────────────────────
+    # Выкуп = выкуплено / заказано. Снижение — алерт; рост (>100% от outliers)
+    # обычно не критичен (хорошо ведь).
+    buyout_alerts = await _detect_buyout_outlier(
+        session, window_start, observation_day, z_threshold, iqr_multiplier
+    )
+    alerts.extend(buyout_alerts)
+
+    return alerts
+
+
+async def _detect_drr_outlier(
+    session: AsyncSession,
+    window_start: date,
+    observation_day: date,
+    z_threshold: float,
+    iqr_multiplier: float,
+) -> list[dict[str, Any]]:
+    """Per-day DRR = sum(ad_spent) / sum(orders_revenue) × 100.
+
+    Источники:
+      - ad_spent: WbAdStatsDaily.sum_spent
+      - orders_revenue: WbOrder.total_price * (1 - discount_percent/100)
+        для is_cancel=False
+
+    Алертит ТОЛЬКО при росте DRR (z > +threshold) — снижение это хорошо.
+    """
+    alerts: list[dict[str, Any]] = []
+
+    # Ad spent per day
+    ad_stmt = (
+        select(
+            WbAdStatsDaily.stat_date.label("d"),
+            func.sum(WbAdStatsDaily.sum_spent).label("spent"),
+        )
+        .where(
+            WbAdStatsDaily.stat_date >= window_start,
+            WbAdStatsDaily.stat_date <= observation_day,
+        )
+        .group_by(WbAdStatsDaily.stat_date)
+    )
+    spent_by_day = {
+        r.d: float(r.spent or 0) for r in (await session.execute(ad_stmt)).all()
+    }
+
+    # Orders revenue per day (priceWithDisc proxy: total_price * (1 - disc/100))
+    # order_dt — DateTime, конвертируем в date через func.date()
+    order_day = func.date(WbOrder.order_dt).label("d")
+    ord_stmt = (
+        select(
+            order_day,
+            func.sum(
+                WbOrder.total_price * (1 - WbOrder.discount_percent / 100.0)
+            ).label("rev"),
+        )
+        .where(
+            func.date(WbOrder.order_dt) >= window_start,
+            func.date(WbOrder.order_dt) <= observation_day,
+            WbOrder.is_cancel.is_(False),
+        )
+        .group_by(order_day)
+    )
+    rev_by_day = {
+        r.d: float(r.rev or 0) for r in (await session.execute(ord_stmt)).all()
+    }
+
+    drr_by_day: dict[date, float] = {}
+    for d in set(spent_by_day) | set(rev_by_day):
+        s = spent_by_day.get(d, 0.0)
+        r = rev_by_day.get(d, 0.0)
+        if r > 0:
+            drr_by_day[d] = (s / r) * 100
+
+    days = sorted(drr_by_day.keys())
+    if observation_day not in drr_by_day or len(days) < 14:
+        return alerts  # недостаточно данных
+
+    history = [drr_by_day[d] for d in days if d < observation_day]
+    current = drr_by_day[observation_day]
+    mean, std = _basic_stats(history)
+    z = _z_score(current, mean, std)
+    if z is not None and z > z_threshold:  # только верхний хвост
+        level = "danger" if z > 3 else "warning"
+        alerts.append(
+            {
+                "level": level,
+                "code": "drr_outlier_z",
+                "message": (
+                    f"ДРР за {observation_day.isoformat()}: {current:.1f}% — "
+                    f"выше 28-дневного среднего ({mean:.1f}%) на {z:.1f}σ. "
+                    f"Реклама стала жечь выручку. Проверь /ads — конкретно "
+                    f"какие кампании выросли в расходах."
+                ),
+            }
+        )
+    return alerts
+
+
+async def _detect_buyout_outlier(
+    session: AsyncSession,
+    window_start: date,
+    observation_day: date,
+    z_threshold: float,
+    iqr_multiplier: float,
+) -> list[dict[str, Any]]:
+    """Per-day buyout-rate (упрощённо): продажи / заказы × 100. Алертит
+    ТОЛЬКО при падении (z < -threshold) — рост не критичен."""
+    alerts: list[dict[str, Any]] = []
+
+    # Заказы per day (order_dt — DateTime, конвертируем в date)
+    order_day = func.date(WbOrder.order_dt).label("d")
+    ord_stmt = (
+        select(
+            order_day,
+            func.count(WbOrder.srid).label("orders"),
+        )
+        .where(
+            func.date(WbOrder.order_dt) >= window_start,
+            func.date(WbOrder.order_dt) <= observation_day,
+            WbOrder.is_cancel.is_(False),
+        )
+        .group_by(order_day)
+    )
+    orders_by_day = {
+        r.d: int(r.orders or 0) for r in (await session.execute(ord_stmt)).all()
+    }
+
+    # Продажи (выкупы) per sale_dt из wb_report_detail (final)
+    sale_stmt = (
+        select(
+            WbReportDetail.sale_dt.label("d"),
+            func.sum(
+                case(
+                    (WbReportDetail.supplier_oper_name == OP_SALE, 1),
+                    (WbReportDetail.supplier_oper_name == OP_RETURN, -1),
+                    else_=0,
+                )
+            ).label("sales"),
+        )
+        .where(sale_dt_filter(window_start, observation_day))
+        .group_by(WbReportDetail.sale_dt)
+    )
+    sales_by_day = {
+        r.d: max(int(r.sales or 0), 0)
+        for r in (await session.execute(sale_stmt)).all()
+    }
+
+    buyout_by_day: dict[date, float] = {}
+    for d in orders_by_day:
+        ord_n = orders_by_day[d]
+        sale_n = sales_by_day.get(d, 0)
+        if ord_n > 0:
+            buyout_by_day[d] = (sale_n / ord_n) * 100
+
+    days = sorted(buyout_by_day.keys())
+    if observation_day not in buyout_by_day or len(days) < 14:
+        return alerts
+
+    history = [buyout_by_day[d] for d in days if d < observation_day]
+    current = buyout_by_day[observation_day]
+    mean, std = _basic_stats(history)
+    z = _z_score(current, mean, std)
+    if z is not None and z < -z_threshold:  # только нижний хвост
+        level = "danger" if z < -3 else "warning"
+        alerts.append(
+            {
+                "level": level,
+                "code": "buyout_outlier_z",
+                "message": (
+                    f"Выкуп за {observation_day.isoformat()}: {current:.1f}% — "
+                    f"ниже 28-дневного среднего ({mean:.1f}%) на {abs(z):.1f}σ. "
+                    f"SKU стали возвращать чаще. Проверь /units → сортировка "
+                    f"по выкупу возрастанию."
+                ),
+            }
+        )
     return alerts

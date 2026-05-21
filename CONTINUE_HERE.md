@@ -37,6 +37,52 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## 2026-05-21 — **Архитектурный долг Sprint+2: 4 closures** (v0.13.1)
+
+Закрыли 4 пункта тех-долга после выкатки Sprint+2 batch-2:
+
+- **Header-фильтр по тегам** (продолжение TASK-DEV-024) в `/supply`,
+  `/units`, `/unit-plan`. Новый endpoint `GET /api/product-tags/assignments`
+  возвращает map `nm_id → tag_ids[]` (brand-scope respected). Frontend
+  переиспользуемый hook `useTagFilter(storageKey)` + компонент
+  `TagFilterDropdown` подключены во все 3 страницы. Persist в localStorage
+  per-page: `supply.tag-filter.v1`, `units.tag-filter.v1`, `unit-plan.tag-filter.v1`.
+- **DRR + buyout outlier-детекторы** (расширение TASK-LEAD-026).
+  `anomaly_statistical.py:_detect_drr_outlier` — z-score только на ВЕРХНЕМ
+  хвосте (рост DRR алертит, снижение — нет). `_detect_buyout_outlier` — на
+  НИЖНЕМ хвосте (падение выкупа — алерт, рост — норма). Источник: DRR =
+  sum(`WbAdStatsDaily.sum_spent`) / sum(`WbOrder.total_price × (1 - disc%)`)
+  per-day. Buyout = sum(rd_sales − rd_returns) / count(orders) per-day.
+- **AppSetting-tuning** `outlier_z_threshold` (default 2.0) и
+  `outlier_iqr_multiplier` (default 1.5) — добавлены в `DEFAULT_THRESHOLDS`
+  в `anomaly.py`. `_thresholds()` уже подгружал их через AppSetting →
+  готово к настройке per-tenant. detect_outliers принимает эти params.
+- **RULES.md § Правило 2.8** «Claim перед правкой» — расписан полный
+  workflow `scripts/claim.sh acquire/release/break-stale` и связь с
+  другими уровнями координации (Tasks, Claims, Deploy, Version).
+
+**Изменённые файлы:**
+- `backend/app/services/anomaly_statistical.py` — DRR + buyout детекторы
+- `backend/app/services/anomaly.py` — 2 новых порога в DEFAULT_THRESHOLDS,
+  передача z_threshold/iqr_multiplier в detect_outliers
+- `backend/app/api/product_tags.py` — endpoint `/api/product-tags/assignments`
+- `frontend/src/api/client.ts` — `productTagsAssignments`
+- `frontend/src/lib/useTagFilter.ts` (new) — reusable hook
+- `frontend/src/components/TagFilterDropdown.tsx` (new) — UI dropdown
+- `frontend/src/pages/Supply.tsx` + `Units.tsx` + `UnitPlan.tsx` —
+  подключение `useTagFilter` + рендер `TagFilterDropdown`
+- `agents/RULES.md` — Правило 2.8 (75 строк)
+- backend/pyproject.toml + frontend/package.json + extension/package.json +
+  VERSION — 0.13.0 → 0.13.1 patch (improvements over 5 new features)
+
+**Что в следующих сессиях:**
+- Per-tenant SETTINGS UI для `outlier_z_threshold` / `outlier_iqr_multiplier`
+  (сейчас только через DB)
+- per-brand outlier-детекторы (сейчас на tenant-уровне)
+- TASK-DEV-014 supply→TG, TASK-DEV-017 plan edit requests
+
+---
+
 ## 2026-05-21 — **Sprint+2 batch-2: 5 задач из Lead/Strategist плана** (v0.12.0)
 
 Закрыли 5 задач из backlog'а единым коммитом (миграция 0052 + 2 новых

@@ -55,6 +55,8 @@ import PageHeader from "@/components/PageHeader";
 import { UnitPlanDrillDrawer } from "@/components/UnitPlanDrillDrawer";
 import { UnitPlanSnapshotsDrawer } from "@/components/UnitPlanSnapshotsDrawer";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
+import { useTagFilter } from "@/lib/useTagFilter";
+import TagFilterDropdown from "@/components/TagFilterDropdown";
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local helpers
@@ -1396,7 +1398,10 @@ function UnitPlanDesktop() {
   const config = configQ.data;
   const isMock = data === MOCK_RESPONSE;
 
-  // ── Filter rows client-side by search + quick-filters ──
+  // TASK-DEV-024 follow-up: header-фильтр по тегам.
+  const { matchTag: matchSkuTag } = useTagFilter("unit-plan.tag-filter.v1");
+
+  // ── Filter rows client-side by search + quick-filters + tag ──
   const items = useMemo(() => {
     if (!data) return [];
     let rows = data.items;
@@ -1410,6 +1415,9 @@ function UnitPlanDesktop() {
           (r.brand || "").toLowerCase().includes(q),
       );
     }
+    // Tag filter (TASK-DEV-024 follow-up). Применяется первым из server-side
+    // фильтров — обычно режет выборку сильнее всего.
+    rows = rows.filter((r) => matchSkuTag(r.nm_id));
     // Quick filters — TASK-DEV-004: сравниваем margin/roi (в долях) с
     // вводом пользователя (%). 5 в input = 0.05 в данных.
     const marginThreshold = marginMaxPct.trim() === ""
@@ -1434,7 +1442,7 @@ function UnitPlanDesktop() {
       );
     }
     return rows;
-  }, [data, search, marginMaxPct, roiMaxPct, stockoutMaxDays]);
+  }, [data, search, marginMaxPct, roiMaxPct, stockoutMaxDays, matchSkuTag]);
 
   const quickFilterActive =
     marginMaxPct.trim() !== "" ||
@@ -1633,6 +1641,7 @@ function UnitPlanDesktop() {
           onChange={(e) => setSearch(e.target.value)}
           className="input w-72 text-sm"
         />
+        <TagFilterDropdown storageKey="unit-plan.tag-filter.v1" />
         <select
           className="input text-sm"
           value={filters.warehouse || ""}

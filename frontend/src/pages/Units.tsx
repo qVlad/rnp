@@ -15,7 +15,9 @@ import { api } from "@/api/client";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import { DndTableProvider, SortableHeader } from "@/components/DraggableHeader";
 import { Icon } from "@/components/Icon";
+import TagFilterDropdown from "@/components/TagFilterDropdown";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
+import { useTagFilter } from "@/lib/useTagFilter";
 
 const COL_VIS_KEY = "units.columnVisibility.v2";
 const COL_ORDER_KEY = "units.columnOrder.v1";
@@ -317,6 +319,9 @@ export default function Units() {
     }
   }, [brands, brandFilter]);
 
+  // TASK-DEV-024 follow-up: header-фильтр по тегам.
+  const { matchTag } = useTagFilter("units.tag-filter.v1");
+
   const filtered = useMemo(() => {
     if (!d) return [];
     const s = filter.trim().toLowerCase();
@@ -328,8 +333,8 @@ export default function Units() {
     const matchBrand = (r: UnitRow) =>
       !brandFilter ||
       (brandFilter === UNITS_NO_BRAND ? !r.brand : r.brand === brandFilter);
-    return d.items.filter((r) => matchSearch(r) && matchBrand(r));
-  }, [d, filter, brandFilter]);
+    return d.items.filter((r) => matchSearch(r) && matchBrand(r) && matchTag(r.nm_id));
+  }, [d, filter, brandFilter, matchTag]);
 
   // ИТОГО — по отфильтрованным.
   const totals = useMemo(() => {
@@ -718,6 +723,7 @@ export default function Units() {
               ))}
             </select>
           )}
+          <TagFilterDropdown storageKey="units.tag-filter.v1" />
           <label className="flex items-center gap-2 text-xs text-muted self-center">
             <input
               type="checkbox"

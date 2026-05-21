@@ -921,6 +921,11 @@ paymentOrderDelete: (payment_order_id: string) =>
     ),
 
   // TASK-DEV-024 — product tags (эмодзи-палитра на nm_id)
+  // Map nm_id → tag_ids[] для header-фильтров (Units / Unit-Plan / Supply)
+  productTagsAssignments: () =>
+    request<{ by_nm: Record<string, number[]> }>(
+      "/api/product-tags/assignments",
+    ),
   productTagsList: () =>
     request<{
       items: Array<{
