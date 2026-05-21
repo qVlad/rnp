@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtNum } from "@/lib/format";
 import { useTagFilter } from "@/lib/useTagFilter";
@@ -150,6 +150,20 @@ export default function Supply() {
    * Колонки согласованы с РОПом из ревью c8f6609: то что нужно для импорта
    * заказа в 1С — артикул, бренд, остаток, к отгрузке.
    */
+  // TASK-DEV-014 — отправка заявки директору в Telegram
+  const [tgMsg, setTgMsg] = useState<string | null>(null);
+  const sendTgMut = useMutation({
+    mutationFn: () => api.supplySendRecommendations(velWin, target, warning),
+    onSuccess: (data) => {
+      setTgMsg(`✓ Отправлено директору. SKU в заявке: ${data.items_count}`);
+      setTimeout(() => setTgMsg(null), 6000);
+    },
+    onError: (e: any) => {
+      setTgMsg(`✗ ${e?.message || "Ошибка отправки"}`);
+      setTimeout(() => setTgMsg(null), 8000);
+    },
+  });
+
   const exportToCsv = () => {
     const headers = [
       "Артикул WB (nm_id)",
@@ -362,6 +376,22 @@ export default function Supply() {
             >
               📥 Экспорт CSV ({items.length})
             </button>
+            <button
+              type="button"
+              onClick={() => sendTgMut.mutate()}
+              disabled={items.length === 0 || sendTgMut.isPending}
+              className="btn text-xs ml-2"
+              title="Отправить заявку директору в Telegram (рейт-лимит 1 раз в час). TASK-DEV-014."
+            >
+              📨 {sendTgMut.isPending ? "Отправка…" : "Отправить директору"}
+            </button>
+            {tgMsg && (
+              <span
+                className={`ml-3 text-xs ${tgMsg.startsWith("✓") ? "text-success" : "text-red-400"}`}
+              >
+                {tgMsg}
+              </span>
+            )}
           </span>
           <span className="text-xs text-muted">{items.length} SKU показано</span>
         </div>

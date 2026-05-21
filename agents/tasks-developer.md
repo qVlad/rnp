@@ -353,12 +353,21 @@
   форматирует Markdown-таблицу и шлёт через TG bot всем `director` тенанта
   + author manager'у как preview. Audit log событие.
 - **Критерии готовности:**
-  - [ ] Backend: новый endpoint, использует `services/notifications` или bot helper
-  - [ ] Сообщение содержит ФИО менеджера + дату + 5-10 топ строк
-  - [ ] Подтверждение «Отправлено директору X» с возможностью повторить через 10 мин
-  - [ ] Rate limit: 1/час на manager'а
+  - [x] Backend: `api/supply_send.py:send_recommendations` использует
+        `integrations/telegram.send_message` и `services/forecast.build_stockout_forecast`
+        (тот же источник что UI — 1:1 цифры)
+  - [x] Сообщение HTML-форматированное: ФИО + role-tag + topN=12 SKU
+        (urgency-emoji + остаток + дни до 0 + к отгрузке) + total
+  - [x] Frontend: «📨 Отправить директору» рядом с CSV-кнопкой,
+        toast-плашка с «✓ Отправлено директору» / «✗ ошибка». Auto-dismiss 6 sec.
+  - [x] Rate limit: Redis `supply_send:{tenant}:{user}` TTL=3600 (1ч).
+        Fail-open если Redis недоступен. На 429 — детализированный
+        message «подождите N мин»
+  - [x] Получатель: `AppSetting.tg_chat_id` тенанта (single-recipient MVP).
+        Multi-director через user.tg_chat_id mapping — follow-up
+  - [x] Audit log event `supply.send_recommendations` с items_count + total
 - **Зависимости:** Telegram bot (есть)
-- **Статус:** Открыта
+- **Статус:** ✅ Закрыта 2026-05-21
 
 ---
 
@@ -409,13 +418,24 @@
   + комментарий», шлёт в audit log (event_type=`plan_edit_request`) +
   notification в Telegram директорам.
 - **Критерии готовности:**
-  - [ ] Новая таблица `plan_edit_requests` (migration 0049) или audit_log
-        с особым event_type — обсудить с analytic'ом
-  - [ ] UI: модалка, indicate pending request в строке
-  - [ ] Notification: TG + (опц.) email
-  - [ ] Director может accept (= apply + log) или reject (= close)
-- **Зависимости:** Telegram bot
-- **Статус:** Открыта
+  - [x] Миграция **0053** `plan_edit_requests` (0049 был занят
+        alert_acknowledgements). Поля: plan_id, requested_by_user_id,
+        field_name, current_value snapshot, requested_value, comment,
+        status (pending/accepted/rejected), resolved_by, resolved_at,
+        resolution_note. Индексы по (tenant, status) + (plan_id).
+  - [x] Whitelist полей: `planned_orders_qty/revenue`,
+        `planned_sales_qty/revenue`, `planned_profit`, `planned_marketing_cost`.
+        Store-scope планы manager не правит (403).
+  - [x] UI: модалка с field-select + value + comment. Manager жмёт
+        «✎ Предложить правку» рядом с каждым планом.
+  - [x] Notification: TG в `AppSetting.tg_chat_id` тенанта с превью изменения
+        (HTML) + ссылкой на /plans
+  - [x] Director видит inbox-секцию сверху на /plans с заявками
+        (pending only, refetch каждую минуту). Accept = apply + audit_log
+        (`sales_plans.update` с comment `via plan_edit_request #N`) +
+        invalidate plans/plan-fact. Reject = требует note (prompt).
+- **Зависимости:** Telegram bot, миграция 0053
+- **Статус:** ✅ Закрыта 2026-05-21
 
 ---
 

@@ -37,6 +37,72 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## 2026-05-21 — **TASK-DEV-014 supply→TG + TASK-DEV-017 plan-edit-requests** (v0.14.0)
+
+Закрыли 2 последние P2 задачи из Sprint+2 backlog'а.
+
+### TASK-DEV-014 — Supply → Telegram заявка
+- Backend `api/supply_send.py:send_recommendations` собирает recommendation-
+  snapshot через `build_stockout_forecast` (1:1 с UI), форматирует HTML-таблицу
+  top-12 SKU по urgency и шлёт в `AppSetting.tg_chat_id` тенанта через
+  `integrations/telegram.send_message`.
+- Rate limit: Redis-ключ `supply_send:{tenant}:{user}` TTL=3600. На 429
+  возвращает «подождите N мин».
+- Audit log event `supply.send_recommendations` с items_count + total_qty.
+- Frontend `Supply.tsx`: кнопка «📨 Отправить директору» рядом с CSV-кнопкой.
+  Mutation с toast «✓ Отправлено директору. SKU в заявке: N» (auto-dismiss 6с).
+- TG-сообщение содержит ФИО отправителя + role + список urgency-emoji.
+
+### TASK-DEV-017 — Plan edit requests
+- Миграция **0053** `plan_edit_requests`: (plan_id, requested_by_user_id,
+  field_name, current_value, requested_value, comment, status, resolved_*).
+  Индексы по (tenant, status) + (plan_id).
+- Backend `api/plan_edit_requests.py`:
+  - `POST /api/plan-edit-requests` — manager создаёт заявку + TG-notify
+    директору с превью изменения.
+  - `GET /api/plan-edit-requests?status=pending` — director видит inbox.
+  - `POST /{id}/accept` — apply на SalesPlan + `audit_log("sales_plans","update")`
+    с comment `via plan_edit_request #N`. invalidate plans + plan-fact.
+  - `POST /{id}/reject` — обязательный `note`.
+- Whitelist полей: `planned_orders_qty/revenue`, `planned_sales_qty/revenue`,
+  `planned_profit`, `planned_marketing_cost`. Store-scope планы manager не
+  правит (403).
+- Frontend `Plans.tsx`:
+  - Manager: кнопка «✎ Предложить правку» рядом с каждым планом → модалка
+    (field-select dropdown + value input + comment textarea) → POST.
+  - Director: inbox-секция сверху с pending-заявками + Принять/Отклонить
+    (refetch каждую минуту через `refetchInterval`).
+- Reject через `window.prompt("Причина отказа")` — простой UX, follow-up
+  на модалку если будут жалобы.
+
+### Версия
+0.13.1 → 0.14.0 (minor — 2 feat).
+
+### Изменённые файлы
+- `backend/app/api/supply_send.py` (new)
+- `backend/app/api/plan_edit_requests.py` (new)
+- `backend/app/db/migrations/versions/0053_plan_edit_requests.py` (new)
+- `backend/app/db/models.py` — `PlanEditRequest` модель
+- `backend/app/main.py` — include 2 router'а
+- `frontend/src/api/client.ts` — 5 новых методов
+- `frontend/src/pages/Supply.tsx` — TG button + mutation
+- `frontend/src/pages/Plans.tsx` — modal + director inbox
+- CLAUDE.md, FEATURES.md, tasks-developer.md
+- 4 version-файла: 0.13.1 → 0.14.0
+
+### Архитектурный долг
+- Single-recipient в TG (только `AppSetting.tg_chat_id`) — мульти-director
+  через `user.tg_chat_id` mapping остаётся follow-up'ом
+- Reject через `prompt()` — UX не очень
+- В inbox-секции нет фильтра по plan_id / date
+
+### Что в следующих сессиях
+- ScheduledRoutines для weekly digest директорам (TG)
+- Polish UX: модалка reject вместо prompt
+- per-tenant SETTINGS UI для outlier_z_threshold / iqr_multiplier
+
+---
+
 ## 2026-05-21 — **Архитектурный долг Sprint+2: 4 closures** (v0.13.1)
 
 Закрыли 4 пункта тех-долга после выкатки Sprint+2 batch-2:

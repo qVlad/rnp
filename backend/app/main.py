@@ -32,6 +32,7 @@ from app.api import (
     notifications,
     off_platform,
     opex,
+    plan_edit_requests,
     plans,
     pnl,
     product_groups,
@@ -42,6 +43,7 @@ from app.api import (
     season_plan,
     settings,
     supplies,
+    supply_send,
     sync_status,
     tariffs,
     tax_report,
@@ -202,6 +204,7 @@ app.include_router(opex.router)
 app.include_router(cost_history.router)
 app.include_router(analytics.router)
 app.include_router(plans.router)
+app.include_router(plan_edit_requests.router)
 app.include_router(cash_flow.router)
 app.include_router(calc.router)
 app.include_router(products.router)
@@ -222,6 +225,7 @@ app.include_router(redistribution.router)
 app.include_router(tax_report.router)
 app.include_router(tariffs.router)
 app.include_router(supplies.router)
+app.include_router(supply_send.router)
 app.include_router(checklist.router)
 app.include_router(season_plan.router)
 app.include_router(jam.router)

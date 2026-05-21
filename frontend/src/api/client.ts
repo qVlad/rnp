@@ -921,6 +921,58 @@ paymentOrderDelete: (payment_order_id: string) =>
     ),
 
   // TASK-DEV-024 — product tags (эмодзи-палитра на nm_id)
+  // TASK-DEV-017 — Plan edit requests (manager → director)
+  planEditRequestCreate: (body: {
+    plan_id: number;
+    field_name: string;
+    requested_value: number;
+    comment?: string | null;
+  }) =>
+    request<{ id: number }>("/api/plan-edit-requests", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  planEditRequestList: (status: "pending" | "accepted" | "rejected" | "all" = "pending") =>
+    request<{
+      items: Array<{
+        id: number;
+        plan_id: number;
+        field_name: string;
+        current_value: number | null;
+        requested_value: number;
+        comment: string | null;
+        status: string;
+        created_at: string | null;
+        requested_by: string | null;
+        resolved_at: string | null;
+        resolved_by: string | null;
+        resolution_note: string | null;
+      }>;
+    }>(`/api/plan-edit-requests?status=${status}`),
+  planEditRequestAccept: (id: number) =>
+    request(`/api/plan-edit-requests/${id}/accept`, { method: "POST" }),
+  planEditRequestReject: (id: number, note: string) =>
+    request(`/api/plan-edit-requests/${id}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ note }),
+    }),
+
+  // TASK-DEV-014 — Send-to-Telegram заявки на закупку
+  supplySendRecommendations: (
+    velocity_window = 14,
+    target_days = 30,
+    warning_days = 7,
+  ) =>
+    request<{
+      ok: boolean;
+      sent_to_chat_id: string;
+      items_count: number;
+      next_allowed_in_sec: number;
+    }>(
+      `/api/supply/send-recommendations?velocity_window=${velocity_window}&target_days=${target_days}&warning_days=${warning_days}`,
+      { method: "POST" },
+    ),
+
   // Map nm_id → tag_ids[] для header-фильтров (Units / Unit-Plan / Supply)
   productTagsAssignments: () =>
     request<{ by_nm: Record<string, number[]> }>(

@@ -2280,3 +2280,45 @@ class ProductTagAssignment(Base, TenantScopedMixin):
             name="uq_product_tag_assignments_unique",
         ),
     )
+
+
+class PlanEditRequest(Base, TenantScopedMixin):
+    """Manager's request to edit a sales plan (TASK-DEV-017, миграция 0053).
+
+    Workflow:
+        pending → accepted (= apply + close) или rejected (= close с причиной)
+
+    `field_name` — какое поле SalesPlan менять (planned_orders_qty,
+    planned_sales_revenue, planned_profit, etc).
+    `current_value` snapshot at request-time (для аудита) — может разойтись
+    с актуальным если director параллельно редактирует.
+    """
+
+    __tablename__ = "plan_edit_requests"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    plan_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("sales_plans.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    requested_by_user_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
+    )
+    field_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    current_value: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
+    requested_value: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    comment: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending", server_default="pending"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    resolved_by_user_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="SET NULL"),
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolution_note: Mapped[str | None] = mapped_column(Text)

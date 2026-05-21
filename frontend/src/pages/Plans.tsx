@@ -43,6 +43,56 @@ export default function Plans() {
   const [form, setForm] = useState(blank());
   const [editingId, setEditingId] = useState<number | null>(null);
 
+  // TASK-DEV-017 — manager «предложить правку» + director accept/reject
+  const [editRequestFor, setEditRequestFor] = useState<number | null>(null);
+  const [editReqField, setEditReqField] = useState("planned_sales_revenue");
+  const [editReqValue, setEditReqValue] = useState("");
+  const [editReqComment, setEditReqComment] = useState("");
+  const [editReqMsg, setEditReqMsg] = useState<string | null>(null);
+  const requestsQ = useQuery({
+    queryKey: ["plan-edit-requests", "pending"],
+    queryFn: () => api.planEditRequestList("pending"),
+    enabled: canEdit,  // только director/head видит inbox
+    refetchInterval: 60_000,
+  });
+  const createReqMut = useMutation({
+    mutationFn: () =>
+      api.planEditRequestCreate({
+        plan_id: editRequestFor!,
+        field_name: editReqField,
+        requested_value: Number(editReqValue),
+        comment: editReqComment || null,
+      }),
+    onSuccess: () => {
+      setEditReqMsg("✓ Заявка отправлена директору");
+      setEditRequestFor(null);
+      setEditReqValue("");
+      setEditReqComment("");
+      setTimeout(() => setEditReqMsg(null), 5000);
+    },
+    onError: (e: any) => {
+      setEditReqMsg(`✗ ${e?.message || "Ошибка"}`);
+      setTimeout(() => setEditReqMsg(null), 8000);
+    },
+  });
+  const acceptReqMut = useMutation({
+    mutationFn: (id: number) => api.planEditRequestAccept(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["plan-edit-requests"] });
+      qc.invalidateQueries({ queryKey: ["plan-fact"] });
+      qc.invalidateQueries({ queryKey: ["plans"] });
+    },
+  });
+  const rejectReqMut = useMutation({
+    mutationFn: (id: number) => {
+      const note = prompt("Причина отказа (обязательно):") || "";
+      if (!note.trim()) throw new Error("Нужна причина");
+      return api.planEditRequestReject(id, note);
+    },
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["plan-edit-requests"] }),
+  });
+
   const plansQ = useQuery({
     queryKey: ["plans", year, month],
     queryFn: () => api.listPlans({ year, month }),
@@ -180,6 +230,119 @@ export default function Plans() {
 
   return (
     <div className="flex flex-col gap-4">
+      {editReqMsg && (
+        <div
+          className={`card text-sm ${editReqMsg.startsWith("✓") ? "text-success" : "text-red-400"}`}
+        >
+          {editReqMsg}
+        </div>
+      )}
+
+      {/* TASK-DEV-017: Director inbox — pending plan edit requests */}
+      {canEdit && (requestsQ.data?.items?.length ?? 0) > 0 && (
+        <div className="card border-l-[3px] border-l-warning">
+          <div className="font-medium text-sm mb-2">
+            📥 Заявки на правку планов ({requestsQ.data?.items.length})
+          </div>
+          <div className="flex flex-col gap-2">
+            {requestsQ.data?.items.map((r) => (
+              <div
+                key={r.id}
+                className="border-t border-border/40 first:border-t-0 pt-2 first:pt-0 text-xs flex items-baseline gap-3 flex-wrap"
+              >
+                <span className="text-muted">#{r.id}</span>
+                <span className="font-medium">{r.requested_by}</span>
+                <span>
+                  plan_id={r.plan_id} · <code>{r.field_name}</code>:{" "}
+                  {r.current_value ?? "—"} → <b>{r.requested_value}</b>
+                </span>
+                {r.comment && (
+                  <span className="text-muted">«{r.comment}»</span>
+                )}
+                <span className="ml-auto flex gap-1">
+                  <button
+                    className="btn text-xs text-success"
+                    onClick={() => acceptReqMut.mutate(r.id)}
+                    disabled={acceptReqMut.isPending}
+                    title="Принять — применить значение и закрыть"
+                  >
+                    ✓ Принять
+                  </button>
+                  <button
+                    className="btn text-xs text-red-400"
+                    onClick={() => rejectReqMut.mutate(r.id)}
+                    disabled={rejectReqMut.isPending}
+                    title="Отклонить с причиной"
+                  >
+                    ✕ Отклонить
+                  </button>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* TASK-DEV-017: Manager modal — предложить правку */}
+      {editRequestFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="card max-w-md w-full p-4 flex flex-col gap-3">
+            <div className="font-medium">
+              Предложить правку плана #{editRequestFor}
+            </div>
+            <label className="flex flex-col text-xs">
+              Поле
+              <select
+                value={editReqField}
+                onChange={(e) => setEditReqField(e.target.value)}
+                className="input mt-1"
+              >
+                <option value="planned_sales_revenue">Выручка (план)</option>
+                <option value="planned_sales_qty">Кол-во продаж (план)</option>
+                <option value="planned_orders_qty">Заказов (план)</option>
+                <option value="planned_orders_revenue">Выручка заказов (план)</option>
+                <option value="planned_profit">Прибыль (план)</option>
+                <option value="planned_marketing_cost">Маркетинг (план)</option>
+              </select>
+            </label>
+            <label className="flex flex-col text-xs">
+              Новое значение
+              <input
+                type="number"
+                value={editReqValue}
+                onChange={(e) => setEditReqValue(e.target.value)}
+                className="input mt-1"
+                placeholder="напр. 250000"
+              />
+            </label>
+            <label className="flex flex-col text-xs">
+              Комментарий (опционально)
+              <textarea
+                value={editReqComment}
+                onChange={(e) => setEditReqComment(e.target.value)}
+                className="input mt-1 h-20"
+                placeholder="Почему предлагаете изменить?"
+              />
+            </label>
+            <div className="flex gap-2 justify-end">
+              <button
+                className="btn text-xs"
+                onClick={() => setEditRequestFor(null)}
+              >
+                Отмена
+              </button>
+              <button
+                className="btn text-xs"
+                disabled={!editReqValue || createReqMut.isPending}
+                onClick={() => createReqMut.mutate()}
+              >
+                {createReqMut.isPending ? "Отправка…" : "📨 Отправить директору"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-end justify-between flex-wrap gap-3">
         <h1 className="text-xl font-semibold">План — Факт</h1>
         <div className="flex items-end gap-3 flex-wrap">
@@ -449,6 +612,15 @@ export default function Plans() {
                     ✕
                   </button>
                 </div>
+              )}
+              {!canEdit && (
+                <button
+                  className="btn text-xs"
+                  onClick={() => setEditRequestFor(it.plan_id)}
+                  title="Предложить правку директору (TASK-DEV-017)"
+                >
+                  ✎ Предложить правку
+                </button>
               )}
             </div>
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
