@@ -14,6 +14,84 @@ Lead использует этот файл как master-view: сюда скл�
 
 ---
 
+## 🎯 Active Sprint — Параллельная координация (2026-05-21)
+
+> Цель: «удобство работы для собственных кабинетов» (internal tool, не SaaS).
+> Источник: UX-Validator seller-daily-workflow report 2026-05-21 + явные запросы
+> пользователя (multi-cabinet, bookkeeper role).
+>
+> **3 параллельных потока + 1 doc-поток.** Координация через `./scripts/claim.sh`
+> на горячих файлах (`Layout.tsx`, `Dashboard.tsx`, `AuthContext.tsx`, `auth.py`).
+
+### Поток 030 (УЖЕ ИДЁТ — отдельная сессия)
+- **TASK-LEAD-030** — OPEX many-to-many (рефактор `pnl_builder.py`, ~1-2 нед)
+- Конфликтует только с TASK-LEAD-043 косвенно (UI explainer не блокирует)
+
+### Поток A — Frontend quick + UX infrastructure (~5-7 дней)
+1. **TASK-LEAD-042** — Default `hybrid` + «Прибыль вчера» hero (3-5ч) ⭐ start here
+2. **TASK-UI-005** (in `tasks-design-engineer.md`) — PeriodContext + миграция 10 pages (4-6ч)
+3. **TASK-LEAD-043** — Cross-source сводка + Reconciliation explainer (3-5д)
+4. **TASK-LEAD-041** — Sidebar profile «Собственник» + слияние налоговых (5-7д)
+
+### Поток B — RBAC + Multi-cabinet (~3-4 недели)
+1. **TASK-LEAD-040** backend — Role `bookkeeper` enum + guards (3-5д)
+2. **TASK-LEAD-040** frontend — Layout visibility (2д)
+3. **TASK-LEAD-039** backend — Multi-cabinet миграция + middleware (1 нед)
+4. **TASK-LEAD-039** frontend — Cabinet switcher UI (1 нед)
+
+### Поток D — Документация (любая роль, изолировано)
+1. **TASK-LEAD-044** — `README.md` в корне с navigation (1ч)
+2. **TASK-LEAD-045** — `QUICKSTART_OWNER.md` (2-3ч)
+3. **TASK-LEAD-046** — `QUICKSTART_BOOKKEEPER.md` (после TASK-LEAD-040, 2-3ч)
+
+### Матрица параллельности (claim'ы обязательны на горячих файлах)
+
+```
+                  030 | 039 | 040 | 041 | 042 | 043 | UI-005 | 044/045/046
+TASK-LEAD-030      —    ✅    ✅    ✅    ✅    ⚠     ✅       ✅
+TASK-LEAD-039      ✅   —     ⚠*   ⚠*   ✅    ✅    ✅       ✅
+TASK-LEAD-040      ✅   ⚠*    —    ⚠**  ✅    ✅    ✅       ✅
+TASK-LEAD-041      ✅   ⚠*    ⚠**  —    ✅    ✅    ✅       ✅
+TASK-LEAD-042      ✅   ✅    ✅    ✅    —     ⚠***  ⚠***    ✅
+TASK-LEAD-043      ⚠    ✅    ✅    ✅    ⚠***   —    ⚠***    ✅
+TASK-UI-005        ✅   ✅    ✅    ✅    ⚠***  ⚠***  —        ✅
+docs (044-046)     ✅   ✅    ✅    ✅    ✅    ✅    ✅        —
+
+✅ безопасно параллельно   ⚠ нужен claim   ⚠* Layout+AuthContext   ⚠** Layout   ⚠*** Dashboard.tsx
+```
+
+### Порядок выполнения внутри потока A
+
+Конфликт `Dashboard.tsx` (042 / 043 / UI-005) разрешается **последовательностью** в одном потоке:
+
+```
+TASK-LEAD-042 (default hybrid + hero)       3-5ч   изолированный
+       ↓ (Dashboard.tsx stabilized)
+TASK-UI-005   (PeriodContext + migrate)     4-6ч   мигрирует Dashboard с уже-готовой hero-line
+       ↓ (PeriodContext доступен)
+TASK-LEAD-043 (cross-source + explainer)    3-5д   использует PeriodContext для пресета
+       ↓
+TASK-LEAD-041 (sidebar profile + tax merge) 5-7д
+```
+
+### Порядок выполнения внутри потока B
+
+Конфликт `Layout.tsx` + `AuthContext.tsx` (039 / 040 / 041) разрешается:
+
+```
+TASK-LEAD-040 backend (Role enum + guards)        3-5д   изолированный от Layout
+       ↓
+TASK-LEAD-040 frontend (Layout visibility)        2д     claim Layout.tsx
+       ↓ (release claim)
+TASK-LEAD-039 backend (миграция + middleware)     1 нед  изолированный
+       ↓
+TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + AuthContext.tsx
+```
+
+Поток 041 (sidebar profile) идёт **последним** в Потоке A потому что нужен Role `bookkeeper` (из 040) для toggle profile с учётом новой роли.
+
+---
+
 ### TASK-LEAD-001: Аудит ROADMAP и заполнение task-backlog'а
 
 - **Исполнитель:** Lead
@@ -1449,6 +1527,80 @@ Lead использует этот файл как master-view: сюда скл�
   - [ ] Smoke: на тестовом расхождении объяснение появляется
 - **Зависимости:** TASK-LEAD-042 (hero-line) — общая структура hero-блока
 - **Статус:** Открыта
+
+---
+
+### TASK-LEAD-044: README.md в корне с навигацией «вы кто → читайте это»
+
+- **Исполнитель:** Design Engineer (минимальный текст) или Product Strategist
+- **Приоритет:** P1 (точка входа для новых пользователей команды + AI-сессий)
+- **Оценка:** XS (~1ч)
+- **Источник:** UX-Validator seller report 2026-05-21 + аудит документации
+- **Описание:** В корне репо сейчас нет `README.md`. Новый пользователь не знает с чего начать. AI-сессия идёт через `CONTINUE_HERE.md` → `CLAUDE.md`. Создать односекционный README со схемой:
+  - «Вы кто?» (3-5 ссылок на role-guides)
+  - «Вы AI?» → CONTINUE_HERE.md
+  - «Вы разработчик?» → CLAUDE.md
+  - Короткое описание проекта (3-5 строк) — internal tool, не SaaS
+- **Критерии готовности:**
+  - [ ] `README.md` в корне репо
+  - [ ] Содержит навигацию по 5 ролям (собственник, manager, head_of_sales, bookkeeper когда появится, разработчик/AI)
+  - [ ] Ссылки на `OWNER_GUIDE.md`, `MANAGER_GUIDE.md`, `ADMIN_GUIDE.md`, `CLAUDE.md`, `CONTINUE_HERE.md`
+  - [ ] 3-5 строк «что это» (internal tool, WB-аналитика, single-tenant + multi-cabinet ready)
+  - [ ] Не дублирует CLAUDE.md — просто routing
+- **Зависимости:** нет
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-045: QUICKSTART_OWNER.md — первый день собственника
+
+- **Исполнитель:** Product Strategist (контент) + Design Engineer (если нужны ASCII-схемы)
+- **Приоритет:** P2
+- **Оценка:** S (2-3ч)
+- **Источник:** UX-Validator seller report 2026-05-21 — OWNER_GUIDE начинается с daily-snapshot, пропускает onboarding
+- **Описание:** Между signup и первым осмысленным P&L у нового собственника — пропасть. Нужен пошаговый «первый день»:
+  1. Подключить WB-токен (откуда взять, инструкция-скрин)
+  2. Дождаться первого sync (~30 мин на 90 дней истории)
+  3. Загрузить COGS — Excel-шаблон + инструкция
+  4. Открыть Dashboard — что смотреть в первые 3 минуты
+  5. Открыть P&L — что должны увидеть, что насторожить
+  6. (опц.) Привязать Telegram — `/start` → bind
+  7. Что делать **не** нужно (anti-patterns: ручное редактирование .env, очистка cooldown'ов)
+- **Критерии готовности:**
+  - [ ] `QUICKSTART_OWNER.md` в корне репо
+  - [ ] 6-7 пошаговых разделов
+  - [ ] Каждый шаг: «зачем + как + что увидеть»
+  - [ ] Anti-patterns секция в конце
+  - [ ] Ссылка из `OWNER_GUIDE.md` § 1 «начни здесь»
+  - [ ] Ссылка из `README.md` (после TASK-LEAD-044)
+- **Зависимости:** TASK-LEAD-044 (для ссылки из README)
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-046: QUICKSTART_BOOKKEEPER.md — гайд бухгалтера
+
+- **Исполнитель:** Product Strategist (контент) — после TASK-LEAD-040 (роль готова)
+- **Приоритет:** P2
+- **Оценка:** S (2-3ч)
+- **Источник:** UX-Validator seller report 2026-05-21 ⚠6 + явный запрос пользователя «нужно добавить отдельную роль для бухгалтер»
+- **Описание:** Когда роль `bookkeeper` будет внедрена (TASK-LEAD-040) — нужен role-specific guide:
+  1. Кто ты и что видишь (scope: налоги, УПД, payment_orders, документы WB)
+  2. Первый вход — что админ должен дать (`bookkeeper@company` логин, какая ставка, какой режим АУСН/УСН)
+  3. Daily/weekly/monthly workflow для бухгалтера:
+     - Раз в неделю — sync buybacks, проверить новые отчёты
+     - Раз в месяц — налоговая декларация (АУСН/УСН expert): экспорт реестра УПД, пересчёт base
+     - Раз в квартал — переход регимов (если planned)
+  4. Per-regime exclusion flags — когда исключать платёжку
+  5. Что НЕ может — OPEX, brand_assignments, users, settings (403)
+- **Критерии готовности:**
+  - [ ] `QUICKSTART_BOOKKEEPER.md` в корне репо
+  - [ ] Workflow daily / weekly / monthly / quarterly
+  - [ ] Скриншоты налоговых страниц (опционально, если есть статичные)
+  - [ ] Ссылка из `README.md`
+  - [ ] Ссылка из самого UI (на `/tax-report-ausn` баннер «Бухгалтер? Читай QUICKSTART_BOOKKEEPER.md»)
+- **Зависимости:** TASK-LEAD-040 (роль должна быть готова), TASK-LEAD-044 (для ссылки из README)
+- **Статус:** Открыта (заблокирована TASK-LEAD-040)
 
 ---
 
