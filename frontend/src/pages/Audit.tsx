@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
 import { Icon } from "../components/Icon";
+import PageHeader from "@/components/PageHeader";
 
 // Хелпер: первый день месяца / последний день месяца — для periods picker'а
 const firstOfMonth = (d: Date) =>
@@ -96,31 +97,31 @@ export default function Audit() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-end justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-semibold">
-          Аудит-режим — сверка трёх источников
-        </h1>
-        <div className="flex items-end gap-3">
-          <label className="flex flex-col text-xs text-muted">
-            Период с
-            <input
-              type="date"
-              value={periodStart}
-              onChange={(e: any) => setPeriodStart(e.target.value)}
-              className="input"
-            />
-          </label>
-          <label className="flex flex-col text-xs text-muted">
-            По
-            <input
-              type="date"
-              value={periodEnd}
-              onChange={(e: any) => setPeriodEnd(e.target.value)}
-              className="input"
-            />
-          </label>
-        </div>
-      </div>
+      <PageHeader
+        title="Аудит-режим — сверка трёх источников"
+        actions={
+          <div className="flex items-end gap-3">
+            <label className="flex flex-col text-xs text-muted">
+              Период с
+              <input
+                type="date"
+                value={periodStart}
+                onChange={(e: any) => setPeriodStart(e.target.value)}
+                className="input"
+              />
+            </label>
+            <label className="flex flex-col text-xs text-muted">
+              По
+              <input
+                type="date"
+                value={periodEnd}
+                onChange={(e: any) => setPeriodEnd(e.target.value)}
+                className="input"
+              />
+            </label>
+          </div>
+        }
+      />
 
       <div className="card text-xs text-muted leading-relaxed">
         Сравнивает 3 источника: наш P&L (расчёт), WB-кабинет (загруженный XLSX

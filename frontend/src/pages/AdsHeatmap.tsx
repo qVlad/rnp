@@ -4,6 +4,7 @@ import { api } from "@/api/client";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
 import { usePeriod } from "@/contexts/PeriodContext";
+import PageHeader from "@/components/PageHeader";
 
 type Metric =
   | "drr"
@@ -106,10 +107,10 @@ export default function AdsHeatmap() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold mb-1">Тепловая карта рекламы</h1>
-        <p className="text-sm text-muted">{metricHelp[metric]}</p>
-      </div>
+      <PageHeader
+        title="Тепловая карта рекламы"
+        subtitle={metricHelp[metric]}
+      />
 
       <section className="card flex flex-wrap gap-4 items-end">
         <div className="flex flex-col gap-1">

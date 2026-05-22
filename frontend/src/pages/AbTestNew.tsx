@@ -13,6 +13,7 @@ import {
 } from "@/api/abtest";
 import { StagedFile, VariantPhotoGrid } from "@/components/abtest/VariantPhotoGrid";
 import { Icon } from "../components/Icon";
+import PageHeader from "@/components/PageHeader";
 
 interface ProductOption {
   nm_id: number;
@@ -680,12 +681,16 @@ export default function AbTestNew() {
 
   return (
     <div className="space-y-4 max-w-5xl">
-      <h1 className="text-2xl font-semibold">Новый A/B тест</h1>
-      <p className="text-muted text-sm">
-        Создадим черновик. Фото вариантов B/{form.variant_count >= 3 ? "C/" : ""}
-        {form.variant_count >= 4 ? "D" : "—"} загрузите на странице теста после
-        создания. Запустить можно отдельной кнопкой.
-      </p>
+      <PageHeader
+        title="Новый A/B тест"
+        subtitle={
+          <>
+            Создадим черновик. Фото вариантов B/{form.variant_count >= 3 ? "C/" : ""}
+            {form.variant_count >= 4 ? "D" : "—"} загрузите на странице теста после
+            создания. Запустить можно отдельной кнопкой.
+          </>
+        }
+      />
 
       {/* ---------- 1. Основные ---------- */}
       <div className="card space-y-3">

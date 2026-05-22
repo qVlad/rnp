@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import CustomMetricsSection from "@/components/CustomMetricsSection";
 import { Icon } from "../components/Icon";
+import PageHeader from "@/components/PageHeader";
 
 export default function Settings() {
   const qc = useQueryClient();
@@ -181,7 +182,7 @@ export default function Settings() {
 
   return (
     <div className="flex flex-col gap-6 max-w-4xl">
-      <h1 className="text-xl font-semibold">Настройки</h1>
+      <PageHeader title="Настройки" />
 
       <CustomMetricsSection />
 

@@ -1922,7 +1922,7 @@ function UnitPlanDesktop() {
                     colSpan={visibleColumns.length}
                     className="p-6 text-center text-muted text-sm"
                   >
-                    Нет данных под фильтры.
+                    Нет SKU под фильтры · измените фильтр или дождитесь синхронизации
                   </td>
                 </tr>
               )}
@@ -2209,7 +2209,11 @@ function HistoricalPeriodsModal({
           <h3 className="text-base font-semibold">
             Исторические периоды (BA-BF)
           </h3>
-          <button className="btn text-xs" onClick={onClose}>
+          <button
+            className="btn text-xs"
+            onClick={onClose}
+            aria-label="Закрыть"
+          >
             <Icon name="close" size={12} />
           </button>
         </div>
@@ -2608,6 +2612,7 @@ function PasteVolumeModal({
             className="btn text-xs"
             onClick={onClose}
             disabled={applying}
+            aria-label="Закрыть"
           >
             <Icon name="close" size={12} />
           </button>

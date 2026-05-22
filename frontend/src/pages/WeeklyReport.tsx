@@ -16,6 +16,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
 import { exportToPdf } from "@/lib/exportPdf";
 import { Icon } from "@/components/Icon";
+import PageHeader from "@/components/PageHeader";
 
 type Week = { from: string; to: string };
 
@@ -159,52 +160,50 @@ export default function WeeklyReport() {
 
   return (
     <div className="flex flex-col gap-4 max-w-5xl">
-      <div className="flex items-end justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">Еженедельный отчёт</h1>
-          <p className="text-xs text-muted mt-1">
-            Сводка за последнюю закрытую WB-неделю (mode=final) для отчётности РОПу.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            className="btn text-xs"
-            onClick={() => setShiftWeek((s) => s - 1)}
-            title="Предыдущая неделя"
-          >
-            ← неделя
-          </button>
-          <button
-            type="button"
-            className="btn text-xs"
-            onClick={() => setShiftWeek(0)}
-            disabled={shiftWeek === 0}
-            title="Вернуться на текущую закрытую неделю"
-          >
-            ⏎ сейчас
-          </button>
-          <button
-            type="button"
-            className="btn text-xs"
-            onClick={() => setShiftWeek((s) => s + 1)}
-            disabled={shiftWeek >= 0}
-            title="Следующая неделя (только если есть данные)"
-          >
-            неделя →
-          </button>
-          <button
-            type="button"
-            className="btn text-xs"
-            onClick={doExport}
-            disabled={exporting || isLoading}
-            title="Скачать PDF"
-          >
-            <Icon name={exporting ? "spinner" : "pdf"} size={12} className={exporting ? "animate-spin" : ""} />{" "}
-            PDF
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="Еженедельный отчёт"
+        subtitle="Сводка за последнюю закрытую WB-неделю (mode=final) для отчётности РОПу."
+        actions={
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="btn text-xs"
+              onClick={() => setShiftWeek((s) => s - 1)}
+              title="Предыдущая неделя"
+            >
+              ← неделя
+            </button>
+            <button
+              type="button"
+              className="btn text-xs"
+              onClick={() => setShiftWeek(0)}
+              disabled={shiftWeek === 0}
+              title="Вернуться на текущую закрытую неделю"
+            >
+              ⏎ сейчас
+            </button>
+            <button
+              type="button"
+              className="btn text-xs"
+              onClick={() => setShiftWeek((s) => s + 1)}
+              disabled={shiftWeek >= 0}
+              title="Следующая неделя (только если есть данные)"
+            >
+              неделя →
+            </button>
+            <button
+              type="button"
+              className="btn text-xs"
+              onClick={doExport}
+              disabled={exporting || isLoading}
+              title="Скачать PDF"
+            >
+              <Icon name={exporting ? "spinner" : "pdf"} size={12} className={exporting ? "animate-spin" : ""} />{" "}
+              PDF
+            </button>
+          </div>
+        }
+      />
 
       <div ref={reportRef} className="flex flex-col gap-4">
         {/* Header card — для PDF */}
@@ -297,7 +296,9 @@ export default function WeeklyReport() {
                   </tbody>
                 </table>
               ) : (
-                <div className="text-muted text-sm">Нет данных за период.</div>
+                <div className="text-muted text-sm">
+                  Нет данных за период · измените фильтр или дождитесь синхронизации
+                </div>
               )}
             </section>
 
@@ -326,7 +327,9 @@ export default function WeeklyReport() {
                   </tbody>
                 </table>
               ) : (
-                <div className="text-muted text-sm">Нет данных за период.</div>
+                <div className="text-muted text-sm">
+                  Нет данных за период · измените фильтр или дождитесь синхронизации
+                </div>
               )}
             </section>
 

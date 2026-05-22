@@ -13,6 +13,7 @@ import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
 import { useAuth } from "@/contexts/AuthContext";
 import { Icon } from "../components/Icon";
+import PageHeader from "@/components/PageHeader";
 
 const STATUS_COLORS: Record<string, string> = {
   red: "text-danger",
@@ -86,13 +87,10 @@ export default function Jam() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <h1 className="text-xl font-semibold">Джем — поисковая аналитика</h1>
-        <div className="text-xs text-muted mt-1">
-          Кластеры поисковых запросов с MAX-границами рекламы (10X-методика).
-          Источник: jam_queries. Загрузка через Excel из «Аналитики сравнения карточек» WB.
-        </div>
-      </div>
+      <PageHeader
+        title="Джем — поисковая аналитика"
+        subtitle="Кластеры поисковых запросов с MAX-границами рекламы (10X-методика). Источник: jam_queries. Загрузка через Excel из «Аналитики сравнения карточек» WB."
+      />
 
       {status.data?.status === "empty" && (
         <div className="card border-warn/40 bg-warn/5">

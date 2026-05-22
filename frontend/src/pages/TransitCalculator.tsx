@@ -13,6 +13,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type TariffTimelineRow } from "@/api/client";
 import { fmtRub, fmtNum } from "@/lib/format";
+import PageHeader from "@/components/PageHeader";
 
 const TRANSIT_KEY = "transit-calc.params.v1";
 
@@ -125,14 +126,16 @@ export default function TransitCalculator() {
 
   return (
     <div className="flex flex-col gap-4 max-w-5xl">
-      <div>
-        <h1 className="text-xl font-semibold">Калькулятор стоимости поставки</h1>
-        <p className="text-sm text-muted mt-1">
-          Считает <b>логистику</b> (acceptance) и <b>хранение</b> для партии N штук
-          на конкретный WB-склад. Использует текущие WB-тарифы (миграция 0040,
-          обновляется ежедневно 08:00 MSK).
-        </p>
-      </div>
+      <PageHeader
+        title="Калькулятор стоимости поставки"
+        subtitle={
+          <>
+            Считает <b>логистику</b> (acceptance) и <b>хранение</b> для партии
+            N штук на конкретный WB-склад. Использует текущие WB-тарифы
+            (миграция 0040, обновляется ежедневно 08:00 MSK).
+          </>
+        }
+      />
 
       {/* Form */}
       <section className="card">

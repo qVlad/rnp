@@ -21,6 +21,7 @@ import { DateRangePicker } from "@/components/DateRangePicker";
 import { fmtRub, fmtNum, fmtPct } from "@/lib/format";
 import { chartTheme } from "@/lib/chartTheme";
 import { usePeriod } from "@/contexts/PeriodContext";
+import PageHeader from "@/components/PageHeader";
 
 type Scope = "brand" | "group" | "warehouse";
 
@@ -49,14 +50,10 @@ export default function Inventory() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-end justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">Капитализация WB-склада</h1>
-          <div className="text-xs text-muted mt-1">
-            Σ остатков на складах WB × средневзвешенная себестоимость на дату
-          </div>
-        </div>
-        <div className="flex items-end gap-2">
+      <PageHeader
+        title="Капитализация WB-склада"
+        subtitle="Σ остатков на складах WB × средневзвешенная себестоимость на дату"
+        actions={
           <label className="flex flex-col gap-1">
             <span className="text-xs text-muted uppercase tracking-wide">
               На дату
@@ -68,8 +65,8 @@ export default function Inventory() {
               onChange={(e) => setOnDate(e.target.value)}
             />
           </label>
-        </div>
-      </div>
+        }
+      />
 
       {/* Hero-KPI */}
       <section className="card">

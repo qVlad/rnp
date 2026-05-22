@@ -3,6 +3,8 @@
  * Anchor-ссылки совпадают с `kpi.key` из API дашборда — клик по ⓘ на
  * KPI-карточке ведёт сюда с #anchor.
  */
+import PageHeader from "@/components/PageHeader";
+
 type Entry = {
   id: string;
   title: string;
@@ -292,12 +294,10 @@ function Item({ e }: { e: Entry }) {
 export default function Glossary() {
   return (
     <div className="flex flex-col gap-4 max-w-4xl">
-      <div>
-        <h1 className="text-xl font-semibold">Глоссарий</h1>
-        <p className="text-sm text-muted mt-1">
-          Что значит каждая метрика на дашборде, как считается и откуда берётся.
-        </p>
-      </div>
+      <PageHeader
+        title="Глоссарий"
+        subtitle="Что значит каждая метрика на дашборде, как считается и откуда берётся."
+      />
 
       <nav className="card text-sm flex flex-wrap gap-x-4 gap-y-2">
         <span className="text-muted text-xs uppercase mr-2">KPI:</span>

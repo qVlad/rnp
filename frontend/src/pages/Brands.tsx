@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import PageHeader from "@/components/PageHeader";
 
 export default function Brands() {
   const qc = useQueryClient();
@@ -31,15 +32,10 @@ export default function Brands() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-semibold">Бренды и ответственные</h1>
-        <span className="text-xs text-muted">
-          Бренды берутся из карточек WB (поле products.brand). На один бренд
-          можно назначить нескольких менеджеров; один менеджер может вести
-          несколько брендов. РОП и директор видят все бренды; менеджер —
-          только свои.
-        </span>
-      </div>
+      <PageHeader
+        title="Бренды и ответственные"
+        subtitle="Бренды берутся из карточек WB (поле products.brand). На один бренд можно назначить нескольких менеджеров; один менеджер может вести несколько брендов. РОП и директор видят все бренды; менеджер — только свои."
+      />
 
       {brandsQ.isLoading && <div className="text-muted">Загрузка…</div>}
       {brandsQ.data && items.length === 0 && (

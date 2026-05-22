@@ -104,6 +104,8 @@ export default function Features() {
       <aside className="lg:w-72 flex-shrink-0">
         <div className="card sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
           <div className="mb-3">
+            {/* TASK-UI-011: h1 живёт внутри sticky-sidebar (не page-shell),
+                PageHeader не подходит — оставлен inline. */}
             <h1 className="text-lg font-semibold">Каталог функций</h1>
             <div className="text-xs text-muted">Полный реестр модулей сервиса</div>
           </div>

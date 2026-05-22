@@ -5,6 +5,7 @@ import { fmtRub, fmtPct } from "@/lib/format";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import PaymentOrdersTable from "@/components/PaymentOrdersTable";
 import { usePeriod } from "@/contexts/PeriodContext";
+import PageHeader from "@/components/PageHeader";
 
 function isoDate(d: Date) {
   return d.toISOString().slice(0, 10);
@@ -108,12 +109,10 @@ export default function TaxReportAusn() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-end gap-4">
-        <h1 className="text-xl font-semibold">Налог АУСН «Доходы» (8 %)</h1>
-        <span className="text-xs text-muted">
-          Месячная свёртка по методике бухгалтера Стаса (xlsx «Разметка банка»)
-        </span>
-      </div>
+      <PageHeader
+        title="Налог АУСН «Доходы» (8 %)"
+        subtitle="Месячная свёртка по методике бухгалтера Стаса (xlsx «Разметка банка»)"
+      />
 
       <div className="card text-xs text-muted leading-relaxed">
         <div className="font-medium text-white mb-1">Методика расчёта</div>
@@ -403,7 +402,7 @@ export default function TaxReportAusn() {
             {!q.isLoading && monthly.length === 0 && (
               <tr>
                 <td colSpan={9} className="text-center text-muted py-4">
-                  Нет данных за выбранный период
+                  Нет данных за период · измените фильтр или дождитесь синхронизации
                 </td>
               </tr>
             )}

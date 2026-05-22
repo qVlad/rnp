@@ -16,6 +16,7 @@ import TaxReportUsn, {
   TaxReportUsnVat5,
   TaxReportUsnVat7,
 } from "./TaxReportUsn";
+import PageHeader from "@/components/PageHeader";
 
 type Mode = "base" | "ausn" | "usn" | "usn-vat5" | "usn-vat7";
 
@@ -52,14 +53,10 @@ export default function Taxes() {
 
   return (
     <div>
-      <div className="mb-4">
-        <h1 className="text-xl font-semibold mb-1">Налоги</h1>
-        <p className="text-tiny text-muted">
-          Все налоговые отчёты в одном окне. Переключай режим вкладками —
-          backend не меняется, под каждой вкладкой та же страница, что
-          раньше жила на отдельном URL.
-        </p>
-      </div>
+      <PageHeader
+        title="Налоги"
+        subtitle="Все налоговые отчёты в одном окне. Переключай режим вкладками — backend не меняется, под каждой вкладкой та же страница, что раньше жила на отдельном URL."
+      />
       <div
         className="flex gap-1 border-b border-border mb-4 overflow-x-auto"
         role="tablist"

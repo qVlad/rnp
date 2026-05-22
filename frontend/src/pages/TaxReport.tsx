@@ -4,6 +4,7 @@ import { api } from "@/api/client";
 import { fmtRub, fmtPct } from "@/lib/format";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import { usePeriod } from "@/contexts/PeriodContext";
+import PageHeader from "@/components/PageHeader";
 
 function isoDate(d: Date) {
   return d.toISOString().slice(0, 10);
@@ -72,12 +73,10 @@ export default function TaxReport() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-end gap-4">
-        <h1 className="text-xl font-semibold">Налоговый отчёт по WB</h1>
-        <span className="text-xs text-muted">
-          Расчёт по методике бухгалтера 1С (УСН/АУСН) — per WB-отчёт реализации
-        </span>
-      </div>
+      <PageHeader
+        title="Налоговый отчёт по WB"
+        subtitle="Расчёт по методике бухгалтера 1С (УСН/АУСН) — per WB-отчёт реализации"
+      />
 
       <div className="card text-xs text-muted leading-relaxed">
         <div className="font-medium text-white mb-1">Методика расчёта</div>

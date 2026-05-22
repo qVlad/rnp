@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
 import { Icon } from "../components/Icon";
+import PageHeader from "@/components/PageHeader";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const blank = () => ({
@@ -80,18 +81,20 @@ export default function CostHistory() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-semibold">История себестоимости</h1>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted">Фильтр по nmId:</span>
-          <input
-            className="input"
-            placeholder="123456789"
-            value={filterNm}
-            onChange={(e: any) => setFilterNm(e.target.value)}
-          />
-        </div>
-      </div>
+      <PageHeader
+        title="История себестоимости"
+        actions={
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted">Фильтр по nmId:</span>
+            <input
+              className="input"
+              placeholder="123456789"
+              value={filterNm}
+              onChange={(e: any) => setFilterNm(e.target.value)}
+            />
+          </div>
+        }
+      />
 
       <div className="card text-sm text-muted leading-relaxed">
         Вместо одной «текущей» себестоимости — таймлайн по датам. Каждая запись
@@ -220,7 +223,7 @@ export default function CostHistory() {
             </summary>
             <div className="mt-3 overflow-x-auto">
               <table className="w-full text-sm">
-                <thead>
+                <thead className="sticky-table-head">
                   <tr className="text-muted text-xs uppercase">
                     <th className="text-left p-2">С даты</th>
                     <th className="text-right p-2">Себ-сть</th>

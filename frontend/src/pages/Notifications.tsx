@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { Icon } from "@/components/Icon";
+import PageHeader from "@/components/PageHeader";
 
 const METRIC_LABELS: Record<string, string> = {
   stock_below: "Остаток SKU ниже",
@@ -81,14 +82,10 @@ export default function Notifications() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold mb-1">Уведомления</h1>
-        <p className="text-sm text-muted">
-          Настраиваемые правила-алерты с отправкой в Telegram. Engine
-          запускается раз в час, после срабатывания правило молчит
-          `cooldown_minutes` (default 24 ч).
-        </p>
-      </div>
+      <PageHeader
+        title="Уведомления"
+        subtitle="Настраиваемые правила-алерты с отправкой в Telegram. Engine запускается раз в час, после срабатывания правило молчит `cooldown_minutes` (default 24 ч)."
+      />
 
       <section className="card flex gap-3 items-center">
         <button className="btn text-sm" onClick={() => setAdding(true)}>

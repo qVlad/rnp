@@ -17,6 +17,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub, fmtPct } from "@/lib/format";
 import { Icon } from "../components/Icon";
+import PageHeader from "@/components/PageHeader";
 
 function diffColor(pct: number | null | undefined): string {
   if (pct == null) return "text-muted";
@@ -65,26 +66,23 @@ export default function Reconciliation4Way() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-end justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">4-way Сверка</h1>
-          <div className="text-xs text-muted mt-1">
-            Уникально для РНП — 4 источника данных side-by-side. Дифференциатор
-            vs Eggheads / TrueStats / MPump.
+      <PageHeader
+        title="4-way Сверка"
+        subtitle="Уникально для РНП — 4 источника данных side-by-side. Дифференциатор vs Eggheads / TrueStats / MPump."
+        actions={
+          <div className="flex gap-1">
+            {[4, 8, 12, 24].map((w) => (
+              <button
+                key={w}
+                className={`btn text-xs ${weeks === w ? "border-accent text-accent" : ""}`}
+                onClick={() => setWeeks(w)}
+              >
+                {w} нед.
+              </button>
+            ))}
           </div>
-        </div>
-        <div className="flex gap-1">
-          {[4, 8, 12, 24].map((w) => (
-            <button
-              key={w}
-              className={`btn text-xs ${weeks === w ? "border-accent text-accent" : ""}`}
-              onClick={() => setWeeks(w)}
-            >
-              {w} нед.
-            </button>
-          ))}
-        </div>
-      </div>
+        }
+      />
 
       <div className="card text-xs text-muted leading-relaxed">
         Источники: <strong className="text-fg">Наш P&L</strong> (services/pnl_builder)

@@ -19,6 +19,7 @@ import TagFilterDropdown from "@/components/TagFilterDropdown";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
 import { useTagFilter } from "@/lib/useTagFilter";
 import { usePeriod } from "@/contexts/PeriodContext";
+import PageHeader from "@/components/PageHeader";
 
 const COL_VIS_KEY = "units.columnVisibility.v2";
 const COL_ORDER_KEY = "units.columnOrder.v1";
@@ -903,8 +904,9 @@ export default function Units() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-semibold">Юнит-экономика</h1>
+      <PageHeader
+        title="Юнит-экономика"
+        actions={
         <div className="flex items-end gap-2 flex-wrap">
           <input
             placeholder="Поиск по nmId / артикулу / названию"
@@ -1064,7 +1066,8 @@ export default function Units() {
             )}
           </div>
         </div>
-      </div>
+        }
+      />
 
       {d && (
         <div className="card text-xs text-muted leading-relaxed">
@@ -1426,7 +1429,7 @@ function SizesModal({
               </div>
             )}
           </div>
-          <button className="btn text-xs" onClick={onClose}>
+          <button className="btn text-xs" onClick={onClose} aria-label="Закрыть">
             <Icon name="close" size={12} />
           </button>
         </div>
@@ -1436,11 +1439,13 @@ function SizesModal({
             <div className="text-danger">Ошибка: {String((q.error as any).message)}</div>
           )}
           {!q.isLoading && sizes.length === 0 && (
-            <div className="text-muted">Нет данных за выбранный период.</div>
+            <div className="text-muted">
+              Нет данных за период · измените фильтр или дождитесь синхронизации
+            </div>
           )}
           {sizes.length > 0 && (
             <table className="w-full text-sm">
-              <thead className="text-xs uppercase text-muted">
+              <thead className="sticky-table-head text-xs uppercase text-muted">
                 <tr className="border-b border-border">
                   <th className="p-2 text-left">Размер</th>
                   <th className="p-2 text-right">Заказы</th>

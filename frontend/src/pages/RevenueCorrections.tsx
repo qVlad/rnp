@@ -3,6 +3,7 @@ import { Icon } from "@/components/Icon";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
+import PageHeader from "@/components/PageHeader";
 
 type Type = "selfbuy" | "giveaway" | "selforder" | "dbs" | "rfbs";
 
@@ -165,21 +166,23 @@ export default function RevenueCorrections() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-semibold">Корректировки выручки</h1>
-        <select
-          className="input"
-          value={filter}
-          onChange={(e: any) => setFilter(e.target.value)}
-        >
-          <option value="">Все типы</option>
-          {TYPE_OPTIONS.map((t) => (
-            <option key={t.value} value={t.value}>
-              {t.label}
-            </option>
-          ))}
-        </select>
-      </div>
+      <PageHeader
+        title="Корректировки выручки"
+        actions={
+          <select
+            className="input"
+            value={filter}
+            onChange={(e: any) => setFilter(e.target.value)}
+          >
+            <option value="">Все типы</option>
+            {TYPE_OPTIONS.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        }
+      />
 
       <section className="card">
         <h2 className="font-medium mb-3">

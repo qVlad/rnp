@@ -15,6 +15,7 @@ import { useNavigate } from "react-router-dom";
 import { LineChart, Line, YAxis } from "recharts";
 import { api } from "@/api/client";
 import { fmtRub, fmtNum, fmtPct } from "@/lib/format";
+import PageHeader from "@/components/PageHeader";
 
 const MONTHS = [
   "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
@@ -118,55 +119,57 @@ export default function ManagersKpi() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-end justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-semibold">KPI менеджеров</h1>
-        <div className="flex items-end gap-3 flex-wrap">
-          <label className="flex flex-col text-xs text-muted">
-            Месяц
-            <select
-              className="input"
-              value={month}
-              onChange={(e: any) => setMonth(Number(e.target.value))}
-            >
-              {MONTHS.map((m, i) => (
-                <option key={i} value={i + 1}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="flex flex-col text-xs text-muted">
-            Год
-            <input
-              type="number"
-              min={2020}
-              max={2100}
-              className="input"
-              value={year}
-              onChange={(e: any) =>
-                setYear(Number(e.target.value) || today.getFullYear())
-              }
-            />
-          </label>
-          <label className="flex flex-col text-xs text-muted">
-            Режим
-            <select
-              className="input"
-              value={mode}
-              onChange={(e: any) => setMode(e.target.value as Mode)}
-              title={
-                "Гибрид (рекоменд.) — финальные за закрытые недели + черновые за свежие. " +
-                "Финальные — только wb_report_detail (лаг ~14 дн). " +
-                "Предварительные — wb_orders/wb_sales (свежие, но шумят)."
-              }
-            >
-              <option value="hybrid">Гибрид</option>
-              <option value="final">Финальные</option>
-              <option value="preliminary">Предварительные</option>
-            </select>
-          </label>
-        </div>
-      </div>
+      <PageHeader
+        title="KPI менеджеров"
+        actions={
+          <div className="flex items-end gap-3 flex-wrap">
+            <label className="flex flex-col text-xs text-muted">
+              Месяц
+              <select
+                className="input"
+                value={month}
+                onChange={(e: any) => setMonth(Number(e.target.value))}
+              >
+                {MONTHS.map((m, i) => (
+                  <option key={i} value={i + 1}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col text-xs text-muted">
+              Год
+              <input
+                type="number"
+                min={2020}
+                max={2100}
+                className="input"
+                value={year}
+                onChange={(e: any) =>
+                  setYear(Number(e.target.value) || today.getFullYear())
+                }
+              />
+            </label>
+            <label className="flex flex-col text-xs text-muted">
+              Режим
+              <select
+                className="input"
+                value={mode}
+                onChange={(e: any) => setMode(e.target.value as Mode)}
+                title={
+                  "Гибрид (рекоменд.) — финальные за закрытые недели + черновые за свежие. " +
+                  "Финальные — только wb_report_detail (лаг ~14 дн). " +
+                  "Предварительные — wb_orders/wb_sales (свежие, но шумят)."
+                }
+              >
+                <option value="hybrid">Гибрид</option>
+                <option value="final">Финальные</option>
+                <option value="preliminary">Предварительные</option>
+              </select>
+            </label>
+          </div>
+        }
+      />
 
       <div className="card text-sm text-muted leading-relaxed">
         Сводка по менеджерам за {MONTHS[month - 1]} {year}. Каждая строка —

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { fmtRub, fmtPct } from "@/lib/format";
+import PageHeader from "@/components/PageHeader";
 import {
   DEFAULT_MARKET,
   type CbrRates,
@@ -121,12 +122,10 @@ export default function NewProducts() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-baseline gap-4">
-        <h1 className="text-xl font-semibold">Калькулятор новинок</h1>
-        <span className="text-xs text-muted">
-          импорт из Китая → себестоимость → юнит-экономика WB с 4 сценариями НДС
-        </span>
-      </div>
+      <PageHeader
+        title="Калькулятор новинок"
+        subtitle="импорт из Китая → себестоимость → юнит-экономика WB с 4 сценариями НДС"
+      />
 
       <div className="card text-xs text-muted leading-relaxed">
         <div className="font-medium text-white mb-1">Как пользоваться</div>

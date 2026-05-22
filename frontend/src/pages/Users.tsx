@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Icon } from "../components/Icon";
+import PageHeader from "@/components/PageHeader";
 
 export default function Users() {
   const { user } = useAuth();
@@ -64,14 +65,16 @@ export default function Users() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-baseline gap-3">
-        <h1 className="text-xl font-semibold">Пользователи</h1>
-        <span className="text-xs text-muted">
-          роль <code>director</code> = полный доступ; <code>manager</code> =
-          ограниченный (нет редактирования налогов / OPEX-категорий /
-          расписания налогов / списка пользователей)
-        </span>
-      </div>
+      <PageHeader
+        title="Пользователи"
+        subtitle={
+          <>
+            роль <code>director</code> = полный доступ; <code>manager</code> =
+            ограниченный (нет редактирования налогов / OPEX-категорий /
+            расписания налогов / списка пользователей)
+          </>
+        }
+      />
 
       <section className="card">
         <h2 className="font-medium mb-2">Создать пользователя</h2>

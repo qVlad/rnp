@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
 import { Icon } from "../components/Icon";
+import PageHeader from "@/components/PageHeader";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const blank = () => ({
@@ -90,21 +91,23 @@ export default function ExternalMarketing() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-semibold">Внешний маркетинг</h1>
-        <select
-          className="input"
-          value={filter}
-          onChange={(e: any) => setFilter(e.target.value)}
-        >
-          <option value="">Все каналы</option>
-          {channels.map((c: string) => (
-            <option key={c} value={c}>
-              {CHANNEL_LABELS[c] ?? c}
-            </option>
-          ))}
-        </select>
-      </div>
+      <PageHeader
+        title="Внешний маркетинг"
+        actions={
+          <select
+            className="input"
+            value={filter}
+            onChange={(e: any) => setFilter(e.target.value)}
+          >
+            <option value="">Все каналы</option>
+            {channels.map((c: string) => (
+              <option key={c} value={c}>
+                {CHANNEL_LABELS[c] ?? c}
+              </option>
+            ))}
+          </select>
+        }
+      />
 
       <div className="card text-sm text-muted leading-relaxed">
         Расходы на маркетинг <strong>вне</strong> WB Promotion (блогеры, инфографика, фотосъёмка,

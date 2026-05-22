@@ -19,6 +19,7 @@ import {
 } from "recharts";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
+import PageHeader from "@/components/PageHeader";
 
 const MONTH_LABELS = [
   "—", "Янв", "Фев", "Мар", "Апр", "Май", "Июн",
@@ -56,45 +57,42 @@ export default function SeasonPlan() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-end justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">План сезона</h1>
-          <div className="text-xs text-muted mt-1">
-            Прогноз выручки на год вперёд с учётом сезонности и YoY-тренда.
-            Декабрь готовится в августе.
+      <PageHeader
+        title="План сезона"
+        subtitle="Прогноз выручки на год вперёд с учётом сезонности и YoY-тренда. Декабрь готовится в августе."
+        actions={
+          <div className="flex items-end gap-3">
+            <label className="flex flex-col text-xs text-muted">
+              История (мес)
+              <select
+                className="bg-surface border border-border rounded-md p-1.5 text-sm text-white"
+                value={history}
+                onChange={(e) => setHistory(Number(e.target.value))}
+              >
+                {[12, 18, 24, 36, 48].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col text-xs text-muted">
+              Прогноз (мес)
+              <select
+                className="bg-surface border border-border rounded-md p-1.5 text-sm text-white"
+                value={forecast}
+                onChange={(e) => setForecast(Number(e.target.value))}
+              >
+                {[3, 6, 12, 18, 24].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
-        </div>
-        <div className="flex items-end gap-3">
-          <label className="flex flex-col text-xs text-muted">
-            История (мес)
-            <select
-              className="bg-surface border border-border rounded-md p-1.5 text-sm text-white"
-              value={history}
-              onChange={(e) => setHistory(Number(e.target.value))}
-            >
-              {[12, 18, 24, 36, 48].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="flex flex-col text-xs text-muted">
-            Прогноз (мес)
-            <select
-              className="bg-surface border border-border rounded-md p-1.5 text-sm text-white"
-              value={forecast}
-              onChange={(e) => setForecast(Number(e.target.value))}
-            >
-              {[3, 6, 12, 18, 24].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </div>
+        }
+      />
 
       {q.isLoading && <div className="card text-muted">Загрузка…</div>}
       {data?.warning && (

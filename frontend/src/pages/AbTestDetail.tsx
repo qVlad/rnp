@@ -509,6 +509,8 @@ export default function AbTestDetail() {
           <Link to="/abtest" className="text-link text-sm">
             ← к списку
           </Link>
+          {/* TASK-UI-011: detail-страница с back-link + dynamic title,
+              PageHeader props не покрывают back-link слот — inline-h1. */}
           <h1 className="text-2xl font-semibold mt-1">{test.name}</h1>
           <div className="text-muted text-sm mt-1">
             nm_id <span className="font-mono">{test.nm_id}</span> •{" "}

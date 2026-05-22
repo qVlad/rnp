@@ -3,6 +3,7 @@ import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import { usePeriod } from "@/contexts/PeriodContext";
+import PageHeader from "@/components/PageHeader";
 
 const SECTION_META: Record<string, { color: string; hint: string }> = {
   operating: {
@@ -32,9 +33,9 @@ export default function CashFlow() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-end justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-semibold">ДДС — Движение денежных средств</h1>
-        <div className="flex items-end gap-3 flex-wrap">
+      <PageHeader
+        title="ДДС — Движение денежных средств"
+        actions={
           <div className="flex flex-col text-xs text-muted">
             Период
             <DateRangePicker
@@ -43,8 +44,8 @@ export default function CashFlow() {
               onChange={(r) => setPeriod({ kind: "custom", from: r.from, to: r.to })}
             />
           </div>
-        </div>
-      </div>
+        }
+      />
 
       <div className="card text-sm text-muted leading-relaxed">
         Отчёт построен на принципе «деньги по факту движения», не по начислению. Знак:

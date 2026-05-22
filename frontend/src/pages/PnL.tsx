@@ -12,6 +12,7 @@ import PnLCardsView from "@/components/PnLCardsView";
 import PnLByBrandView from "@/components/PnLByBrandView";
 import { usePeriod } from "@/contexts/PeriodContext";
 import { useReportingMode } from "@/contexts/ReportingModeContext";
+import PageHeader from "@/components/PageHeader";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const daysAgo = (n: number) => {
@@ -235,10 +236,11 @@ export default function PnL() {
           результат компании, попросите директора.
         </div>
       )}
-      <div className="flex items-end justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-semibold">P&L — Отчёт о прибылях и убытках</h1>
-        <div className="flex items-end gap-3 flex-wrap">
-          <div className="flex gap-1" title="Вид отчёта">
+      <PageHeader
+        title="P&L — Отчёт о прибылях и убытках"
+        actions={
+          <div className="flex items-end gap-3 flex-wrap">
+            <div className="flex gap-1" title="Вид отчёта">
             <button
               className={`btn ${view === "table" ? "border-accent text-accent" : ""}`}
               onClick={() => onSetView("table")}
@@ -303,8 +305,9 @@ export default function PnL() {
               />
             </>
           )}
-        </div>
-      </div>
+          </div>
+        }
+      />
 
       {view === "cards" && <PnLCardsView />}
       {view === "by-brand" && <PnLByBrandView />}

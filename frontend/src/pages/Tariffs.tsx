@@ -32,6 +32,7 @@ import {
 } from "recharts";
 import { api, type TariffTimelineRow } from "@/api/client";
 import { fmtPct } from "@/lib/format";
+import PageHeader from "@/components/PageHeader";
 
 type Tab = "box" | "pallet" | "commission";
 
@@ -70,14 +71,16 @@ export default function Tariffs() {
 
   return (
     <div className="space-y-4">
-      <header className="space-y-1">
-        <h1 className="text-2xl font-semibold">Тарифы Wildberries</h1>
-        <p className="text-sm text-muted">
-          История изменения тарифов хранения, логистики и комиссий по складам и
-          предметам. Источник — WB Tariffs API (sync ежедневно в 08:00 MSK,
-          таблицы <code className="px-1">wb_tariff_*</code>).
-        </p>
-      </header>
+      <PageHeader
+        title="Тарифы Wildberries"
+        subtitle={
+          <>
+            История изменения тарифов хранения, логистики и комиссий по складам
+            и предметам. Источник — WB Tariffs API (sync ежедневно в 08:00 MSK,
+            таблицы <code className="px-1">wb_tariff_*</code>).
+          </>
+        }
+      />
 
       <nav className="flex gap-1 border-b border-border">
         {(
@@ -292,7 +295,7 @@ function ChangesTable({
   return (
     <div className="card overflow-x-auto p-0">
       <table className="min-w-full text-sm">
-        <thead className="bg-surface-2 text-muted text-xs uppercase">
+        <thead className="sticky-table-head text-muted text-xs uppercase">
           <tr>
             <th className="text-left p-2">С даты</th>
             <th className="text-right p-2">Δ Логистика база</th>
@@ -455,7 +458,7 @@ function CommissionTab() {
       {sorted.length > 0 && (
         <div className="card overflow-x-auto p-0">
           <table className="min-w-full text-sm">
-            <thead className="bg-surface-2 text-muted text-xs uppercase">
+            <thead className="sticky-table-head text-muted text-xs uppercase">
               <tr>
                 <th className="text-left p-2">С даты</th>
                 <th className="text-right p-2">Δ FBO, %</th>

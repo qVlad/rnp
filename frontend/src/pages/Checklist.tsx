@@ -9,6 +9,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
+import PageHeader from "@/components/PageHeader";
 
 type Status = "red" | "yellow" | "green" | "ok";
 
@@ -54,36 +55,34 @@ export default function Checklist() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-end justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">Чек-лист SKU</h1>
-          <div className="text-xs text-muted mt-1">
-            Готовый to-do list по каждому товару — что не так и что сделать.
+      <PageHeader
+        title="Чек-лист SKU"
+        subtitle="Готовый to-do list по каждому товару — что не так и что сделать."
+        actions={
+          <div className="flex items-end gap-3 flex-wrap">
+            <label className="flex flex-col text-xs text-muted">
+              Период (дней)
+              <select
+                className="bg-surface border border-border rounded-md p-1.5 text-sm text-white"
+                value={days}
+                onChange={(e) => setDays(Number(e.target.value))}
+              >
+                <option value={7}>7</option>
+                <option value={14}>14</option>
+                <option value={30}>30</option>
+                <option value={60}>60</option>
+                <option value={90}>90</option>
+              </select>
+            </label>
+            <input
+              placeholder="Поиск по nmId / артикулу / бренду"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              className="bg-surface border border-border rounded-md p-1.5 text-sm w-72"
+            />
           </div>
-        </div>
-        <div className="flex items-end gap-3 flex-wrap">
-          <label className="flex flex-col text-xs text-muted">
-            Период (дней)
-            <select
-              className="bg-surface border border-border rounded-md p-1.5 text-sm text-white"
-              value={days}
-              onChange={(e) => setDays(Number(e.target.value))}
-            >
-              <option value={7}>7</option>
-              <option value={14}>14</option>
-              <option value={30}>30</option>
-              <option value={60}>60</option>
-              <option value={90}>90</option>
-            </select>
-          </label>
-          <input
-            placeholder="Поиск по nmId / артикулу / бренду"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="bg-surface border border-border rounded-md p-1.5 text-sm w-72"
-          />
-        </div>
-      </div>
+        }
+      />
 
       {summary.data && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

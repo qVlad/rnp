@@ -19,6 +19,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
 import { Icon } from "../components/Icon";
+import PageHeader from "@/components/PageHeader";
 
 interface ProductOption {
   nm_id: number;
@@ -228,16 +229,16 @@ export default function PromoCalculator() {
   return (
     <div className="flex flex-col gap-4">
       {/* Hero */}
-      <div className="card">
-        <h1 className="text-xl font-semibold mb-1">
-          Калькулятор рентабельности WB-акций
-        </h1>
-        <p className="text-sm text-muted">
-          Симулирует impact акции (скидка × N дней × ожидаемый рост продаж)
-          на маржу и выручку per-SKU. Источник baseline — реальные данные
-          выкупов из <code>wb_report_detail</code> за выбранное окно.
-        </p>
-      </div>
+      <PageHeader
+        title="Калькулятор рентабельности WB-акций"
+        subtitle={
+          <>
+            Симулирует impact акции (скидка × N дней × ожидаемый рост продаж)
+            на маржу и выручку per-SKU. Источник baseline — реальные данные
+            выкупов из <code>wb_report_detail</code> за выбранное окно.
+          </>
+        }
+      />
 
       {/* Form */}
       <div className="card flex flex-col gap-4">

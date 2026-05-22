@@ -16,6 +16,8 @@ export default function Legal() {
           </Link>
         </div>
 
+        {/* TASK-UI-011: Legal — публичная страница без app-shell,
+            оставлен inline-h1 (semantic h1 нормализован глобальным CSS). */}
         <h1 className="text-2xl font-semibold mb-4">Правила и приватность</h1>
         <p className="text-sm text-muted mb-6">
           Сервис «РНП — Wildberries аналитика» (далее «Сервис») предоставляет

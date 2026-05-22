@@ -5,6 +5,7 @@ import { DateRangePicker } from "@/components/DateRangePicker";
 import PaymentOrdersTable from "@/components/PaymentOrdersTable";
 import { fmtRub } from "@/lib/format";
 import { usePeriod } from "@/contexts/PeriodContext";
+import PageHeader from "@/components/PageHeader";
 
 function isoDate(d: Date) {
   return d.toISOString().slice(0, 10);
@@ -50,19 +51,21 @@ function UsnPage({ vatRate, title }: { vatRate: number; title: string }) {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="mb-1">{title}</h1>
-        <p className="text-sm text-muted">
-          Налоговый отчёт по методике бухгалтера: cash-basis для выкупных
-          отчётов, accrual (по дате реализации) для основных отчётов.
-          {hasVat && (
-            <>
-              {" "}Невозвратный НДС {vatRate}% выделяется ИЗ цены, УСН считается с
-              net (gross − НДС). Общая нагрузка = УСН + НДС.
-            </>
-          )}
-        </p>
-      </div>
+      <PageHeader
+        title={title}
+        subtitle={
+          <>
+            Налоговый отчёт по методике бухгалтера: cash-basis для выкупных
+            отчётов, accrual (по дате реализации) для основных отчётов.
+            {hasVat && (
+              <>
+                {" "}Невозвратный НДС {vatRate}% выделяется ИЗ цены, УСН
+                считается с net (gross − НДС). Общая нагрузка = УСН + НДС.
+              </>
+            )}
+          </>
+        }
+      />
 
       <section className="card text-xs text-muted">
         <strong className="text-fg">Формула:</strong>{" "}

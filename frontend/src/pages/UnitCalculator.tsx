@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub, fmtPct } from "@/lib/format";
 import { computeUnitEconomics, type CalcInput } from "@/lib/calc";
+import PageHeader from "@/components/PageHeader";
 
 const blank = (): CalcInput => ({
   price: 1990,
@@ -119,7 +120,7 @@ export default function UnitCalculator() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-xl font-semibold">Юнит-калькулятор «what-if»</h1>
+      <PageHeader title="Юнит-калькулятор «what-if»" />
 
       <div className="card text-sm text-muted leading-relaxed">
         Прикиньте маржу и ROI ещё до завоза товара. Меняйте параметры — расчёт

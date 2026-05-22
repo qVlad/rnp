@@ -7,6 +7,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { abtestApi, AbTestStatus } from "@/api/abtest";
 import { Icon } from "../components/Icon";
+import PageHeader from "@/components/PageHeader";
 
 const STATUS_LABELS: Record<AbTestStatus | string, string> = {
   draft: "Черновик",
@@ -67,12 +68,14 @@ export default function AbTestList() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">A/B тесты карточек</h1>
-        <Link to="/abtest/new" className="btn btn-primary">
-          + Новый тест
-        </Link>
-      </div>
+      <PageHeader
+        title="A/B тесты карточек"
+        actions={
+          <Link to="/abtest/new" className="btn btn-primary">
+            + Новый тест
+          </Link>
+        }
+      />
 
       <div className="flex gap-3 items-center">
         <select

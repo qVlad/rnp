@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
 import { Icon } from "../components/Icon";
+import PageHeader from "@/components/PageHeader";
 
 type PaidStatus = "unpaid" | "partial" | "paid";
 
@@ -83,12 +84,10 @@ export default function Supplies() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-baseline gap-4">
-        <h1 className="text-xl font-semibold">Закупки товара</h1>
-        <span className="text-xs text-muted">
-          для расчёта себестоимости методом средневзвешенной (как в 1С)
-        </span>
-      </div>
+      <PageHeader
+        title="Закупки товара"
+        subtitle="для расчёта себестоимости методом средневзвешенной (как в 1С)"
+      />
 
       <div className="card text-xs text-muted leading-relaxed">
         <div className="font-medium text-white mb-1">Зачем это нужно</div>

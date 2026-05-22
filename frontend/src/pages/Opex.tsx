@@ -7,6 +7,7 @@ import {
   type AllocationRow,
 } from "@/components/OpexAllocationsEditor";
 import { Icon } from "../components/Icon";
+import PageHeader from "@/components/PageHeader";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -16,23 +17,25 @@ export default function Opex() {
   const [tab, setTab] = useState<Tab>("entries");
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-semibold">OPEX (расходы вне маркетплейса)</h1>
-        <div className="flex gap-1">
-          <button
-            className={`btn ${tab === "entries" ? "border-accent text-accent" : ""}`}
-            onClick={() => setTab("entries")}
-          >
-            Записи
-          </button>
-          <button
-            className={`btn ${tab === "categories" ? "border-accent text-accent" : ""}`}
-            onClick={() => setTab("categories")}
-          >
-            Категории
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="OPEX (расходы вне маркетплейса)"
+        actions={
+          <div className="flex gap-1">
+            <button
+              className={`btn ${tab === "entries" ? "border-accent text-accent" : ""}`}
+              onClick={() => setTab("entries")}
+            >
+              Записи
+            </button>
+            <button
+              className={`btn ${tab === "categories" ? "border-accent text-accent" : ""}`}
+              onClick={() => setTab("categories")}
+            >
+              Категории
+            </button>
+          </div>
+        }
+      />
 
       {tab === "entries" ? <Entries /> : <Categories />}
     </div>

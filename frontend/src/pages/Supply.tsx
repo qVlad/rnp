@@ -5,6 +5,7 @@ import { fmtNum, fmtPct } from "@/lib/format";
 import { useTagFilter } from "@/lib/useTagFilter";
 import TagFilterDropdown from "@/components/TagFilterDropdown";
 import { Icon } from "../components/Icon";
+import PageHeader from "@/components/PageHeader";
 
 const URGENCY_STYLE: Record<string, { label: string; color: string }> = {
   critical: { label: "Критично", color: "bg-danger-subtle text-danger" },
@@ -236,61 +237,63 @@ export default function Supply() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-end justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-semibold">Поставки и прогноз стокаута</h1>
-        <div className="flex items-end gap-3 flex-wrap">
-          <label className="flex flex-col text-xs text-muted">
-            Окно скорости продаж
-            <select
-              className="input"
-              value={velWin}
-              onChange={(e: any) => setVelWin(Number(e.target.value))}
-            >
-              {VELOCITY_WINDOWS.map((w) => (
-                <option key={w} value={w}>
-                  {w} дн
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="flex flex-col text-xs text-muted">
-            Цель: хватать на
-            <input
-              type="number"
-              min={7}
-              max={180}
-              className="input"
-              value={target}
-              onChange={(e: any) => setTarget(Number(e.target.value) || 30)}
-            />
-          </label>
-          <label className="flex flex-col text-xs text-muted">
-            Алерт когда осталось
-            <input
-              type="number"
-              min={1}
-              max={30}
-              className="input"
-              value={warning}
-              onChange={(e: any) => setWarning(Number(e.target.value) || 7)}
-            />
-          </label>
-          <label className="flex flex-col text-xs text-muted">
-            Окно ИРП
-            <select
-              className="input"
-              value={irpWin}
-              onChange={(e: any) => setIrpWin(Number(e.target.value))}
-            >
-              {IRP_WINDOWS.map((w) => (
-                <option key={w} value={w}>
-                  {w} дн
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </div>
+      <PageHeader
+        title="Поставки и прогноз стокаута"
+        actions={
+          <div className="flex items-end gap-3 flex-wrap">
+            <label className="flex flex-col text-xs text-muted">
+              Окно скорости продаж
+              <select
+                className="input"
+                value={velWin}
+                onChange={(e: any) => setVelWin(Number(e.target.value))}
+              >
+                {VELOCITY_WINDOWS.map((w) => (
+                  <option key={w} value={w}>
+                    {w} дн
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col text-xs text-muted">
+              Цель: хватать на
+              <input
+                type="number"
+                min={7}
+                max={180}
+                className="input"
+                value={target}
+                onChange={(e: any) => setTarget(Number(e.target.value) || 30)}
+              />
+            </label>
+            <label className="flex flex-col text-xs text-muted">
+              Алерт когда осталось
+              <input
+                type="number"
+                min={1}
+                max={30}
+                className="input"
+                value={warning}
+                onChange={(e: any) => setWarning(Number(e.target.value) || 7)}
+              />
+            </label>
+            <label className="flex flex-col text-xs text-muted">
+              Окно ИРП
+              <select
+                className="input"
+                value={irpWin}
+                onChange={(e: any) => setIrpWin(Number(e.target.value))}
+              >
+                {IRP_WINDOWS.map((w) => (
+                  <option key={w} value={w}>
+                    {w} дн
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        }
+      />
 
       <div className="card text-sm text-muted leading-relaxed">
         <div>
@@ -416,7 +419,7 @@ export default function Supply() {
         )}
         {items.length > 0 && (
           <table className="w-full text-sm">
-            <thead>
+            <thead className="sticky-table-head">
               <tr className="text-muted text-xs uppercase">
                 <th className="w-6 p-2"></th>
                 <th className="text-left p-2">nmId</th>

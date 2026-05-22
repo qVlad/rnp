@@ -17,6 +17,7 @@ import LkDisclaimerModal, {
   hasAgreedDisclaimer,
 } from "@/components/LkDisclaimerModal";
 import { Icon } from "../components/Icon";
+import PageHeader from "@/components/PageHeader";
 
 export default function Redistribution() {
   const qc = useQueryClient();
@@ -121,23 +122,23 @@ export default function Redistribution() {
         </div>
       )}
 
-      <div className="flex items-baseline justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-semibold">
-          Перераспределение остатков WB
-        </h1>
-        <button
-          className="btn text-xs"
-          onClick={() => generateMut.mutate()}
-          disabled={generateMut.isPending || !statusQ.data?.lk_connected}
-          title={
-            !statusQ.data?.lk_connected
-              ? "Нужно подключение LK. Откройте seller.wildberries.ru в браузере с установленным расширением — LK подключится автоматически."
-              : ""
-          }
-        >
-          {generateMut.isPending ? "Считаю…" : "↻ Пересчитать рекомендации"}
-        </button>
-      </div>
+      <PageHeader
+        title="Перераспределение остатков WB"
+        actions={
+          <button
+            className="btn text-xs"
+            onClick={() => generateMut.mutate()}
+            disabled={generateMut.isPending || !statusQ.data?.lk_connected}
+            title={
+              !statusQ.data?.lk_connected
+                ? "Нужно подключение LK. Откройте seller.wildberries.ru в браузере с установленным расширением — LK подключится автоматически."
+                : ""
+            }
+          >
+            {generateMut.isPending ? "Считаю…" : "↻ Пересчитать рекомендации"}
+          </button>
+        }
+      />
 
       <div className="card text-xs text-muted leading-relaxed">
         Связка прогноз → план → автобронь для услуги WB «Перераспределение

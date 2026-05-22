@@ -4,6 +4,7 @@ import { api } from "@/api/client";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import { usePeriod } from "@/contexts/PeriodContext";
 import { Icon } from "../components/Icon";
+import PageHeader from "@/components/PageHeader";
 
 const isoToday = () => new Date().toISOString().slice(0, 10);
 
@@ -52,13 +53,15 @@ export default function AuditLog() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-baseline gap-3 flex-wrap">
-        <h1 className="text-xl font-semibold">Audit log</h1>
-        <span className="text-xs text-muted">
-          кто / когда / что менял в справочниках. Действия ID = заголовок{" "}
-          <code>X-Actor</code> (выставь себе имя в /settings)
-        </span>
-      </div>
+      <PageHeader
+        title="Audit log"
+        subtitle={
+          <>
+            кто / когда / что менял в справочниках. Действия ID = заголовок{" "}
+            <code>X-Actor</code> (выставь себе имя в /settings)
+          </>
+        }
+      />
 
       {/* Filters */}
       <section className="card">

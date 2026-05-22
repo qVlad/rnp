@@ -109,6 +109,18 @@ html, body, #root {
   .font-mono, code, kbd, pre, samp {
     font-variant-numeric: tabular-nums;
   }
+  /* Sticky thead для длинных таблиц (TASK-UI-007). Применять как
+     <thead className="sticky-table-head">. Фон var(--surface-2) непрозрачный,
+     иначе строки тела «просвечивают» при скролле. */
+  .sticky-table-head {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--surface-2);
+  }
+  .sticky-table-head th {
+    background: var(--surface-2);
+  }
   /* H1-стандарт: 24px / 32px line-height. Перебивает inline text-xl font-semibold */
   h1 {
     @apply text-h2 font-semibold leading-tight;

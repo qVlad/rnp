@@ -193,3 +193,27 @@ _Пока пусто. Audit-задачи TASK-UI-001..003 в Sprint 1 превр
 - **Минимальный фикс:** Добавить `fmtRub2(v, digits=2)` / `fmtRatio(v)` helpers в `lib/format.ts` и перейти по-файлово. Или — добавить `// math` коммент рядом с каждым `.toFixed()`.
 - **Связанные задачи:** TASK-UI-004 (предусмотренно: `>80% за раунд, остальное defer`)
 - **Статус:** Открыт
+
+### BUG-UI-003: Sticky первая колонка (nm_id) на Units / ABC (отложено из TASK-UI-007)
+
+- **Приоритет:** P3
+- **Обнаружено:** 2026-05-22 (sub-agent J)
+- **Среда:** dev
+- **Причина:** В TASK-UI-007 добавлен sticky-thead (горизонтальный fix), но опциональный sticky-первой-колонки на Units (1448) и ABC требует test z-index conflict с sticky-thead (`top: 0 z-index: 10`) и overflow-x контейнера. На table с `overflow-x-auto` left-sticky колонка должна быть `position: sticky; left: 0; z-index: 11` (выше thead corner). Если просто навешать класс без проверки — поедет визуал при горизонтальном скролле.
+- **Затронутые файлы:** `frontend/src/pages/Units.tsx` (main-table + sizes-table), `frontend/src/pages/AbcAnalysis.tsx`.
+- **Ожидаемое:** Первая колонка (nm_id) sticky слева, не отдаёт horizontal-scroll. Corner-cell (intersection thead × first-col) с z-index выше обоих.
+- **Минимальный фикс:** Создать `.sticky-table-col` class в `styles.css` + corner-fix `.sticky-table-head th:first-child { z-index: 11 }`. Применить точечно в 2 файлах. Verify визуально на 1920x1080.
+- **Связанные задачи:** TASK-UI-007
+- **Статус:** Открыт
+
+### BUG-UI-004: Унификация Loading / Empty / Error через `states.tsx` (отложено из TASK-UI-008)
+
+- **Приоритет:** P3
+- **Обнаружено:** 2026-05-22 (sub-agent J)
+- **Среда:** dev
+- **Причина:** Из 40+ pages с `useQuery` ни один не использует canonical `Skeleton/EmptyState/ErrorState` компоненты из `frontend/src/components/states.tsx` (созданы давно, не внедрены). В Sprint 2 sub-agent J унифицировал только wording empty-state'ов на 7 топ-страницах ((«Нет данных за период · измените фильтр или дождитесь синхронизации»), полная миграция на компоненты отложена.
+- **Затронутые файлы:** все `frontend/src/pages/*.tsx` где есть `useQuery` + любые из паттернов `if (isLoading) return ...`, `q.error && <div>...</div>`, `items.length === 0 && <div>...</div>`. Также: `WB-токен не введён` → отдельный EmptyState с CTA на `/settings` — нет existing-pattern, нужно определить триггер.
+- **Ожидаемое:** `if (q.isLoading) return <Skeleton variant="table" rows={5} />`, `if (q.error) return <ErrorState error={q.error} onRetry={() => q.refetch()} />`, `if (!items.length) return <EmptyState icon="package" title="..." hint="..." action={<Link>Сделать X</Link>} />`. Единый tone & wording.
+- **Минимальный фикс:** Per-page. Старт с топ-5 по трафику: Dashboard (если main session разрешит), Units, PnL, AbcAnalysis, Tariffs. Затем остальные.
+- **Связанные задачи:** TASK-UI-008
+- **Статус:** Открыт

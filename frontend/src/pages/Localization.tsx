@@ -17,6 +17,7 @@ import { api } from "@/api/client";
 import { fmtNum, fmtPct } from "@/lib/format";
 import { usePeriod } from "@/contexts/PeriodContext";
 import { DateRangePicker } from "@/components/DateRangePicker";
+import PageHeader from "@/components/PageHeader";
 
 function pctColor(pct: number): string {
   if (pct >= 70) return "text-success";
@@ -100,14 +101,16 @@ export default function Localization() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-end justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-semibold">Локализация заказов</h1>
-        <DateRangePicker
-          from={range.from}
-          to={range.to}
-          onChange={(r) => setPeriod({ kind: "custom", from: r.from, to: r.to })}
-        />
-      </div>
+      <PageHeader
+        title="Локализация заказов"
+        actions={
+          <DateRangePicker
+            from={range.from}
+            to={range.to}
+            onChange={(r) => setPeriod({ kind: "custom", from: r.from, to: r.to })}
+          />
+        }
+      />
 
       <div className="card text-sm text-muted leading-relaxed">
         Локализация = % заказов отгружённых из склада в том же федеральном
@@ -151,7 +154,9 @@ export default function Localization() {
       <div className="card">
         <h2 className="text-lg font-semibold mb-3">По кластеру покупателя</h2>
         {d.by_cluster.length === 0 ? (
-          <div className="text-muted text-sm">Нет данных за период</div>
+          <div className="text-muted text-sm">
+            Нет данных за период · измените фильтр или дождитесь синхронизации
+          </div>
         ) : (
           <table className="w-full text-sm">
             <thead>
@@ -192,7 +197,9 @@ export default function Localization() {
           = локализованные. Top-25 складов по объёму.
         </div>
         {!heatmap ? (
-          <div className="text-muted text-sm">Нет данных за период</div>
+          <div className="text-muted text-sm">
+            Нет данных за период · измените фильтр или дождитесь синхронизации
+          </div>
         ) : (
           <table className="text-xs">
             <thead>
@@ -314,7 +321,9 @@ export default function Localization() {
       <div className="card overflow-x-auto">
         <h2 className="text-lg font-semibold mb-3">По складам отгрузки</h2>
         {d.by_warehouse.length === 0 ? (
-          <div className="text-muted text-sm">Нет данных за период</div>
+          <div className="text-muted text-sm">
+            Нет данных за период · измените фильтр или дождитесь синхронизации
+          </div>
         ) : (
           <table className="w-full text-sm">
             <thead>

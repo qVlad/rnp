@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { Icon } from "../components/Icon";
+import PageHeader from "@/components/PageHeader";
 
 export default function ProductGroups() {
   const qc = useQueryClient();
@@ -104,13 +105,10 @@ export default function ProductGroups() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-baseline gap-3 flex-wrap">
-        <h1 className="text-xl font-semibold">Группы товаров</h1>
-        <span className="text-xs text-muted">
-          объединяй SKU по бренду / категории / ответственному менеджеру —
-          для фильтра на дашборде, план-факте, юнит-эконоmика
-        </span>
-      </div>
+      <PageHeader
+        title="Группы товаров"
+        subtitle="объединяй SKU по бренду / категории / ответственному менеджеру — для фильтра на дашборде, план-факте, юнит-экономика"
+      />
 
       {/* Create / edit form */}
       <section className="card">
@@ -162,7 +160,7 @@ export default function ProductGroups() {
               {editingId ? "Сохранить" : "Создать"}
             </button>
             {editingId && (
-              <button className="btn" onClick={reset}>
+              <button className="btn" onClick={reset} aria-label="Отменить редактирование">
                 <Icon name="close" size={12} />
               </button>
             )}

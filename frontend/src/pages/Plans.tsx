@@ -4,6 +4,7 @@ import { api } from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { fmtRub, fmtNum, fmtPct } from "@/lib/format";
 import { Icon } from "../components/Icon";
+import PageHeader from "@/components/PageHeader";
 
 const today = new Date();
 const blank = () => ({
@@ -510,69 +511,71 @@ export default function Plans() {
         </div>
       )}
 
-      <div className="flex items-end justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-semibold">План — Факт</h1>
-        <div className="flex items-end gap-3 flex-wrap">
-          {canEdit && (
-            <>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".xlsx,.xls"
-                onChange={handleFileChange}
-                className="hidden"
-              />
+      <PageHeader
+        title="План — Факт"
+        actions={
+          <div className="flex items-end gap-3 flex-wrap">
+            {canEdit && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".xlsx,.xls"
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  className="btn text-xs self-end"
+                  onClick={handleImportClick}
+                  disabled={importMut.isPending}
+                  title="Загрузить XLSX-файл с планами — auto-detect колонок"
+                >
+                  {importMut.isPending ? "Импортирую…" : "📂 Импорт XLSX"}
+                </button>
+              </>
+            )}
+            {canEdit && (
               <button
                 type="button"
                 className="btn text-xs self-end"
-                onClick={handleImportClick}
-                disabled={importMut.isPending}
-                title="Загрузить XLSX-файл с планами — auto-detect колонок"
+                onClick={handleCopyFromPrev}
+                disabled={copyFromPrevMut.isPending}
+                title={`Перенести все планы из ${MONTHS[prevPeriod.month - 1]} ${prevPeriod.year} в ${MONTHS[month - 1]} ${year}`}
               >
-                {importMut.isPending ? "Импортирую…" : "📂 Импорт XLSX"}
+                {copyFromPrevMut.isPending
+                  ? "Копирую…"
+                  : `📋 Скопировать из ${MONTHS[prevPeriod.month - 1]} ${prevPeriod.year}`}
               </button>
-            </>
-          )}
-          {canEdit && (
-            <button
-              type="button"
-              className="btn text-xs self-end"
-              onClick={handleCopyFromPrev}
-              disabled={copyFromPrevMut.isPending}
-              title={`Перенести все планы из ${MONTHS[prevPeriod.month - 1]} ${prevPeriod.year} в ${MONTHS[month - 1]} ${year}`}
-            >
-              {copyFromPrevMut.isPending
-                ? "Копирую…"
-                : `📋 Скопировать из ${MONTHS[prevPeriod.month - 1]} ${prevPeriod.year}`}
-            </button>
-          )}
-          <label className="flex flex-col text-xs text-muted">
-            Месяц
-            <select
-              className="input"
-              value={month}
-              onChange={(e: any) => setMonth(Number(e.target.value))}
-            >
-              {MONTHS.map((m, i) => (
-                <option key={i} value={i + 1}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="flex flex-col text-xs text-muted">
-            Год
-            <input
-              type="number"
-              min={2020}
-              max={2100}
-              className="input"
-              value={year}
-              onChange={(e: any) => setYear(Number(e.target.value) || today.getFullYear())}
-            />
-          </label>
-        </div>
-      </div>
+            )}
+            <label className="flex flex-col text-xs text-muted">
+              Месяц
+              <select
+                className="input"
+                value={month}
+                onChange={(e: any) => setMonth(Number(e.target.value))}
+              >
+                {MONTHS.map((m, i) => (
+                  <option key={i} value={i + 1}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col text-xs text-muted">
+              Год
+              <input
+                type="number"
+                min={2020}
+                max={2100}
+                className="input"
+                value={year}
+                onChange={(e: any) => setYear(Number(e.target.value) || today.getFullYear())}
+              />
+            </label>
+          </div>
+        }
+      />
       {copyFromPrevMut.isError && (
         <div className="rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
           {(copyFromPrevMut.error as Error).message}

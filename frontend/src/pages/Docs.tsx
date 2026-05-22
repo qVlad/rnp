@@ -587,6 +587,8 @@ export default function Docs() {
       <aside className="lg:w-64 flex-shrink-0">
         <div className="card flex flex-col gap-3 sticky top-4">
           <div>
+            {/* TASK-UI-011: h1 живёт внутри sticky-sidebar (не page-shell),
+                PageHeader не подходит — оставлен inline. */}
             <h1 className="text-lg font-semibold">Помощь</h1>
             <div className="text-xs text-muted">
               Вы вошли как <code className="text-accent">{role}</code>

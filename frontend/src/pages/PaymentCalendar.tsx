@@ -13,6 +13,7 @@ import {
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
 import { chartTheme } from "@/lib/chartTheme";
+import PageHeader from "@/components/PageHeader";
 
 export default function PaymentCalendar() {
   const [daysForward, setDaysForward] = useState(30);
@@ -58,13 +59,10 @@ export default function PaymentCalendar() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold mb-1">Платёжный календарь</h1>
-        <p className="text-sm text-muted">
-          Прогноз банковского остатка: ожидаемые выплаты WB (по неоплаченным отчётам)
-          + запланированные OPEX. Алерт показывается если в горизонте ожидается кассовый разрыв.
-        </p>
-      </div>
+      <PageHeader
+        title="Платёжный календарь"
+        subtitle="Прогноз банковского остатка: ожидаемые выплаты WB (по неоплаченным отчётам) + запланированные OPEX. Алерт показывается если в горизонте ожидается кассовый разрыв."
+      />
 
       <section className="card flex flex-wrap gap-4 items-end">
         <label className="flex flex-col gap-1">

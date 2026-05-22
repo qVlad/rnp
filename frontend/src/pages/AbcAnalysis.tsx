@@ -4,6 +4,7 @@ import { api } from "@/api/client";
 import { fmtRub, fmtNum, fmtPct } from "@/lib/format";
 import { useTagFilter } from "@/lib/useTagFilter";
 import TagFilterDropdown from "@/components/TagFilterDropdown";
+import PageHeader from "@/components/PageHeader";
 
 const METRICS = [
   { value: "revenue", label: "Выручка" },
@@ -67,43 +68,45 @@ export default function AbcAnalysis() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-end justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-semibold">ABC + XYZ-анализ</h1>
-        <div className="flex items-end gap-3 flex-wrap">
-          <label className="flex flex-col text-xs text-muted">
-            Период
-            <select
-              className="input"
-              value={days}
-              onChange={(e: any) => setDays(Number(e.target.value))}
-            >
-              {PERIODS.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="flex flex-col text-xs text-muted">
-            Метрика
-            <select
-              className="input"
-              value={metric}
-              onChange={(e: any) => setMetric(e.target.value)}
-            >
-              {METRICS.map((m) => (
-                <option key={m.value} value={m.value}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="flex flex-col text-xs text-muted">
-            Тег
-            <TagFilterDropdown storageKey="abc.tag-filter.v1" />
+      <PageHeader
+        title="ABC + XYZ-анализ"
+        actions={
+          <div className="flex items-end gap-3 flex-wrap">
+            <label className="flex flex-col text-xs text-muted">
+              Период
+              <select
+                className="input"
+                value={days}
+                onChange={(e: any) => setDays(Number(e.target.value))}
+              >
+                {PERIODS.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col text-xs text-muted">
+              Метрика
+              <select
+                className="input"
+                value={metric}
+                onChange={(e: any) => setMetric(e.target.value)}
+              >
+                {METRICS.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="flex flex-col text-xs text-muted">
+              Тег
+              <TagFilterDropdown storageKey="abc.tag-filter.v1" />
+            </div>
           </div>
-        </div>
-      </div>
+        }
+      />
 
       <div className="card text-sm text-muted leading-relaxed">
         <strong>ABC</strong> — распределение SKU по доле выбранной метрики (Парето 80/15/5).
@@ -204,7 +207,7 @@ export default function AbcAnalysis() {
         )}
         {items.length > 0 && (
           <table className="w-full text-sm">
-            <thead>
+            <thead className="sticky-table-head">
               <tr className="text-muted text-xs uppercase">
                 <th className="text-left p-2">nmId</th>
                 <th className="text-left p-2">Артикул</th>

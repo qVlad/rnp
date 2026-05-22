@@ -16,6 +16,7 @@ import { api } from "@/api/client";
 import { fmtNum, fmtPct } from "@/lib/format";
 import { useTagFilter } from "@/lib/useTagFilter";
 import TagFilterDropdown from "@/components/TagFilterDropdown";
+import PageHeader from "@/components/PageHeader";
 
 type SortKey =
   | "views"
@@ -75,23 +76,25 @@ export default function Funnel() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-end justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-semibold">Воронка продаж — per SKU</h1>
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs text-muted">Период:</span>
-          {[7, 14, 30].map((n) => (
-            <button
-              key={n}
-              type="button"
-              className={`btn text-xs ${days === n ? "border-accent text-accent" : ""}`}
-              onClick={() => setDays(n)}
-            >
-              {n} дн
-            </button>
-          ))}
-          <TagFilterDropdown storageKey="funnel.tag-filter.v1" />
-        </div>
-      </div>
+      <PageHeader
+        title="Воронка продаж — per SKU"
+        actions={
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-muted">Период:</span>
+            {[7, 14, 30].map((n) => (
+              <button
+                key={n}
+                type="button"
+                className={`btn text-xs ${days === n ? "border-accent text-accent" : ""}`}
+                onClick={() => setDays(n)}
+              >
+                {n} дн
+              </button>
+            ))}
+            <TagFilterDropdown storageKey="funnel.tag-filter.v1" />
+          </div>
+        }
+      />
 
       <div className="card text-sm text-muted leading-relaxed">
         4 шага: <strong>показ</strong> (реклама) → <strong>корзина</strong> (atbs)

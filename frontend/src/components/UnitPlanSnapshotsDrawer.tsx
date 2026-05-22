@@ -115,7 +115,12 @@ export function UnitPlanSnapshotsDrawer({ open, onClose }: Props) {
               времени.
             </div>
           </div>
-          <button className="btn text-xs" onClick={onClose} title="Esc">
+          <button
+            className="btn text-xs"
+            onClick={onClose}
+            title="Esc"
+            aria-label="Закрыть"
+          >
             <Icon name="close" size={12} />
           </button>
         </div>

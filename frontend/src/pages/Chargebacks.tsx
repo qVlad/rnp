@@ -4,6 +4,7 @@ import { api, type Chargeback } from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { fmtRub } from "@/lib/format";
 import { Icon } from "../components/Icon";
+import PageHeader from "@/components/PageHeader";
 
 const STATUS_TONE: Record<string, string> = {
   new: "text-warn",
@@ -112,34 +113,34 @@ export default function Chargebacks() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-baseline justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-semibold">
-          Чарджбэки / штрафы WB
-        </h1>
-        <div className="flex items-center gap-2">
-          <a
-            className="btn text-xs"
-            href={api.chargebacksExportXlsxUrl({
-              status: filters.status || undefined,
-              category: filters.category || undefined,
-              date_from: filters.date_from || undefined,
-              date_to: filters.date_to || undefined,
-            })}
-            download
-            title="Скачать XLSX-реестр претензий с текущими фильтрами — для подачи в WB-поддержку"
-          >
-            <Icon name="download" size={12} /> Реестр в XLSX
-          </a>
-          <button
-            className="btn text-xs"
-            onClick={() => syncMut.mutate()}
-            disabled={syncMut.isPending}
-            title="Сканировать wb_report_detail за 60 дней и создать новые записи"
-          >
-            {syncMut.isPending ? "Синк…" : "↻ Sync (60 дн.)"}
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="Чарджбэки / штрафы WB"
+        actions={
+          <div className="flex items-center gap-2">
+            <a
+              className="btn text-xs"
+              href={api.chargebacksExportXlsxUrl({
+                status: filters.status || undefined,
+                category: filters.category || undefined,
+                date_from: filters.date_from || undefined,
+                date_to: filters.date_to || undefined,
+              })}
+              download
+              title="Скачать XLSX-реестр претензий с текущими фильтрами — для подачи в WB-поддержку"
+            >
+              <Icon name="download" size={12} /> Реестр в XLSX
+            </a>
+            <button
+              className="btn text-xs"
+              onClick={() => syncMut.mutate()}
+              disabled={syncMut.isPending}
+              title="Сканировать wb_report_detail за 60 дней и создать новые записи"
+            >
+              {syncMut.isPending ? "Синк…" : "↻ Sync (60 дн.)"}
+            </button>
+          </div>
+        }
+      />
 
       <div className="flex gap-2">
         <button

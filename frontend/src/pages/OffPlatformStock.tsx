@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub, fmtNum } from "@/lib/format";
 import { Icon } from "../components/Icon";
+import PageHeader from "@/components/PageHeader";
 
 export default function OffPlatformStock() {
   const qc = useQueryClient();
@@ -87,12 +88,10 @@ export default function OffPlatformStock() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-end gap-4 flex-wrap">
-        <h1 className="text-xl font-semibold">Off-WB склад · капитализация</h1>
-        <span className="text-xs text-muted">
-          движения по собственному складу + сумма «связанных» в запасах денег
-        </span>
-      </div>
+      <PageHeader
+        title="Off-WB склад · капитализация"
+        subtitle="движения по собственному складу + сумма «связанных» в запасах денег"
+      />
 
       {/* Summary cards */}
       <section className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -215,7 +214,7 @@ export default function OffPlatformStock() {
               {editingId ? "Сохранить" : "Добавить"}
             </button>
             {editingId && (
-              <button className="btn" onClick={reset}>
+              <button className="btn" onClick={reset} aria-label="Отменить редактирование">
                 <Icon name="close" size={12} />
               </button>
             )}
