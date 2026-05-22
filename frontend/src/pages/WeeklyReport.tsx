@@ -473,7 +473,7 @@ export default function WeeklyReport() {
 
             {/* Top SKUs by revenue */}
             <section className="card">
-              <h2 className="font-medium mb-3">Топ-5 SKU по выручке</h2>
+              <h2 className="font-medium mb-3">Топ-5 артикулов по выручке</h2>
               {topByRevenue.data?.items && topByRevenue.data.items.length > 0 ? (
                 <table className="w-full text-sm">
                   <thead className="text-muted text-xs uppercase">
@@ -487,7 +487,32 @@ export default function WeeklyReport() {
                   <tbody>
                     {topByRevenue.data.items.map((sku: any) => (
                       <tr key={sku.nm_id} className="border-t border-border">
-                        <td className="p-1 font-mono text-xs">#{sku.nm_id}</td>
+                        <td className="p-1">
+                          <a
+                            href={`/units?nm_id=${sku.nm_id}`}
+                            className="flex items-center gap-2 hover:underline"
+                            title={sku.vendor_code || sku.brand || `nm_id ${sku.nm_id}`}
+                          >
+                            <img
+                              src={`/api/products/${sku.nm_id}/photo`}
+                              alt=""
+                              className="w-9 h-12 object-cover rounded border border-border flex-shrink-0"
+                              loading="lazy"
+                              onError={(e) =>
+                                ((e.target as HTMLImageElement).style.visibility =
+                                  "hidden")
+                              }
+                            />
+                            <div className="flex flex-col leading-tight">
+                              <span className="font-mono text-xs">#{sku.nm_id}</span>
+                              {sku.vendor_code && (
+                                <span className="text-tiny text-muted">
+                                  {sku.vendor_code}
+                                </span>
+                              )}
+                            </div>
+                          </a>
+                        </td>
                         <td className="p-1 text-right font-mono">{fmtRub(sku.revenue || 0)}</td>
                         <td className="p-1 text-right font-mono">{fmtRub(sku.margin || 0)}</td>
                         <td className="p-1 text-right font-mono">{fmtPct(sku.roi || 0)}</td>
@@ -504,7 +529,7 @@ export default function WeeklyReport() {
 
             {/* Top SKUs by margin */}
             <section className="card">
-              <h2 className="font-medium mb-3">Топ-5 SKU по марже</h2>
+              <h2 className="font-medium mb-3">Топ-5 артикулов по марже</h2>
               {topByMargin.data?.items && topByMargin.data.items.length > 0 ? (
                 <table className="w-full text-sm">
                   <thead className="text-muted text-xs uppercase">
@@ -518,7 +543,32 @@ export default function WeeklyReport() {
                   <tbody>
                     {topByMargin.data.items.map((sku: any) => (
                       <tr key={sku.nm_id} className="border-t border-border">
-                        <td className="p-1 font-mono text-xs">#{sku.nm_id}</td>
+                        <td className="p-1">
+                          <a
+                            href={`/units?nm_id=${sku.nm_id}`}
+                            className="flex items-center gap-2 hover:underline"
+                            title={sku.vendor_code || sku.brand || `nm_id ${sku.nm_id}`}
+                          >
+                            <img
+                              src={`/api/products/${sku.nm_id}/photo`}
+                              alt=""
+                              className="w-9 h-12 object-cover rounded border border-border flex-shrink-0"
+                              loading="lazy"
+                              onError={(e) =>
+                                ((e.target as HTMLImageElement).style.visibility =
+                                  "hidden")
+                              }
+                            />
+                            <div className="flex flex-col leading-tight">
+                              <span className="font-mono text-xs">#{sku.nm_id}</span>
+                              {sku.vendor_code && (
+                                <span className="text-tiny text-muted">
+                                  {sku.vendor_code}
+                                </span>
+                              )}
+                            </div>
+                          </a>
+                        </td>
                         <td className="p-1 text-right font-mono">{fmtRub(sku.margin || 0)}</td>
                         <td className="p-1 text-right font-mono">{fmtRub(sku.revenue || 0)}</td>
                         <td className="p-1 text-right font-mono">{fmtPct(sku.margin_pct || 0)}</td>

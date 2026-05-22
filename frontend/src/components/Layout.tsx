@@ -131,13 +131,15 @@ const PROFILE_KEY = "sidebar.profile.v1";
 //
 // «Полный» — текущее поведение (RBAC как есть).
 // «owner» — главные 5-7 пунктов собственника (Dashboard / P&L / Сверка / Plans / Налоги).
+// «rop» — РОП-обзор: сводки + плановость + scoreboard'ы по менеджерам.
 // «manager» — узкое меню менеджера (SKU + Plans read).
 // «bookkeeper» — эмуляция bookkeeper-режима (для director/head — посмотреть глазами бухгалтера).
-type Profile = "full" | "owner" | "manager" | "bookkeeper";
+type Profile = "full" | "owner" | "rop" | "manager" | "bookkeeper";
 
 const PROFILE_LABELS: Record<Profile, string> = {
   full: "Полный",
   owner: "Собственник",
+  rop: "РОП",
   manager: "Менеджер",
   bookkeeper: "Бухгалтер",
 };
@@ -152,6 +154,24 @@ const PROFILE_WHITELIST: Record<Exclude<Profile, "full">, Set<string>> = {
     "/plans",
     "/taxes",
   ]),
+  rop: new Set([
+    "/",
+    "/pnl",
+    "/weekly-report",
+    "/managers-kpi",
+    "/units",
+    "/unit-plan",
+    "/abc",
+    "/plans",
+    "/supply",
+    "/redistribution",
+    "/localization",
+    "/transit-calculator",
+    "/supply-calculator",
+    "/promo-calculator",
+    "/funnel",
+    "/ads",
+  ]),
   manager: new Set([
     "/",
     "/units",
@@ -161,6 +181,7 @@ const PROFILE_WHITELIST: Record<Exclude<Profile, "full">, Set<string>> = {
     "/plans",
     "/redistribution",
     "/product-groups",
+    "/weekly-report",
   ]),
   bookkeeper: new Set([
     "/audit",
@@ -175,7 +196,10 @@ const PROFILE_WHITELIST: Record<Exclude<Profile, "full">, Set<string>> = {
 function readProfile(): Profile {
   try {
     const v = localStorage.getItem(PROFILE_KEY);
-    if (v === "full" || v === "owner" || v === "manager" || v === "bookkeeper") {
+    if (
+      v === "full" || v === "owner" || v === "rop" ||
+      v === "manager" || v === "bookkeeper"
+    ) {
       return v;
     }
   } catch {}

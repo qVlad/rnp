@@ -16,6 +16,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { api } from "@/api/client";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
 import { Icon } from "../components/Icon";
@@ -61,17 +62,15 @@ function SkuMultiPicker({
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  // Fetch products for search + selected chip details
+  // Поиск артикулов — через локальную базу `products` (НЕ через WB API).
+  // Используем общий api.listProducts с brand-scope guard'ом (manager
+  // увидит только свои бренды). До этого был прямой `fetch(...)` который
+  // обходил auth-interceptor и global error-handling.
   const searchQ = useQuery({
     queryKey: ["promo-calc-search", debounced],
     queryFn: async (): Promise<ProductOption[]> => {
-      const url = debounced
-        ? `/api/products?search=${encodeURIComponent(debounced)}`
-        : `/api/products`;
-      const resp = await fetch(url, { credentials: "include" });
-      if (!resp.ok) throw new Error("Не удалось загрузить products");
-      const data = (await resp.json()) as { items?: ProductOption[] };
-      return (data.items || []).slice(0, 30);
+      const data = await api.listProducts({ search: debounced || undefined });
+      return ((data.items as ProductOption[]) || []).slice(0, 30);
     },
     enabled: open,
   });
@@ -118,7 +117,7 @@ function SkuMultiPicker({
           className="flex-1 min-w-[180px] bg-transparent outline-none text-sm"
           placeholder={
             selected.length === 0
-              ? "Найти SKU: nm_id, артикул, бренд…"
+              ? "Найти артикул: nm_id, vendor_code, бренд…"
               : "+ добавить ещё"
           }
           value={query}
@@ -233,18 +232,17 @@ export default function PromoCalculator() {
         title="Калькулятор рентабельности WB-акций"
         subtitle={
           <>
-            Симулирует impact акции (скидка × N дней × ожидаемый рост продаж)
-            на маржу и выручку per-SKU. Источник baseline — реальные данные
-            выкупов из <code>wb_report_detail</code> за выбранное окно.{" "}
-            <a
-              href="/docs/PROMO_CALCULATOR.md"
-              target="_blank"
-              rel="noopener noreferrer"
+            Симулирует влияние акции (скидка × N дней × ожидаемый рост продаж)
+            на маржу и выручку по каждому артикулу. Источник «как было без
+            акции» — реальные данные выкупов из{" "}
+            <code>wb_report_detail</code> за выбранное окно.{" "}
+            <Link
+              to="/docs/promo-calculator"
               className="underline text-accent hover:text-accent-strong"
-              title="Открыть методику и формулы калькулятора в новом окне"
+              title="Открыть методику и формулы калькулятора"
             >
               📘 Методика
-            </a>
+            </Link>
           </>
         }
       />
@@ -253,7 +251,7 @@ export default function PromoCalculator() {
       <div className="card flex flex-col gap-4">
         <div>
           <label className="block text-sm font-medium mb-2">
-            SKU для расчёта
+            Артикулы для расчёта
             {nmIds.length > 0 && (
               <span className="text-muted font-normal">
                 {" "}
@@ -324,10 +322,13 @@ export default function PromoCalculator() {
             </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              Baseline-период
-            </label>
+          <label
+            className="block"
+            title="За какой период взять данные «как продавалось без акции» — выручка, маржа, скорость продаж"
+          >
+            <span className="block text-sm font-medium mb-1">
+              Период для сравнения (без акции)
+            </span>
             <select
               className="input w-full"
               value={baselinePeriod}
@@ -338,9 +339,9 @@ export default function PromoCalculator() {
               <option value={30}>30 дней</option>
             </select>
             <div className="text-xs text-muted mt-1">
-              Окно для расчёта velocity и средней маржи.
+              Окно для расчёта средней скорости продаж и маржи без акции.
             </div>
-          </div>
+          </label>
         </div>
 
         <div className="flex items-center gap-3">
@@ -366,7 +367,7 @@ export default function PromoCalculator() {
           {/* Totals */}
           <div className="mb-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
             <div>
-              <div className="text-muted">Выручка baseline</div>
+              <div className="text-muted">Выручка без акции</div>
               <div className="font-mono">
                 {fmtRub(result.totals.sum_baseline_revenue_total)}
               </div>
@@ -379,7 +380,7 @@ export default function PromoCalculator() {
               </div>
             </div>
             <div>
-              <div className="text-muted">Маржа baseline</div>
+              <div className="text-muted">Маржа без акции</div>
               <div className="font-mono">
                 {fmtRub(result.totals.sum_baseline_margin_total)}
               </div>
@@ -394,15 +395,19 @@ export default function PromoCalculator() {
           </div>
 
           <div className="text-sm text-muted mb-3">
-            Прибыльных SKU:{" "}
-            <span className="font-mono">
-              {result.totals.profitable_count}/{result.totals.items_count}
+            <span title="Артикулы, у которых маржа за единицу остаётся положительной (не убыток per unit)">
+              Не убыточных артикулов:{" "}
+              <span className="font-mono">
+                {result.totals.profitable_count}/{result.totals.items_count}
+              </span>
             </span>
             {" · "}
-            Лучше baseline:{" "}
-            <span className="font-mono">
-              {result.totals.better_than_baseline_count}/
-              {result.totals.items_count}
+            <span title="Артикулы, у которых суммарная маржа в акции выше, чем без акции (выгодно вступать)">
+              Лучше, чем без акции:{" "}
+              <span className="font-mono">
+                {result.totals.better_than_baseline_count}/
+                {result.totals.items_count}
+              </span>
             </span>
             {result.totals.skipped_nm_ids.length > 0 && (
               <span>
@@ -417,16 +422,20 @@ export default function PromoCalculator() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-muted border-b border-border">
-                <th className="py-2">SKU</th>
-                <th>Цена baseline</th>
+                <th className="py-2">Артикул</th>
+                <th>Цена без акции</th>
                 <th>Цена с акцией</th>
-                <th>Velocity / день</th>
-                <th>Маржа/ед. base</th>
-                <th>Маржа/ед. промо</th>
-                <th>Δ маржа total</th>
-                <th>Δ выручка total</th>
-                <th>Прибыль?</th>
-                <th>Breakeven boost</th>
+                <th>Шт/день</th>
+                <th>Маржа/ед. без акции</th>
+                <th>Маржа/ед. в акции</th>
+                <th>Δ маржа всего</th>
+                <th>Δ выручка всего</th>
+                <th title="Юнит-маржа в акции положительна = акция не убыточна. ⚠ Это НЕ показатель выгодности vs текущей ситуации — для этого смотри «Δ маржа всего»">
+                  Маржа &gt; 0
+                </th>
+                <th title="Минимальный рост продаж, при котором акция окупается. Если ваш типичный boost от акций ниже — не вступать">
+                  Минимум для окупаемости
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -497,13 +506,23 @@ export default function PromoCalculator() {
                     </td>
                     <td className="font-mono">
                       {row.breakeven_velocity_boost_pct === null ? (
-                        <span className="text-muted">недостижим</span>
+                        <span
+                          className="text-muted"
+                          title="Маржа в акции отрицательна — не окупается ни при каком росте продаж"
+                        >
+                          не окупается
+                        </span>
                       ) : (
                         <span
                           className={
                             row.breakeven_velocity_boost_pct <= boostPct
                               ? "text-success"
                               : "text-warning"
+                          }
+                          title={
+                            row.breakeven_velocity_boost_pct <= boostPct
+                              ? "Ваш плановый рост покрывает breakeven — акция выгодна"
+                              : "Ваш плановый рост ниже breakeven — акция убыточна"
                           }
                         >
                           +{fmtNum(row.breakeven_velocity_boost_pct)}%
@@ -516,8 +535,9 @@ export default function PromoCalculator() {
               {sortedItems.length === 0 && (
                 <tr>
                   <td colSpan={10} className="py-6 text-center text-muted">
-                    Нет данных. Возможно SKU не найдены в baseline-периоде
-                    (не было продаж) — попробуй увеличить baseline до 30 дней.
+                    Нет данных. Возможно артикулы не нашлись за выбранный
+                    период (не было продаж) — попробуй увеличить период
+                    до 30 дней.
                   </td>
                 </tr>
               )}

@@ -34,6 +34,9 @@ type SavedParams = {
   rate_small: number; // ₽/л при объёме < threshold
   rate_large: number; // ₽/л при объёме ≥ threshold
   volume_threshold_l: number;
+  // Прямой тариф довоза (если знаешь точное значение и не хочешь возиться
+  // с двухступенчатой шкалой). Когда > 0 — используется ВМЕСТО small/large.
+  rate_direct: number;
 };
 
 const DEFAULTS: SavedParams = {
@@ -45,6 +48,7 @@ const DEFAULTS: SavedParams = {
   rate_small: 8.0,
   rate_large: 2.0,
   volume_threshold_l: 1500,
+  rate_direct: 0,
 };
 
 // Известные хабы WB (на 2026-05, из research). Список свободно редактируется
@@ -91,6 +95,9 @@ function loadParams(): SavedParams {
         volume_threshold_l: Number.isFinite(v.volume_threshold_l)
           ? Number(v.volume_threshold_l)
           : DEFAULTS.volume_threshold_l,
+        rate_direct: Number.isFinite(v.rate_direct)
+          ? Number(v.rate_direct)
+          : DEFAULTS.rate_direct,
       };
     }
   } catch {}
@@ -120,9 +127,17 @@ function computeTransit(
   const totalVolume = p.units * p.liters_per_unit;
   if (!Number.isFinite(totalVolume) || totalVolume <= 0) return null;
 
+  // Если задан прямой тариф (rate_direct > 0) — используем его, игнорируем
+  // двухступенчатую шкалу. Это удобный шорткат когда юзер точно знает тариф
+  // для своей пары хаб→склад из ЛК WB.
+  const useDirect = Number.isFinite(p.rate_direct) && p.rate_direct > 0;
   const rateTier: "small" | "large" =
-    totalVolume < p.volume_threshold_l ? "small" : "large";
-  const appliedRate = rateTier === "small" ? p.rate_small : p.rate_large;
+    useDirect || totalVolume < p.volume_threshold_l ? "small" : "large";
+  const appliedRate = useDirect
+    ? p.rate_direct
+    : rateTier === "small"
+      ? p.rate_small
+      : p.rate_large;
   const transitCost = totalVolume * appliedRate;
 
   // Хранение на конечном складе — обычный тариф box (если выбран и есть тариф)
@@ -342,7 +357,49 @@ export default function TransitCalculator() {
         <h3 className="font-medium mb-3 text-sm">
           Тариф транзита (вписать из ЛК WB)
         </h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+
+        {/* Simple: один тариф ₽/л — если знаешь точную цену довоза. */}
+        <div className="mb-3">
+          <label className="flex flex-col gap-1">
+            <span
+              className="text-xs text-muted uppercase tracking-wide"
+              title="Если у тебя в ЛК WB опубликован прямой тариф довоза для пары «хаб → конечный склад» — впиши его сюда. Когда поле > 0 — двухступенчатая шкала ниже игнорируется."
+            >
+              Прямой тариф довоза ₽/л
+              <span className="text-faint normal-case font-normal">
+                {" "}— рекомендуется, если знаешь точное значение
+              </span>
+            </span>
+            <input
+              type="number"
+              className="input"
+              min="0"
+              step="0.1"
+              value={params.rate_direct}
+              placeholder="напр. 5.5"
+              onChange={(e: any) =>
+                update({ rate_direct: Number(e.target.value) || 0 })
+              }
+            />
+            <span className="text-tiny text-muted">
+              Общая стоимость довоза = общий объём партии × этот тариф.
+              {params.rate_direct > 0 &&
+                " Двухступенчатая шкала ниже сейчас игнорируется."}
+            </span>
+          </label>
+        </div>
+
+        <details className="mb-2">
+          <summary className="text-xs text-muted cursor-pointer hover:text-fg">
+            ⚙ Двухступенчатый тариф (если точного значения нет — fallback по
+            порогу объёма)
+          </summary>
+        </details>
+        <div
+          className={`grid grid-cols-1 md:grid-cols-3 gap-3 ${
+            params.rate_direct > 0 ? "opacity-50" : ""
+          }`}
+        >
           <label className="flex flex-col gap-1">
             <span
               className="text-xs text-muted uppercase tracking-wide"

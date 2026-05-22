@@ -67,6 +67,9 @@ services:
       - ./FEATURES.md:/app/FEATURES.md:ro
       # USER_GUIDE.md — user-facing версия каталога функций (TASK-LEAD-075).
       - ./USER_GUIDE.md:/app/USER_GUIDE.md:ro
+      # Markdown-доки рендерящиеся на /docs/:slug страницах.
+      - ./PROMO_CALCULATOR.md:/app/PROMO_CALCULATOR.md:ro
+      - ./UNIT_PLAN.md:/app/UNIT_PLAN.md:ro
 
   worker-stats:
     image: rnp-app:latest

@@ -1263,20 +1263,27 @@ async def top_skus(
         orders = int(r.orders or 0)
         cogs = cogs_map.get(nm, 0.0) * orders
         margin = rev - cogs
+        margin_pct = (margin / rev * 100.0) if rev > 0 else 0.0
+        roi = (margin / cogs * 100.0) if cogs > 0 else 0.0
         prod = products.get(nm)
         items.append(
             {
                 "nm_id": nm,
                 "vendor_code": prod.vendor_code if prod else None,
                 "subject": prod.subject if prod else None,
+                "brand": prod.brand if prod else None,
                 "revenue": rev,
                 "orders": orders,
+                # margin_estimate — legacy alias, оставлен для back-compat.
                 "margin_estimate": margin,
+                "margin": margin,
+                "margin_pct": margin_pct,
+                "roi": roi,
             }
         )
     reverse = order != "asc"
     if by == "margin":
-        items.sort(key=lambda x: x["margin_estimate"], reverse=reverse)
+        items.sort(key=lambda x: x["margin"], reverse=reverse)
     else:
         items.sort(key=lambda x: x["revenue"], reverse=reverse)
     return items[:limit]

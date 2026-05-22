@@ -40,6 +40,7 @@ import Users from "./pages/Users";
 import Brands from "./pages/Brands";
 import Glossary from "./pages/Glossary";
 import Docs from "./pages/Docs";
+import DocPage from "./pages/DocPage";
 import Features from "./pages/Features";
 import Checklist from "./pages/Checklist";
 import SeasonPlan from "./pages/SeasonPlan";
@@ -277,6 +278,7 @@ export default function App() {
           />
           <Route path="glossary" element={<Glossary />} />
           <Route path="docs" element={<Docs />} />
+          <Route path="docs/:slug" element={<DocPage />} />
           <Route path="features" element={<Features />} />
           <Route path="checklist" element={<Checklist />} />
           <Route
