@@ -39,6 +39,13 @@ Lead использует этот файл как master-view: сюда скл�
 > - ✅ **BUG-UI cleanup batch** (sub-agent K): ternary emoji 22→8, non-% .toFixed 41→8 (+ `fmtCompact`/`fmtRatio` helpers), sticky-first-col применён Units+ABC (z=5 cells / z=15 corner), states migration на 5 страницах.
 > - Совпадение: Units.tsx DeltaCell migration попал в perf-fix BUG-DEV-007 follow-up #2 commit (`7ecbb98 v0.27.2`) параллельной сессии. Конфликтов не было.
 >
+> **Раунд 14 завершён (v0.30.0):** 2 P1-блокера для РОП-валидации `/weekly-report`:
+> - ✅ **TASK-LEAD-061** Multi-manager scoreboard (sub-agent N): `GET /api/weekly-report/by-manager`, UI секция «По менеджерам» для director/head, sortable WoW через DeltaCell.
+> - ✅ **TASK-LEAD-062** Серверный комментарий (main): миграция 0058 `weekly_report_comment`, API с RBAC (manager → свои brand_assignments, overall read-only), UI с TanStack Query + Mutation + кнопка «Сохранить» + author/timestamp + legacy migration из localStorage.
+> - Конфликт cherry-pick на WeeklyReport.tsx (imports) + USER_GUIDE.md — резолвлено, обе фичи объединены.
+>
+> **Раунд 13 завершён (v0.28.0):** TASK-LEAD-074 — интеграция WB Prices API → актуальные цены в `/unit-plan`. Миграция 0057, sync `sync.prices` каждые 30 мин per-tenant, `PriceSourceBadge` + `PricesHealthBar` в UI.
+>
 > **Раунд 12 завершён (2026-05-22, docs-only):** Post-feature review для пакета v0.27.x (TASK-LEAD-042/043/050/051/052/053/054/055). 2 параллельных персона-агента (QA+seller / rop+manager) → synthesis Product Strategist+Lead+PM. Результат:
 > - **5 BUG** заведено: BUG-DEV-010/011/012/013 + BUG-UI-006
 > - **17 TASK** заведено: TASK-LEAD-058..073 + TASK-UI-024 (6 P1, 7 P2, 4 P3)
