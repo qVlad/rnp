@@ -2419,6 +2419,24 @@ paymentOrderDelete: (payment_order_id: string) =>
     return r.text();
   },
 
+  // ── Weekly report comment (TASK-LEAD-062) ──
+  weeklyReportCommentGet: (week_start: string, brand?: string | null) => {
+    const qs = new URLSearchParams({ week_start });
+    if (brand) qs.set("brand", brand);
+    return request<WeeklyReportComment>(
+      `/api/weekly-report/comment?${qs.toString()}`,
+    );
+  },
+  weeklyReportCommentUpsert: (body: {
+    week_start: string;
+    brand: string | null;
+    comment: string;
+  }) =>
+    request<WeeklyReportComment>(`/api/weekly-report/comment`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
   // ── Promo calculator (TASK-LEAD-050) ──
   promoCalculatorSimulate: (body: {
     nm_ids: number[];
@@ -2643,6 +2661,16 @@ export interface UnitPlanPricesStatus {
   synced_at_min: string | null;
   synced_at_max: string | null;
   age_minutes: number | null;
+}
+
+/** TASK-LEAD-062 — серверный комментарий менеджера в /weekly-report. */
+export interface WeeklyReportComment {
+  week_start: string;
+  brand: string | null;
+  comment: string;
+  author_user_id: number | null;
+  author_name: string | null;
+  updated_at: string | null;
 }
 
 export interface UnitPlanResponse {

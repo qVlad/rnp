@@ -2504,3 +2504,28 @@ class WbPriceSize(Base):
     synced_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class WeeklyReportComment(Base, TenantScopedMixin):
+    """Серверный комментарий менеджера к неделе в `/weekly-report` (TASK-LEAD-062).
+
+    Заменяет `localStorage` — теперь РОП видит что написал менеджер.
+
+    `brand` NULL = общий комментарий за неделю (для РОПа/собственника).
+    Заполненный brand — per-brand комментарий менеджера.
+    """
+
+    __tablename__ = "weekly_report_comment"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    brand: Mapped[str | None] = mapped_column(String(255))
+    week_start: Mapped[date] = mapped_column(Date, nullable=False)
+    comment: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("''")
+    )
+    author_user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

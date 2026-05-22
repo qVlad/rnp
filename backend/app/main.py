@@ -27,6 +27,7 @@ from app.api import (
     external_ad_costs,
     features_doc,
     user_guide_doc,
+    weekly_report_comment,
     funnel,
     inventory,
     jam,
@@ -251,6 +252,7 @@ app.include_router(inventory.router)
 app.include_router(sync_status.router)
 app.include_router(features_doc.router)
 app.include_router(user_guide_doc.router)
+app.include_router(weekly_report_comment.router)
 app.include_router(abtest.router)
 app.include_router(abtest_uploads.router)
 app.include_router(extension.router)

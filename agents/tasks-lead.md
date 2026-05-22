@@ -2195,12 +2195,17 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Источник:** `feedback-reviews/round-12-2026-05-22.md` — UX-rop + UX-manager 051
 - **Описание:** Сейчас manager-комментарий в `/weekly-report` хранится в `localStorage`. РОП открывает ту же неделю → пусто. Это полу-фича — комментарий «для меня», не «для команды». Заменить на серверное хранилище.
 - **Критерии готовности:**
-  - [ ] Миграция: `weekly_report_comment(id, tenant_id, brand, week_start, comment TEXT, author_user_id FK, updated_at TIMESTAMPTZ)`. UNIQUE на `(tenant_id, brand, week_start)`. tenant-scoped.
-  - [ ] API: `GET /api/weekly-report/comment?week_start=&brand=` + `PUT` (manager сохраняет для своих брендов; director/head — для всех).
-  - [ ] UI: WeeklyReport.tsx читает с сервера вместо localStorage. Indicator «обновлено N минут назад автором X».
-  - [ ] Migration script: если localStorage у current user — попросить перенести вручную (без auto, так как user-binding нечёткий).
+  - [x] Миграция 0058: `weekly_report_comment(id, tenant_id, brand, week_start, comment TEXT, author_user_id FK, updated_at TIMESTAMPTZ)`. UNIQUE с COALESCE(brand, '__overall__') в индексе (Postgres NULL-handling). tenant-scoped через `TenantScopedMixin`.
+  - [x] API: `GET /api/weekly-report/comment?week_start=&brand=` + `PUT`. RBAC: bookkeeper → 403; director/head — всё; manager — только свои `brand_assignments`, общий (brand=NULL) — read-only.
+  - [x] UI `WeeklyReport.tsx`: читает с сервера через TanStack Query (`weekly-report-comment` queryKey). Кнопка «Сохранить» (active при dirty), indicator «автор · N мин назад» в шапке секции.
+  - [x] Legacy migration: при first load если на сервере пусто но в `localStorage[weekly-report.comment.<week>]` есть текст — показываем legacy текст в textarea, user может сохранить → попадает на сервер + legacy ключ чистится.
 - **Зависимости:** TASK-LEAD-051 ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-22 (main session, раунд 14). Реализация:
+  - `backend/app/db/migrations/versions/0058_weekly_report_comment.py`
+  - `backend/app/db/models.py:WeeklyReportComment`
+  - `backend/app/api/weekly_report_comment.py` (GET + PUT с RBAC-проверкой через `_assert_brand_access`)
+  - `frontend/src/api/client.ts` (`weeklyReportCommentGet/Upsert` + `WeeklyReportComment` interface)
+  - `frontend/src/pages/WeeklyReport.tsx` (TanStack Query + Mutation + кнопка «Сохранить» + legacy migration)
 
 ---
 

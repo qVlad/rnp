@@ -9,8 +9,8 @@
  * к ближайшему вс назад → понедельник той же недели). Эту же логику использует
  * `WeekProfitHero` — единообразно.
  */
-import { useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
@@ -50,7 +50,21 @@ function fmtPeriod(w: Week): string {
   return `${a.getDate()} ${months[a.getMonth()]} — ${b.getDate()} ${months[b.getMonth()]}`;
 }
 
+// TASK-LEAD-062: localStorage заменён на серверное хранение через
+// `/api/weekly-report/comment`. Legacy ключ оставлен для one-shot migration
+// (если у user'а уже есть локальные заметки — он увидит их при первом
+// открытии и сможет сохранить на сервер вручную).
 const COMMENT_KEY_PREFIX = "weekly-report.comment.";
+
+function formatAgo(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (m < 1) return "только что";
+  if (m < 60) return `${m} мин назад`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} ч назад`;
+  return `${Math.floor(h / 24)} д назад`;
+}
 
 const HIGHLIGHTED_KPIS = [
   "revenue_gross",
@@ -114,29 +128,62 @@ export default function WeeklyReport() {
     queryFn: () => api.alerts(),
   });
 
-  const commentKey = COMMENT_KEY_PREFIX + current.from;
-  const [comment, setComment] = useState<string>(() => {
-    try {
-      return localStorage.getItem(commentKey) ?? "";
-    } catch {
-      return "";
-    }
+  // TASK-LEAD-062: серверное хранение. brand=null = overall (РОП/собственник
+  // scope). Per-brand комментарии менеджера — отдельная задача в будущем
+  // (нужен brand-selector в UI; пока используем overall для всех ролей).
+  const qc = useQueryClient();
+  const commentQ = useQuery({
+    queryKey: ["weekly-report-comment", current.from],
+    queryFn: () => api.weeklyReportCommentGet(current.from, null),
+    retry: false,
   });
+  const [comment, setComment] = useState<string>("");
+  const [dirty, setDirty] = useState(false);
+
+  // Подгружаем с сервера при смене недели. Если на сервере пусто И есть
+  // legacy localStorage запись — показываем её (one-shot миграция: user
+  // увидит свою старую заметку и сможет сохранить «Сохранить» → попадёт
+  // на сервер).
+  useEffect(() => {
+    if (commentQ.data === undefined) return;
+    const serverText = commentQ.data?.comment ?? "";
+    if (serverText) {
+      setComment(serverText);
+    } else {
+      try {
+        const legacy = localStorage.getItem(COMMENT_KEY_PREFIX + current.from) ?? "";
+        setComment(legacy);
+      } catch {
+        setComment("");
+      }
+    }
+    setDirty(false);
+  }, [commentQ.data, current.from]);
+
+  const saveMut = useMutation({
+    mutationFn: (text: string) =>
+      api.weeklyReportCommentUpsert({
+        week_start: current.from,
+        brand: null,
+        comment: text,
+      }),
+    onSuccess: (data) => {
+      qc.setQueryData(["weekly-report-comment", current.from], data);
+      setDirty(false);
+      // Подчищаем legacy localStorage — сохранение на сервер успешно.
+      try {
+        localStorage.removeItem(COMMENT_KEY_PREFIX + current.from);
+      } catch {}
+    },
+  });
+
   const onCommentChange = (v: string) => {
     setComment(v);
-    try {
-      localStorage.setItem(commentKey, v);
-    } catch {}
+    setDirty(true);
   };
-  // При смене недели — подгрузить comment из localStorage
-  useMemo(() => {
-    try {
-      setComment(localStorage.getItem(commentKey) ?? "");
-    } catch {
-      setComment("");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [commentKey]);
+  const onSaveComment = () => {
+    saveMut.mutate(comment);
+  };
 
   const isLoading = curQ.isLoading || prevQ.isLoading;
   const curKpis = curQ.data?.kpis ?? [];
@@ -362,9 +409,16 @@ export default function WeeklyReport() {
               )}
             </section>
 
-            {/* Comment */}
+            {/* Comment — TASK-LEAD-062: серверное хранение */}
             <section className="card">
-              <h2 className="font-medium mb-2">Комментарий менеджера</h2>
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="font-medium">Комментарий за неделю</h2>
+                {commentQ.data?.author_name && commentQ.data?.updated_at && (
+                  <div className="text-xs text-muted">
+                    {commentQ.data.author_name} · {formatAgo(commentQ.data.updated_at)}
+                  </div>
+                )}
+              </div>
               <textarea
                 className="input w-full text-sm"
                 rows={5}
@@ -372,8 +426,23 @@ export default function WeeklyReport() {
                 value={comment}
                 onChange={(e: any) => onCommentChange(e.target.value)}
               />
-              <div className="text-xs text-muted mt-1">
-                Сохраняется в браузер автоматически (per-неделя). При экспорте PDF попадёт в отчёт.
+              <div className="flex items-center justify-between mt-2">
+                <div className="text-xs text-muted">
+                  Виден всем в команде. Попадёт в PDF-экспорт отчёта.
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary text-xs"
+                  onClick={onSaveComment}
+                  disabled={!dirty || saveMut.isPending}
+                  title={
+                    dirty
+                      ? "Сохранить комментарий на сервер"
+                      : "Нет изменений"
+                  }
+                >
+                  {saveMut.isPending ? "Сохранение…" : dirty ? "Сохранить" : "Сохранено"}
+                </button>
               </div>
             </section>
           </>
