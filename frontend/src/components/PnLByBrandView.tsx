@@ -22,7 +22,7 @@ import { DateRangePicker, type DateRange } from "@/components/DateRangePicker";
 function marginColor(pct: number): string {
   if (pct >= 15) return "bg-success/10 text-success";
   if (pct >= 5) return "bg-warning/10 text-warning";
-  return "bg-red-500/10 text-red-400";
+  return "bg-danger-subtle text-danger";
 }
 
 function monthLabel(yyyymm: string): string {
@@ -183,7 +183,7 @@ export default function PnLByBrandView() {
 
       {q.isLoading && <div className="text-muted">Загрузка…</div>}
       {q.isError && (
-        <div className="card text-red-400 text-sm">
+        <div className="card text-danger text-sm">
           Ошибка: {(q.error as Error).message}
         </div>
       )}
@@ -250,7 +250,7 @@ export default function PnLByBrandView() {
                       </td>
                     );
                   })}
-                  <td className="p-2 text-right border-l border-border pl-3 font-medium">
+                  <td className="p-2 text-right border-l border-border pl-3 font-medium font-mono">
                     {fmtRub(row.total_revenue_net)}
                   </td>
                   <td

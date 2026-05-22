@@ -285,35 +285,35 @@ export default function TransitCalculator() {
               <tbody>
                 <tr className="border-b border-border">
                   <td className="p-2 text-muted">Базовая логистика</td>
-                  <td className="p-2 text-right">{fmtRub(result.base)}</td>
+                  <td className="p-2 text-right font-mono">{fmtRub(result.base)}</td>
                 </tr>
                 <tr className="border-b border-border">
                   <td className="p-2 text-muted">
                     Доп. литры (ceil({params.liters_per_unit}) − 1 = {result.extraLiters} × {fmtRub(result.perLiter)})
                   </td>
-                  <td className="p-2 text-right">
+                  <td className="p-2 text-right font-mono">
                     {fmtRub(result.acceptancePerUnit - result.base)}
                   </td>
                 </tr>
                 <tr className="border-b border-border font-semibold">
                   <td className="p-2">Логистика на 1 шт</td>
-                  <td className="p-2 text-right">{fmtRub(result.acceptancePerUnit)}</td>
+                  <td className="p-2 text-right font-mono">{fmtRub(result.acceptancePerUnit)}</td>
                 </tr>
                 <tr className="border-b border-border">
                   <td className="p-2 text-muted">Хранение база / день</td>
-                  <td className="p-2 text-right">{fmtRub(result.storageBase)}</td>
+                  <td className="p-2 text-right font-mono">{fmtRub(result.storageBase)}</td>
                 </tr>
                 <tr className="border-b border-border">
                   <td className="p-2 text-muted">
                     Доп. литры хранение ({result.extraLiters} × {fmtRub(result.storageLiter)})
                   </td>
-                  <td className="p-2 text-right">
+                  <td className="p-2 text-right font-mono">
                     {fmtRub(result.storagePerUnitPerDay - result.storageBase)}
                   </td>
                 </tr>
                 <tr className="font-semibold">
                   <td className="p-2">Хранение на 1 шт / день</td>
-                  <td className="p-2 text-right">{fmtRub(result.storagePerUnitPerDay)}</td>
+                  <td className="p-2 text-right font-mono">{fmtRub(result.storagePerUnitPerDay)}</td>
                 </tr>
               </tbody>
             </table>

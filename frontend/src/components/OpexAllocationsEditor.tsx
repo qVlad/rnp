@@ -19,6 +19,8 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { Icon } from "./Icon";
+import { Icon } from "./Icon";
 
 // ──────────────────────────────────────────────────────────────────────────
 // Типы и константы
@@ -334,12 +336,12 @@ export function OpexAllocationsEditor({
                 </td>
                 <td className="p-2 text-right">
                   <button
-                    className="btn text-xs text-red-400"
+                    className="btn text-xs text-danger"
                     onClick={() => removeRow(i)}
                     aria-label="Удалить строку"
                     title="Удалить"
                   >
-                    🗑
+                    <Icon name="trash" size={12} />
                   </button>
                 </td>
               </tr>
@@ -383,7 +385,7 @@ export function OpexAllocationsEditor({
           подправить вручную.
         </div>
         {previewError && (
-          <div className="basis-full text-xs text-red-400">{previewError}</div>
+          <div className="basis-full text-xs text-danger">{previewError}</div>
         )}
       </div>
 
@@ -391,7 +393,7 @@ export function OpexAllocationsEditor({
       <div className="flex items-center justify-between gap-3 sticky bottom-0 bg-bg pt-2 border-t border-border">
         <div className="text-xs text-muted">
           {sumState === "over" && (
-            <span className="text-red-400">
+            <span className="text-danger">
               Σ &gt; 100% — нельзя сохранить. Уменьши веса.
             </span>
           )}
@@ -403,7 +405,7 @@ export function OpexAllocationsEditor({
           )}
           {sumState === "exact" && (
             <span className="text-success">
-              ✓ Σ = 100% — manager видит всё распределение.
+              <Icon name="check" size={12} /> Σ = 100% — manager видит всё распределение.
             </span>
           )}
         </div>
@@ -421,7 +423,7 @@ export function OpexAllocationsEditor({
         </div>
       </div>
       {saveError && (
-        <div className="text-xs text-red-400">{saveError}</div>
+        <div className="text-xs text-danger">{saveError}</div>
       )}
     </div>
   );
@@ -442,16 +444,16 @@ function SumIndicator({
   if (state === "over") {
     return (
       <span
-        className={`${base} bg-red-500/10 border-red-500/40 text-red-300`}
+        className={`${base} bg-danger-subtle border-danger text-danger`}
       >
-        ⚠ Перебор: Σ = {pct(sum)} (&gt; 100%)
+        <Icon name="warning" size={12} /> Перебор: Σ = {pct(sum)} (&gt; 100%)
       </span>
     );
   }
   if (state === "under") {
     return (
       <span
-        className={`${base} bg-yellow-500/10 border-yellow-500/40 text-yellow-300`}
+        className={`${base} bg-warn-subtle border-warn text-warn`}
       >
         Σ = {pct(sum)} · остаток {pct(1 - sum)} → company-only
       </span>
@@ -459,9 +461,9 @@ function SumIndicator({
   }
   return (
     <span
-      className={`${base} bg-emerald-500/10 border-emerald-500/40 text-emerald-300`}
+      className={`${base} bg-success-subtle border-success text-success`}
     >
-      ✓ Σ = 100%
+      <Icon name="check" size={12} /> Σ = 100%
     </span>
   );
 }

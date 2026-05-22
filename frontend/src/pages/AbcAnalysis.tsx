@@ -26,9 +26,9 @@ const ABC_COLOR: Record<string, string> = {
   C: "bg-zinc-700/40 text-zinc-300",
 };
 const XYZ_COLOR: Record<string, string> = {
-  X: "bg-blue-700/40 text-blue-200",
+  X: "bg-accent-subtle text-accent",
   Y: "bg-orange-700/40 text-warn",
-  Z: "bg-red-700/40 text-red-200",
+  Z: "bg-danger-subtle text-danger",
 };
 
 const COMBO_HINT: Record<string, string> = {
@@ -230,7 +230,7 @@ export default function AbcAnalysis() {
                       {it.xyz_class}
                     </span>
                   </td>
-                  <td className="p-2 text-right">{it.qty}</td>
+                  <td className="p-2 text-right font-mono">{it.qty}</td>
                   <td className="p-2 text-right font-mono">{fmtRub(it.revenue)}</td>
                   <td className="p-2 text-right font-mono">{fmtRub(it.profit)}</td>
                   <td className="p-2 text-right font-mono">{fmtPct(it.share_pct, 1)}</td>

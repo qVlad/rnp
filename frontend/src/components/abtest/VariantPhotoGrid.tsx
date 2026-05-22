@@ -21,6 +21,8 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AbTestVariantPhoto, abtestApi } from "@/api/abtest";
+import { Icon } from "../Icon";
+import { Icon } from "../Icon";
 
 export type StagedFile = {
   order: number;
@@ -199,7 +201,7 @@ export function VariantPhotoGrid({
                 onClick={() => onDeleteLive(existing.id)}
                 title="Удалить фото"
               >
-                ✕
+                <Icon name="close" size={12} />
               </button>
             )}
           </>
@@ -216,7 +218,7 @@ export function VariantPhotoGrid({
                 onClick={() => onUnstageFile(order)}
                 title="Убрать (ещё не загружено)"
               >
-                ✕
+                <Icon name="close" size={12} />
               </button>
             )}
           </>
@@ -238,7 +240,7 @@ export function VariantPhotoGrid({
                 onClick={() => onRemoveRemote(isMain ? "all" : order)}
                 title={isMain ? "Убрать все фото с WB" : "Убрать это фото"}
               >
-                ✕
+                <Icon name="close" size={12} />
               </button>
             )}
           </>
@@ -267,7 +269,9 @@ export function VariantPhotoGrid({
                 <span>загрузка…</span>
               ) : isMain ? (
                 <>
-                  <div className="text-2xl mb-1">🖼</div>
+                  <div className="mb-1 flex justify-center text-muted">
+                    <Icon name="png" size={24} />
+                  </div>
                   {canEdit && !isRemoteVariant
                     ? "Главное фото — кликни"
                     : "Главное фото"}
@@ -337,7 +341,7 @@ export function VariantPhotoGrid({
       {/* Aspect-ratio warning */}
       {aspectWarning && (
         <div className="text-xs text-warn border border-warn/30 bg-warn-bg/30 rounded px-2 py-1">
-          ⚠ {aspectWarning} WB обрежет края при показе в листинге.
+          <Icon name="warning" size={12} /> {aspectWarning} WB обрежет края при показе в листинге.
         </div>
       )}
     </div>

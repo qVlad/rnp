@@ -12,10 +12,11 @@ import {
 } from "recharts";
 import { api } from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { fmtRub, fmtNum, fmtLocalDt, fmtLocalTime } from "@/lib/format";
+import { fmtRub, fmtNum, fmtLocalDt, fmtLocalTime, fmtPct } from "@/lib/format";
 import LkDisclaimerModal, {
   hasAgreedDisclaimer,
 } from "@/components/LkDisclaimerModal";
+import { Icon } from "../components/Icon";
 
 export default function Redistribution() {
   const qc = useQueryClient();
@@ -225,7 +226,7 @@ export default function Redistribution() {
                   <td className="p-2">{r.to_office_name}</td>
                   <td className="p-2 text-right font-mono">{r.qty}</td>
                   <td className="p-2 text-right font-mono">
-                    <span className={r.net_benefit_rub > 0 ? "text-success" : "text-red-400"}>
+                    <span className={r.net_benefit_rub > 0 ? "text-success" : "text-danger"}>
                       {fmtRub(r.net_benefit_rub)}
                     </span>
                     {r.payback_days && (
@@ -248,14 +249,14 @@ export default function Redistribution() {
                           onClick={() => approveMut.mutate(r.id)}
                           disabled={approveMut.isPending}
                         >
-                          ✓ В очередь
+                          <Icon name="check" size={12} /> В очередь
                         </button>
                         <button
                           className="btn text-xs text-muted"
                           onClick={() => dismissMut.mutate(r.id)}
                           disabled={dismissMut.isPending}
                         >
-                          ✕
+                          <Icon name="close" size={12} />
                         </button>
                       </div>
                     )}
@@ -336,7 +337,7 @@ export default function Redistribution() {
                         className={`font-mono mr-1 ${
                           t.last_status_code >= 200 && t.last_status_code < 300
                             ? "text-success"
-                            : "text-red-400"
+                            : "text-danger"
                         }`}
                       >
                         HTTP {t.last_status_code}
@@ -355,7 +356,7 @@ export default function Redistribution() {
                   <td className="p-2 text-right">
                     {(t.status === "queued" || t.status === "failed") && (
                       <button
-                        className="btn text-xs text-muted hover:text-red-400"
+                        className="btn text-xs text-muted hover:text-danger"
                         onClick={() => {
                           if (
                             confirm(
@@ -367,7 +368,7 @@ export default function Redistribution() {
                         disabled={cancelMut.isPending}
                         title="Снять с polling. Заявка не будет отправлена в WB."
                       >
-                        ✕
+                        <Icon name="close" size={12} />
                       </button>
                     )}
                   </td>
@@ -413,9 +414,9 @@ function LkStatusCard({
         <h2 className="font-medium">Подключение к LK WB</h2>
         <div className="text-xs">
           {status.lk_connected ? (
-            <span className="text-success">✓ Подключено</span>
+            <span className="text-success"><Icon name="check" size={12} /> Подключено</span>
           ) : status.lk_needs_relogin ? (
-            <span className="text-warn">⚠ Нужен перелогин в WB</span>
+            <span className="text-warn"><Icon name="warning" size={12} /> Нужен перелогин в WB</span>
           ) : (
             <span className="text-muted">Не подключено</span>
           )}
@@ -439,7 +440,7 @@ function LkStatusCard({
           </div>
           <div className="flex gap-2 mt-3">
             <button
-              className="btn text-xs text-red-400"
+              className="btn text-xs text-danger"
               onClick={() =>
                 window.confirm("Отвязать LK-сессию? Бронирования остановятся.") &&
                 onDisconnect()
@@ -556,7 +557,7 @@ function TaskStatusBadge({
     status === "accepted"
       ? "text-success"
       : status === "failed"
-        ? "text-red-400"
+        ? "text-danger"
         : status === "queued"
           ? "text-accent"
           : status === "cancelled"
@@ -604,9 +605,9 @@ function QueueAgeBadge({
     ageH > 0 ? `${ageH}ч ${ageMin}м` : `${ageMin}м`;
   const tone =
     ageHours > 24
-      ? "text-red-400 font-medium"
+      ? "text-danger font-medium"
       : ageHours > 12
-        ? "text-yellow-400"
+        ? "text-warn"
         : "text-muted";
   return <span className={`font-mono ${tone}`}>{text}</span>;
 }
@@ -700,7 +701,7 @@ function RoiCard({ roi, loading }: { roi: any; loading: boolean }) {
         />
         <Stat
           label="ROI"
-          value={r.roi_pct !== null && r.roi_pct !== undefined ? `+${r.roi_pct.toFixed(0)}%` : "—"}
+          value={r.roi_pct !== null && r.roi_pct !== undefined ? `+${fmtPct(r.roi_pct, 0)}` : "—"}
           tone={r.roi_pct && r.roi_pct > 0 ? "success" : "muted"}
         />
       </div>
@@ -717,13 +718,13 @@ function RoiCard({ roi, loading }: { roi: any; loading: boolean }) {
         />
         <Stat
           label="Индекс локализации (avg)"
-          value={r.il_avg_pct ? `${r.il_avg_pct.toFixed(1)}%` : "—"}
+          value={r.il_avg_pct ? `${fmtPct(r.il_avg_pct, 1)}` : "—"}
         />
       </div>
       {hasData && (
         <div className="text-xs text-muted mt-3 leading-relaxed">
           За «{periodLabels[period]}» перераспределение принесло{" "}
-          <span className={netProfit > 0 ? "text-success" : "text-red-400"}>
+          <span className={netProfit > 0 ? "text-success" : "text-danger"}>
             {netProfit > 0 ? "+" : ""}{fmtRub(netProfit)}
           </span>{" "}
           чистой прибыли (экономия на логистике −0.5% комиссии WB). Это{" "}
@@ -765,9 +766,9 @@ function RoiCard({ roi, loading }: { roi: any; loading: boolean }) {
                   <td className="p-1 font-mono">{s.nm_id}</td>
                   <td className="p-1">{s.vendor_code || "—"}</td>
                   <td className="p-1 text-muted">{s.brand || "—"}</td>
-                  <td className="p-1 text-right">{fmtNum(s.tasks_count)}</td>
-                  <td className="p-1 text-right">{fmtNum(s.total_qty)}</td>
-                  <td className="p-1 text-right text-success">
+                  <td className="p-1 text-right font-mono">{fmtNum(s.tasks_count)}</td>
+                  <td className="p-1 text-right font-mono">{fmtNum(s.total_qty)}</td>
+                  <td className="p-1 text-right text-success font-mono">
                     {fmtRub(s.total_saving_rub)}
                   </td>
                 </tr>
@@ -834,7 +835,7 @@ function Stat({
 }) {
   const cls =
     tone === "success" ? "text-success" :
-    tone === "red" ? "text-red-400" :
+    tone === "red" ? "text-danger" :
     tone === "muted" ? "text-muted" : "text-fg";
   return (
     <div>

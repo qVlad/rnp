@@ -6,6 +6,7 @@ import {
   OpexAllocationsEditor,
   type AllocationRow,
 } from "@/components/OpexAllocationsEditor";
+import { Icon } from "../components/Icon";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -271,15 +272,15 @@ function Entries() {
                         setEditingId(row.id);
                       }}
                     >
-                      ✎
+                      <Icon name="edit" size={12} />
                     </button>
                     <button
-                      className="btn text-xs text-red-400"
+                      className="btn text-xs text-danger"
                       onClick={() => {
                         if (confirm("Удалить запись?")) delMut.mutate(row.id);
                       }}
                     >
-                      ✕
+                      <Icon name="close" size={12} />
                     </button>
                   </td>
                 </tr>
@@ -335,7 +336,7 @@ function AllocationsDrawer({
             onClick={onClose}
             aria-label="Закрыть"
           >
-            ✕
+            <Icon name="close" size={12} />
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-4">
@@ -380,10 +381,10 @@ function AllocationsChip({ allocations }: { allocations: any[] }) {
   const nonTenant = allocations.filter((a: any) => a.scope_type !== "tenant");
   const isOver = sum > 1 + 1e-4;
   const cls = isOver
-    ? "bg-red-500/10 border-red-500/40 text-red-300"
+    ? "bg-danger-subtle border-danger text-danger"
     : sum < 1 - 1e-4
-    ? "bg-yellow-500/10 border-yellow-500/40 text-yellow-200"
-    : "bg-emerald-500/10 border-emerald-500/40 text-emerald-300";
+    ? "bg-warn-subtle border-warn text-warn"
+    : "bg-success-subtle border-success text-success";
   return (
     <span
       className={`px-2 py-0.5 rounded border font-mono ${cls}`}
@@ -563,7 +564,7 @@ function Categories() {
                       <span className="text-success">опер.</span>
                     )}
                     {c.cf_section === "investing" && (
-                      <span className="text-blue-400">инв.</span>
+                      <span className="text-accent">инв.</span>
                     )}
                     {c.cf_section === "financing" && (
                       <span className="text-warn">фин.</span>
@@ -586,16 +587,16 @@ function Categories() {
                         setEditingId(c.id);
                       }}
                     >
-                      ✎
+                      <Icon name="edit" size={12} />
                     </button>
                     {!c.is_default && (
                       <button
-                        className="btn text-xs text-red-400"
+                        className="btn text-xs text-danger"
                         onClick={() => {
                           if (confirm("Удалить категорию?")) delMut.mutate(c.id);
                         }}
                       >
-                        ✕
+                        <Icon name="close" size={12} />
                       </button>
                     )}
                   </td>

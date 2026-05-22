@@ -179,7 +179,7 @@ export default function ManagersKpi() {
 
       {q.isLoading && <div className="text-muted">Загрузка…</div>}
       {q.isError && (
-        <div className="card text-red-400 text-sm">
+        <div className="card text-danger text-sm">
           Ошибка: {(q.error as Error).message}
         </div>
       )}
@@ -271,7 +271,7 @@ export default function ManagersKpi() {
                     : marginPct >= 5
                       ? "text-warning"
                       : marginPct < 0
-                        ? "text-red-400"
+                        ? "text-danger"
                         : "text-muted";
                 // Δ-цвет: |Δ|<3% — шум, серый. >+3 — зелёный. <-3 — красный.
                 const dRev = m.delta_revenue_pct;
@@ -280,7 +280,7 @@ export default function ManagersKpi() {
                     ? "text-muted"
                     : Number(dRev) > 0
                       ? "text-success"
-                      : "text-red-400";
+                      : "text-danger";
                 const deltaLabel =
                   dRev == null
                     ? "—"
@@ -331,7 +331,7 @@ export default function ManagersKpi() {
                         </span>
                       )}
                     </td>
-                    <td className="py-2 pr-3 text-right">
+                    <td className="py-2 pr-3 text-right font-mono">
                       {fmtRub(m.revenue_net_rub)}
                     </td>
                     <td
@@ -350,7 +350,7 @@ export default function ManagersKpi() {
                       ) : (
                         <div
                           className={
-                            Number(dRev ?? 0) >= 0 ? "text-success" : "text-red-400"
+                            Number(dRev ?? 0) >= 0 ? "text-success" : "text-danger"
                           }
                         >
                           <LineChart width={80} height={24} data={sparkData}>
@@ -367,22 +367,22 @@ export default function ManagersKpi() {
                         </div>
                       )}
                     </td>
-                    <td className="py-2 pr-3 text-right">
+                    <td className="py-2 pr-3 text-right font-mono">
                       {fmtRub(m.margin_rub)}
                     </td>
                     <td className={`py-2 pr-3 text-right ${marginColor}`}>
                       {fmtPct(m.margin_pct)}
                     </td>
-                    <td className="py-2 pr-3 text-right">
+                    <td className="py-2 pr-3 text-right font-mono">
                       {fmtPct(m.drr_pct)}
                     </td>
-                    <td className="py-2 pr-3 text-right">
+                    <td className="py-2 pr-3 text-right font-mono">
                       {fmtPct(m.buyout_pct)}
                     </td>
-                    <td className="py-2 pr-3 text-right">
+                    <td className="py-2 pr-3 text-right font-mono">
                       {fmtNum(m.orders)}
                     </td>
-                    <td className="py-2 pr-3 text-right">
+                    <td className="py-2 pr-3 text-right font-mono">
                       {fmtRub(m.ad_cost_rub)}
                     </td>
                   </tr>

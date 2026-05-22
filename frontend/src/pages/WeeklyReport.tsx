@@ -263,7 +263,7 @@ export default function WeeklyReport() {
                       {dpct != null && (
                         <span className={`text-xs font-mono ${deltaCls}`}>
                           {dpct >= 0 ? "▲ +" : "▼ "}
-                          {dpct.toFixed(1)}% WoW
+                          {fmtPct(dpct, 1)} WoW
                         </span>
                       )}
                     </div>

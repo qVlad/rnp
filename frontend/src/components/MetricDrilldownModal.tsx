@@ -11,7 +11,8 @@ import {
   YAxis,
 } from "recharts";
 import { api } from "@/api/client";
-import { fmtNum, fmtRub } from "@/lib/format";
+import { fmtNum, fmtRub, fmtPct } from "@/lib/format";
+import { Icon } from "./Icon";
 
 export type MetricKey = "revenue" | "orders" | "ad_cost" | "profit";
 
@@ -156,7 +157,7 @@ export default function MetricDrilldownModal({
               <>
                 <div
                   className={`text-3xl font-semibold font-mono tabular-nums mt-1 ${
-                    summary.total < 0 ? "text-red-400" : ""
+                    summary.total < 0 ? "text-danger" : ""
                   }`}
                 >
                   {meta.fmt(summary.total)}
@@ -172,21 +173,21 @@ export default function MetricDrilldownModal({
                         summary.wowDelta > 0
                           ? "text-success"
                           : summary.wowDelta < 0
-                          ? "text-red-400"
+                          ? "text-danger"
                           : "text-muted"
                       }
                       title="Последние 7 дней vs предыдущие 7 дней"
                     >
                       {summary.wowDelta > 0 ? "▲ " : summary.wowDelta < 0 ? "▼ " : ""}
                       {summary.wowPct > 0 ? "+" : ""}
-                      {summary.wowPct.toFixed(1)}% WoW · последние 7 дн.{" "}
+                      {fmtPct(summary.wowPct, 1)} WoW · последние 7 дн.{" "}
                       {meta.fmt(summary.last7)}
                     </span>
                   )}
                 </div>
                 {lockedRow && (
                   <div className="text-xs mt-2 px-2 py-1 inline-flex items-center gap-2 bg-surface-2 rounded border border-accent/40">
-                    <span className="text-muted">📌 {lockedRow.date}:</span>
+                    <span className="text-muted"><Icon name="info" size={12} /> {lockedRow.date}:</span>
                     <span className="font-mono">{meta.fmt(lockedValue ?? 0)}</span>
                     {lockedPairValue !== null && meta.pairFmt && (
                       <span className="text-muted font-mono">
@@ -198,7 +199,7 @@ export default function MetricDrilldownModal({
                       className="text-muted hover:text-accent ml-1"
                       title="Снять (Esc)"
                     >
-                      ✕
+                      <Icon name="close" size={12} />
                     </button>
                   </div>
                 )}
@@ -225,7 +226,7 @@ export default function MetricDrilldownModal({
               aria-label="Закрыть"
               title="Esc"
             >
-              ✕
+              <Icon name="close" size={12} />
             </button>
           </div>
         </div>

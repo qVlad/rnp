@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
+import { Icon } from "../components/Icon";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const blank = () => ({
@@ -244,15 +245,15 @@ export default function ExternalMarketing() {
                   <td className="p-2 text-muted">{row.comment ?? ""}</td>
                   <td className="p-2 text-right space-x-2">
                     <button className="btn text-xs" onClick={() => startEdit(row)}>
-                      ✎
+                      <Icon name="edit" size={12} />
                     </button>
                     <button
-                      className="btn text-xs text-red-400"
+                      className="btn text-xs text-danger"
                       onClick={() => {
                         if (confirm("Удалить запись?")) delMut.mutate(row.id);
                       }}
                     >
-                      ✕
+                      <Icon name="close" size={12} />
                     </button>
                   </td>
                 </tr>

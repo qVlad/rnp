@@ -123,10 +123,10 @@ export default function OwnerCockpitView() {
             <span className="text-muted text-xs">…</span>
           ) : reconWorst && Math.abs(reconWorst.pct) > 1 ? (
             <span
-              className={`text-xs ${Math.abs(reconWorst.pct) > 3 ? "text-red-400" : "text-warning"}`}
+              className={`text-xs ${Math.abs(reconWorst.pct) > 3 ? "text-danger" : "text-warning"}`}
             >
               {reconWorst.pct > 0 ? "+" : ""}
-              {reconWorst.pct.toFixed(2)}% худшая
+              {fmtPct(reconWorst.pct, 2)} худшая
             </span>
           ) : (
             <span className="text-xs text-success">Δ &lt; 1% ОК</span>
@@ -165,7 +165,7 @@ export default function OwnerCockpitView() {
           <div className="text-xs text-muted">{timePct}% месяца прошло</div>
         </div>
         <div className="text-2xl font-semibold mt-1">
-          {planPct == null ? "—" : `${planPct.toFixed(0)}%`}
+          {planPct == null ? "—" : `${fmtPct(planPct, 0)}`}
         </div>
         <div className="h-2 rounded bg-muted/20 overflow-hidden mt-2">
           <div
@@ -176,7 +176,7 @@ export default function OwnerCockpitView() {
                   ? "bg-success"
                   : planLag >= -10
                     ? "bg-warning"
-                    : "bg-red-500"
+                    : "bg-danger"
             }`}
             style={{ width: `${Math.min(planPct ?? 0, 100)}%` }}
           />
@@ -184,7 +184,7 @@ export default function OwnerCockpitView() {
         <div className="text-[11px] text-muted mt-1">
           Факт {fmtRub(factTotal)} / План {fmtRub(planTotal)}
           {planLag != null && (
-            <span className={planLag >= 0 ? "text-success ml-1" : "text-red-400 ml-1"}>
+            <span className={planLag >= 0 ? "text-success ml-1" : "text-danger ml-1"}>
               ({planLag >= 0 ? "+" : ""}
               {planLag.toFixed(0)}pp к темпу)
             </span>
@@ -209,11 +209,11 @@ export default function OwnerCockpitView() {
             </div>
           ))
         )}
-        <div className="text-[11px] text-red-400 mt-2 mb-1">↓ Bottom-3</div>
+        <div className="text-[11px] text-danger mt-2 mb-1">↓ Bottom-3</div>
         {bottomBrands.map((b) => (
           <div key={b.brand} className="flex justify-between text-xs">
             <span className="truncate">{b.brand}</span>
-            <span className="text-red-400">{fmtPct(b.total_margin_pct)}</span>
+            <span className="text-danger">{fmtPct(b.total_margin_pct)}</span>
           </div>
         ))}
       </Link>
@@ -239,7 +239,7 @@ export default function OwnerCockpitView() {
         )}
         {bottomManagers.length > 0 && bottomManagers !== topManagers && (
           <>
-            <div className="text-[11px] text-red-400 mt-2 mb-1">↓ Bottom-3</div>
+            <div className="text-[11px] text-danger mt-2 mb-1">↓ Bottom-3</div>
             {bottomManagers.map((m: any) => (
               <div key={m.user_id} className="flex justify-between text-xs">
                 <span className="truncate">{m.full_name || m.username}</span>

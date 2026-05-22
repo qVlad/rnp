@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
+import { Icon } from "../components/Icon";
 
 // Хелпер: первый день месяца / последний день месяца — для periods picker'а
 const firstOfMonth = (d: Date) =>
@@ -158,7 +159,7 @@ export default function Audit() {
                   Заменить
                 </button>
                 <button
-                  className="btn text-xs text-red-400"
+                  className="btn text-xs text-danger"
                   onClick={() =>
                     deleteMut.mutate(importsQ.data!.wb_cabinet!.id)
                   }
@@ -220,7 +221,7 @@ export default function Audit() {
                   Заменить
                 </button>
                 <button
-                  className="btn text-xs text-red-400"
+                  className="btn text-xs text-danger"
                   onClick={() =>
                     deleteMut.mutate(importsQ.data!.bookkeeper!.id)
                   }
@@ -294,7 +295,7 @@ export default function Audit() {
                 <tr
                   key={r.code}
                   className={`border-t border-border ${
-                    r.has_discrepancy ? "bg-red-900/10" : ""
+                    r.has_discrepancy ? "bg-danger-subtle" : ""
                   }`}
                 >
                   <td className="p-2">{r.label}</td>
@@ -307,12 +308,12 @@ export default function Audit() {
                   </td>
                   <td className="p-2 text-center">
                     {r.has_discrepancy ? (
-                      <span title="расхождение > 0.01₽" className="text-red-400">
-                        ⚠
+                      <span title="расхождение > 0.01₽" className="text-danger">
+                        <Icon name="warning" size={12} />
                       </span>
                     ) : r.ours !== null ? (
                       <span className="text-success" title="сходится">
-                        ✓
+                        <Icon name="check" size={12} />
                       </span>
                     ) : (
                       ""
@@ -477,11 +478,11 @@ function BookkeeperMappingWizard({
           </select>
           {selectedTemplateId !== "" && (
             <button
-              className="btn text-xs text-red-400"
+              className="btn text-xs text-danger"
               onClick={() => deleteTemplateMut.mutate(Number(selectedTemplateId))}
               title="Удалить выбранный шаблон"
             >
-              ✕
+              <Icon name="close" size={12} />
             </button>
           )}
         </div>
@@ -605,7 +606,7 @@ function BookkeeperMappingWizard({
           disabled={!saveAsName.trim() || saveTemplateMut.isPending}
           title="Сохранить текущий маппинг чтобы переиспользовать на следующих файлах"
         >
-          💾 Сохранить шаблон
+          <Icon name="save" size={12} /> Сохранить шаблон
         </button>
       </div>
     </div>

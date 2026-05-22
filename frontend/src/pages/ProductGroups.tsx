@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { Icon } from "../components/Icon";
 
 export default function ProductGroups() {
   const qc = useQueryClient();
@@ -162,7 +163,7 @@ export default function ProductGroups() {
             </button>
             {editingId && (
               <button className="btn" onClick={reset}>
-                ✕
+                <Icon name="close" size={12} />
               </button>
             )}
           </div>
@@ -221,7 +222,7 @@ export default function ProductGroups() {
                   <td className="p-2 text-xs text-muted">{g.comment || ""}</td>
                   <td className="p-2 text-right whitespace-nowrap">
                     <button className="btn text-xs mr-1" onClick={() => startEdit(g)}>
-                      ✎
+                      <Icon name="edit" size={12} />
                     </button>
                     <button
                       className="btn text-xs"
@@ -234,7 +235,7 @@ export default function ProductGroups() {
                           deleteMut.mutate(g.id);
                       }}
                     >
-                      ✕
+                      <Icon name="close" size={12} />
                     </button>
                   </td>
                 </tr>
@@ -285,7 +286,7 @@ export default function ProductGroups() {
                         .filter(Boolean)
                         .join(" · ") || "—"}
                       {m.is_archived && (
-                        <span className="ml-2 text-warn">📦 архив</span>
+                        <span className="ml-2 text-warn"><Icon name="package" size={12} /> архив</span>
                       )}
                     </td>
                     <td className="p-2 text-right">
@@ -293,7 +294,7 @@ export default function ProductGroups() {
                         className="btn text-xs"
                         onClick={() => unassignMut.mutate(m.nm_id)}
                       >
-                        ✕
+                        <Icon name="close" size={12} />
                       </button>
                     </td>
                   </tr>

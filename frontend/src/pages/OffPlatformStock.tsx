@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub, fmtNum } from "@/lib/format";
+import { Icon } from "../components/Icon";
 
 export default function OffPlatformStock() {
   const qc = useQueryClient();
@@ -133,8 +134,8 @@ export default function OffPlatformStock() {
                 return (
                   <tr key={k} className="border-t border-border">
                     <td className="p-1">{kindLabels[k] || k}</td>
-                    <td className="p-1 text-right">{fmtNum(v.qty)}</td>
-                    <td className="p-1 text-right">{fmtRub(v.amount)}</td>
+                    <td className="p-1 text-right font-mono">{fmtNum(v.qty)}</td>
+                    <td className="p-1 text-right font-mono">{fmtRub(v.amount)}</td>
                   </tr>
                 );
               })}
@@ -215,7 +216,7 @@ export default function OffPlatformStock() {
             </button>
             {editingId && (
               <button className="btn" onClick={reset}>
-                ✕
+                <Icon name="close" size={12} />
               </button>
             )}
           </div>
@@ -310,11 +311,11 @@ export default function OffPlatformStock() {
                       <div className="text-muted">{m.vendor_code}</div>
                     )}
                   </td>
-                  <td className="p-2 text-right">
+                  <td className="p-2 text-right font-mono">
                     {m.signed_qty > 0 ? "+" : ""}
                     {fmtNum(m.signed_qty)}
                   </td>
-                  <td className="p-2 text-right">{fmtRub(m.unit_cost)}</td>
+                  <td className="p-2 text-right font-mono">{fmtRub(m.unit_cost)}</td>
                   <td
                     className={`p-2 text-right font-medium ${
                       m.amount >= 0 ? "text-success" : "text-warn"
@@ -325,7 +326,7 @@ export default function OffPlatformStock() {
                   <td className="p-2 text-xs text-muted">{m.comment || ""}</td>
                   <td className="p-2 text-right whitespace-nowrap">
                     <button className="btn text-xs mr-1" onClick={() => startEdit(m)}>
-                      ✎
+                      <Icon name="edit" size={12} />
                     </button>
                     <button
                       className="btn text-xs"
@@ -333,7 +334,7 @@ export default function OffPlatformStock() {
                         if (confirm("Удалить движение?")) deleteMut.mutate(m.id);
                       }}
                     >
-                      ✕
+                      <Icon name="close" size={12} />
                     </button>
                   </td>
                 </tr>

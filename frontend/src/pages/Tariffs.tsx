@@ -59,7 +59,7 @@ function delta(curr: number | null | undefined, prev: number | null | undefined)
   const arrow = diff > 0 ? "↑" : "↓";
   const cls = diff > 0 ? "text-warn" : "text-success";
   return {
-    text: `${arrow} ${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%`,
+    text: `${arrow} ${pct >= 0 ? "+" : ""}${fmtPct(pct, 1)}`,
     className: cls,
   };
 }
@@ -356,7 +356,7 @@ function DeltaCell({
 }) {
   const d = delta(curr, prev);
   return (
-    <td className="p-2 text-right">
+    <td className="p-2 text-right font-mono">
       <div className="font-mono">{fmtNum(curr, digits)}</div>
       <div className={`text-xs ${d.className}`}>{d.text}</div>
     </td>

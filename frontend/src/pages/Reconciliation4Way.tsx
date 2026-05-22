@@ -16,13 +16,14 @@ import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub, fmtPct } from "@/lib/format";
+import { Icon } from "../components/Icon";
 
 function diffColor(pct: number | null | undefined): string {
   if (pct == null) return "text-muted";
   const a = Math.abs(pct);
   if (a < 0.5) return "text-success";
   if (a < 2) return "text-warning";
-  return "text-red-400";
+  return "text-danger";
 }
 
 export default function Reconciliation4Way() {
@@ -127,12 +128,12 @@ export default function Reconciliation4Way() {
           className={`card text-xs ${
             importResult.imported > 0
               ? "border-success/30 bg-success/5"
-              : "border-red-500/30 bg-red-500/5"
+              : "border-danger bg-danger-subtle"
           }`}
         >
           {importResult.imported > 0 ? (
             <div className="text-success font-medium">
-              ✓ Импортировано строк: {importResult.imported}
+              <Icon name="check" size={12} /> Импортировано строк: {importResult.imported}
               {importResult.filename && (
                 <span className="text-muted ml-2 font-normal">
                   ({importResult.filename}, лист «{importResult.sheet_name}»,
@@ -141,8 +142,8 @@ export default function Reconciliation4Way() {
               )}
             </div>
           ) : (
-            <div className="text-red-400 font-medium">
-              ✗ Не удалось импортировать
+            <div className="text-danger font-medium">
+              <Icon name="close" size={12} /> Не удалось импортировать
             </div>
           )}
           {importResult.errors.length > 0 && (
@@ -160,7 +161,7 @@ export default function Reconciliation4Way() {
 
       {q.isLoading && <div className="text-muted">Загрузка…</div>}
       {q.isError && (
-        <div className="card text-red-400 text-sm">
+        <div className="card text-danger text-sm">
           Ошибка: {(q.error as Error).message}
         </div>
       )}
@@ -220,7 +221,7 @@ export default function Reconciliation4Way() {
                     {p.period_from} … {p.period_to}
                   </td>
                   {/* Наш P&L */}
-                  <td className="p-2 text-right border-l border-border">
+                  <td className="p-2 text-right border-l border-border font-mono">
                     {fmtRub(p.ours.revenue_gross)}
                   </td>
                   <td
@@ -230,17 +231,17 @@ export default function Reconciliation4Way() {
                     {fmtPct(p.ours.diff_vs_wb_pct)}
                   </td>
                   {/* WB Cabinet */}
-                  <td className="p-2 text-right border-l border-border">
+                  <td className="p-2 text-right border-l border-border font-mono">
                     {fmtRub(p.wb_cabinet.revenue_gross)}
                   </td>
-                  <td className="p-2 text-right text-muted">
+                  <td className="p-2 text-right text-muted font-mono">
                     {fmtRub(p.wb_cabinet.commission)}
                   </td>
-                  <td className="p-2 text-right text-muted">
+                  <td className="p-2 text-right text-muted font-mono">
                     {fmtRub(p.wb_cabinet.payout)}
                   </td>
                   {/* WB Documents */}
-                  <td className="p-2 text-right border-l border-border">
+                  <td className="p-2 text-right border-l border-border font-mono">
                     {fmtRub(p.wb_documents.redeem_total_rub)}
                     {p.wb_documents.redeem_count > 0 && (
                       <span className="text-[10px] text-muted ml-1">
@@ -248,7 +249,7 @@ export default function Reconciliation4Way() {
                       </span>
                     )}
                   </td>
-                  <td className="p-2 text-right">
+                  <td className="p-2 text-right font-mono">
                     {fmtRub(p.wb_documents.offset_total_rub)}
                     {p.wb_documents.offset_count > 0 && (
                       <span className="text-[10px] text-muted ml-1">
@@ -256,16 +257,16 @@ export default function Reconciliation4Way() {
                       </span>
                     )}
                   </td>
-                  <td className="p-2 text-right font-medium">
+                  <td className="p-2 text-right font-medium font-mono">
                     {fmtRub(p.wb_documents.total_rub)}
                   </td>
                   {/* Бухгалтер */}
-                  <td className="p-2 text-right border-l border-border text-xs">
+                  <td className="p-2 text-right border-l border-border text-xs font-mono">
                     {p.bookkeeper.available
                       ? fmtRub(p.bookkeeper.revenue_gross || 0)
                       : <span className="text-muted">—</span>}
                   </td>
-                  <td className="p-2 text-right text-xs">
+                  <td className="p-2 text-right text-xs font-mono">
                     {p.bookkeeper.available
                       ? fmtRub(p.bookkeeper.commission || 0)
                       : <span className="text-muted">—</span>}

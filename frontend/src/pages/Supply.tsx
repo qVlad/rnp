@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { fmtNum } from "@/lib/format";
+import { fmtNum, fmtPct } from "@/lib/format";
 import { useTagFilter } from "@/lib/useTagFilter";
 import TagFilterDropdown from "@/components/TagFilterDropdown";
+import { Icon } from "../components/Icon";
 
 const URGENCY_STYLE: Record<string, { label: string; color: string }> = {
-  critical: { label: "Критично", color: "bg-red-700/40 text-red-200" },
+  critical: { label: "Критично", color: "bg-danger-subtle text-danger" },
   warning: { label: "Внимание", color: "bg-orange-700/40 text-warn" },
   ok: { label: "ОК", color: "bg-success-subtle/40 text-success" },
   no_sales: { label: "Без продаж", color: "bg-zinc-700/40 text-zinc-300" },
@@ -352,7 +353,7 @@ export default function Supply() {
             ИЛ бренда
           </span>
           <div className={`mt-2 text-2xl font-semibold ${ilColor}`}>
-            {distQ.isLoading ? "…" : `${aggIl.toFixed(1)}%`}
+            {distQ.isLoading ? "…" : `${fmtPct(aggIl, 1)}`}
           </div>
           <div className="text-xs text-muted">за {irpWin} дн</div>
         </div>
@@ -386,7 +387,7 @@ export default function Supply() {
               className="btn text-xs ml-3"
               title="Скачать видимые рекомендации в CSV (Excel открывает напрямую). Импорт в 1С: заказ поставщику."
             >
-              📥 Экспорт CSV ({items.length})
+              <Icon name="download" size={12} /> Экспорт CSV ({items.length})
             </button>
             <button
               type="button"
@@ -395,11 +396,11 @@ export default function Supply() {
               className="btn text-xs ml-2"
               title="Отправить заявку директору в Telegram (рейт-лимит 1 раз в час). TASK-DEV-014."
             >
-              📨 {sendTgMut.isPending ? "Отправка…" : "Отправить директору"}
+              <Icon name="upload" size={12} /> {sendTgMut.isPending ? "Отправка…" : "Отправить директору"}
             </button>
             {tgMsg && (
               <span
-                className={`ml-3 text-xs ${tgMsg.startsWith("✓") ? "text-success" : "text-red-400"}`}
+                className={`ml-3 text-xs ${tgMsg.startsWith("✓") ? "text-success" : "text-danger"}`}
               >
                 {tgMsg}
               </span>
@@ -501,7 +502,7 @@ export default function Supply() {
                           : "—"}
                       </td>
                       <td className={`p-2 text-right font-mono ${ilCls}`}>
-                        {il == null ? "—" : `${il.toFixed(0)}%`}
+                        {il == null ? "—" : `${fmtPct(il, 0)}`}
                       </td>
                     </tr>
                     {isOpen && dist && (
@@ -544,7 +545,7 @@ export default function Supply() {
                                         </td>
                                         <td className="p-1.5">{c.label}</td>
                                         <td className="p-1.5 text-right font-mono">
-                                          {c.irp_pct.toFixed(1)}%
+                                          {fmtPct(c.irp_pct, 1)}
                                         </td>
                                         <td className="p-1.5 text-right font-mono">{c.stock}</td>
                                         <td className="p-1.5 text-right font-mono">
@@ -586,7 +587,7 @@ export default function Supply() {
                                                     >
                                                       <td className="p-1 font-mono">{s.size}</td>
                                                       <td className="p-1 text-right font-mono text-muted">
-                                                        {s.share_pct.toFixed(1)}%
+                                                        {fmtPct(s.share_pct, 1)}
                                                       </td>
                                                       <td className="p-1 text-right font-mono">
                                                         {s.stock}

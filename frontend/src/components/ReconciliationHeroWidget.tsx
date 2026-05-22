@@ -12,7 +12,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "@/api/client";
-import { fmtRub } from "@/lib/format";
+import { fmtRub, fmtPct } from "@/lib/format";
+import { Icon } from "./Icon";
 
 interface PeriodRow {
   period_from: string;
@@ -30,7 +31,7 @@ interface PeriodRow {
 function fmtPctSigned(v: number): string {
   if (!Number.isFinite(v)) return "—";
   const sign = v >= 0 ? "+" : "";
-  return `${sign}${v.toFixed(2)}%`;
+  return `${sign}${fmtPct(v, 2)}`;
 }
 
 export default function ReconciliationHeroWidget() {
@@ -109,13 +110,13 @@ export default function ReconciliationHeroWidget() {
       </div>
       {latest.diff.alert && (
         <div className="mt-3 text-xs text-warn">
-          ⚠ Δ &gt; 1% — есть расхождение. Открой подробную сверку чтобы понять причину
+          <Icon name="warning" size={12} /> Δ &gt; 1% — есть расхождение. Открой подробную сверку чтобы понять причину
           (неучтённые удержания / задержка sync / ретроспективная корректировка WB).
         </div>
       )}
       {!latest.diff.alert && (
         <div className="mt-2 text-xs text-success">
-          ✓ Δ ≤ 1% — наши цифры сходятся с WB-кабинетом.
+          <Icon name="check" size={12} /> Δ ≤ 1% — наши цифры сходятся с WB-кабинетом.
         </div>
       )}
     </div>

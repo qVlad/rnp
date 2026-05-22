@@ -18,7 +18,7 @@ import {
 } from "recharts";
 import { api } from "@/api/client";
 import { DateRangePicker } from "@/components/DateRangePicker";
-import { fmtRub, fmtNum } from "@/lib/format";
+import { fmtRub, fmtNum, fmtPct } from "@/lib/format";
 import { chartTheme } from "@/lib/chartTheme";
 import { usePeriod } from "@/contexts/PeriodContext";
 
@@ -200,12 +200,12 @@ export default function Inventory() {
                 return (
                   <tr key={row.key} className="border-t border-border">
                     <td className="p-2">{row.key}</td>
-                    <td className="p-2 text-right">{fmtNum(row.qty)}</td>
-                    <td className="p-2 text-right font-medium">
+                    <td className="p-2 text-right font-mono">{fmtNum(row.qty)}</td>
+                    <td className="p-2 text-right font-medium font-mono">
                       {fmtRub(row.value)}
                     </td>
-                    <td className="p-2 text-right text-muted">
-                      {share.toFixed(1)}%
+                    <td className="p-2 text-right text-muted font-mono">
+                      {fmtPct(share, 1)}
                     </td>
                   </tr>
                 );

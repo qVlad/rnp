@@ -666,7 +666,7 @@ function Row({
     .filter(Boolean)
     .join(" ");
   const valColor =
-    value > 0 ? "text-success" : value < 0 ? "text-red-400" : "text-muted";
+    value > 0 ? "text-success" : value < 0 ? "text-danger" : "text-muted";
   const display =
     sign && sign === "+" && value >= 0 ? `+${fmtRub(value)}` : fmtRub(value);
   return (
@@ -691,7 +691,7 @@ function BigKpi({
       ? "text-success"
       : tone === "warn"
       ? "text-warn"
-      : "text-red-400";
+      : "text-danger";
   return (
     <div className="border border-border rounded-md p-3 bg-surface-2/40">
       <div className="text-xs text-muted">{label}</div>

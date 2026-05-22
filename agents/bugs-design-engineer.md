@@ -140,3 +140,56 @@ _Пока пусто. Audit-задачи TASK-UI-001..003 в Sprint 1 превр
    - Визуал / компонент / token / a11y → `BUG-UI-NNN`
 3. Если фикс требует кода — Design Engineer делает end-to-end (без передачи
    Developer'у, кроме случаев когда нужна правка backend / API / бизнес-логики)
+
+---
+
+## Открытые баги
+
+### BUG-UI-001: Остаточные эмодзи в JSX ternary-строках после Sprint 1 (TASK-UI-003)
+
+- **Приоритет:** P3
+- **Обнаружено:** 2026-05-22 (sub-agent H, UI compliance batch)
+- **Среда:** dev (любой режим)
+- **Роль теста:** all
+- **Причина:** TASK-UI-003 в Sprint 1 покрыл 59% эмодзи (190 → 78). Оставшиеся ~48 «UI chrome» эмодзи — это ternary-string-литералы в JSX-выражениях типа `{cond ? "✓ Принять" : "✕ Отклонить"}`, `{success ? "🟢" : "🔴"}`, `<span>📌</span>`. Они не подходят под безопасный batch-pattern `>EMOJI TEXT<` и требуют ручной разборки per-case (нужно заменить ternary, возвращающий emoji-prefix-string, на ternary возвращающий JSX-фрагмент `<><Icon name="..."/> TEXT</>`).
+- **Затронутые файлы (топ):**
+  - `frontend/src/pages/AbTestDetail.tsx` — `EVENT_LABELS` объект (7 эмодзи: ✕/🏆/🤖/👤/✓), success/fail status в таблице events
+  - `frontend/src/pages/Plans.tsx` — `parts.push(\`⚠ ...\`)` (импорт-summary), `{isPending ? "..." : "📨 Отправить"}` (3 кнопки)
+  - `frontend/src/pages/Redistribution.tsx` — `{cond ? "✓ принята" : "✗ ошибка"}` (job-status table)
+  - `frontend/src/pages/Settings.tsx` — `<span>✓</span>` для wb-token-status, ToastHost-like inline
+  - `frontend/src/pages/Audit.tsx` — `{wb_cabinet ? "✓" : "—"}` в source-status cells (2 шт)
+  - `frontend/src/pages/PromoCalculator.tsx` — `<span>{✓}</span>` / `<span>{✗}</span>` для validate-result
+  - `frontend/src/pages/Checklist.tsx` — `🔴/🟡/🟢` в `<th>` заголовках + ternary в cells
+  - `frontend/src/pages/Jam.tsx` — легенда `🔴/🟡/🟢` (3 строки)
+  - `frontend/src/pages/Glossary.tsx` — `⚠` в string-content tooltip-text (это **allowed** per task, можно оставить)
+  - `frontend/src/components/ReconciliationHeroWidget.tsx` — `{alert ? "⚠ Объяснить" : "Подробнее"}` (1)
+- **Что:** Пользователь видит смесь эмодзи и lucide-иконок в одних и тех же группах кнопок/статусов.
+- **Ожидаемое:** Per `DESIGN_SYSTEM §2.3 / §6.5` все UI chrome-emoji заменены на `<Icon>`. Только `ProductTagChips` / `TagFilterDropdown` сохраняют preset-эмодзи.
+- **Root cause:** Batch-regex `>EMOJI<` / `>EMOJI TEXT<` не охватывает паттерны `"EMOJI TEXT"` (string-literal в ternary, который компилируется в JSX text node).
+- **Минимальный фикс:** Заменить ternary-with-emoji-string на ternary-with-JSX-fragment:
+  ```tsx
+  // before
+  {cond ? "✓ OK" : "✕ FAIL"}
+  // after
+  {cond ? <><Icon name="check" size={12} /> OK</> : <><Icon name="close" size={12} /> FAIL</>}
+  ```
+  Для `EVENT_LABELS: Record<X, string>` объектов — поменять value-тип на `ReactNode` или сделать дополнительный helper `eventLabelToNode()`.
+- **Связанные задачи:** TASK-UI-003 (предусмотренно: `>80% за раунд, остальное defer`)
+- **Статус:** Открыт
+
+### BUG-UI-002: Остаточные `.toFixed()` без `fmt*` helper (TASK-UI-004)
+
+- **Приоритет:** P3
+- **Обнаружено:** 2026-05-22 (sub-agent H)
+- **Среда:** dev
+- **Причина:** TASK-UI-004 покрыл 46% (76 → 41). Оставшиеся 41 — это math-выражения и нестандартные формат-форматы которые не подпадают под безопасный batch:
+  - `(v / 1_000_000).toFixed(1)M` — axis-labels recharts (НЕ % формат)
+  - `Number(n).toFixed(2)` — currency/FX-rates ЦБ (`cbrRates.rub_cny.toFixed(4)`)
+  - `(ctr * 100).toFixed(2)%` — math до %, нужен helper или `fmtPct(ctr * 100, 2)`
+  - `.toFixed(2).replace(".", ",")` — CSV-форматы (manually parsed)
+  - `.toFixed(val < 10 ? 1 : 0)` — conditional digits
+- **Затронутые файлы:** NewProducts.tsx (10), Supply.tsx (6), AbTestDetail.tsx (4), Settings.tsx (1), и ~12 других — см. `grep -rn ".toFixed(" frontend/src --include="*.tsx"`.
+- **Ожидаемое:** Все остаточные либо обёрнуты в `fmt*`, либо имеют `// math` коммент.
+- **Минимальный фикс:** Добавить `fmtRub2(v, digits=2)` / `fmtRatio(v)` helpers в `lib/format.ts` и перейти по-файлово. Или — добавить `// math` коммент рядом с каждым `.toFixed()`.
+- **Связанные задачи:** TASK-UI-004 (предусмотренно: `>80% за раунд, остальное defer`)
+- **Статус:** Открыт

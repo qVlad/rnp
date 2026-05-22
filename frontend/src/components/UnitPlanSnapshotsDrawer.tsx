@@ -14,6 +14,8 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type UnitPlanSnapshotDiff } from "@/api/client";
 import { fmtNum, fmtRub } from "@/lib/format";
+import { Icon } from "./Icon";
+import { Icon } from "./Icon";
 
 interface Props {
   open: boolean;
@@ -115,7 +117,7 @@ export function UnitPlanSnapshotsDrawer({ open, onClose }: Props) {
             </div>
           </div>
           <button className="btn text-xs" onClick={onClose} title="Esc">
-            ✕
+            <Icon name="close" size={12} />
           </button>
         </div>
 
@@ -123,7 +125,7 @@ export function UnitPlanSnapshotsDrawer({ open, onClose }: Props) {
           {createMsg && (
             <div
               className={`text-xs ${
-                createMsg.startsWith("✓") ? "text-emerald-400" : "text-danger"
+                createMsg.startsWith("✓") ? "text-success" : "text-danger"
               }`}
             >
               {createMsg}
@@ -135,7 +137,7 @@ export function UnitPlanSnapshotsDrawer({ open, onClose }: Props) {
               className="btn btn-primary text-sm self-start"
               onClick={() => setShowCreate(true)}
             >
-              📸 Создать snapshot
+              <Icon name="package" size={12} /> Создать snapshot
             </button>
           )}
 
@@ -304,7 +306,7 @@ function SnapshotDiffView({
 
           {/* Config diff (UNIT_PLAN.md §10 / миграция 0047) */}
           {!diff.config_diff.frozen_available && (
-            <div className="card bg-amber-500/10 border-amber-500/30 text-amber-200 text-xs p-2">
+            <div className="card bg-warn-subtle border-warn text-warn text-xs p-2">
               ⓘ Snapshot создан до миграции 0047 — frozen-cfg недоступен.
               Изменения констант после snapshot'а могут выглядеть как
               изменения данных.
@@ -312,21 +314,21 @@ function SnapshotDiffView({
           )}
           {diff.config_diff.frozen_available &&
             diff.config_diff.changed_keys.length === 0 && (
-              <div className="card bg-emerald-500/10 border-emerald-500/30 text-emerald-300 text-xs p-2">
-                ✓ Константы global_config не менялись с момента snapshot'а —
+              <div className="card bg-success-subtle border-success text-success text-xs p-2">
+                <Icon name="check" size={12} /> Константы global_config не менялись с момента snapshot'а —
                 все дельты ниже отражают изменения данных, а не настроек.
               </div>
             )}
           {diff.config_diff.frozen_available &&
             diff.config_diff.changed_keys.length > 0 && (
-              <div className="card bg-amber-500/10 border-amber-500/30 text-amber-200 text-xs p-2">
+              <div className="card bg-warn-subtle border-warn text-warn text-xs p-2">
                 <div className="font-medium mb-1">
-                  ⚠ Изменилось {diff.config_diff.changed_keys.length}{" "}
+                  <Icon name="warning" size={12} /> Изменилось {diff.config_diff.changed_keys.length}{" "}
                   констант global_config (frozen → current):
                 </div>
                 <table className="w-full">
                   <thead>
-                    <tr className="text-left text-amber-300/70">
+                    <tr className="text-left text-warn/70">
                       <th className="py-0.5 pr-2">Параметр</th>
                       <th className="py-0.5 pr-2">Snapshot</th>
                       <th className="py-0.5 pr-2">Current</th>
@@ -334,7 +336,7 @@ function SnapshotDiffView({
                   </thead>
                   <tbody>
                     {diff.config_diff.changed_keys.map((k) => (
-                      <tr key={k} className="border-t border-amber-500/20">
+                      <tr key={k} className="border-t border-warn">
                         <td className="py-0.5 pr-2 font-mono">{k}</td>
                         <td className="py-0.5 pr-2">
                           {String(
@@ -385,9 +387,9 @@ function SnapshotDiffView({
                           (dProfit == null
                             ? "text-muted"
                             : dProfit > 0
-                            ? "text-emerald-400"
+                            ? "text-success"
                             : dProfit < 0
-                            ? "text-rose-400"
+                            ? "text-danger"
                             : "")
                         }
                       >
@@ -399,9 +401,9 @@ function SnapshotDiffView({
                           (dMargin == null
                             ? "text-muted"
                             : dMargin > 0
-                            ? "text-emerald-400"
+                            ? "text-success"
                             : dMargin < 0
-                            ? "text-rose-400"
+                            ? "text-danger"
                             : "")
                         }
                       >

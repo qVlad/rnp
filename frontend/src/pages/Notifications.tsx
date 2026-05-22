@@ -247,7 +247,7 @@ export default function Notifications() {
                         if (confirm(`Удалить правило «${r.name}»?`)) deleteMut.mutate(r.id);
                       }}
                     >
-                      ✕
+                      <Icon name="close" size={12} />
                     </button>
                   </td>
                 </tr>

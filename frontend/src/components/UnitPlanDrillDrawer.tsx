@@ -27,6 +27,7 @@ import {
 } from "recharts";
 import { api, type UnitPlanDetail } from "@/api/client";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
+import { Icon } from "./Icon";
 
 interface Props {
   nm: number;
@@ -108,7 +109,7 @@ export function UnitPlanDrillDrawer({
             onClick={onClose}
             aria-label="Закрыть"
           >
-            ✕
+            <Icon name="close" size={12} />
           </button>
         </div>
 
@@ -117,7 +118,7 @@ export function UnitPlanDrillDrawer({
             <div className="text-muted text-tiny">Загрузка…</div>
           )}
           {detail.isError && (
-            <div className="rounded border border-red-500/40 bg-red-500/10 p-3 text-tiny text-red-300">
+            <div className="rounded border border-danger bg-danger-subtle p-3 text-tiny text-danger">
               Ошибка загрузки: {(detail.error as Error)?.message || "unknown"}
             </div>
           )}
@@ -373,8 +374,8 @@ function PvfTile({
     diff == null
       ? "text-faint"
       : diff >= 0
-      ? "text-emerald-400"
-      : "text-rose-400";
+      ? "text-success"
+      : "text-danger";
   const diffSign = diff != null && diff > 0 ? "+" : "";
   return (
     <div className="rounded border border-border bg-surface-2/30 p-2.5">

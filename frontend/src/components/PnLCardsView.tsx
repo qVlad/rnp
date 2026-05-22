@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Area, AreaChart, ResponsiveContainer, Tooltip } from "recharts";
 import { api } from "@/api/client";
-import { fmtRub } from "@/lib/format";
+import { fmtRub, fmtPct } from "@/lib/format";
 
 interface CardDef {
   key: string;
@@ -100,7 +100,7 @@ function monthlySeries(
 
 function fmtPct(v: number | null | undefined): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return "—";
-  return `${v >= 0 ? "" : ""}${v.toFixed(1)}%`;
+  return `${v >= 0 ? "" : ""}${fmtPct(v, 1)}`;
 }
 
 function fmtYoY(curr: number, prev: number): { delta: number; pct: number | null } {
@@ -158,8 +158,8 @@ function PnLCard({
       : card.positive
       ? currTotal >= 0
         ? "text-success"
-        : "text-red-400"
-      : "text-red-400";
+        : "text-danger"
+      : "text-danger";
 
   return (
     <div className="card hover:border-accent/40 transition-colors">
@@ -274,11 +274,11 @@ function PnLCard({
               className={`text-sm font-mono tabular-nums ${
                 (card.positive ? yoy.delta >= 0 : yoy.delta <= 0)
                   ? "text-success"
-                  : "text-red-400"
+                  : "text-danger"
               }`}
             >
               {yoy.pct > 0 ? "+" : ""}
-              {yoy.pct.toFixed(1)}%
+              {fmtPct(yoy.pct, 1)}
             </div>
           )}
         </div>
@@ -323,7 +323,7 @@ function PnLCard({
                           ? "text-muted"
                           : (card.positive ? dlt > 0 : dlt < 0)
                           ? "text-success"
-                          : "text-red-400"
+                          : "text-danger"
                       }`}
                     >
                       {dlt === 0 ? "—" : `${dlt > 0 ? "+" : ""}${fmtRub(dlt)}`}

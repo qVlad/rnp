@@ -868,7 +868,7 @@ export default function Units() {
               <span className={cls + " font-mono font-semibold"}>{fmtRub(newMargin)}</span>
               {deltaPct != null && (
                 <span className={deltaCls + " font-mono"}>
-                  {deltaPct >= 0 ? "+" : ""}{deltaPct.toFixed(1)}%
+                  {deltaPct >= 0 ? "+" : ""}{fmtPct(deltaPct, 1)}
                 </span>
               )}
             </div>
@@ -935,7 +935,7 @@ export default function Units() {
               onClick={clearPriceOverrides}
               title="Сбросить все новые цены/скидки которые ты задал inline в таблице"
             >
-              ✕ Сбросить цены ({priceOverridesCount})
+              <Icon name="close" size={12} /> Сбросить цены ({priceOverridesCount})
             </button>
           )}
           <label className="flex items-center gap-2 text-xs text-muted self-center">
@@ -1427,7 +1427,7 @@ function SizesModal({
             )}
           </div>
           <button className="btn text-xs" onClick={onClose}>
-            ✕
+            <Icon name="close" size={12} />
           </button>
         </div>
         <div className="p-4">
@@ -1456,8 +1456,8 @@ function SizesModal({
                 {sizes.map((s: any) => (
                   <tr key={s.tech_size} className="border-b border-border/50">
                     <td className="p-2 font-mono">{s.tech_size}</td>
-                    <td className="p-2 text-right">{fmtNum(s.orders)}</td>
-                    <td className="p-2 text-right">{fmtNum(s.qty_sale)}</td>
+                    <td className="p-2 text-right font-mono">{fmtNum(s.orders)}</td>
+                    <td className="p-2 text-right font-mono">{fmtNum(s.qty_sale)}</td>
                     <td className="p-2 text-right">
                       <span
                         className={
@@ -1467,10 +1467,10 @@ function SizesModal({
                         {fmtPct(s.buyout_pct)}
                       </span>
                     </td>
-                    <td className="p-2 text-right">{fmtNum(s.qty_return)}</td>
-                    <td className="p-2 text-right">{fmtRub(s.revenue_net)}</td>
-                    <td className="p-2 text-right">{fmtRub(s.ppvz_net)}</td>
-                    <td className="p-2 text-right">{fmtNum(s.stock)}</td>
+                    <td className="p-2 text-right font-mono">{fmtNum(s.qty_return)}</td>
+                    <td className="p-2 text-right font-mono">{fmtRub(s.revenue_net)}</td>
+                    <td className="p-2 text-right font-mono">{fmtRub(s.ppvz_net)}</td>
+                    <td className="p-2 text-right font-mono">{fmtNum(s.stock)}</td>
                   </tr>
                 ))}
               </tbody>

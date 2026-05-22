@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
-import { fmtRub } from "@/lib/format";
+import { fmtRub, fmtPct } from "@/lib/format";
 import {
   ColumnVisibilityButton,
   useColumnVisibility,
@@ -147,11 +147,11 @@ function deltaCell(curr: number | undefined, prev: number | undefined): {
     abs > 0
       ? "text-success"
       : abs < 0
-      ? "text-red-400"
+      ? "text-danger"
       : "text-muted";
   return {
     abs: (abs > 0 ? "+" : "") + fmtRub(abs),
-    pct: pctVal === null ? "—" : `${pctVal > 0 ? "+" : ""}${pctVal.toFixed(1)}%`,
+    pct: pctVal === null ? "—" : `${pctVal > 0 ? "+" : ""}${fmtPct(pctVal, 1)}`,
     cls,
   };
 }
@@ -394,7 +394,7 @@ export default function PnL() {
                       {margin !== undefined && (
                         <span
                           className={`ml-1 text-[11px] ${
-                            margin >= 0 ? "text-muted" : "text-red-400"
+                            margin >= 0 ? "text-muted" : "text-danger"
                           }`}
                         >
                           ({margin >= 0 ? "" : ""}

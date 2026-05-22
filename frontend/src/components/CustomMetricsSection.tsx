@@ -15,6 +15,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub, fmtNum, fmtPct } from "@/lib/format";
+import { Icon } from "./Icon";
+import { Icon } from "./Icon";
 
 type Format = "currency" | "percent" | "number";
 
@@ -113,11 +115,11 @@ export default function CustomMetricsSection() {
                       setFormOpen(true);
                     }}
                   >
-                    ✎
+                    <Icon name="edit" size={12} />
                   </button>
                   <button
                     type="button"
-                    className="btn text-xs text-red-400"
+                    className="btn text-xs text-danger"
                     onClick={async () => {
                       if (!confirm(`Удалить «${m.name}»?`)) return;
                       await api.metricTemplatesDelete(m.id);
@@ -245,12 +247,12 @@ function MetricForm({
         {previewMut.isPending && <span className="text-muted">проверяю…</span>}
         {preview?.ok === true && (
           <span className="text-success">
-            ✓ За эту неделю значение ={" "}
+            <Icon name="check" size={12} /> За эту неделю значение ={" "}
             <strong>{formatValue(preview.value || 0, format)}</strong>
           </span>
         )}
         {preview?.ok === false && (
-          <span className="text-red-400">⚠ {preview.error}</span>
+          <span className="text-danger"><Icon name="warning" size={12} /> {preview.error}</span>
         )}
       </div>
 
@@ -294,7 +296,7 @@ function MetricForm({
           Отмена
         </button>
         {saveMut.isError && (
-          <span className="text-red-400 text-xs self-center">
+          <span className="text-danger text-xs self-center">
             {(saveMut.error as Error).message}
           </span>
         )}

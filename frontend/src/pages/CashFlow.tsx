@@ -10,7 +10,7 @@ const SECTION_META: Record<string, { color: string; hint: string }> = {
     hint: "Поступления и оттоки от ежедневных операций: продажи, расходы МП, маркетинг, COGS, ОПЕР-OPEX",
   },
   investing: {
-    color: "border-blue-700/40",
+    color: "border-accent",
     hint: "Покупки оборудования, инвест.вложения, выходы из инвестиций",
   },
   financing: {
@@ -49,7 +49,7 @@ export default function CashFlow() {
       <div className="card text-sm text-muted leading-relaxed">
         Отчёт построен на принципе «деньги по факту движения», не по начислению. Знак:
         <span className="text-success"> +</span> — поступление,
-        <span className="text-red-400"> −</span> — выбытие.
+        <span className="text-danger"> −</span> — выбытие.
         Принадлежность OPEX-категорий к секциям настраивается на странице{" "}
         <a className="text-accent" href="/opex">OPEX</a>.
       </div>
@@ -67,7 +67,7 @@ export default function CashFlow() {
               </div>
               <div
                 className={`text-lg font-semibold mt-1 ${
-                  s.total >= 0 ? "text-success" : "text-red-400"
+                  s.total >= 0 ? "text-success" : "text-danger"
                 }`}
               >
                 {fmtRub(s.total)}
@@ -84,7 +84,7 @@ export default function CashFlow() {
             </div>
             <div
               className={`text-2xl font-semibold mt-1 ${
-                q.data.net_cash_flow >= 0 ? "text-success" : "text-red-400"
+                q.data.net_cash_flow >= 0 ? "text-success" : "text-danger"
               }`}
             >
               {fmtRub(q.data.net_cash_flow)}
@@ -102,7 +102,7 @@ export default function CashFlow() {
                   {fmtRub(q.data.context.pnl_cash_flow)}
                 </span>
                 {Math.abs(q.data.context.pnl_cash_flow - q.data.net_cash_flow) > 1 && (
-                  <span className="ml-2 text-red-400">
+                  <span className="ml-2 text-danger">
                     Δ {fmtRub(q.data.net_cash_flow - q.data.context.pnl_cash_flow)}
                   </span>
                 )}
@@ -121,7 +121,7 @@ export default function CashFlow() {
               <h2 className="font-medium">{s.title}</h2>
               <span
                 className={`font-mono text-lg ${
-                  s.total >= 0 ? "text-success" : "text-red-400"
+                  s.total >= 0 ? "text-success" : "text-danger"
                 }`}
               >
                 {fmtRub(s.total)}
@@ -144,7 +144,7 @@ export default function CashFlow() {
                           l.amount > 0
                             ? "text-success"
                             : l.amount < 0
-                            ? "text-red-400"
+                            ? "text-danger"
                             : "text-muted"
                         }`}
                       >

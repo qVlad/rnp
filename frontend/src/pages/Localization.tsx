@@ -21,14 +21,14 @@ import { DateRangePicker } from "@/components/DateRangePicker";
 function pctColor(pct: number): string {
   if (pct >= 70) return "text-success";
   if (pct >= 30) return "text-warning";
-  return "text-red-400";
+  return "text-danger";
 }
 
 function cellBg(pct: number): string {
   // Inline-стиль вместо tailwind — нужны промежуточные оттенки для heatmap.
   if (pct >= 70) return "bg-success/20";
   if (pct >= 30) return "bg-warning/20";
-  return "bg-red-500/15";
+  return "bg-danger-subtle";
 }
 
 export default function Localization() {
@@ -138,7 +138,7 @@ export default function Localization() {
         </div>
         <div className="card">
           <div className="text-xs text-muted">Не локализовано</div>
-          <div className="text-3xl font-semibold text-red-400">
+          <div className="text-3xl font-semibold text-danger">
             {fmtNum(d.total_orders - d.localized_orders)}
           </div>
           <div className="text-xs text-muted mt-1">
@@ -169,8 +169,8 @@ export default function Localization() {
                     {c.cluster_label}{" "}
                     <span className="text-xs text-muted">({c.cluster})</span>
                   </td>
-                  <td className="py-2 text-right">{fmtNum(c.orders)}</td>
-                  <td className="py-2 text-right">{fmtNum(c.localized_orders)}</td>
+                  <td className="py-2 text-right font-mono">{fmtNum(c.orders)}</td>
+                  <td className="py-2 text-right font-mono">{fmtNum(c.localized_orders)}</td>
                   <td className={`py-2 text-right font-semibold ${pctColor(c.localization_pct)}`}>
                     {fmtPct(c.localization_pct)}
                   </td>
@@ -298,8 +298,8 @@ export default function Localization() {
                   <td className="py-2">{s.vendor_code ?? "—"}</td>
                   <td className="py-2">{s.brand ?? "—"}</td>
                   <td className="py-2 text-xs">{s.subject ?? "—"}</td>
-                  <td className="py-2 text-right">{fmtNum(s.orders)}</td>
-                  <td className="py-2 text-right">{fmtNum(s.localized_orders)}</td>
+                  <td className="py-2 text-right font-mono">{fmtNum(s.orders)}</td>
+                  <td className="py-2 text-right font-mono">{fmtNum(s.localized_orders)}</td>
                   <td className={`py-2 text-right font-semibold ${pctColor(s.localization_pct)}`}>
                     {fmtPct(s.localization_pct)}
                   </td>
@@ -333,8 +333,8 @@ export default function Localization() {
                   <td className="py-2 text-xs text-muted">
                     {w.cluster_label} ({w.cluster})
                   </td>
-                  <td className="py-2 text-right">{fmtNum(w.orders)}</td>
-                  <td className="py-2 text-right">{fmtNum(w.localized_orders)}</td>
+                  <td className="py-2 text-right font-mono">{fmtNum(w.orders)}</td>
+                  <td className="py-2 text-right font-mono">{fmtNum(w.localized_orders)}</td>
                   <td className={`py-2 text-right font-semibold ${pctColor(w.localization_pct)}`}>
                     {fmtPct(w.localization_pct)}
                   </td>

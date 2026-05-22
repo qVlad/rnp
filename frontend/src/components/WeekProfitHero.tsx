@@ -11,7 +11,7 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { fmtRub } from "@/lib/format";
+import { fmtRub, fmtPct } from "@/lib/format";
 
 type Week = { from: string; to: string };
 
@@ -123,7 +123,7 @@ export default function WeekProfitHero() {
     (logistics != null ? `Логистика WB: ${fmtRub(logistics)}\n` : "") +
     (storage != null ? `Хранение WB: ${fmtRub(storage)}\n` : "") +
     (wow != null && prevProfit != null
-      ? `\nWoW: предыдущая неделя ${fmtRub(prevProfit)} → текущая ${fmtRub(curProfit)} (${wow >= 0 ? "+" : ""}${wow.toFixed(1)}%)`
+      ? `\nWoW: предыдущая неделя ${fmtRub(prevProfit)} → текущая ${fmtRub(curProfit)} (${wow >= 0 ? "+" : ""}${fmtPct(wow, 1)})`
       : "");
 
   return (
@@ -135,7 +135,7 @@ export default function WeekProfitHero() {
         </div>
         {wow != null && (
           <div className={`text-xs font-mono ${wowCls}`}>
-            {arrow} {wow >= 0 ? "+" : ""}{wow.toFixed(1)}% WoW
+            {arrow} {wow >= 0 ? "+" : ""}{fmtPct(wow, 1)} WoW
           </div>
         )}
       </div>

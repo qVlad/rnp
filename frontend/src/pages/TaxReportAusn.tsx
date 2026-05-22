@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { fmtRub } from "@/lib/format";
+import { fmtRub, fmtPct } from "@/lib/format";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import PaymentOrdersTable from "@/components/PaymentOrdersTable";
 import { usePeriod } from "@/contexts/PeriodContext";
@@ -355,19 +355,19 @@ export default function TaxReportAusn() {
             {monthly.map((r) => (
               <tr key={r.month} className="border-b border-border/40 hover:bg-surface-2/60">
                 <td className="py-2 px-2 font-medium">{monthLabel(r.month)}</td>
-                <td className="py-2 px-2 text-right">{fmtRub(r.bank)}</td>
-                <td className="py-2 px-2 text-right">{fmtRub(r.vzz_reports)}</td>
-                <td className="py-2 px-2 text-right">{fmtRub(r.upd_delivery)}</td>
-                <td className="py-2 px-2 text-right text-success font-medium">
+                <td className="py-2 px-2 text-right font-mono">{fmtRub(r.bank)}</td>
+                <td className="py-2 px-2 text-right font-mono">{fmtRub(r.vzz_reports)}</td>
+                <td className="py-2 px-2 text-right font-mono">{fmtRub(r.upd_delivery)}</td>
+                <td className="py-2 px-2 text-right text-success font-medium font-mono">
                   {fmtRub(r.base)}
                 </td>
-                <td className="py-2 px-2 text-right text-muted">
-                  {r.tax_rate.toFixed(1)}%
+                <td className="py-2 px-2 text-right text-muted font-mono">
+                  {fmtPct(r.tax_rate, 1)}
                 </td>
-                <td className="py-2 px-2 text-right text-accent font-medium">
+                <td className="py-2 px-2 text-right text-accent font-medium font-mono">
                   {fmtRub(r.tax)}
                 </td>
-                <td className="py-2 px-2 text-right text-muted/60 italic">
+                <td className="py-2 px-2 text-right text-muted/60 italic font-mono">
                   {fmtRub(r.buyback_returns)}
                 </td>
                 <td className="py-2 px-2 text-right text-muted">
@@ -378,21 +378,21 @@ export default function TaxReportAusn() {
             {totals && (
               <tr className="border-t-2 border-border bg-surface-2/40 font-semibold">
                 <td className="py-2 px-2">{monthLabel(totals.month)}</td>
-                <td className="py-2 px-2 text-right">{fmtRub(totals.bank)}</td>
-                <td className="py-2 px-2 text-right">
+                <td className="py-2 px-2 text-right font-mono">{fmtRub(totals.bank)}</td>
+                <td className="py-2 px-2 text-right font-mono">
                   {fmtRub(totals.vzz_reports)}
                 </td>
-                <td className="py-2 px-2 text-right">
+                <td className="py-2 px-2 text-right font-mono">
                   {fmtRub(totals.upd_delivery)}
                 </td>
-                <td className="py-2 px-2 text-right text-success">
+                <td className="py-2 px-2 text-right text-success font-mono">
                   {fmtRub(totals.base)}
                 </td>
-                <td className="py-2 px-2 text-right text-muted">—</td>
-                <td className="py-2 px-2 text-right text-accent">
+                <td className="py-2 px-2 text-right text-muted font-mono">—</td>
+                <td className="py-2 px-2 text-right text-accent font-mono">
                   {fmtRub(totals.tax)}
                 </td>
-                <td className="py-2 px-2 text-right text-muted/60 italic">
+                <td className="py-2 px-2 text-right text-muted/60 italic font-mono">
                   {fmtRub(totals.buyback_returns)}
                 </td>
                 <td className="py-2 px-2 text-right text-muted">
@@ -462,11 +462,11 @@ export default function TaxReportAusn() {
                   <td className="py-2 px-2 text-muted">{r.report_type}</td>
                   <td className="py-2 px-2 text-muted">{r.pay_date_proxy}</td>
                   <td className="py-2 px-2 text-muted">{monthLabel(r.month)}</td>
-                  <td className="py-2 px-2 text-right text-muted">
+                  <td className="py-2 px-2 text-right text-muted font-mono">
                     {fmtRub(r.sale_gross)}
                   </td>
-                  <td className="py-2 px-2 text-right">{fmtRub(r.bank_amount)}</td>
-                  <td className="py-2 px-2 text-right text-muted">
+                  <td className="py-2 px-2 text-right font-mono">{fmtRub(r.bank_amount)}</td>
+                  <td className="py-2 px-2 text-right text-muted font-mono">
                     {fmtRub(r.vzz_amount)}
                   </td>
                 </tr>

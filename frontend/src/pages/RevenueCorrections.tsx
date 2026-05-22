@@ -384,7 +384,7 @@ function GroupSection({
                       {labels[row.type] ?? row.type}
                     </td>
                     <td className="p-2 font-mono">{row.nm_id ?? "—"}</td>
-                    <td className="p-2 text-right">{row.qty}</td>
+                    <td className="p-2 text-right font-mono">{row.qty}</td>
                     <td className="p-2 text-right font-mono">{fmtRub(row.gross_amount)}</td>
                     <td className="p-2 text-right font-mono">
                       {fmtRub(row.contractor_fee)}
@@ -392,15 +392,15 @@ function GroupSection({
                     <td className="p-2 text-muted">{row.comment ?? ""}</td>
                     <td className="p-2 text-right space-x-2">
                       <button className="btn text-xs" onClick={() => onEdit(row)}>
-                        ✎
+                        <Icon name="edit" size={12} />
                       </button>
                       <button
-                        className="btn text-xs text-red-400"
+                        className="btn text-xs text-danger"
                         onClick={() => {
                           if (confirm("Удалить запись?")) onDelete(row.id);
                         }}
                       >
-                        ✕
+                        <Icon name="close" size={12} />
                       </button>
                     </td>
                   </tr>

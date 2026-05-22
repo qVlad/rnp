@@ -24,7 +24,7 @@ interface Props {
 const COLOR_CLASS: Record<string, string> = {
   success: "bg-success/10 text-success",
   warning: "bg-warning/10 text-warning",
-  danger: "bg-red-500/10 text-red-400",
+  danger: "bg-red-500/10 text-danger",
   accent: "bg-accent/10 text-accent",
   muted: "bg-muted/10 text-muted",
 };
@@ -99,7 +99,7 @@ export default function ProductTagChips({ nm_id, readonly = false, compact = fal
             <div className="absolute left-0 top-full mt-1 z-50 card p-2 min-w-[180px]">
               {tagsQ.isLoading && <div className="text-xs text-muted">…</div>}
               {tagsQ.isError && (
-                <div className="text-xs text-red-400">ошибка загрузки тегов</div>
+                <div className="text-xs text-danger">ошибка загрузки тегов</div>
               )}
               {!tagsQ.isLoading && allTags.length === 0 && (
                 <div className="text-xs text-muted">

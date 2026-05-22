@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import CustomMetricsSection from "@/components/CustomMetricsSection";
+import { Icon } from "../components/Icon";
 
 export default function Settings() {
   const qc = useQueryClient();
@@ -199,7 +200,7 @@ export default function Settings() {
           Текущий статус:{" "}
           {wbTokenStatusQ.data?.set ? (
             <span className="text-success">
-              ✓ токен установлен{" "}
+              <Icon name="check" size={12} /> токен установлен{" "}
               {wbTokenStatusQ.data.seller_id && (
                 <span className="text-muted">
                   (seller: {wbTokenStatusQ.data.seller_id.slice(0, 8)}…)
@@ -215,7 +216,7 @@ export default function Settings() {
               )}
             </span>
           ) : (
-            <span className="text-warn">✗ не настроен</span>
+            <span className="text-warn"><Icon name="close" size={12} /> не настроен</span>
           )}
         </div>
 
@@ -270,13 +271,13 @@ export default function Settings() {
           <div className="mt-2 text-sm">
             {testResult.valid ? (
               <span className="text-success">
-                ✓ токен валиден
+                <Icon name="check" size={12} /> токен валиден
                 {testResult.seller_id &&
                   ` · seller_id: ${testResult.seller_id}`}
               </span>
             ) : (
               <span className="text-danger">
-                ✗ {testResult.error || "ошибка"}
+                <Icon name="close" size={12} /> {testResult.error || "ошибка"}
               </span>
             )}
           </div>
@@ -770,10 +771,10 @@ export default function Settings() {
                 Отправить тестовое сообщение
               </button>
               {tgTestMut.isSuccess && (
-                <span className="text-success text-xs">✓ Отправлено</span>
+                <span className="text-success text-xs"><Icon name="check" size={12} /> Отправлено</span>
               )}
               {tgTestMut.isError && (
-                <span className="text-red-400 text-xs">
+                <span className="text-danger text-xs">
                   Ошибка: {(tgTestMut.error as Error).message}
                 </span>
               )}
@@ -1236,7 +1237,7 @@ function TimelineSection() {
                       className="btn text-xs"
                       onClick={() => deleteMut.mutate(r.id)}
                     >
-                      ✕
+                      <Icon name="close" size={12} />
                     </button>
                   </td>
                 </tr>
@@ -1630,7 +1631,7 @@ function UnitPlanGlobalConfigSection() {
                   onClick={() => removeSubjectRow(i)}
                   title="Удалить строку"
                 >
-                  ✕
+                  <Icon name="close" size={12} />
                 </button>
               </div>
             ))}
@@ -1979,18 +1980,18 @@ function UnitPlanGlobalConfigHistory({ currentId }: { currentId?: number }) {
                     )}
                   </td>
                   <td className="p-2 text-muted">{v.id ?? "—"}</td>
-                  <td className="p-2 text-right">{fmtPct(v.wb_club_pct)}</td>
-                  <td className="p-2 text-right">
+                  <td className="p-2 text-right font-mono">{fmtPct(v.wb_club_pct)}</td>
+                  <td className="p-2 text-right font-mono">
                     {fmtPct(v.spp_default_pct)}
                   </td>
                   <td className="p-2 text-right">
                     {fmtVat(v.vat_mode, v.vat_pct)}
                   </td>
-                  <td className="p-2 text-right">{fmtPct(v.tax_pct)}</td>
-                  <td className="p-2 text-right">
+                  <td className="p-2 text-right font-mono">{fmtPct(v.tax_pct)}</td>
+                  <td className="p-2 text-right font-mono">
                     {fmtPct(v.marketing_pct)}
                   </td>
-                  <td className="p-2 text-right">
+                  <td className="p-2 text-right font-mono">
                     {fmtNum(v.velocity_days, "д")}
                   </td>
                   <td className="p-2 text-muted">{isExpanded ? "▾" : "▸"}</td>
@@ -2283,7 +2284,7 @@ function WbTariffsSection() {
       {syncMsg && (
         <div
           className={`text-xs mb-3 ${
-            syncMsg.startsWith("✓") ? "text-emerald-400" : "text-danger"
+            syncMsg.startsWith("✓") ? "text-success" : "text-danger"
           }`}
         >
           {syncMsg}
@@ -2537,7 +2538,7 @@ function ExtensionTokensSection() {
               className="btn btn-ghost"
               onClick={() => setJustCreated(null)}
             >
-              ✕
+              <Icon name="close" size={12} />
             </button>
           </div>
         </div>
@@ -2679,7 +2680,7 @@ function MyTgSubsection() {
           onClick={() => codeMut.mutate()}
           disabled={codeMut.isPending}
         >
-          {codeMut.isPending ? "Генерация…" : "🔑 Сгенерировать код привязки"}
+          {codeMut.isPending ? "Генерация…" : "Сгенерировать код привязки"}
         </button>
         {bindCode && (
           <span className="font-mono text-base bg-surface-2/60 px-2 py-1 rounded">
@@ -2710,7 +2711,7 @@ function MyTgSubsection() {
         </button>
         {meTgQ.data?.chat_id && (
           <button
-            className="btn text-xs text-red-400"
+            className="btn text-xs text-danger"
             onClick={() => saveMut.mutate(null)}
           >
             Отвязать

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@/components/Icon";
-import { fmtRub } from "@/lib/format";
+import { fmtRub, fmtPct } from "@/lib/format";
 import {
   DEFAULT_MARKET,
   type CbrRates,
@@ -362,18 +362,18 @@ function ImportTable({
                 <td className="p-1.5"><NumIn value={it.length_cm} on={(v) => update(it.id, { length_cm: v })} /></td>
                 <td className="p-1.5"><NumIn value={it.width_cm} on={(v) => update(it.id, { width_cm: v })} /></td>
                 <td className="p-1.5"><NumIn value={it.height_cm} on={(v) => update(it.id, { height_cm: v })} /></td>
-                <td className="p-1.5 text-right text-muted">{c.volume_l.toFixed(2)}</td>
+                <td className="p-1.5 text-right text-muted font-mono">{c.volume_l.toFixed(2)}</td>
                 <td className="p-1.5"><NumIn value={it.weight_kg} on={(v) => update(it.id, { weight_kg: v })} step={0.01} /></td>
                 <td className="p-1.5"><NumIn value={it.cost_cny} on={(v) => update(it.id, { cost_cny: v })} /></td>
                 <td className="p-1.5"><NumIn value={it.duty_per_unit_eur} on={(v) => update(it.id, { duty_per_unit_eur: v })} step={0.01} /></td>
                 <td className="p-1.5"><NumIn value={it.duty_per_kg_eur} on={(v) => update(it.id, { duty_per_kg_eur: v })} step={0.01} /></td>
-                <td className="p-1.5 text-right text-muted">{fmtRub(c.cost_rub_no_vat)}</td>
-                <td className="p-1.5 text-right text-muted">{fmtRub(c.delivery_rub)}</td>
-                <td className="p-1.5 text-right text-muted">{fmtRub(c.duty_rub)}</td>
-                <td className="p-1.5 text-right text-muted">{fmtRub(c.vat_rub)}</td>
-                <td className="p-1.5 text-right text-accent font-medium">{fmtRub(c.total_with_vat)}</td>
+                <td className="p-1.5 text-right text-muted font-mono">{fmtRub(c.cost_rub_no_vat)}</td>
+                <td className="p-1.5 text-right text-muted font-mono">{fmtRub(c.delivery_rub)}</td>
+                <td className="p-1.5 text-right text-muted font-mono">{fmtRub(c.duty_rub)}</td>
+                <td className="p-1.5 text-right text-muted font-mono">{fmtRub(c.vat_rub)}</td>
+                <td className="p-1.5 text-right text-accent font-medium font-mono">{fmtRub(c.total_with_vat)}</td>
                 <td className="p-1.5">
-                  <button className="text-error hover:underline" onClick={() => remove(it.id)} title="Удалить">✕</button>
+                  <button className="text-error hover:underline" onClick={() => remove(it.id)} title="Удалить"><Icon name="close" size={12} /></button>
                 </td>
               </tr>
             );
@@ -452,30 +452,30 @@ function WbTable({
                 </td>
                 <td className="p-1.5"><NumIn value={r.price_rub} on={(v) => update(r.id, { price_rub: v })} /></td>
                 <td className="p-1.5"><NumIn value={r.commission_pct} on={(v) => update(r.id, { commission_pct: v })} step={0.1} /></td>
-                <td className="p-1.5 text-right text-muted">{c.kvv_pct.toFixed(2)}</td>
+                <td className="p-1.5 text-right text-muted font-mono">{c.kvv_pct.toFixed(2)}</td>
                 <td className="p-1.5"><NumIn value={r.buyout_pct} on={(v) => update(r.id, { buyout_pct: v })} /></td>
                 <td className="p-1.5"><NumIn value={r.turnover_days} on={(v) => update(r.id, { turnover_days: v })} /></td>
                 <td className="p-1.5"><NumIn value={r.promo_pct} on={(v) => update(r.id, { promo_pct: v })} step={0.1} /></td>
                 <td className="p-1.5"><NumIn value={r.other_rub} on={(v) => update(r.id, { other_rub: v })} /></td>
-                <td className="p-1.5 text-right text-muted">{c.volume_l.toFixed(2)}</td>
-                <td className="p-1.5 text-right text-muted">{fmtRub(c.full_cost_with_vat)}</td>
-                <td className="p-1.5 text-right text-muted">{fmtRub(c.base_logistics)}</td>
-                <td className="p-1.5 text-right text-muted">{fmtRub(c.logistics_total)}</td>
-                <td className="p-1.5 text-right text-muted">{fmtRub(c.storage)}</td>
-                <td className="p-1.5 text-right text-muted">{fmtRub(c.wb_commission)}</td>
-                <td className="p-1.5 text-right">{fmtRub(sc.expenses_rub)}</td>
-                <td className="p-1.5 text-right">{fmtRub(sc.tax_rub)}</td>
+                <td className="p-1.5 text-right text-muted font-mono">{c.volume_l.toFixed(2)}</td>
+                <td className="p-1.5 text-right text-muted font-mono">{fmtRub(c.full_cost_with_vat)}</td>
+                <td className="p-1.5 text-right text-muted font-mono">{fmtRub(c.base_logistics)}</td>
+                <td className="p-1.5 text-right text-muted font-mono">{fmtRub(c.logistics_total)}</td>
+                <td className="p-1.5 text-right text-muted font-mono">{fmtRub(c.storage)}</td>
+                <td className="p-1.5 text-right text-muted font-mono">{fmtRub(c.wb_commission)}</td>
+                <td className="p-1.5 text-right font-mono">{fmtRub(sc.expenses_rub)}</td>
+                <td className="p-1.5 text-right font-mono">{fmtRub(sc.tax_rub)}</td>
                 <td className={`p-1.5 text-right font-medium ${sc.profit_rub >= 0 ? "text-success" : "text-error"}`}>
                   {fmtRub(sc.profit_rub)}
                 </td>
                 <td className={`p-1.5 text-right ${sc.margin_pct >= 0 ? "text-success" : "text-error"}`}>
-                  {sc.margin_pct.toFixed(1)}%
+                  {fmtPct(sc.margin_pct, 1)}
                 </td>
                 <td className={`p-1.5 text-right ${sc.roi_pct >= 0 ? "text-success" : "text-error"}`}>
-                  {sc.roi_pct.toFixed(1)}%
+                  {fmtPct(sc.roi_pct, 1)}
                 </td>
                 <td className="p-1.5">
-                  <button className="text-error hover:underline" onClick={() => remove(r.id)} title="Удалить">✕</button>
+                  <button className="text-error hover:underline" onClick={() => remove(r.id)} title="Удалить"><Icon name="close" size={12} /></button>
                 </td>
               </tr>
             );

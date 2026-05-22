@@ -151,13 +151,13 @@ export default function PaymentOrdersTable({
                   <td className="py-2 px-2 text-muted">{o.report_type ?? "—"}</td>
                 </>
               )}
-              <td className="py-2 px-2 text-right">{fmtRub(o.amount)}</td>
+              <td className="py-2 px-2 text-right font-mono">{fmtRub(o.amount)}</td>
               {showExtendedColumns && (
                 <>
-                  <td className="py-2 px-2 text-right text-muted">
+                  <td className="py-2 px-2 text-right text-muted font-mono">
                     {o.upd_delivery_amount > 0 ? fmtRub(o.upd_delivery_amount) : "—"}
                   </td>
-                  <td className="py-2 px-2 text-right text-muted">
+                  <td className="py-2 px-2 text-right text-muted font-mono">
                     {o.buyout_returns_amount > 0 ? fmtRub(o.buyout_returns_amount) : "—"}
                   </td>
                 </>

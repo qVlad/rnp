@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Icon } from "@/components/Icon";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { fmtRub } from "@/lib/format";
+import { fmtRub, fmtPct } from "@/lib/format";
 
 // WB seller cabinet — раздел финансовых отчётов реализации.
 // Прямого URL на конкретный realization_id у WB нет — селлер открывает
@@ -44,7 +44,7 @@ export default function PnLReconciliation() {
         (Payout / gross) — какой % gross-выручки реально дошёл до селлера после
         WB-удержаний; норма 25-40 % для маркетплейса.
         <div className="mt-2 text-accent">
-          💡 <b>Кликни на строку</b> — откроется пошаговая сверка с прямой ссылкой
+          <Icon name="info" size={12} /> <b>Кликни на строку</b> — откроется пошаговая сверка с прямой ссылкой
           в WB-кабинет: куда смотреть и какие поля сличать.
         </div>
         <span className="text-accent">
@@ -185,17 +185,17 @@ export default function PnLReconciliation() {
                       {p.realizations_count}
                       <div className="text-muted">{p.realization_ids}</div>
                     </td>
-                    <td className="p-2 text-right">{fmtRub(p.wb.revenue_gross)}</td>
-                    <td className="p-2 text-right text-muted">
+                    <td className="p-2 text-right font-mono">{fmtRub(p.wb.revenue_gross)}</td>
+                    <td className="p-2 text-right text-muted font-mono">
                       {p.wb.revenue_returns ? fmtRub(p.wb.revenue_returns) : "—"}
                     </td>
-                    <td className="p-2 text-right">{fmtRub(p.wb.commission)}</td>
-                    <td className="p-2 text-right font-medium">
+                    <td className="p-2 text-right font-mono">{fmtRub(p.wb.commission)}</td>
+                    <td className="p-2 text-right font-medium font-mono">
                       {fmtRub(p.wb.payout)}
                     </td>
-                    <td className="p-2 text-right text-muted">{fmtRub(fees)}</td>
-                    <td className="p-2 text-right">{fmtRub(p.ours.revenue_gross)}</td>
-                    <td className="p-2 text-right">{fmtRub(p.ours.revenue_net)}</td>
+                    <td className="p-2 text-right text-muted font-mono">{fmtRub(fees)}</td>
+                    <td className="p-2 text-right font-mono">{fmtRub(p.ours.revenue_gross)}</td>
+                    <td className="p-2 text-right font-mono">{fmtRub(p.ours.revenue_net)}</td>
                     <td
                       className={`p-2 text-right font-medium ${
                         p.ours.profit >= 0 ? "text-success" : "text-danger"
@@ -217,7 +217,7 @@ export default function PnLReconciliation() {
                         p.diff.alert ? "text-danger font-bold" : "text-muted"
                       }`}
                     >
-                      {p.diff.revenue_gross_pct.toFixed(2)}%
+                      {fmtPct(p.diff.revenue_gross_pct, 2)}
                     </td>
                     <td
                       className={`p-2 text-right ${
@@ -227,7 +227,7 @@ export default function PnLReconciliation() {
                       }`}
                       title="Какая доля gross-выручки реально доходит до селлера после комиссий WB"
                     >
-                      {p.diff.payout_to_gross_pct.toFixed(1)}%
+                      {fmtPct(p.diff.payout_to_gross_pct, 1)}
                     </td>
                   </tr>
                   {isOpen && <WizardRow p={p} fees={fees} />}
@@ -335,14 +335,14 @@ function WizardRow({ p, fees }: { p: any; fees: number }) {
         {/* TASK-LEAD-043 — Summary explainer для проблемных недель */}
         {showExplainer && (
           <div className="card mb-4 border border-warn/40">
-            <div className="font-medium mb-2">⚠ Что не сходится за эту неделю</div>
+            <div className="font-medium mb-2"><Icon name="warning" size={12} /> Что не сходится за эту неделю</div>
             <div className="grid md:grid-cols-3 gap-3 text-sm">
               {hasAlert && (
                 <div>
                   <div className="text-xs text-muted uppercase">Δ revenue gross</div>
                   <div className="text-lg font-mono font-semibold text-danger mt-1">
                     {p.diff.revenue_gross_pct >= 0 ? "+" : ""}
-                    {p.diff.revenue_gross_pct.toFixed(2)}%
+                    {fmtPct(p.diff.revenue_gross_pct, 2)}
                   </div>
                   <div className="text-xs text-muted">
                     {p.diff.revenue_gross_abs >= 0 ? "+" : ""}
@@ -376,7 +376,7 @@ function WizardRow({ p, fees }: { p: any; fees: number }) {
                           : "text-warn"
                     }`}
                   >
-                    {payoutToGrossPct.toFixed(1)}%
+                    {fmtPct(payoutToGrossPct, 1)}
                   </div>
                   <div className="text-xs text-muted">
                     Норма 95-100%. &lt; 90% — WB активно «жмёт» удержаниями;
@@ -452,7 +452,7 @@ function WizardRow({ p, fees }: { p: any; fees: number }) {
 
             {p.diff.alert && (
               <div className="card border-danger/40 bg-danger/10 text-xs text-danger">
-                <Icon name="warning" size={12} className="inline mr-1" />Δ Выручка {p.diff.revenue_gross_pct.toFixed(2)}% превышает
+                <Icon name="warning" size={12} className="inline mr-1" />Δ Выручка {fmtPct(p.diff.revenue_gross_pct, 2)} превышает
                 порог {`(`}
                 {fmtRub(p.diff.revenue_gross_abs)}
                 {`)`}. Возможные причины:

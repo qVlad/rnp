@@ -11,6 +11,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "@/api/client";
 import { fmtRub, fmtNum, fmtPct } from "@/lib/format";
+import { Icon } from "./Icon";
 
 function formatValue(value: number | null, fmt: string): string {
   if (value == null) return "—";
@@ -47,8 +48,8 @@ export default function CustomMetricsCard({
           >
             <div className="text-xs text-muted truncate">{m.name}</div>
             {m.error ? (
-              <div className="text-xs text-red-400 mt-1" title={m.error}>
-                ⚠ {m.error.slice(0, 40)}
+              <div className="text-xs text-danger mt-1" title={m.error}>
+                <Icon name="warning" size={12} /> {m.error.slice(0, 40)}
                 {m.error.length > 40 ? "…" : ""}
               </div>
             ) : (

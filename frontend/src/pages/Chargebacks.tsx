@@ -3,12 +3,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Chargeback } from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { fmtRub } from "@/lib/format";
+import { Icon } from "../components/Icon";
 
 const STATUS_TONE: Record<string, string> = {
   new: "text-warn",
   disputing: "text-accent",
   resolved_recovered: "text-success",
-  resolved_rejected: "text-red-400",
+  resolved_rejected: "text-danger",
   cancelled: "text-muted",
   auto_closed: "text-muted",
 };
@@ -127,7 +128,7 @@ export default function Chargebacks() {
             download
             title="Скачать XLSX-реестр претензий с текущими фильтрами — для подачи в WB-поддержку"
           >
-            📥 Реестр в XLSX
+            <Icon name="download" size={12} /> Реестр в XLSX
           </a>
           <button
             className="btn text-xs"
@@ -145,14 +146,14 @@ export default function Chargebacks() {
           className={`btn text-sm ${tab === "expenses" ? "border-accent text-accent" : ""}`}
           onClick={() => setTab("expenses")}
         >
-          🔻 Списания{" "}
+          <Icon name="trend-down" size={12} /> Списания{" "}
           <span className="text-muted">({expenseCount})</span>
         </button>
         <button
           className={`btn text-sm ${tab === "incomes" ? "border-accent text-accent" : ""}`}
           onClick={() => setTab("incomes")}
         >
-          🔺 Возмещения{" "}
+          <Icon name="trend-up" size={12} /> Возмещения{" "}
           <span className="text-muted">({incomeCount})</span>
         </button>
         <button
@@ -171,7 +172,7 @@ export default function Chargebacks() {
         <span className="text-warn">Новое</span> →{" "}
         <span className="text-accent">Оспаривается</span> →{" "}
         <span className="text-success">Вернули</span> /{" "}
-        <span className="text-red-400">Отказали</span>. Мелкие суммы (&lt;100₽)
+        <span className="text-danger">Отказали</span>. Мелкие суммы (&lt;100₽)
         авто-закрываются.
       </div>
 
@@ -369,7 +370,7 @@ function ChargebackRow({
         <td className="p-2">{c.category_label}</td>
         <td className="p-2 text-right font-mono text-xs">{c.nm_id || "—"}</td>
         <td className="p-2 text-right font-mono">
-          <span className={c.is_income ? "text-success" : "text-red-400"}>
+          <span className={c.is_income ? "text-success" : "text-danger"}>
             {c.is_income ? "+" : "-"}
             {fmtRub(c.amount_rub)}
           </span>
@@ -570,7 +571,7 @@ function ChargebacksByManagerWidget({
                 <div className="text-xs text-muted">@{u.username}</div>
               </td>
               <td className="p-2 text-right font-mono">{u.total_count}</td>
-              <td className="p-2 text-right font-mono text-red-400">
+              <td className="p-2 text-right font-mono text-danger">
                 {fmtRub(u.total_amount)}
               </td>
               <td className="p-2 text-right font-mono text-warn">
@@ -650,7 +651,7 @@ function ClaimTemplateSelector({
       title="Использовать шаблон претензии"
       onClick={(e) => e.stopPropagation()}
     >
-      <option value="">📝 Шаблон…</option>
+      <option value=""><Icon name="edit" size={12} /> Шаблон…</option>
       {items.map((t) => (
         <option key={t.id} value={t.id}>
           {t.name}

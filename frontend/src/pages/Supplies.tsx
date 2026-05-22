@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
+import { Icon } from "../components/Icon";
 
 type PaidStatus = "unpaid" | "partial" | "paid";
 
@@ -174,9 +175,9 @@ export default function Supplies() {
                 <td className="py-2 px-2 text-muted">{s.supply_date}</td>
                 <td className="py-2 px-2 font-mono">{s.nm_id ?? "—"}</td>
                 <td className="py-2 px-2 text-muted">{s.vendor_code || "—"}</td>
-                <td className="py-2 px-2 text-right">{s.qty}</td>
-                <td className="py-2 px-2 text-right">{s.cost_per_unit.toFixed(2)}</td>
-                <td className="py-2 px-2 text-right">{fmtRub(s.total_cost)}</td>
+                <td className="py-2 px-2 text-right font-mono">{s.qty}</td>
+                <td className="py-2 px-2 text-right font-mono">{s.cost_per_unit.toFixed(2)}</td>
+                <td className="py-2 px-2 text-right font-mono">{fmtRub(s.total_cost)}</td>
                 <td className="py-2 px-2 text-muted">{s.currency}</td>
                 <td className="py-2 px-2 text-muted">{s.vendor || "—"}</td>
                 <td className="py-2 px-2">
@@ -189,7 +190,7 @@ export default function Supplies() {
                     className="text-accent hover:underline mr-2"
                     onClick={() => setEditing(toForm(s))}
                   >
-                    ✎
+                    <Icon name="edit" size={12} />
                   </button>
                   <button
                     className="text-error hover:underline"
@@ -197,7 +198,7 @@ export default function Supplies() {
                       if (confirm(`Удалить закупку #${s.id}?`)) remove.mutate(s.id);
                     }}
                   >
-                    ✕
+                    <Icon name="close" size={12} />
                   </button>
                 </td>
               </tr>

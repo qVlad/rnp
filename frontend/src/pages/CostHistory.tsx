@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
+import { Icon } from "../components/Icon";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const blank = () => ({
@@ -125,7 +126,11 @@ export default function CostHistory() {
                 {p.vendor_code && (
                   <span className="ml-1 text-muted">{p.vendor_code}</span>
                 )}
-                {p.is_archived && <span className="ml-1">📦</span>}
+                {p.is_archived && (
+                  <span className="ml-1 inline-flex text-muted" title="Архив">
+                    <Icon name="archive" size={12} />
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -254,15 +259,15 @@ export default function CostHistory() {
                             window.scrollTo({ top: 0, behavior: "smooth" });
                           }}
                         >
-                          ✎
+                          <Icon name="edit" size={12} />
                         </button>
                         <button
-                          className="btn text-xs text-red-400"
+                          className="btn text-xs text-danger"
                           onClick={() => {
                             if (confirm("Удалить запись?")) delMut.mutate(r.id);
                           }}
                         >
-                          ✕
+                          <Icon name="close" size={12} />
                         </button>
                       </td>
                     </tr>

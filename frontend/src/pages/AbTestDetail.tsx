@@ -28,6 +28,7 @@ import {
   AbTestVariant,
 } from "@/api/abtest";
 import { VariantPhotoGrid } from "@/components/abtest/VariantPhotoGrid";
+import { Icon } from "../components/Icon";
 
 const STATUS_BADGE: Record<AbTestStatus | string, string> = {
   draft: "bg-surface-2 text-muted",
@@ -595,7 +596,7 @@ export default function AbTestDetail() {
                 className="btn-link text-xs"
                 onClick={() => action(() => abtestApi.resolveAlert(a.id))}
               >
-                ✓ Resolve
+                <Icon name="check" size={12} /> Resolve
               </button>
             </div>
           ))}
@@ -658,7 +659,7 @@ export default function AbTestDetail() {
           {result.ctr_winner && (
             <div className="card border-success">
               <div className="text-success font-medium">
-                🏆 Победитель по «{scenarioLabels(test.test_mode, test.traffic_source).top}»: вариант {result.ctr_winner.label}
+                <Icon name="star" size={12} /> Победитель по «{scenarioLabels(test.test_mode, test.traffic_source).top}»: вариант {result.ctr_winner.label}
               </div>
               {(test.status === "running" || test.status === "paused") && (
                 <button
@@ -723,7 +724,7 @@ export default function AbTestDetail() {
                       <td className="p-2 font-medium">{v.label}</td>
                       <td className="p-2 text-right">{v.impressions}</td>
                       <td className="p-2 text-right">{v.clicks}</td>
-                      <td className="p-2 text-right">{v.orders}</td>
+                      <td className="p-2 text-right font-mono">{v.orders}</td>
                       <td className="p-2 text-right font-mono">
                         {(ctr?.rate * 100).toFixed(2)}%
                       </td>

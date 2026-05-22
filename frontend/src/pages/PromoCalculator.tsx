@@ -18,6 +18,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
+import { Icon } from "../components/Icon";
 
 interface ProductOption {
   nm_id: number;
@@ -108,7 +109,7 @@ function SkuMultiPicker({
               onClick={() => toggle(nm)}
               aria-label={`Убрать ${nm}`}
             >
-              ✕
+              <Icon name="close" size={12} />
             </button>
           </span>
         ))}
@@ -184,7 +185,7 @@ function deltaCell(value: number | null, isPct: boolean) {
   return (
     <span
       className={
-        positive ? "text-success" : negative ? "text-red-400" : "text-muted"
+        positive ? "text-success" : negative ? "text-danger" : "text-muted"
       }
     >
       {positive ? "+" : ""}
@@ -342,7 +343,7 @@ export default function PromoCalculator() {
             {mut.isPending ? "Считаю…" : "Симулировать"}
           </button>
           {mut.isError && (
-            <span className="text-red-400 text-sm">
+            <span className="text-danger text-sm">
               Ошибка: {(mut.error as Error)?.message || "неизвестно"}
             </span>
           )}
@@ -425,7 +426,7 @@ export default function PromoCalculator() {
                 const rowClass = better
                   ? "bg-success/5"
                   : !profitable
-                    ? "bg-red-500/5"
+                    ? "bg-danger-subtle"
                     : "";
                 return (
                   <tr
@@ -470,7 +471,7 @@ export default function PromoCalculator() {
                       className={`font-mono ${
                         row.with_promo.margin_per_unit > 0
                           ? "text-success"
-                          : "text-red-400"
+                          : "text-danger"
                       }`}
                     >
                       {fmtRub(row.with_promo.margin_per_unit)}
@@ -481,7 +482,7 @@ export default function PromoCalculator() {
                       {profitable ? (
                         <span className="text-success">✓</span>
                       ) : (
-                        <span className="text-red-400">✗</span>
+                        <span className="text-danger">✗</span>
                       )}
                     </td>
                     <td className="font-mono">

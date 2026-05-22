@@ -12,6 +12,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
 import { useAuth } from "@/contexts/AuthContext";
+import { Icon } from "../components/Icon";
 
 const STATUS_COLORS: Record<string, string> = {
   red: "text-danger",
@@ -95,7 +96,7 @@ export default function Jam() {
 
       {status.data?.status === "empty" && (
         <div className="card border-warn/40 bg-warn/5">
-          <div className="font-medium text-warn mb-2">📥 Нет загруженных запросов</div>
+          <div className="font-medium text-warn mb-2"><Icon name="download" size={12} /> Нет загруженных запросов</div>
           <div className="text-sm leading-relaxed">{status.data.message}</div>
           <div className="mt-3 text-xs space-y-1">
             <div>
@@ -131,7 +132,7 @@ export default function Jam() {
 
       {status.data?.status === "configured" && (
         <div className="card text-xs text-muted">
-          ✅ {status.data.message}
+          <Icon name="check" size={12} /> {status.data.message}
         </div>
       )}
 
@@ -185,7 +186,7 @@ export default function Jam() {
               </li>
             </ol>
             <div className="mt-2 text-warn">
-              ⚠ Этот endpoint WB не публикует официально. Может поменяться
+              <Icon name="warning" size={12} /> Этот endpoint WB не публикует официально. Может поменяться
               без предупреждения — если перестанет работать, повтори поиск.
             </div>
           </details>
@@ -367,7 +368,7 @@ export default function Jam() {
                     <td className="p-2 text-right">{c.orders}</td>
                     <td className="p-2 text-right">{c.clicks}</td>
                     <td className="p-2 text-right">{c.ctr}%</td>
-                    <td className="p-2 text-right">{c.cart_conv_pct}%</td>
+                    <td className="p-2 text-right font-mono">{c.cart_conv_pct}%</td>
                     <td className="p-2 text-right font-mono">
                       {fmtRub(c.ad_spent)}
                     </td>

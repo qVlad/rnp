@@ -71,7 +71,7 @@ function pctColor(pct: number | null): string {
   if (pct == null) return "bg-zinc-500";
   if (pct >= 90) return "bg-success";
   if (pct >= 60) return "bg-warning";
-  return "bg-red-500";
+  return "bg-danger";
 }
 
 export default function ManagerPlanProgressCard() {

@@ -12,6 +12,7 @@ import {
   TriggerMode,
 } from "@/api/abtest";
 import { StagedFile, VariantPhotoGrid } from "@/components/abtest/VariantPhotoGrid";
+import { Icon } from "../components/Icon";
 
 interface ProductOption {
   nm_id: number;
@@ -122,7 +123,7 @@ function ProductPicker({
               setOpen(true);
             }}
           >
-            ✕ Сменить
+            <Icon name="close" size={12} /> Сменить
           </button>
         </div>
       ) : (
@@ -753,7 +754,7 @@ export default function AbTestNew() {
 
         {currentScenario.testMode === "FUNNEL" && (
           <div className="text-xs text-warn border border-warn/30 bg-warn-bg/30 rounded p-2">
-            ⚠ Для воронки в каждый вариант загружайте полный комплект фото
+            <Icon name="warning" size={12} /> Для воронки в каждый вариант загружайте полный комплект фото
             (главное + до 9 доп.) — иначе тест мало отличается от теста главного
             фото, и эффект новых фото не будет измерен.
           </div>
@@ -962,7 +963,7 @@ export default function AbTestNew() {
           <div className="border border-dashed border-border rounded p-3 flex items-start gap-3">
             <div className="flex-1">
               <div className="text-sm font-medium">
-                📥 Использовать текущее фото с WB как Вариант A
+                <Icon name="download" size={12} /> Использовать текущее фото с WB как Вариант A
               </div>
               <div className="text-xs text-muted mt-1">
                 Подгрузим{" "}

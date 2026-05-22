@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { fmtRub } from "@/lib/format";
+import { fmtRub, fmtPct } from "@/lib/format";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import { usePeriod } from "@/contexts/PeriodContext";
 
@@ -194,7 +194,7 @@ export default function TaxReport() {
                 <tr key={b.number} className="border-b border-border/40">
                   <td className="py-1 px-2 font-mono">№{b.number}</td>
                   <td className="py-1 px-2 text-muted">{b.date}</td>
-                  <td className="py-1 px-2 text-right text-success">{fmtRub(b.total_sum_with_vat)}</td>
+                  <td className="py-1 px-2 text-right text-success font-mono">{fmtRub(b.total_sum_with_vat)}</td>
                   <td className="py-1 px-2 text-right text-muted">{b.items_count}</td>
                 </tr>
               ))}
@@ -233,11 +233,11 @@ export default function TaxReport() {
                   <td className="py-2 px-2 text-muted">
                     {r.report_date_from} … {r.report_date_to}
                   </td>
-                  <td className="py-2 px-2 text-right text-success">{fmtRub(r.income_total)}</td>
-                  <td className="py-2 px-2 text-right" title={expenseBreakdown(r)}>
+                  <td className="py-2 px-2 text-right text-success font-mono">{fmtRub(r.income_total)}</td>
+                  <td className="py-2 px-2 text-right font-mono" title={expenseBreakdown(r)}>
                     {fmtRub(r.expense_total)}
                   </td>
-                  <td className="py-2 px-2 text-right text-warn">{fmtRub(r.cogs)}</td>
+                  <td className="py-2 px-2 text-right text-warn font-mono">{fmtRub(r.cogs)}</td>
                   <td
                     className={
                       incomeOnly
@@ -252,9 +252,9 @@ export default function TaxReport() {
                   >
                     {fmtRub(r.tax_base)}
                   </td>
-                  <td className="py-2 px-2 text-right text-accent font-medium">{fmtRub(r.tax)}</td>
-                  <td className="py-2 px-2 text-right text-muted">
-                    {effRate.toFixed(2)}%
+                  <td className="py-2 px-2 text-right text-accent font-medium font-mono">{fmtRub(r.tax)}</td>
+                  <td className="py-2 px-2 text-right text-muted font-mono">
+                    {fmtPct(effRate, 2)}
                   </td>
                   <td className="py-2 px-2 text-muted">
                     {taxSystemLabel(r.tax_system)} ({r.tax_rate}%)

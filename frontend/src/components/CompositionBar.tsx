@@ -1,4 +1,4 @@
-import { formatValue } from "@/lib/format";
+import { formatValue, fmtPct } from "@/lib/format";
 
 export interface CompositionSegment {
   key: string;
@@ -46,7 +46,7 @@ export default function CompositionBar({
             <div
               key={s.key}
               style={{ width: `${pct}%`, background: s.color }}
-              title={`${s.label}: ${formatValue(s.value, unit)} (${pct.toFixed(1)}%)`}
+              title={`${s.label}: ${formatValue(s.value, unit)} (${fmtPct(pct, 1)})`}
             />
           );
         })}
@@ -59,7 +59,7 @@ export default function CompositionBar({
               <div
                 key={s.key}
                 className="flex items-center gap-1.5 min-w-0"
-                title={`${s.label}: ${formatValue(s.value, unit)} (${pct.toFixed(1)}%)`}
+                title={`${s.label}: ${formatValue(s.value, unit)} (${fmtPct(pct, 1)})`}
               >
                 <span
                   className="inline-block w-2 h-2 rounded-sm flex-shrink-0"
@@ -67,7 +67,7 @@ export default function CompositionBar({
                 />
                 <span className="text-muted truncate flex-1">{s.label}</span>
                 <span className="font-mono tabular-nums text-fg/80">
-                  {pct.toFixed(0)}%
+                  {fmtPct(pct, 0)}
                 </span>
               </div>
             );

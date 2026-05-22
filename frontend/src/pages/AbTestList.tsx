@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { abtestApi, AbTestStatus } from "@/api/abtest";
+import { Icon } from "../components/Icon";
 
 const STATUS_LABELS: Record<AbTestStatus | string, string> = {
   draft: "Черновик",
@@ -138,7 +139,9 @@ export default function AbTestList() {
                         {t.name}
                       </Link>
                       {archived && (
-                        <span className="ml-2 text-xs text-muted">📦</span>
+                        <span className="ml-2 inline-flex text-muted" title="В архиве">
+                          <Icon name="archive" size={12} />
+                        </span>
                       )}
                     </td>
                     <td className="p-3 font-mono">{t.nm_id}</td>
@@ -163,7 +166,7 @@ export default function AbTestList() {
                         }
                         disabled={archiveMut.isPending || t.status === "running"}
                       >
-                        {archived ? "↺ Из архива" : "📦 Архив"}
+                        {archived ? "Из архива" : "В архив"}
                       </button>
                       <button
                         className="btn-link text-xs text-warn"
@@ -183,7 +186,7 @@ export default function AbTestList() {
                         }}
                         disabled={deleteMut.isPending || !canDelete}
                       >
-                        ✕ Удалить
+                        <Icon name="close" size={12} /> Удалить
                       </button>
                     </td>
                   </tr>

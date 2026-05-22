@@ -73,7 +73,7 @@ export default function ToastHost() {
             aria-label="Закрыть"
             title="Закрыть"
           >
-            ✕
+            <Icon name="close" size={12} />
           </button>
         </div>
       ))}

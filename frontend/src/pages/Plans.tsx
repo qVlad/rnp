@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { fmtRub, fmtNum, fmtPct } from "@/lib/format";
+import { Icon } from "../components/Icon";
 
 const today = new Date();
 const blank = () => ({
@@ -297,7 +298,7 @@ export default function Plans() {
     <div className="flex flex-col gap-4">
       {editReqMsg && (
         <div
-          className={`card text-sm ${editReqMsg.startsWith("✓") ? "text-success" : "text-red-400"}`}
+          className={`card text-sm ${editReqMsg.startsWith("✓") ? "text-success" : "text-danger"}`}
         >
           {editReqMsg}
         </div>
@@ -307,7 +308,7 @@ export default function Plans() {
       {canEdit && (requestsQ.data?.items?.length ?? 0) > 0 && (
         <div className="card border-l-[3px] border-l-warning">
           <div className="font-medium text-sm mb-2">
-            📥 Заявки на правку планов ({requestsQ.data?.items.length})
+            <Icon name="download" size={12} /> Заявки на правку планов ({requestsQ.data?.items.length})
           </div>
           <div className="flex flex-col gap-2">
             {requestsQ.data?.items.map((r) => (
@@ -331,15 +332,15 @@ export default function Plans() {
                     disabled={acceptReqMut.isPending}
                     title="Принять — применить значение и закрыть"
                   >
-                    ✓ Принять
+                    <Icon name="check" size={12} /> Принять
                   </button>
                   <button
-                    className="btn text-xs text-red-400"
+                    className="btn text-xs text-danger"
                     onClick={() => setRejectFor(r.id)}
                     disabled={rejectReqMut.isPending}
                     title="Отклонить с причиной"
                   >
-                    ✕ Отклонить
+                    <Icon name="close" size={12} /> Отклонить
                   </button>
                 </span>
               </div>
@@ -374,7 +375,7 @@ export default function Plans() {
                 Отмена
               </button>
               <button
-                className="btn text-xs text-red-400"
+                className="btn text-xs text-danger"
                 disabled={!rejectNote.trim() || rejectReqMut.isPending}
                 onClick={() =>
                   rejectReqMut.mutate({ id: rejectFor, note: rejectNote.trim() })
@@ -449,7 +450,7 @@ export default function Plans() {
 
       {importMsg && (
         <div
-          className={`card text-sm ${importMsg.startsWith("✓") ? "text-success" : "text-red-400"}`}
+          className={`card text-sm ${importMsg.startsWith("✓") ? "text-success" : "text-danger"}`}
         >
           {importMsg}
         </div>
@@ -743,7 +744,7 @@ export default function Plans() {
             </button>
           )}
           {saveMut.isError && (
-            <span className="text-red-400 text-sm self-center">
+            <span className="text-danger text-sm self-center">
               {(saveMut.error as Error).message}
             </span>
           )}
@@ -808,15 +809,15 @@ export default function Plans() {
                       if (p) startEdit(p);
                     }}
                   >
-                    ✎
+                    <Icon name="edit" size={12} />
                   </button>
                   <button
-                    className="btn text-xs text-red-400"
+                    className="btn text-xs text-danger"
                     onClick={() => {
                       if (confirm("Удалить план?")) delMut.mutate(it.plan_id);
                     }}
                   >
-                    ✕
+                    <Icon name="close" size={12} />
                   </button>
                 </div>
               )}
@@ -826,7 +827,7 @@ export default function Plans() {
                   onClick={() => setEditRequestFor(it.plan_id)}
                   title="Предложить правку директору (TASK-DEV-017)"
                 >
-                  ✎ Предложить правку
+                  <Icon name="edit" size={12} /> Предложить правку
                 </button>
               )}
             </div>
@@ -844,7 +845,7 @@ export default function Plans() {
                     ? "text-success"
                     : pct >= 80
                     ? "text-warn"
-                    : "text-red-400";
+                    : "text-danger";
                 return (
                   <div
                     key={key}
@@ -880,7 +881,7 @@ export default function Plans() {
                               ? "bg-success-subtle"
                               : pct >= 80
                               ? "bg-warn-subtle"
-                              : "bg-red-500"
+                              : "bg-danger"
                           }`}
                           style={{ width: `${Math.min(100, pct)}%` }}
                         />

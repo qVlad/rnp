@@ -214,7 +214,7 @@ export default function Dashboard() {
             className={`btn text-xs ${ownerView ? "border-accent text-accent" : ""}`}
             title="Owner cockpit — 4 виджета на одном экране: сверка, план месяца, топ/bottom бренды и менеджеры"
           >
-            👑 {ownerView ? "Скрыть Owner cockpit" : "Owner cockpit"}
+            <Icon name="star" size={12} /> {ownerView ? "Скрыть Owner cockpit" : "Owner cockpit"}
           </button>
         </div>
       )}
@@ -534,7 +534,7 @@ export default function Dashboard() {
                     </div>
                     <div className="text-right text-sm">
                       {isMarginView ? (
-                        <div className={isLoss ? "text-red-400" : "text-success"}>
+                        <div className={isLoss ? "text-danger" : "text-success"}>
                           {fmtRub(it.margin_estimate)}
                         </div>
                       ) : (

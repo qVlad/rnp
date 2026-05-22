@@ -57,6 +57,7 @@ import { UnitPlanSnapshotsDrawer } from "@/components/UnitPlanSnapshotsDrawer";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
 import { useTagFilter } from "@/lib/useTagFilter";
 import TagFilterDropdown from "@/components/TagFilterDropdown";
+import { Icon } from "../components/Icon";
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local helpers
@@ -80,28 +81,28 @@ function useMediaQuery(query: string): boolean {
 /** Цвет фона ячейки маржи по 4 порогам (UNIT_PLAN.md §12). */
 function marginColor(pct: number | null | undefined): string {
   if (pct == null) return "";
-  if (pct < 0) return "bg-rose-500/15 text-rose-300";
-  if (pct < 0.05) return "bg-amber-500/15 text-amber-300";
+  if (pct < 0) return "bg-danger-subtle text-danger";
+  if (pct < 0.05) return "bg-warn-subtle text-warn";
   if (pct < 0.15) return "text-fg";
-  return "bg-emerald-500/15 text-emerald-300";
+  return "bg-success-subtle text-success";
 }
 
 function profitColor(rub: number | null | undefined): string {
   if (rub == null) return "";
-  return rub < 0 ? "text-rose-400" : "text-emerald-400";
+  return rub < 0 ? "text-danger" : "text-success";
 }
 
 function buyoutColor(pct: number | null | undefined): string {
   if (pct == null) return "text-muted";
-  if (pct < 0.30) return "text-rose-400";
-  if (pct < 0.50) return "text-amber-300";
-  return "text-emerald-400";
+  if (pct < 0.30) return "text-danger";
+  if (pct < 0.50) return "text-warn";
+  return "text-success";
 }
 
 function stockoutColor(days: number | null | undefined): string {
   if (days == null) return "text-muted";
-  if (days < 14) return "text-rose-400";
-  if (days < 30) return "text-amber-300";
+  if (days < 14) return "text-danger";
+  if (days < 30) return "text-warn";
   return "text-fg";
 }
 
@@ -323,7 +324,7 @@ function EditableCell({
             (flash === "saving"
               ? "bg-accent opacity-100 animate-pulse"
               : flash === "ok"
-              ? "bg-emerald-400 opacity-100"
+              ? "bg-success opacity-100"
               : flash === "error"
               ? "bg-rose-400 opacity-100"
               : "bg-faint")
@@ -522,7 +523,7 @@ const COLUMNS: ColDef[] = [
     visibleByDefault: false,
     render: (r) =>
       r.discount_match === false ? (
-        <span className="text-amber-300" title="Скидка в БД ≠ скидка на сайте WB">⚠</span>
+        <span className="text-warn" title="Скидка в БД ≠ скидка на сайте WB">⚠</span>
       ) : (
         <span className="text-muted">✓</span>
       ),
@@ -940,9 +941,9 @@ const COLUMNS: ColDef[] = [
               className={
                 "inline-block rounded px-1.5 py-0.5 text-xs font-mono " +
                 (r.abc_label === "A"
-                  ? "bg-emerald-500/20 text-emerald-300"
+                  ? "bg-success-subtle text-success"
                   : r.abc_label === "B"
-                  ? "bg-amber-500/20 text-amber-300"
+                  ? "bg-warn-subtle text-warn"
                   : "bg-slate-500/20 text-muted")
               }
             >
@@ -1551,7 +1552,7 @@ function UnitPlanDesktop() {
       />
 
       {isMock && (
-        <div className="card bg-amber-500/10 border-amber-500/30 text-amber-200 text-sm">
+        <div className="card bg-warn-subtle border-warn text-warn text-sm">
           <strong>Backend API в разработке (UNIT-PLAN-009).</strong>{" "}
           Показаны mock-данные 5 SKU. Реальные расчёты появятся после деплоя
           бэкенда.
@@ -1572,8 +1573,8 @@ function UnitPlanDesktop() {
         if (missingCogs > half) warnings.push(`себестоимость (${missingCogs} из ${items.length})`);
         if (warnings.length === 0) return null;
         return (
-          <div className="card bg-rose-500/10 border-rose-500/30 text-rose-200 text-sm">
-            <strong>⚠ Расчёты неполные.</strong>{" "}
+          <div className="card bg-danger-subtle border-danger text-danger text-sm">
+            <strong><Icon name="warning" size={12} /> Расчёты неполные.</strong>{" "}
             У большинства SKU не заполнено: {warnings.join(", ")}.
             Логистика, хранение, прибыль и маржа могут быть существенно искажены.{" "}
             Заполни через paste-from-Excel в колонке «Литры», или через{" "}
@@ -1659,7 +1660,7 @@ function UnitPlanDesktop() {
             className="btn text-xs"
             title="Сбросить быстрые фильтры"
           >
-            ✕ Сбросить
+            <Icon name="close" size={12} /> Сбросить
           </button>
         )}
         {quickFilterActive && (
@@ -1742,7 +1743,7 @@ function UnitPlanDesktop() {
       {/* ── Toolbar ── */}
       <div className="flex flex-wrap items-center gap-2">
         <button className="btn text-xs" onClick={onSnapshot}>
-          📸 Снимок
+          <Icon name="package" size={12} /> Снимок
         </button>
         <button className="btn text-xs" onClick={onExportXlsx}>
           ⬇ XLSX
@@ -1758,7 +1759,7 @@ function UnitPlanDesktop() {
           onClick={() => setPeriodsModalOpen(true)}
           title="Исторические периоды (BA-BF): заказано/выкуплено за прошлое + прогноз остатка"
         >
-          📅 Периоды{hasHistoricalActive(filters) ? " ●" : ""}
+          <Icon name="calendar" size={12} /> Периоды{hasHistoricalActive(filters) ? " ●" : ""}
         </button>
         <div className="ml-auto flex items-center gap-2">
           {/* Group collapse toggles */}
@@ -1811,7 +1812,7 @@ function UnitPlanDesktop() {
           <div className="p-4 text-muted text-sm">Загрузка плана…</div>
         )}
         {rowsQ.error && !isMock && (
-          <div className="p-4 text-rose-400 text-sm">
+          <div className="p-4 text-danger text-sm">
             Ошибка загрузки: {(rowsQ.error as Error).message}
           </div>
         )}
@@ -2209,7 +2210,7 @@ function HistoricalPeriodsModal({
             Исторические периоды (BA-BF)
           </h3>
           <button className="btn text-xs" onClick={onClose}>
-            ✕
+            <Icon name="close" size={12} />
           </button>
         </div>
         <p className="text-tiny text-muted mb-4">
@@ -2608,7 +2609,7 @@ function PasteVolumeModal({
             onClick={onClose}
             disabled={applying}
           >
-            ✕
+            <Icon name="close" size={12} />
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-3 text-sm">
@@ -2645,7 +2646,7 @@ function PasteVolumeModal({
                     key={i}
                     className={
                       "border-b border-border/30 " +
-                      (r.valid ? "" : "bg-rose-500/10")
+                      (r.valid ? "" : "bg-danger-subtle")
                     }
                   >
                     <td className="py-0.5 text-muted">{i + 1}</td>
@@ -2653,14 +2654,14 @@ function PasteVolumeModal({
                     <td className="py-0.5 text-muted">
                       {r.vendor_code || "—"}
                     </td>
-                    <td className="py-0.5 text-right">
+                    <td className="py-0.5 text-right font-mono">
                       {r.valid ? r.volume_l.toFixed(2) : "—"}
                     </td>
                     <td className="py-0.5 pl-2 text-tiny">
                       {r.valid ? (
-                        <span className="text-emerald-400">OK</span>
+                        <span className="text-success">OK</span>
                       ) : (
-                        <span className="text-rose-300">{r.reason}</span>
+                        <span className="text-danger">{r.reason}</span>
                       )}
                     </td>
                   </tr>
@@ -2694,7 +2695,7 @@ function PasteVolumeModal({
             </div>
           )}
           {errors.length > 0 && (
-            <div className="mt-3 text-rose-300 text-xs">
+            <div className="mt-3 text-danger text-xs">
               <div className="font-semibold">Ошибки ({errors.length}):</div>
               <ul className="list-disc list-inside mt-1 max-h-24 overflow-y-auto">
                 {errors.map((e, i) => (

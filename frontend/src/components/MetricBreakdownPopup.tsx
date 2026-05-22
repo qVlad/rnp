@@ -11,6 +11,7 @@ import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
+import { Icon } from "./Icon";
 
 export type BreakdownMetric =
   | "logistics_wb"
@@ -124,7 +125,7 @@ export default function MetricBreakdownPopup({
             onClick={onClose}
             aria-label="Закрыть"
           >
-            ✕
+            <Icon name="close" size={12} />
           </button>
         </div>
 

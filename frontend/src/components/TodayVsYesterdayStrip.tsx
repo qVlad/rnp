@@ -59,7 +59,7 @@ export default function TodayVsYesterdayStrip() {
               </span>
               <span className="font-mono text-lg font-medium">{today}</span>
               <span className={`font-mono ${cls}`}>
-                {arrow} {typeof dpct === "number" ? `${dpct >= 0 ? "+" : ""}${dpct.toFixed(1)}%` : "—"}
+                {arrow} {typeof dpct === "number" ? `${dpct >= 0 ? "+" : ""}${fmtPct(dpct, 1)}` : "—"}
                 <span className="text-muted ml-2 text-[10px]">вчера {yesterday}</span>
               </span>
             </div>

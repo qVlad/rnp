@@ -173,8 +173,8 @@ export default function AdsHeatmap() {
             <div>
               Корз. / Зак.:{" "}
               <span className="text-fg font-mono">
-                {totals.basket_conv != null ? `${totals.basket_conv.toFixed(1)}%` : "—"} /{" "}
-                {totals.order_conv != null ? `${totals.order_conv.toFixed(1)}%` : "—"}
+                {totals.basket_conv != null ? `${fmtPct(totals.basket_conv, 1)}` : "—"} /{" "}
+                {totals.order_conv != null ? `${fmtPct(totals.order_conv, 1)}` : "—"}
               </span>
             </div>
           </div>
@@ -257,7 +257,7 @@ export default function AdsHeatmap() {
                     const fmtTitle = (val: number) => {
                       if (metric === "drr") return fmtPct(val);
                       if (metric === "basket_conv" || metric === "order_conv")
-                        return `${val.toFixed(1)}%`;
+                        return `${fmtPct(val, 1)}`;
                       if (isRubMetric(metric)) return fmtRub(val);
                       return fmtNum(val);
                     };

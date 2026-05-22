@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import { usePeriod } from "@/contexts/PeriodContext";
+import { Icon } from "../components/Icon";
 
 const isoToday = () => new Date().toISOString().slice(0, 10);
 
@@ -247,7 +248,7 @@ function DiffView({
     return (
       <details>
         <summary className="cursor-pointer text-danger">
-          ✕ удалено ({Object.keys(before).length} полей)
+          <Icon name="close" size={12} /> удалено ({Object.keys(before).length} полей)
         </summary>
         <pre className="text-xs mt-1 text-muted overflow-x-auto">
           {JSON.stringify(before, null, 2)}
@@ -262,7 +263,7 @@ function DiffView({
   return (
     <details>
       <summary className="cursor-pointer text-warn">
-        ✎ изменено ({changed.length} полей)
+        <Icon name="edit" size={12} /> изменено ({changed.length} полей)
       </summary>
       <table className="text-xs mt-1">
         <tbody>

@@ -31,7 +31,7 @@ const WEAKEST_LABEL: Record<string, string> = {
 };
 
 const WEAKEST_COLOR: Record<string, string> = {
-  "views→cart": "bg-red-500/10 text-red-400",
+  "views→cart": "bg-danger-subtle text-danger",
   "cart→order": "bg-warning/10 text-warning",
   "order→buyout": "bg-accent/10 text-accent",
 };
@@ -39,7 +39,7 @@ const WEAKEST_COLOR: Record<string, string> = {
 function rateColor(pct: number): string {
   if (pct >= 10) return "text-success";
   if (pct >= 3) return "text-warning";
-  return "text-red-400";
+  return "text-danger";
 }
 
 export default function Funnel() {
@@ -140,7 +140,7 @@ export default function Funnel() {
 
       {q.isLoading && <div className="text-muted">Загрузка…</div>}
       {q.isError && (
-        <div className="card text-red-400 text-sm">
+        <div className="card text-danger text-sm">
           Ошибка: {(q.error as Error).message}
         </div>
       )}
@@ -204,7 +204,7 @@ export default function Funnel() {
                     <div className="text-[10px] text-muted">{it.subject ?? "—"}</div>
                   </td>
                   <td className="p-2 text-xs">{it.brand ?? "—"}</td>
-                  <td className="p-2 text-right">{fmtNum(it.views)}</td>
+                  <td className="p-2 text-right font-mono">{fmtNum(it.views)}</td>
                   <td className={`p-2 text-right ${rateColor(it.ctr_pct)}`}>
                     {fmtPct(it.ctr_pct)}
                   </td>
@@ -214,7 +214,7 @@ export default function Funnel() {
                   <td className={`p-2 text-right ${rateColor(it.buyout_rate_pct)}`}>
                     {fmtPct(it.buyout_rate_pct)}
                   </td>
-                  <td className="p-2 text-right">{fmtNum(it.buyouts)}</td>
+                  <td className="p-2 text-right font-mono">{fmtNum(it.buyouts)}</td>
                   <td className="p-2">
                     <span
                       className={`px-2 py-0.5 rounded text-xs ${

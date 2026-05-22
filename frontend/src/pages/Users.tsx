@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { Icon } from "../components/Icon";
 
 export default function Users() {
   const { user } = useAuth();
@@ -207,7 +208,7 @@ export default function Users() {
                         }
                       }}
                     >
-                      🔑 пароль
+                      <Icon name="settings" size={12} /> пароль
                     </button>
                     <button
                       className="btn text-xs"
@@ -221,7 +222,7 @@ export default function Users() {
                           deleteMut.mutate(u.id);
                       }}
                     >
-                      ✕
+                      <Icon name="close" size={12} />
                     </button>
                   </td>
                 </tr>

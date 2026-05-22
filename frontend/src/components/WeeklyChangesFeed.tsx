@@ -12,6 +12,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "@/api/client";
+import { Icon, type IconName } from "./Icon";
 
 type Item = {
   kind: "brand_revenue" | "drr_spike" | "plan_slip";
@@ -20,15 +21,15 @@ type Item = {
   link?: string;
 };
 
-function severityIcon(s: Item["severity"]): string {
-  if (s === "danger") return "🔴";
-  if (s === "warning") return "🟡";
-  return "🟢";
+function severityIconName(s: Item["severity"]): IconName {
+  if (s === "danger") return "alert";
+  if (s === "warning") return "warning";
+  return "check";
 }
 
 function severityClass(s: Item["severity"]): string {
-  if (s === "danger") return "text-red-400";
-  if (s === "warning") return "text-warning";
+  if (s === "danger") return "text-danger";
+  if (s === "warning") return "text-warn";
   return "text-success";
 }
 
@@ -71,7 +72,9 @@ export default function WeeklyChangesFeed() {
           {items.map((it, idx) => {
             const inner = (
               <>
-                <span className="mr-2">{severityIcon(it.severity)}</span>
+                <span className={`mr-2 inline-flex ${severityClass(it.severity)}`}>
+                  <Icon name={severityIconName(it.severity)} size={14} />
+                </span>
                 <span className={severityClass(it.severity)}>{it.text}</span>
               </>
             );
