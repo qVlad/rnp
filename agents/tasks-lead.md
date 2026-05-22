@@ -29,9 +29,13 @@ Lead использует этот файл как master-view: сюда скл�
 >
 > **Раунд 8 завершён (v0.25.3):** 056 verified + UI-006 sidebar a11y + UI compliance batch (UI-001/002/003/004/013) Sprint 1
 >
-> **Раунд 9 запущен (2026-05-22 — 2 потока):**
-> - 🔄 **TASK-UI-009** Hero-KPI Dashboard + **TASK-UI-010** popover — main session
-> - 🔄 **Sprint 2 page-wide batch** (UI-007 sticky / UI-008 states / UI-011 PageHeader / UI-012 a11y / UI-014 CSS-vars) — sub-agent I
+> **Раунд 9 завершён (v0.26.0):** Sprint 2 UI batch (UI-007/008/009/011/012/014). UI-010 deferred (radix dep).
+>
+> **Раунд 10 запущен (2026-05-22 day — 2 потока):**
+> - 🔄 **TASK-UI-017** DeltaCell + **TASK-UI-020** density toggle Units — main session
+> - 🔄 **Sprint 3 batch** (TASK-UI-016 chartTheme.ts + UI-018 AlertsBar minimal + UI-019 micro-animations audit) — sub-agent J
+>
+> **UI-015** (cmdk command palette) — Deferred (требует `npm install cmdk` ~10kB, отдельная задача).
 >
 > После завершения раунда — TASK-LEAD-051 (Weekly digest) и TASK-LEAD-053 (Транзит) в следующем заходе.
 >
