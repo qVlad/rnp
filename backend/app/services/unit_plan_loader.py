@@ -535,6 +535,9 @@ async def _latest_price(
     if not nm_ids:
         return {}
     # Latest sale_dt per nm_id, pick price_with_disc.
+    # BUG-DEV-008: фильтр `is_return=False` — у возвратов `price_with_disc`
+    # отрицательный (минусовая строка в wb_sales). Без фильтра, если самое
+    # свежее событие — возврат, base_price выходит отрицательной.
     subq = (
         select(
             WbSale.nm_id,
@@ -543,6 +546,7 @@ async def _latest_price(
         .where(
             WbSale.tenant_id == tenant_id,
             WbSale.nm_id.in_(nm_ids),
+            WbSale.is_return.is_(False),
         )
         .group_by(WbSale.nm_id)
         .subquery()
@@ -556,7 +560,10 @@ async def _latest_price(
                 WbSale.sale_dt == subq.c.max_dt,
             ),
         )
-        .where(WbSale.tenant_id == tenant_id)
+        .where(
+            WbSale.tenant_id == tenant_id,
+            WbSale.is_return.is_(False),
+        )
     )
     out: dict[int, tuple[Decimal | None, Decimal | None]] = {}
     for nm, price, disc in (await session.execute(stmt)).all():

@@ -2340,13 +2340,25 @@ paymentOrderDelete: (payment_order_id: string) =>
       `/api/unit-plan/rows${tail ? `?${tail}` : ""}`,
     );
   },
-  unitPlanGlobalConfig: () =>
-    request<UnitPlanGlobalConfig>(`/api/unit-plan/global-config`),
-  unitPlanSetGlobalConfig: (body: UnitPlanGlobalConfigUpdate) =>
-    request<UnitPlanGlobalConfig>(`/api/unit-plan/global-config`, {
-      method: "PUT",
-      body: JSON.stringify(body),
-    }),
+  // BUG-DEV-009: backend возвращает `{config: ...}`, разворачиваем здесь.
+  unitPlanGlobalConfig: async (): Promise<UnitPlanGlobalConfig | null> => {
+    const resp = await request<{ config: UnitPlanGlobalConfig | null }>(
+      `/api/unit-plan/global-config`,
+    );
+    return resp.config;
+  },
+  unitPlanSetGlobalConfig: async (
+    body: UnitPlanGlobalConfigUpdate,
+  ): Promise<UnitPlanGlobalConfig> => {
+    const resp = await request<{ config: UnitPlanGlobalConfig }>(
+      `/api/unit-plan/global-config`,
+      {
+        method: "PUT",
+        body: JSON.stringify(body),
+      },
+    );
+    return resp.config;
+  },
   /** История версий global_config для UNIT-плана (director-only). */
   unitPlanGlobalConfigVersions: () =>
     request<{ items: UnitPlanGlobalConfig[] }>(
