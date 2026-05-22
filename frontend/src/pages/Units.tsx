@@ -146,6 +146,7 @@ const OverridesContext = createContext<OverridesCtxValue | null>(null);
 const PRICE_OV_KEY = "units.price-overrides.v1";
 
 export default function Units() {
+  if (typeof window !== "undefined") console.count("UnitsRender");
   const qc = useQueryClient();
   // TASK-UI-005 continuation: two-way sync с PeriodContext.
   const { period: ctxPeriod, setPeriod: ctxSetPeriod } = usePeriod();
