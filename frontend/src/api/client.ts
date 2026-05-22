@@ -2407,6 +2407,11 @@ paymentOrderDelete: (payment_order_id: string) =>
       `/api/unit-plan/sync-prices`,
       { method: "POST" },
     ),
+  /** Фактические ИЛ/ИРП коэффициенты из истории за N дней (для UI-подсказки). */
+  unitPlanCoefRecommendations: (days: number = 30) =>
+    request<UnitPlanCoefRecommendations>(
+      `/api/unit-plan/coef-recommendations?days=${days}`,
+    ),
   unitPlanDetail: (nm_id: number) =>
     request<UnitPlanDetail>(`/api/unit-plan/${nm_id}/detail`),
   /** UNIT-PLAN-015: snapshots — список (grouped by date+label с count). */
@@ -2686,6 +2691,17 @@ export interface UnitPlanPricesStatus {
   synced_at_min: string | null;
   synced_at_max: string | null;
   age_minutes: number | null;
+}
+
+/** Фактические il_coef / irp_coef из истории — подсказка под полями в /settings. */
+export interface UnitPlanCoefRecommendations {
+  il_coef_actual: string | null;
+  irp_coef_actual: string | null;
+  rows_used_il: number;
+  rows_used_irp: number;
+  period_days: number;
+  period_from: string;
+  period_to: string;
 }
 
 /** TASK-LEAD-062 — серверный комментарий менеджера в /weekly-report. */

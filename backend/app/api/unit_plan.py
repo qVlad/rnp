@@ -1577,3 +1577,41 @@ async def trigger_prices_sync(
     except Exception as exc:
         raise HTTPException(503, f"celery broker unavailable: {exc}") from exc
     return {"task_id": result.id, "queued": True, "tenant_id": user.tenant_id}
+
+
+@router.get(
+    "/coef-recommendations",
+    dependencies=[Depends(require_director)],
+)
+async def coef_recommendations(
+    days: int = Query(default=30, ge=7, le=180),
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Фактические `il_coef` / `irp_coef` из истории `wb_report_detail`.
+
+    Для UI-подсказки в `/settings` под полями ИЛ-коэф / ИРП-коэф:
+    «📊 Фактический за N дней: X.XX (применить?)».
+
+    Расчёт:
+      il_coef_actual = SUM(actual_delivery_rub) / SUM(теор_delivery_по_WB_тарифу)
+        где теор берётся из `wb_tariff_box` (latest effective_from <= today)
+        с учётом volume_l из `products`.
+      irp_coef_actual = SUM(paid_acceptance) / SUM(retail_price_withdisc_rub).
+    """
+    from app.services.unit_plan_coef_recommendations import (
+        compute_recommended_coefs,
+    )
+
+    rec = await compute_recommended_coefs(
+        session, tenant_id=user.tenant_id, days=days
+    )
+    return {
+        "il_coef_actual": str(rec.il_coef_actual) if rec.il_coef_actual is not None else None,
+        "irp_coef_actual": str(rec.irp_coef_actual) if rec.irp_coef_actual is not None else None,
+        "rows_used_il": rec.rows_used_il,
+        "rows_used_irp": rec.rows_used_irp,
+        "period_days": rec.period_days,
+        "period_from": rec.period_from.isoformat(),
+        "period_to": rec.period_to.isoformat(),
+    }

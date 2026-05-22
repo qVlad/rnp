@@ -1009,6 +1009,66 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+/** Подсказка под полем ИЛ/ИРП-коэф: фактический коэффициент из истории
+ * за N дней + кнопка «Применить» (копирует в input). Скрывает себя если
+ * данных не хватает (нет продаж / нет тарифов / нет volume_l). */
+function CoefRecommendationHint({
+  kind,
+  actual,
+  rowsUsed,
+  periodDays,
+  currentDraft,
+  onApply,
+}: {
+  kind: "il" | "irp";
+  actual: string | null;
+  rowsUsed: number;
+  periodDays: number;
+  currentDraft: string;
+  onApply: (v: string) => void;
+}) {
+  if (actual == null || rowsUsed === 0) {
+    return (
+      <div className="text-tiny text-muted mt-1">
+        📊 Фактический коэффициент пока недоступен (нужны данные продаж за
+        последние {periodDays} дн +{" "}
+        {kind === "il" ? "volume_l и WB-тарифы по складам" : "поле paid_acceptance"}
+        ).
+      </div>
+    );
+  }
+  const sameValue = currentDraft && Math.abs(Number(currentDraft) - Number(actual)) < 1e-6;
+  return (
+    <div className="text-tiny text-muted mt-1 flex items-center gap-2">
+      <span>
+        📊 Фактический за {periodDays} дн:{" "}
+        <span className="font-mono text-fg">{actual}</span>
+        {kind === "irp" && (
+          <>
+            {" "}(
+            <span className="font-mono">
+              {(Number(actual) * 100).toFixed(2)}%
+            </span>
+            )
+          </>
+        )}
+        {" · "}
+        <span className="text-faint">{rowsUsed} шт</span>
+      </span>
+      {!sameValue && (
+        <button
+          type="button"
+          className="btn btn-secondary text-tiny px-2 py-0.5"
+          onClick={() => onApply(actual)}
+          title="Подставить фактический коэффициент в поле"
+        >
+          Применить
+        </button>
+      )}
+    </div>
+  );
+}
+
 function ActorSection() {
   // Until full Users/Auth lands the operator picks a name here. Stored in
   // localStorage and sent on every API call as `X-Actor:` header → audit log
@@ -1355,6 +1415,13 @@ function UnitPlanGlobalConfigSection() {
     queryKey: ["unit-plan-global-config"],
     queryFn: () => api.unitPlanGlobalConfig(),
   });
+  // Фактические il/irp коэф из истории (для подсказки под полями).
+  const coefRecQ = useQuery({
+    queryKey: ["unit-plan-coef-recs", 30],
+    queryFn: () => api.unitPlanCoefRecommendations(30),
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
 
   const [draft, setDraft] = useState<UnitPlanConfigDraft>(EMPTY_DRAFT);
   const [newEffDate, setNewEffDate] = useState<string>("");
@@ -1670,6 +1737,16 @@ function UnitPlanGlobalConfigSection() {
                   setDraft((d) => ({ ...d, il_coef: e.target.value }))
                 }
               />
+              <CoefRecommendationHint
+                kind="il"
+                actual={coefRecQ.data?.il_coef_actual ?? null}
+                rowsUsed={coefRecQ.data?.rows_used_il ?? 0}
+                periodDays={coefRecQ.data?.period_days ?? 30}
+                currentDraft={draft.il_coef}
+                onApply={(v) =>
+                  setDraft((d) => ({ ...d, il_coef: v }))
+                }
+              />
             </Field>
             <Field label="ИРП-коэф (% от цены, как доля 0.017 = 1.7%)">
               <input
@@ -1681,6 +1758,16 @@ function UnitPlanGlobalConfigSection() {
                 value={draft.irp_coef}
                 onChange={(e: any) =>
                   setDraft((d) => ({ ...d, irp_coef: e.target.value }))
+                }
+              />
+              <CoefRecommendationHint
+                kind="irp"
+                actual={coefRecQ.data?.irp_coef_actual ?? null}
+                rowsUsed={coefRecQ.data?.rows_used_irp ?? 0}
+                periodDays={coefRecQ.data?.period_days ?? 30}
+                currentDraft={draft.irp_coef}
+                onApply={(v) =>
+                  setDraft((d) => ({ ...d, irp_coef: v }))
                 }
               />
             </Field>
