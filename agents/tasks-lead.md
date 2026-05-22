@@ -2541,6 +2541,85 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 
 ---
 
+### TASK-LEAD-078: Авто-тарифы транзита через extension
+
+- **Исполнитель:** Sub-agent P (Developer + Design Engineer)
+- **Приоритет:** P1 (follow-up к TASK-LEAD-077: убрать manual ввод тарифов)
+- **Оценка:** M (3-4ч)
+- **Источник:** TASK-LEAD-077 (transit calculator) — собственник видел manual
+  ввод и сказал «давай через extension автоматически, как с
+  /redistribution». Research показал, что WB Tariffs API транзит не отдаёт
+  (см. `research-transit-shipments-2026-05-22.md`).
+- **Описание:** Перехватить таблицу транзитных тарифов (хаб → конечный
+  склад → ₽/л) из internal-fetch'ей WB-фронта в ЛК и автоматически
+  подставлять в `/transit-calculator`. Сохранить manual fallback.
+- **Критерии готовности:**
+  - [x] Миграция 0059 `wb_transit_tariff(tenant_id, hub_name,
+        destination_warehouse, rate_small, rate_large, threshold_l, currency,
+        synced_at)` + UNIQUE `(tenant, hub, dest)`
+  - [x] Модель `WbTransitTariff` в `backend/app/db/models.py`
+  - [x] API `backend/app/api/transit_tariffs.py`: GET list / GET lookup /
+        POST /upload (с pg_insert + on_conflict_do_update, chunked для
+        asyncpg 32k bind-limit). RBAC: GET — tenant-scoped (manager OK
+        — это reference-данные), POST /upload — `require_director_or_head`.
+  - [x] Регистрация роутера в `backend/app/main.py`
+  - [x] Extension MAIN-world interceptor
+        `extension/src/content/wb-transit-tariffs-interceptor-main.ts` —
+        fetch + XHR sniffing на `*.wildberries.ru` хостах, гибкий парсер
+        shape данных (warehouseFrom/hubName/from etc, snake/camel/kebab
+        вариативность). Точный URL endpoint'а ЛК не задокументирован —
+        отлавливаем по shape («массив с парами hub+dest+price»)
+  - [x] Extension ISOLATED content
+        `extension/src/content/wb-transit-tariffs-content.ts` — receiver +
+        FNV-1a hash дедуп + `chrome.runtime.sendMessage`
+  - [x] Регистрация content scripts в `manifest.config.ts` на
+        `seller.wildberries.ru/*`
+  - [x] SW handler `maybeUploadTransitTariffs` в `background/index.ts` —
+        POST через `Bearer rnpToken`, persistent дедуп через
+        `chrome.storage.local["rnp.transit.lastHash"]`, notification
+        «🚚 Тарифы транзита обновлены (N пар хабов)» один раз на token,
+        403 (manager) — записываем hash и не ретраим
+  - [x] Frontend: `api.transitTariffsList()` + `api.transitTariffsLookup()`
+        в `client.ts` + тип `TransitTariffRow`
+  - [x] `pages/TransitCalculator.tsx` — useQuery на list, useMemo выбор
+        тарифа для текущей (hub, final_warehouse) пары, useEffect auto-fill
+        rate_small/large/threshold_l при смене пары (НЕ перезатирает если
+        юзер уже правил руками — отслеживание через `autoFilled` key).
+        Зелёный баннер «📊 Тариф из ЛК WB · обновлён N ч назад» если есть,
+        желтый «🔄 Не нашли тариф — открой ЛК WB → Транзитные направления»
+        если нет. Datalist хабов дополняется из backend.
+  - [x] Research-отчёт `agents/references/research-transit-lk-endpoint-2026-05-22.md`
+        (что искал, какой shape принят, gracefully-degradation matrix)
+  - [x] `USER_GUIDE.md` — секция «Как работает авто-подтягивание тарифов
+        из ЛК» с инструкцией для пользователя + кто может (director/head),
+        что делать если не подтягивается
+  - [x] `FEATURES.md` — запись Transit calculator обновлена (auto-fetch +
+        миграция 0059 + endpoints)
+  - [x] `CLAUDE.md` — таблица миграций 0058/0059, API endpoints
+        `/api/transit-tariffs/*`
+  - [x] `tsc --noEmit` frontend чистый (только legacy `baseUrl` warning,
+        не из нашего кода)
+  - [x] Python AST parse migration/api/models/main — OK
+- **Зависимости:**
+  - TASK-LEAD-077 (manual ввод тарифов транзита, сохранён как fallback)
+- **Не сделано (out of scope этой итерации):**
+  - Узкий парсер shape (pydantic-валидация под конкретный URL endpoint
+    ЛК) — пока shape точно не подтверждён HAR'ом, оставлен гибкий
+  - `raw_payload JSONB` колонка в `wb_transit_tariff` для debug —
+    добавим в 0060 если потребуется
+  - UI для просмотра/правки накопленных тарифов в `/settings`
+  - Periodic cleanup старых тарифов (TTL >90 дней)
+- **Graceful degradation:**
+  - Юзер без extension → manual ввод (как до этой задачи)
+  - Extension есть, юзер не зашёл в ЛК → manual + баннер «🔄 Открой ЛК
+    для подтягивания»
+  - Shape WB поменялся → backend получит пустой array (extension не
+    найдёт «похоже на тарифы») → manual fallback продолжает работать
+  - Manager роль → 403 на POST, extension не ретраит (hash сохранён)
+- **Статус:** Выполнено — 2026-05-23 — Sub-agent P
+
+---
+
 ### TASK-LEAD-077: Транзит-калькулятор + переименование старого
 
 - **Исполнитель:** Sub-agent O (Developer + Design Engineer)

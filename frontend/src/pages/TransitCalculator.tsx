@@ -17,9 +17,9 @@
  *
  * Frontend-only, persist в localStorage["transit-calculator.v2"].
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api, type TariffTimelineRow } from "@/api/client";
+import { api, type TariffTimelineRow, type TransitTariffRow } from "@/api/client";
 import { fmtRub, fmtNum } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 
@@ -205,7 +205,75 @@ export default function TransitCalculator() {
     queryFn: () => api.tariffCurrent("box"),
   });
 
+  // TASK-LEAD-078: список auto-fetched тарифов транзита (из ЛК WB через
+  // Chrome-extension). Если пусто — фронт показывает manual-fallback ввод.
+  const transitListQ = useQuery({
+    queryKey: ["transit-tariffs-list"],
+    queryFn: () => api.transitTariffsList(),
+  });
+  const transitFromBackend: TransitTariffRow | null = useMemo(() => {
+    const items = transitListQ.data?.items ?? [];
+    if (!params.hub || !params.final_warehouse) return null;
+    const hubLower = params.hub.trim().toLowerCase();
+    const destLower = params.final_warehouse.trim().toLowerCase();
+    return (
+      items.find(
+        (t) =>
+          t.hub_name.toLowerCase() === hubLower &&
+          t.destination_warehouse.toLowerCase() === destLower,
+      ) ?? null
+    );
+  }, [params.hub, params.final_warehouse, transitListQ.data]);
+
+  // Auto-fill rate_small/rate_large/threshold_l из backend если нашли пару.
+  // НЕ перезатираем если юзер уже что-то правил — следим за изменением пары
+  // и применяем 1 раз когда тариф появился. Юзер может в любой момент
+  // вписать своё значение поверх.
+  const [autoFilled, setAutoFilled] = useState<string | null>(null);
+  useEffect(() => {
+    if (!transitFromBackend) return;
+    const key = `${params.hub}|${params.final_warehouse}|${transitFromBackend.synced_at}`;
+    if (autoFilled === key) return;
+    setAutoFilled(key);
+    const patch: Partial<SavedParams> = {};
+    if (transitFromBackend.rate_small !== null) {
+      patch.rate_small = transitFromBackend.rate_small;
+    }
+    if (transitFromBackend.rate_large !== null) {
+      patch.rate_large = transitFromBackend.rate_large;
+    }
+    if (transitFromBackend.threshold_l !== null) {
+      patch.volume_threshold_l = transitFromBackend.threshold_l;
+    }
+    if (Object.keys(patch).length > 0) update(patch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transitFromBackend?.synced_at, params.hub, params.final_warehouse]);
+
+  function formatRelativeTime(iso: string | null): string {
+    if (!iso) return "только что";
+    const now = Date.now();
+    const then = new Date(iso).getTime();
+    if (!Number.isFinite(then)) return "неизвестно";
+    const diffMin = Math.max(0, Math.round((now - then) / 60000));
+    if (diffMin < 1) return "только что";
+    if (diffMin < 60) return `${diffMin} мин назад`;
+    const diffH = Math.round(diffMin / 60);
+    if (diffH < 24) return `${diffH} ч назад`;
+    const diffD = Math.round(diffH / 24);
+    return `${diffD} дн назад`;
+  }
+
   const warehouses = whQ.data?.items ?? [];
+
+  // Хабы для datalist: hard-coded список + хабы из backend (auto-fetched
+  // тарифы). Дубли убираем.
+  const datalistHubs = useMemo(() => {
+    const set = new Set<string>(KNOWN_HUBS);
+    for (const t of transitListQ.data?.items ?? []) {
+      if (t.hub_name) set.add(t.hub_name);
+    }
+    return Array.from(set).sort();
+  }, [transitListQ.data]);
   const finalTariff = useMemo<TariffTimelineRow | null>(() => {
     if (!params.final_warehouse) return null;
     const items = tariffsQ.data?.items ?? [];
@@ -240,25 +308,87 @@ export default function TransitCalculator() {
         }
       />
 
-      {/* Important warning */}
-      <section className="card text-xs" style={{ background: "rgba(255,193,7,0.08)" }}>
-        <p>
-          <b>⚠️ Где взять тариф транзита:</b>{" "}
-          <a
-            className="text-accent"
-            href="https://seller.wildberries.ru"
-            target="_blank"
-            rel="noreferrer"
-          >
-            ЛК WB
-          </a>{" "}
-          → Поставки и заказы → Поставки (FBW) → <b>Транзитные направления</b>.
-          Выбери пару «хаб → конечный_склад» и впиши <code>₽/л</code> ниже.
-          Тариф зависит от объёма (двухступенчатая шкала: до 1500 л — выше,
-          от 1500 л — ниже). С 1 апреля 2026 WB поднял тарифы транзита в
-          среднем на ~20%.
-        </p>
-      </section>
+      {/* Auto-fetched status banner — TASK-LEAD-078 */}
+      {transitFromBackend ? (
+        <section
+          className="card text-xs"
+          style={{ background: "rgba(16,185,129,0.08)" }}
+        >
+          <p>
+            <b>📊 Тариф из ЛК WB</b> · обновлён{" "}
+            {formatRelativeTime(transitFromBackend.synced_at)}. Подставлен
+            автоматически для пары «{params.hub} → {params.final_warehouse}».
+            Можно править руками если нужно — твои значения не перезапишутся,
+            пока не сменишь пару хаб+склад.
+          </p>
+        </section>
+      ) : params.hub && params.final_warehouse ? (
+        <section
+          className="card text-xs"
+          style={{ background: "rgba(255,193,7,0.08)" }}
+        >
+          <p>
+            <b>🔄 Не нашли тариф для этой пары.</b>{" "}
+            <button
+              type="button"
+              className="text-accent underline"
+              onClick={() =>
+                window.open(
+                  "https://seller.wildberries.ru/supplies-management/all-supplies",
+                  "_blank",
+                  "noopener",
+                )
+              }
+            >
+              Открой ЛК WB
+            </button>{" "}
+            → «Транзитные направления» — расширение РНП автоматически подтянет
+            тарифы. Тарифы видны в ЛК на странице{" "}
+            <i>«Поставки и заказы → Поставки (FBW) → Транзитные направления»</i>.
+            Расширение должно быть{" "}
+            <a className="text-accent" href="/settings#extension-tokens">
+              подключено
+            </a>{" "}
+            и юзер должен иметь роль director / head_of_sales.
+          </p>
+          <p className="mt-1 text-muted">
+            Пока тариф не подтянут — впиши <code>₽/л</code> вручную ниже из
+            той же страницы ЛК.
+          </p>
+        </section>
+      ) : (
+        <section
+          className="card text-xs"
+          style={{ background: "rgba(255,193,7,0.08)" }}
+        >
+          <p>
+            <b>⚠️ Где взять тариф транзита:</b>{" "}
+            <a
+              className="text-accent"
+              href="https://seller.wildberries.ru/supplies-management/all-supplies"
+              target="_blank"
+              rel="noreferrer"
+            >
+              ЛК WB
+            </a>{" "}
+            → Поставки и заказы → Поставки (FBW) → <b>Транзитные направления</b>.
+            Если у тебя установлено{" "}
+            <a className="text-accent" href="/settings#extension-tokens">
+              Chrome-расширение РНП
+            </a>{" "}
+            — оно автоматически подтянет тарифы при заходе на эту страницу.
+            Иначе — выбери пару «хаб → конечный_склад» и впиши <code>₽/л</code>{" "}
+            ниже. Двухступенчатая шкала: до 1500 л — выше, от 1500 л — ниже.
+            С 1 апреля 2026 WB поднял тарифы транзита в среднем на ~20%.
+          </p>
+          {transitListQ.data && transitListQ.data.total > 0 ? (
+            <p className="mt-1 text-muted">
+              📊 В базе уже {transitListQ.data.total} пар хабов из ЛК — выбери
+              хаб и конечный склад чтобы тариф подставился автоматически.
+            </p>
+          ) : null}
+        </section>
+      )}
 
       {/* Form */}
       <section className="card">
@@ -277,7 +407,7 @@ export default function TransitCalculator() {
               placeholder="например, Обухово"
             />
             <datalist id="transit-hubs">
-              {KNOWN_HUBS.map((h) => (
+              {datalistHubs.map((h) => (
                 <option key={h} value={h} />
               ))}
             </datalist>

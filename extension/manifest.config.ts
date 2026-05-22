@@ -126,6 +126,29 @@ export default defineManifest({
       js: ["src/content/rnp-detector.ts"],
       run_at: "document_idle",
     },
+    {
+      // TASK-LEAD-078: тарифы транзитных направлений из ЛК WB.
+      // ISOLATED-world receiver — слушает postMessage от MAIN-world
+      // interceptor'а и шлёт распарсенные тарифы в SW.
+      // Висим на всех страницах seller.wildberries.ru — точный URL
+      // страницы «Транзитные направления» может меняться, проще слушать
+      // глобально (как wb-shifts-content). MAIN-interceptor сам решает
+      // что это похоже на тариф транзита по shape данных.
+      matches: ["https://seller.wildberries.ru/*"],
+      js: ["src/content/wb-transit-tariffs-content.ts"],
+      run_at: "document_start",
+    },
+    {
+      // TASK-LEAD-078: MAIN-world interceptor для транзитных тарифов.
+      // Перехватывает fetch+XHR на любых *.wildberries.ru хостах,
+      // парсит response body на предмет «похоже на таблицу транзитных
+      // тарифов» (см. looksLikeTransitTariffs), шлёт через postMessage
+      // в ISOLATED. Не сужаем URL — endpoint неизвестен документально.
+      matches: ["https://seller.wildberries.ru/*"],
+      js: ["src/content/wb-transit-tariffs-interceptor-main.ts"],
+      run_at: "document_start",
+      world: "MAIN",
+    },
   ],
   host_permissions: [
     "https://seller.wildberries.ru/*",

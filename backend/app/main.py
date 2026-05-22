@@ -54,6 +54,7 @@ from app.api import (
     sync_status,
     tariffs,
     tax_report,
+    transit_tariffs,
     tenant_modules,
     tenant_settings,
     unit_plan,
@@ -244,6 +245,7 @@ app.include_router(chargebacks.router)
 app.include_router(redistribution.router)
 app.include_router(tax_report.router)
 app.include_router(tariffs.router)
+app.include_router(transit_tariffs.router)
 app.include_router(supplies.router)
 app.include_router(supply_send.router)
 app.include_router(checklist.router)

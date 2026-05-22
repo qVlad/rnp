@@ -492,6 +492,113 @@ async function maybeAutoConnectLk(payload: {
   }
 }
 
+// ---- TASK-LEAD-078: транзитные тарифы из ЛК WB ----
+
+const STORAGE_TRANSIT_LAST_HASH = "rnp.transit.lastHash";
+const STORAGE_TRANSIT_NOTIFIED = "rnp.transit.notified";
+
+type TransitUploadResult =
+  | { status: "no-rnp-token" }
+  | { status: "unchanged" }
+  | { status: "forbidden" }
+  | { status: "http-error"; code: number; body?: string }
+  | { status: "network-error"; error: string }
+  | { status: "ok"; inserted_or_updated: number; skipped: number };
+
+async function maybeUploadTransitTariffs(payload: {
+  rows: Array<{
+    hub_name: string;
+    destination_warehouse: string;
+    rate_small: number | null;
+    rate_large: number | null;
+    threshold_l: number | null;
+  }>;
+  hash: string;
+}): Promise<TransitUploadResult> {
+  const settings = await getSettings();
+  if (!settings.rnpUrl || !settings.rnpToken) return { status: "no-rnp-token" };
+
+  // Persistent дедуп через chrome.storage (выживает между SW-tick'ами).
+  const stored = await chrome.storage.local.get(STORAGE_TRANSIT_LAST_HASH);
+  if (stored[STORAGE_TRANSIT_LAST_HASH] === payload.hash) {
+    return { status: "unchanged" };
+  }
+
+  const items = payload.rows
+    .filter((r) => r.hub_name && r.destination_warehouse)
+    .filter((r) => r.rate_small !== null || r.rate_large !== null)
+    .map((r) => ({
+      hub_name: r.hub_name,
+      destination_warehouse: r.destination_warehouse,
+      rate_small: r.rate_small,
+      rate_large: r.rate_large,
+      threshold_l: r.threshold_l ?? 1500,
+    }));
+  if (items.length === 0) return { status: "unchanged" };
+
+  try {
+    const r = await fetch(
+      `${settings.rnpUrl.replace(/\/$/, "")}/api/transit-tariffs/upload`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${settings.rnpToken}`,
+        },
+        body: JSON.stringify({ items }),
+      },
+    );
+    if (r.status === 403) {
+      // Manager (не director/head) — записываем hash чтобы не повторять.
+      await chrome.storage.local.set({ [STORAGE_TRANSIT_LAST_HASH]: payload.hash });
+      return { status: "forbidden" };
+    }
+    if (!r.ok) {
+      let body = "";
+      try {
+        body = (await r.text()).slice(0, 200);
+      } catch {
+        /* ignore */
+      }
+      console.warn(`[rnp-ext SW] transit-tariffs: HTTP ${r.status} ${body}`);
+      return { status: "http-error", code: r.status, body };
+    }
+    const json = (await r.json()) as {
+      inserted_or_updated: number;
+      skipped: number;
+      total_received: number;
+    };
+    await chrome.storage.local.set({ [STORAGE_TRANSIT_LAST_HASH]: payload.hash });
+    console.log(
+      `[rnp-ext SW] transit-tariffs uploaded ${json.inserted_or_updated} rows (skipped ${json.skipped})`,
+    );
+
+    // Notification — один раз на token (как с LK auto-connect). Если
+    // юзер открывает страницу транзита каждый день — нотификация всё
+    // равно одна за всё время использования расширения.
+    const wasNotified = await chrome.storage.local.get(STORAGE_TRANSIT_NOTIFIED);
+    if (!wasNotified[STORAGE_TRANSIT_NOTIFIED] && json.inserted_or_updated > 0) {
+      chrome.notifications.create("rnp.transit.uploaded", {
+        type: "basic",
+        iconUrl: chrome.runtime.getURL("icons/icon-128.png"),
+        title: "Тарифы транзита обновлены",
+        message: `Расширение РНП подтянуло ${json.inserted_or_updated} пар хабов из ЛК WB. Калькулятор транзита теперь автоматически подставляет тариф для выбранной пары.`,
+        priority: 1,
+      });
+      await chrome.storage.local.set({ [STORAGE_TRANSIT_NOTIFIED]: true });
+    }
+    return {
+      status: "ok",
+      inserted_or_updated: json.inserted_or_updated,
+      skipped: json.skipped,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn("[rnp-ext SW] transit-tariffs upload failed:", e);
+    return { status: "network-error", error: msg };
+  }
+}
+
 // ---- Message handlers from content scripts ----
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -575,6 +682,30 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         root_version: msg.root_version ?? null,
       });
       console.log(`[rnp-ext SW] maybeAutoConnectLk →`, result);
+      sendResponse(result);
+      return;
+    }
+    // ---- TASK-LEAD-078: тарифы транзитных направлений из ЛК WB.
+    //      Content script `wb-transit-tariffs-content.ts` шлёт это когда
+    //      MAIN-world interceptor поймал «похоже на таблицу транзитных
+    //      тарифов» в response body fetch'а WB-фронта. SW делает POST
+    //      `/api/transit-tariffs/upload` (Bearer rnpToken). ----
+    if (
+      msg?.type === "rnp:transit-tariffs" &&
+      Array.isArray(msg.rows) &&
+      typeof msg.hash === "string"
+    ) {
+      const result = await maybeUploadTransitTariffs({
+        rows: msg.rows as Array<{
+          hub_name: string;
+          destination_warehouse: string;
+          rate_small: number | null;
+          rate_large: number | null;
+          threshold_l: number | null;
+        }>,
+        hash: msg.hash,
+      });
+      console.log(`[rnp-ext SW] transit-tariffs →`, result);
       sendResponse(result);
       return;
     }

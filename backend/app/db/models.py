@@ -2529,3 +2529,44 @@ class WeeklyReportComment(Base, TenantScopedMixin):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class WbTransitTariff(Base, TenantScopedMixin):
+    """Тарифы транзитных направлений из ЛК WB (TASK-LEAD-078, миграция 0059).
+
+    WB Tariffs API публично транзитные тарифы не отдаёт — они доступны только
+    в ЛК seller.wildberries.ru на странице «Поставки и заказы → Поставки
+    (FBW) → Транзитные направления». Расширение РНП перехватывает internal-
+    fetch'и WB-фронта и POST'ит их сюда. См.
+    `extension/src/content/wb-transit-tariffs-*.ts`.
+
+    Двухступенчатая шкала ₽/л (rate_small для < threshold_l, rate_large для
+    >= threshold_l). Если конкретный тариф не имеет двух ступеней —
+    rate_large = NULL.
+    """
+
+    __tablename__ = "wb_transit_tariff"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    hub_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    destination_warehouse: Mapped[str] = mapped_column(String(255), nullable=False)
+    rate_small: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    rate_large: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    threshold_l: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 2), server_default=text("1500")
+    )
+    currency: Mapped[str] = mapped_column(
+        String(8), nullable=False, server_default=text("'RUB'")
+    )
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "hub_name",
+            "destination_warehouse",
+            name="uq_wb_transit_tariff_tenant_hub_dest",
+        ),
+    )

@@ -2315,6 +2315,23 @@ paymentOrderDelete: (payment_order_id: string) =>
       method: "POST",
     }),
 
+  // ── TASK-LEAD-078: тарифы транзитных направлений (auto-fetched из ЛК WB
+  //    через Chrome-extension; manual fallback в /transit-calculator). ──
+  transitTariffsList: (hub?: string, dest?: string) => {
+    const qs = new URLSearchParams();
+    if (hub) qs.set("hub", hub);
+    if (dest) qs.set("dest", dest);
+    const s = qs.toString();
+    return request<{ items: TransitTariffRow[]; total: number }>(
+      `/api/transit-tariffs${s ? `?${s}` : ""}`,
+    );
+  },
+  /** Точечный lookup. 404 если пары нет — фронт показывает manual ввод. */
+  transitTariffsLookup: (hub: string, dest: string) => {
+    const qs = new URLSearchParams({ hub, dest });
+    return request<TransitTariffRow>(`/api/transit-tariffs/lookup?${qs}`);
+  },
+
   // ── Long-lived API tokens для Chrome-расширения (миграция 0048) ──
   extensionApiTokenList: () =>
     request<
@@ -2536,6 +2553,17 @@ export interface TariffTimelineRow {
   paid_storage_kgvp?: number | null;
   return_cost?: number | null;
   is_baseline?: boolean;
+}
+
+/** TASK-LEAD-078: тариф транзитного направления (хаб → конечный склад). */
+export interface TransitTariffRow {
+  hub_name: string;
+  destination_warehouse: string;
+  rate_small: number | null;
+  rate_large: number | null;
+  threshold_l: number | null;
+  currency: string;
+  synced_at: string | null;
 }
 
 export interface TariffTimelineResponse {
