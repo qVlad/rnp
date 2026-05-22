@@ -33,9 +33,11 @@ Lead использует этот файл как master-view: сюда скл�
 >
 > **Раунд 10 завершён (v0.27.0):** Sprint 3 UI batch (UI-016/017/018/019/020). UI-015 — на самом деле уже реализован.
 >
-> **Раунд 11 запущен (2026-05-22 day — 2 потока):**
-> - 🔄 **BUG-UI-005** DeltaCell на Plans/Units/ABC + **UI-015** verify (CommandPalette уже работает, cmdk^1.1.1 в deps) — main
-> - 🔄 **BUG-UI cleanup batch** (BUG-UI-001 ternary emoji / 002 non-percent toFixed / 003 sticky-first-col / 004 states migration) — sub-agent K
+> **Раунд 11 завершён (v0.27.3):**
+> - ✅ **BUG-UI-005** DeltaCell на Units (Новая маржа: inline deltaCls → DeltaCell). Plans использует «% выполнения плана» — не классическая дельта; ABC дельт не имеет.
+> - ✅ **UI-015** verified — CommandPalette уже полностью работает через cmdk^1.1.1 + ⌘K + 47 nav-команд.
+> - ✅ **BUG-UI cleanup batch** (sub-agent K): ternary emoji 22→8, non-% .toFixed 41→8 (+ `fmtCompact`/`fmtRatio` helpers), sticky-first-col применён Units+ABC (z=5 cells / z=15 corner), states migration на 5 страницах.
+> - Совпадение: Units.tsx DeltaCell migration попал в perf-fix BUG-DEV-007 follow-up #2 commit (`7ecbb98 v0.27.2`) параллельной сессии. Конфликтов не было.
 >
 > После завершения раунда — TASK-LEAD-051 (Weekly digest) и TASK-LEAD-053 (Транзит) в следующем заходе.
 >
