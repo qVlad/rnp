@@ -159,6 +159,32 @@ export default function Units() {
     pageSize: 50,
   });
   const [hoverPhoto, setHoverPhoto] = useState<{ nm: number; x: number; y: number } | null>(null);
+  // BUG-DEV-007: hover-popup иногда "залипал" — onMouseLeave не срабатывал
+  // если table re-mountил <img> между enter/leave (pagination / sort / filter
+  // меняют DOM). Закрываем popup при:
+  //  • scroll (внутри таблицы или окна)
+  //  • Escape
+  //  • mousemove дальше чем ~80px от точки появления (значит увели курсор)
+  useEffect(() => {
+    if (!hoverPhoto) return;
+    const close = () => setHoverPhoto(null);
+    const onMove = (e: MouseEvent) => {
+      const dx = Math.abs(e.clientX - hoverPhoto.x);
+      const dy = Math.abs(e.clientY - hoverPhoto.y);
+      if (dx > 80 || dy > 80) close();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [hoverPhoto]);
   const [density, setDensity] = useState<"comfortable" | "compact" | "dense">(() => {
     try {
       const v = localStorage.getItem("units.density.v1");
@@ -420,22 +446,9 @@ export default function Units() {
         enableSorting: false,
         cell: (c) => {
           const nm = c.row.original.nm_id;
-          return (
-            <img
-              src={`/api/products/${nm}/photo`}
-              alt=""
-              loading="lazy"
-              className="w-10 h-10 object-cover rounded border border-border bg-bg cursor-zoom-in"
-              onMouseEnter={(e) => {
-                const r = e.currentTarget.getBoundingClientRect();
-                setHoverPhoto({ nm, x: r.right + 8, y: r.top });
-              }}
-              onMouseLeave={() => setHoverPhoto(null)}
-              onError={(e: any) => {
-                e.currentTarget.style.display = "none";
-              }}
-            />
-          );
+          // WB карточка имеет соотношение 3:4 (vertical). Раньше было 40×40
+          // (квадрат) — картинка обрезалась снизу и сверху. 36×48 = 3:4.
+          return <UnitsPhotoCell nm={nm} onHover={setHoverPhoto} />;
         },
       },
       {
@@ -697,8 +710,12 @@ export default function Units() {
           if (r.is_archived) {
             return (
               <button
+                type="button"
                 className="btn text-xs whitespace-nowrap"
-                onClick={() => unarchiveMut.mutate(r.nm_id)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  unarchiveMut.mutate(r.nm_id);
+                }}
               >
                 ↩
               </button>
@@ -707,18 +724,26 @@ export default function Units() {
           return (
             <div className="flex gap-1">
               <button
+                type="button"
                 className="btn text-xs whitespace-nowrap"
                 title="Разбивка по размерам"
                 aria-label="Разбивка по размерам"
-                onClick={() => setSizesModalFor(r.nm_id)}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSizesModalFor(r.nm_id);
+                }}
               >
                 <Icon name="ruler" size={12} />
               </button>
               <button
+                type="button"
                 className="btn text-xs whitespace-nowrap"
                 title="Архивировать SKU"
                 aria-label="Архивировать SKU"
-                onClick={() => {
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
                   if (confirm(`Архивировать SKU ${r.nm_id}?`)) {
                     archiveMut.mutate(r.nm_id);
                   }
@@ -1056,12 +1081,13 @@ export default function Units() {
           alt=""
           style={{
             position: "fixed",
-            left: Math.min(hoverPhoto.x, window.innerWidth - 340),
-            top: Math.min(hoverPhoto.y, window.innerHeight - 340),
+            // 3:4 popup = 288×384. Не вылезаем за края viewport.
+            left: Math.min(hoverPhoto.x, window.innerWidth - 300),
+            top: Math.min(hoverPhoto.y, window.innerHeight - 400),
             zIndex: 50,
             pointerEvents: "none",
           }}
-          className="w-80 h-80 object-cover rounded-md border border-border bg-bg shadow-2xl"
+          className="w-72 h-96 object-cover rounded-md border border-border bg-bg shadow-2xl"
         />
       )}
 
@@ -1263,6 +1289,42 @@ export default function Units() {
         />
       )}
     </div>
+  );
+}
+
+function UnitsPhotoCell({
+  nm,
+  onHover,
+}: {
+  nm: number;
+  onHover: (s: { nm: number; x: number; y: number } | null) => void;
+}) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    // Если WB CDN не отдал фото (24h negative cache на бэке) — не оставляем
+    // пустое место, показываем nm_id плейсхолдер с тем же aspect-ratio.
+    return (
+      <div
+        className="w-9 h-12 rounded border border-border bg-surface-2 flex items-center justify-center text-[8px] text-muted font-mono"
+        title={`Фото SKU #${nm} не найдено на WB CDN`}
+      >
+        нет
+      </div>
+    );
+  }
+  return (
+    <img
+      src={`/api/products/${nm}/photo`}
+      alt=""
+      loading="lazy"
+      className="w-9 h-12 object-cover rounded border border-border bg-bg cursor-zoom-in"
+      onPointerEnter={(e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        onHover({ nm, x: r.right + 8, y: r.top });
+      }}
+      onPointerLeave={() => onHover(null)}
+      onError={() => setFailed(true)}
+    />
   );
 }
 

@@ -111,6 +111,28 @@
 
 ---
 
+## BUG-DEV-007: /units — фото 1×1 вместо 3:4, popup залипает, ruler/archive кнопки не реагируют, часть фото 404
+
+- **Приоритет:** P1 (UX-блокер на ключевой странице юнит-экономики)
+- **Обнаружено:** 2026-05-22 (отчёт собственника по скриншотам)
+- **Среда:** production https://rnp.sellerfriends.ru/units
+- **Причины:**
+  1. **Aspect ratio:** thumbnail `w-10 h-10` и hover-popup `w-80 h-80` — квадрат. WB карточки 3:4 → картинка обрезалась.
+  2. **Hover-popup залипал:** `onMouseLeave` не срабатывал когда table re-mountил `<img>` между enter/leave (pagination / sort / filter). Глобальных listener'ов на scroll / Escape / mousemove-away не было.
+  3. **Кнопки ruler+archive:** click-handler'ы корректны, но без `type="button"` + `stopPropagation()` — pointer-события могли поглощаться родителем (DnD-context от `DndTableProvider` на header'ах) на некоторых сценариях. Также `confirm()` мог блокироваться браузером.
+  4. **404 на фото:** basket-CDN heuristic ограничивался корзинами 1-28, но WB добавил `basket-29..36` для свежих nm_id 2025-2026.
+- **Затронутые файлы:** `frontend/src/pages/Units.tsx`, `backend/app/api/products.py`
+- **Критерии исправления:**
+  - [x] thumbnail 36×48 (3:4), hover-popup 288×384 (3:4)
+  - [x] `onPointerEnter/Leave` вместо `onMouseEnter/Leave` (более надёжный pointer-API)
+  - [x] useEffect с scroll/keydown(Escape)/mousemove-away cleanup для hover-popup
+  - [x] кнопки получили `type="button"` + `onClick(e.stopPropagation)` + `onPointerDown(e.stopPropagation)`
+  - [x] basket range расширен до 36 (с 28)
+  - [x] failed-photo placeholder вместо `display:none` (заполняем cell серым «нет» с тем же aspect-ratio, не оставляем пустоту)
+- **Статус:** Исправлено — 2026-05-22
+
+---
+
 > На момент 2026-05-17 — открытых багов нет. Недавние P0 уже закрыты (см. git history):
 >
 > - `fix(auth): don't redirect to /login from /signup on initial 401` (commit `049ebb3`)

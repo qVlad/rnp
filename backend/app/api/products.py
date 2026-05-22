@@ -29,6 +29,9 @@ _PHOTO_KEY_FMT = "wb:photo:{nm_id}"
 _PHOTO_NEG_FMT = "wb:photo404:{nm_id}"
 
 
+_MAX_BASKET = 36  # WB добавляет новые корзины (>=29 для свежих nm_id из 2025-2026).
+
+
 def _wb_photo_urls(nm_id: int) -> list[str]:
     """Candidate WB CDN URLs for a product's main photo.
 
@@ -41,15 +44,15 @@ def _wb_photo_urls(nm_id: int) -> list[str]:
     """
     vol = nm_id // 100000
     part = nm_id // 1000
-    # Heuristic primary basket (covers vol up to ~4500). The candidate list
-    # then expands outward by ±1, ±2, ... so usually we hit on the 1st or
-    # 2nd try.
-    primary = max(1, min(28, (vol // 144) + 1))
+    # Heuristic primary basket. Эмпирическая формула WB по vol — расширена до
+    # basket 36 (свежие SKU из 2025-2026 живут в 29-36; default-формула их
+    # промахивала, давая 404).
+    primary = max(1, min(_MAX_BASKET, (vol // 144) + 1))
     order: list[int] = [primary]
-    for delta in range(1, 28):
+    for delta in range(1, _MAX_BASKET):
         for sign in (-1, 1):
             n = primary + sign * delta
-            if 1 <= n <= 28 and n not in order:
+            if 1 <= n <= _MAX_BASKET and n not in order:
                 order.append(n)
     # WB switched the CDN domain in 2026 from `wb.ru` to `wbbasket.ru`.
     # Probe new domain first across all baskets, then legacy domain as fallback.
