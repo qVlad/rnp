@@ -27,9 +27,11 @@ Lead использует этот файл как master-view: сюда скл�
 > **Раунд 6 завершён (v0.25.0):** 055 breakdown popups + 054 reporting modes
 > **Раунд 7 завершён (v0.25.1):** 043 cross-source widget + reconciliation explainer
 >
-> **Раунд 8 запущен (2026-05-21 night — 2 потока):**
-> - 🔄 **TASK-LEAD-056** Per-store налоги + **TASK-UI-006** sidebar polish — main session
-> - 🔄 **UI compliance batch** (TASK-UI-001/003/013 audit + 002/004 .btn/.input/моно) — sub-agent H
+> **Раунд 8 завершён (v0.25.3):** 056 verified + UI-006 sidebar a11y + UI compliance batch (UI-001/002/003/004/013) Sprint 1
+>
+> **Раунд 9 запущен (2026-05-22 — 2 потока):**
+> - 🔄 **TASK-UI-009** Hero-KPI Dashboard + **TASK-UI-010** popover — main session
+> - 🔄 **Sprint 2 page-wide batch** (UI-007 sticky / UI-008 states / UI-011 PageHeader / UI-012 a11y / UI-014 CSS-vars) — sub-agent I
 >
 > После завершения раунда — TASK-LEAD-051 (Weekly digest) и TASK-LEAD-053 (Транзит) в следующем заходе.
 >
