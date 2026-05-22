@@ -9,7 +9,7 @@ export default function Legal() {
       <div className="max-w-3xl mx-auto px-6">
         <div className="flex items-baseline justify-between mb-8">
           <div className="font-bold text-xl">
-            <span className="text-accent">●</span> РНП
+            <span className="text-accent">●</span> SellerFriends
           </div>
           <Link to="/login" className="text-sm text-accent underline">
             ← Войти
@@ -20,7 +20,7 @@ export default function Legal() {
             оставлен inline-h1 (semantic h1 нормализован глобальным CSS). */}
         <h1 className="text-2xl font-semibold mb-4">Правила и приватность</h1>
         <p className="text-sm text-muted mb-6">
-          Сервис «РНП — Wildberries аналитика» (далее «Сервис») предоставляет
+          Сервис «SellerFriends — Wildberries аналитика» (далее «Сервис») предоставляет
           селлерам Wildberries инструменты аналитики на базе данных WB API.
           Регистрируясь, вы принимаете условия ниже.
         </p>

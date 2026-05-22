@@ -60,7 +60,7 @@ export default function LkDisclaimerModal({
         </h2>
         <div className="text-sm text-muted leading-relaxed space-y-2">
           <p>
-            Подключая кабинет селлера Wildberries (LK WB) к РНП, вы
+            Подключая кабинет селлера Wildberries (LK WB) к SellerFriends, вы
             <strong className="text-fg"> добровольно</strong> предоставляете
             нашему сервису доступ к своим временным авторизационным токенам
             (<code>AuthorizeV3</code>, <code>Wb-Seller-Lk</code>).
@@ -117,7 +117,7 @@ export default function LkDisclaimerModal({
           />
           <span className="text-sm">
             Я ознакомлен(а) и согласен(а) с условиями. Подключение токенов LK
-            WB к РНП — моё добровольное решение.
+            WB к SellerFriends — моё добровольное решение.
           </span>
         </label>
 

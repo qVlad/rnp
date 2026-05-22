@@ -240,7 +240,7 @@ function PositionsSection({ abtestId }: { abtestId: number }) {
         <div className="card text-muted text-sm space-y-1">
           <div>Снимков позиций ещё нет.</div>
           <div className="text-xs">
-            Данные собирает Chrome-расширение РНП при заходе на
+            Данные собирает Chrome-расширение SellerFriends при заходе на
             <code className="px-1">www.wildberries.ru</code> с включённой
             опцией <em>«Трекинг позиций»</em> (по умолчанию включена). Когда
             кто-то откроет каталог/поиск со SKU вашего теста — позиции

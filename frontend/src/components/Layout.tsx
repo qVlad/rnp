@@ -279,7 +279,7 @@ export default function Layout() {
           <span className="inline-block w-2 h-2 rounded-full bg-accent" aria-hidden />
           {!collapsed && (
             <div className="font-bold text-base leading-tight">
-              РНП
+              SellerFriends
               <span className="text-muted text-tiny font-normal ml-1">Wildberries</span>
             </div>
           )}

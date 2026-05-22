@@ -2763,7 +2763,7 @@ function MyTgSubsection() {
       </div>
       <div className="text-xs text-muted mb-2 leading-relaxed">
         <strong>Рекомендуемый способ — clean-bind через код:</strong> жмите
-        «🔑 Сгенерировать код», скопируйте 6 символов, в боте РНП пишите
+        «🔑 Сгенерировать код», скопируйте 6 символов, в боте SellerFriends пишите
         <code> /bind &lt;код&gt;</code>. Бот сам подвяжет ваш chat_id.<br/>
         <strong>Ручная привязка</strong> (legacy): узнайте chat_id написав
         <code> /start</code> боту, вставьте в поле ниже, сохраните.

@@ -30,7 +30,7 @@ HELP = (
     "/now — KPI сегодня / неделя / месяц\n"
     "/alerts — текущие пороговые алерты\n"
     "/pnl — короткий P&L за неделю и месяц\n"
-    "/bind <username> — привязать свой логин РНП (для multi-recipient уведомлений)\n"
+    "/bind <username> — привязать свой логин SellerFriends (для multi-recipient уведомлений)\n"
     "/unbind — отвязать свой логин\n"
     "/help — это сообщение"
 )
@@ -252,7 +252,7 @@ async def _handle_command(chat_id: int, text: str) -> None:
         if tenant_id is not None:
             await send_message(
                 chat_id,
-                f"✅ Чат привязан к РНП.\n\n"
+                f"✅ Чат привязан к SellerFriends.\n\n"
                 f"Tenant ID: {tenant_id} (через User.tg_chat_id).\n\n"
                 + HELP,
             )
@@ -262,7 +262,7 @@ async def _handle_command(chat_id: int, text: str) -> None:
                 "✅ <b>Привет!</b> Этот чат теперь получает ежедневную сводку "
                 "по умолчанию (legacy fallback).\n\n"
                 "Для <b>персональных уведомлений</b> (заявки на закупку, "
-                "правки планов) привяжите свой РНП-аккаунт:\n"
+                "правки планов) привяжите свой SellerFriends-аккаунт:\n"
                 "1. В /settings → «Мой Telegram-чат» → «🔑 Сгенерировать код»\n"
                 "2. Сюда напишите <code>/bind &lt;код&gt;</code>\n\n"
                 + HELP,
@@ -271,12 +271,12 @@ async def _handle_command(chat_id: int, text: str) -> None:
             await send_message(
                 chat_id,
                 "👋 <b>Привет!</b> Этот чат пока не привязан ни к одному "
-                "аккаунту РНП.\n\n"
+                "аккаунту SellerFriends.\n\n"
                 "<b>Чтобы получать персональные уведомления:</b>\n"
                 "1. Зайдите в /settings → «Мой Telegram-чат»\n"
                 "2. Нажмите «🔑 Сгенерировать код привязки»\n"
                 "3. Сюда напишите <code>/bind &lt;код&gt;</code>\n\n"
-                "Альтернатива — <code>/bind &lt;ваш-username-в-РНП&gt;</code>.\n\n"
+                "Альтернатива — <code>/bind &lt;ваш-username-в-SellerFriends&gt;</code>.\n\n"
                 + HELP,
             )
         return
@@ -289,15 +289,15 @@ async def _handle_command(chat_id: int, text: str) -> None:
             await send_message(chat_id, "🚫 Только текущий владелец может сменить привязку.")
         return
 
-    # /bind и /unbind — открытые для всех (любой залогиненный юзер РНП
+    # /bind и /unbind — открытые для всех (любой залогиненный юзер SellerFriends
     # может привязать свой Telegram, не только tenant-owner). Используется
     # для multi-recipient broadcast'а заявок (см. services/tg_broadcast.py).
     if cmd == "/bind":
         if not args:
             await send_message(
                 chat_id,
-                "Использование: <code>/bind &lt;ваш-username-в-РНП&gt;</code>\n\n"
-                "username — тот же что вы используете для входа в РНП.\n"
+                "Использование: <code>/bind &lt;ваш-username-в-SellerFriends&gt;</code>\n\n"
+                "username — тот же что вы используете для входа в SellerFriends.\n"
                 "Найти можно в /settings → ваш профиль.",
             )
             return
@@ -319,7 +319,7 @@ async def _handle_command(chat_id: int, text: str) -> None:
             if not await _is_authorized(chat_id):
                 await send_message(
                     chat_id,
-                    "🚫 Чат не привязан ни к одному аккаунту РНП.\n\n"
+                    "🚫 Чат не привязан ни к одному аккаунту SellerFriends.\n\n"
                     "Используйте <code>/bind &lt;username&gt;</code> или "
                     "сгенерируйте код привязки в /settings → «Мой Telegram-чат».",
                 )

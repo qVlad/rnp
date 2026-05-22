@@ -45,7 +45,7 @@ export default function Login() {
         className="card w-full max-w-md flex flex-col gap-4"
       >
         <div className="font-bold text-xl mb-2">
-          <span className="text-accent">●</span> РНП ·{" "}
+          <span className="text-accent">●</span> SellerFriends ·{" "}
           {needsBootstrap ? "Первый запуск" : "Вход"}
         </div>
 

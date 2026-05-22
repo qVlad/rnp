@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    app_name: str = "RNP Wildberries"
+    app_name: str = "SellerFriends"
     debug: bool = False
 
     # Версия сервиса для отображения в UI и логах. Подставляется в .env

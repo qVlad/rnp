@@ -68,7 +68,7 @@ export default function Reconciliation4Way() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="4-way Сверка"
-        subtitle="Уникально для РНП — 4 источника данных side-by-side. Дифференциатор vs Eggheads / TrueStats / MPump."
+        subtitle="Уникально для SellerFriends — 4 источника данных side-by-side. Дифференциатор vs Eggheads / TrueStats / MPump."
         actions={
           <div className="flex gap-1">
             {[4, 8, 12, 24].map((w) => (

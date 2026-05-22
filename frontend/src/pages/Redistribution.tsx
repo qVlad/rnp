@@ -458,7 +458,7 @@ function LkStatusCard({
             <strong>Как подключить:</strong>
             <ol className="list-decimal list-inside mt-1 space-y-1">
               <li>
-                Установите Chrome-расширение РНП (если ещё нет).
+                Установите Chrome-расширение SellerFriends (если ещё нет).
               </li>
               <li>
                 Откройте{" "}

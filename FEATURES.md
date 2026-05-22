@@ -1,4 +1,4 @@
-# РНП — Каталог функционала
+# SellerFriends — Каталог функционала
 
 > **Цель документа.** Полный реестр всех функций сервиса (UI-страницы, API endpoint'ы, сервисы, фоновые задачи).
 >
@@ -226,7 +226,7 @@
 | Триггеры VIEWS/TIME/BUDGET | Условия ротации | `services/abtest/rotation.py` | — |
 | Auto-budget topup | Автодокачка баланса РК | `services/abtest/budget.py` | — |
 | Photo upload в WB | `POST /content/v3/media/file` с rate-limit 8.5/min | `services/abtest/photo_storage.py` | — |
-| **Chrome-расширение (MV3)** | Companion-расширение к РНП: launcher A/B-теста на странице карточки в seller-кабинете, badge активного теста, polling winner-событий, трекинг позиций в каталоге WB | `extension/` (Vite + React + @crxjs), backend `api/extension.py` | Bearer JWT |
+| **Chrome-расширение (MV3)** | Companion-расширение к SellerFriends: launcher A/B-теста на странице карточки в seller-кабинете, badge активного теста, polling winner-событий, трекинг позиций в каталоге WB | `extension/` (Vite + React + @crxjs), backend `api/extension.py` | Bearer JWT |
 
 **Миграция 0033**: 11 таблиц + `wb_campaign_budget`.
 
@@ -510,7 +510,7 @@ Daily digest через Celery beat в 09:00 MSK. TG_BOT_TOKEN в `.env`.
 | exportPdf | html2canvas + jspdf | `lib/exportPdf.ts` |
 | shareUrl | base64 URL hash encoding | `lib/shareUrl.ts` |
 | CSS-vars | `--bg`, `--surface`, `--accent`, `--focus-ring` и т.д. | `styles.css`, `tailwind.config.js` |
-| **PWA-манифест + service worker** (TASK-LEAD-032) | `frontend/public/manifest.webmanifest` (name="РНП", icons 192/512, theme="#0f172a", display=standalone) + минимальный SW `/sw.js` (no-op install/activate/fetch для PWA-валидации). Регистрация в `main.tsx`. Apple meta-tags + apple-touch-icon. Позволяет «Add to home screen» на iOS Safari + Android Chrome. Заменяет native mobile app. | `frontend/public/manifest.webmanifest`, `frontend/public/sw.js`, `frontend/index.html`, `frontend/src/main.tsx` |
+| **PWA-манифест + service worker** (TASK-LEAD-032) | `frontend/public/manifest.webmanifest` (name="SellerFriends", icons 192/512, theme="#0f172a", display=standalone) + минимальный SW `/sw.js` (no-op install/activate/fetch для PWA-валидации). Регистрация в `main.tsx`. Apple meta-tags + apple-touch-icon. Позволяет «Add to home screen» на iOS Safari + Android Chrome. Заменяет native mobile app. | `frontend/public/manifest.webmanifest`, `frontend/public/sw.js`, `frontend/index.html`, `frontend/src/main.tsx` |
 | **Маркер «Сегодня» в Cash-flow** (TASK-LEAD-032) | На странице `/payment-calendar` — `ReferenceLine` на сегодняшней дате в LineChart (dashed warn-color, label «Сегодня») + цветовая дифференциация past/future в таблице расписания (past = full opacity, future = `/70`, today-строка = `border-warning bg-warning/5` + бейдж). Если today вне видимого периода — линия не рендерится. | `pages/PaymentCalendar.tsx` |
 
 ### Tokens

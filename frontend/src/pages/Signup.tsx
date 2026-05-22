@@ -61,7 +61,7 @@ export default function Signup() {
         className="card w-full max-w-md flex flex-col gap-4"
       >
         <div className="font-bold text-xl mb-2">
-          <span className="text-accent">●</span> РНП · Регистрация компании
+          <span className="text-accent">●</span> SellerFriends · Регистрация компании
         </div>
 
         <p className="text-xs text-muted -mt-3">
