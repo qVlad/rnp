@@ -1,7 +1,0 @@
-{
-  "task_id": "BUG-DEV-007",
-  "agent": "Claude Opus 4.7 — main",
-  "started_at": "2026-05-22T10:56:08Z",
-  "expected_minutes": 20,
-  "notes": "debug deploy: alert() on click"
-}
