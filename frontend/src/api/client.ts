@@ -91,6 +91,33 @@ export interface WeeklyReportByManager {
   wow_margin_pp: number;
 }
 
+// TASK-LEAD-064 — Top-3 actionable рекомендации на неделю
+export interface WeeklyRecommendation {
+  nm_id: number;
+  vendor_code: string | null;
+  brand: string | null;
+  rule: "stockout" | "drr_high" | "returns_high";
+  suggestion_text: string;
+  severity: "high" | "medium" | "low";
+}
+
+// HYP-002 — preview списка recipient'ов для confirm-диалога TG-share
+export interface ShareToTelegramPreview {
+  directors: Array<{ user_id: number; name: string }>;
+  self_has_tg: boolean;
+  self_name: string | null;
+}
+
+export interface ShareToTelegramResult {
+  shared: boolean;
+  fallback?: "download_pdf";
+  reason?: string;
+  sent: number;
+  failed?: number;
+  recipients: Array<string | number>;
+  mode?: "self" | "all_directors";
+}
+
 export interface Chargeback {
   id: number;
   rrd_id: number;
@@ -1567,6 +1594,27 @@ paymentOrderDelete: (payment_order_id: string) =>
       week_start: string;
       items: WeeklyReportByManager[];
     }>(`/api/weekly-report/by-manager?week_start=${week_start}`),
+
+  // ── Weekly report — Top-3 рекомендации (TASK-LEAD-064) ──
+  weeklyReportRecommendations: (week_start: string) =>
+    request<{
+      week_start: string;
+      items: WeeklyRecommendation[];
+    }>(`/api/weekly-report/recommendations?week_start=${week_start}`),
+
+  // ── Weekly report — TG-share (HYP-002) ──
+  weeklyReportShareToTelegramPreview: () =>
+    request<ShareToTelegramPreview>(
+      `/api/weekly-report/share-to-telegram/preview`,
+    ),
+  weeklyReportShareToTelegram: (body: {
+    week_start: string;
+    recipient_filter: "all_directors" | "self";
+  }) =>
+    request<ShareToTelegramResult>(`/api/weekly-report/share-to-telegram`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   // ── Reconciliation 4-way (Stratege ставка #2) ──
   reconciliationImport: async (file: File, source: string = "bookkeeper") => {

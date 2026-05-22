@@ -2243,11 +2243,11 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Источник:** `feedback-reviews/round-12-2026-05-22.md` — UX-manager 051
 - **Описание:** Сейчас WeeklyReport = голые KPI. Менеджер открыл понедельник утром — хочет «брифинг»: «Top-3 действий на неделю». Auto-generated heuristics: stockout → «#X закончился, нужна поставка», DRR>20% → «#X — снизить ставки», returns_pct>30% → «#X — проверить размерную сетку». Heuristics простые, но превращают digest в actionable.
 - **Критерии готовности:**
-  - [ ] Backend: `services/weekly_recommendations.py` — 3 правила (stockout, drr_high, returns_high) → list of `{nm_id, vendor_code, brand, rule, suggestion_text}`
-  - [ ] API: `/api/weekly-report/recommendations?week_start=&brand=`
-  - [ ] UI: секция «Top-3 действий» вверху страницы (после Header, до KPI)
+  - [x] Backend: `services/weekly_recommendations.py` — 3 правила (stockout, drr_high, returns_high) → list of `{nm_id, vendor_code, brand, rule, suggestion_text, severity}`. Сортировка severity desc → revenue_impact desc; топ-3.
+  - [x] API: `GET /api/weekly-report/recommendations?week_start=YYYY-MM-DD` (brands-filter применяется автоматически — manager видит свой scope; bookkeeper — 403)
+  - [x] UI: секция «Top-N действий на эту неделю» вверху страницы (между Header и Scoreboard / KPI grid); скрыта если рекомендаций нет; клик → `/units?nm_id=X`
 - **Зависимости:** TASK-LEAD-051 ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-23 — Developer+DE (Claude Opus 4.7)
 
 ---
 

@@ -11,7 +11,11 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type WeeklyReportByManager } from "@/api/client";
+import {
+  api,
+  type WeeklyReportByManager,
+  type WeeklyRecommendation,
+} from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
 import { exportToPdf } from "@/lib/exportPdf";
@@ -211,6 +215,113 @@ export default function WeeklyReport() {
   const curKpis = curQ.data?.kpis ?? [];
   const prevKpis = prevQ.data?.kpis ?? [];
 
+  // TASK-LEAD-064 — Top-3 рекомендации (доступно всем кроме bookkeeper).
+  const canSeeRecs = user?.role !== "bookkeeper";
+  const recsQ = useQuery<{
+    week_start: string;
+    items: WeeklyRecommendation[];
+  }>({
+    queryKey: ["weekly-report", "recommendations", current.from],
+    queryFn: () => api.weeklyReportRecommendations(current.from),
+    enabled: canSeeRecs,
+  });
+
+  // HYP-002 — TG-share
+  const [sharing, setSharing] = useState(false);
+  const [toast, setToast] = useState<{ text: string; type: "ok" | "err" } | null>(
+    null,
+  );
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const doShareToTelegram = async () => {
+    if (sharing) return;
+    setSharing(true);
+    try {
+      // Resolve recipients first для confirm-диалога.
+      const preview = await api.weeklyReportShareToTelegramPreview();
+      const isManager = user?.role === "manager";
+      const filter: "self" | "all_directors" = isManager
+        ? "self"
+        : "all_directors";
+
+      let confirmMsg: string;
+      if (filter === "self") {
+        if (!preview.self_has_tg) {
+          // Сразу fallback на PDF — TG не привязан.
+          if (
+            !confirm(
+              "У тебя не привязан Telegram-чат. Скачать PDF для ручной отправки?",
+            )
+          ) {
+            setSharing(false);
+            return;
+          }
+          await doExport();
+          setToast({
+            text: "PDF скачан · отправь вручную через @username",
+            type: "ok",
+          });
+          setSharing(false);
+          return;
+        }
+        confirmMsg = `Отправить отчёт себе в Telegram (${preview.self_name ?? "личный чат"})?`;
+      } else {
+        const names = preview.directors.map((d) => d.name).join(", ");
+        const n = preview.directors.length;
+        confirmMsg = n
+          ? `Отправить отчёт в Telegram директорам (${n}: ${names})?`
+          : "Ни один директор не привязал Telegram-чат. Скачать PDF?";
+        if (!n) {
+          if (confirm(confirmMsg)) {
+            await doExport();
+            setToast({ text: "PDF скачан", type: "ok" });
+          }
+          setSharing(false);
+          return;
+        }
+      }
+
+      if (!confirm(confirmMsg)) {
+        setSharing(false);
+        return;
+      }
+
+      const result = await api.weeklyReportShareToTelegram({
+        week_start: current.from,
+        recipient_filter: filter,
+      });
+
+      if (result.shared) {
+        setToast({
+          text: `✓ Отправлено в ${result.sent} ${result.sent === 1 ? "чат" : "чат(ов)"}`,
+          type: "ok",
+        });
+      } else if (result.fallback === "download_pdf") {
+        await doExport();
+        setToast({
+          text: "Нет привязки TG. PDF скачан — отправь вручную через @username",
+          type: "ok",
+        });
+      } else {
+        setToast({
+          text: `Не удалось отправить: ${result.reason ?? "ошибка"}`,
+          type: "err",
+        });
+      }
+    } catch (e: any) {
+      setToast({
+        text: `Ошибка: ${e?.message || e}`,
+        type: "err",
+      });
+    } finally {
+      setSharing(false);
+    }
+  };
+
   // TASK-LEAD-061 — Multi-manager scoreboard (только для head/director).
   const canSeeScoreboard =
     user?.role === "director" || user?.role === "head_of_sales";
@@ -282,9 +393,26 @@ export default function WeeklyReport() {
               <Icon name={exporting ? "spinner" : "pdf"} size={12} className={exporting ? "animate-spin" : ""} />{" "}
               PDF
             </button>
+            <button
+              type="button"
+              className="btn text-xs"
+              onClick={doShareToTelegram}
+              disabled={sharing || isLoading}
+              title="Отправить отчёт в Telegram"
+            >
+              {sharing ? "Отправляем…" : "📨 Отправить в Telegram"}
+            </button>
           </div>
         }
       />
+      {toast && (
+        <div
+          className={`card text-sm ${toast.type === "ok" ? "text-success" : "text-danger"}`}
+          role="status"
+        >
+          {toast.text}
+        </div>
+      )}
 
       <div ref={reportRef} className="flex flex-col gap-4">
         {/* Header card — для PDF */}
@@ -310,6 +438,35 @@ export default function WeeklyReport() {
             </div>
           </div>
         </section>
+
+        {/* TASK-LEAD-064 — Top-3 actionable рекомендации.
+            Скрыта если recs пуст (не показываем пустой блок). */}
+        {canSeeRecs && recsQ.data?.items && recsQ.data.items.length > 0 && (
+          <section className="card border-l-4 border-l-warn">
+            <h2 className="font-medium mb-3">
+              Top-{recsQ.data.items.length} действий на эту неделю
+            </h2>
+            <ul className="flex flex-col gap-2 text-sm">
+              {recsQ.data.items.map((r) => (
+                <li key={`${r.rule}-${r.nm_id}`} className="flex gap-2 items-start">
+                  <span className="text-base leading-tight">
+                    {r.severity === "high" ? "🚨" : "⚠️"}
+                  </span>
+                  <a
+                    href={`/units?nm_id=${r.nm_id}`}
+                    className="text-fg hover:text-accent hover:underline"
+                  >
+                    {r.suggestion_text}
+                  </a>
+                </li>
+              ))}
+            </ul>
+            <div className="text-xs text-muted mt-2">
+              Эвристики: остатки = 0 при трафике; ДРР &gt; 20%; возвраты &gt; 30%.
+              Клик → карточка в `/units`.
+            </div>
+          </section>
+        )}
 
         {/* TASK-LEAD-061 — По менеджерам (только для head/director, видна над KPI grid'ом) */}
         {canSeeScoreboard && (
