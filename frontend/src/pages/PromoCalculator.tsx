@@ -235,7 +235,16 @@ export default function PromoCalculator() {
           <>
             Симулирует impact акции (скидка × N дней × ожидаемый рост продаж)
             на маржу и выручку per-SKU. Источник baseline — реальные данные
-            выкупов из <code>wb_report_detail</code> за выбранное окно.
+            выкупов из <code>wb_report_detail</code> за выбранное окно.{" "}
+            <a
+              href="/docs/PROMO_CALCULATOR.md"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline text-accent hover:text-accent-strong"
+              title="Открыть методику и формулы калькулятора в новом окне"
+            >
+              📘 Методика
+            </a>
           </>
         }
       />

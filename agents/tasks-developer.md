@@ -638,6 +638,28 @@
 
 ---
 
+### TASK-DEV-027: PROMO_CALCULATOR.md + inline-ссылка из UI `/promo-calculator`
+
+- **Исполнитель:** Developer (main session)
+- **Приоритет:** P2 (doc-debt; пользователь спросил «где доки калькулятора акций» — описание разбросано по FEATURES.md/CLAUDE.md/tasks-lead)
+- **Оценка:** XS (1ч)
+- **Источник:** Запрос пользователя 2026-05-22 — «заведи единое описание для этой фичи и сделай чтобы оно было доступно из интерфейса и дай inline ссылку на него»
+- **Описание:**
+  1. Создать `frontend/public/docs/PROMO_CALCULATOR.md` (по образцу `UNIT_PLAN.md`): семантика «акция выгодна / нет», формулы pure-функции `simulate_promo`, источник baseline (wb_report_detail), WB Promo Calendar API (graceful fallback), RBAC, ограничения.
+  2. Файл живёт **только** в `frontend/public/docs/` (не в корне!) — поскольку Docker build context для frontend = `./frontend`, симлинк на корневой `.md` сломал бы COPY. Это `single source of truth` для user-facing документации.
+  3. Inline ссылка в `frontend/src/pages/PromoCalculator.tsx`: PageHeader subtitle → `<a href="/docs/PROMO_CALCULATOR.md" target="_blank">📘 Методика</a>`.
+  4. Запись в `CLAUDE.md` § «Где искать что» с указанием пути `frontend/public/docs/PROMO_CALCULATOR.md` (и URL `/docs/PROMO_CALCULATOR.md` для UI).
+- **Критерии готовности:**
+  - [x] `frontend/public/docs/PROMO_CALCULATOR.md` создан (~240 строк, по структуре UNIT_PLAN.md)
+  - [x] vite build не падает (файл попадает в `dist/docs/` вербатим, nginx сервит как `/docs/PROMO_CALCULATOR.md`)
+  - [x] Inline-link в PageHeader виден, открывает .md в новом tab
+  - [x] `CLAUDE.md` обновлён
+  - [ ] Smoke: дёрнуть `https://rnp.sellerfriends.ru/docs/PROMO_CALCULATOR.md` после deploy → 200 + содержимое
+- **Зависимости:** TASK-LEAD-050 ✅ (PromoCalculator фича существует)
+- **Статус:** В работе — 2026-05-22 — Developer (main session)
+
+---
+
 ### TASK-DEV-026: `/bind` `/unbind` команды TG-бота для self-binding User.tg_chat_id
 
 - **Исполнитель:** Developer

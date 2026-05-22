@@ -238,6 +238,7 @@ Uncommitted `M`-файлы, которые ты в этой сессии **са�
 | Стратегический cockpit (бизнес-метрики, decision log) | [`STRATEGY_COCKPIT.md`](STRATEGY_COCKPIT.md) |
 | План перераспределения функционала между модулями | [`REDISTRIBUTION_PLAN.md`](REDISTRIBUTION_PLAN.md) |
 | **UNIT-план — методика и формулы** (60 колонок Excel → DTO, 1:1 с LeymanKids) | [`UNIT_PLAN.md`](UNIT_PLAN.md) ⭐ |
+| **Калькулятор рентабельности WB-акций — методика, формулы, edge cases** (доступна и через UI: `/docs/PROMO_CALCULATOR.md`) | [`frontend/public/docs/PROMO_CALCULATOR.md`](frontend/public/docs/PROMO_CALCULATOR.md) ⭐ |
 
 ## Стек
 
