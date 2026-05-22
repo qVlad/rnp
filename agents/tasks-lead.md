@@ -24,9 +24,12 @@ Lead использует этот файл как master-view: сюда скл�
 > **Раунд 5 завершён (v0.24.0 — 5 фич РОПа на проде):**
 > - ✅ TASK-LEAD-049 inline edit Units / 050 калькулятор акций / 051 weekly digest / 052 локализация / 053 транзит-калькулятор
 >
-> **Раунд 6 запущен (2026-05-21 night — 2 потока):**
-> - 🔄 **TASK-LEAD-055** Breakdown-попапы на KPI Dashboard (P2, S) — main session
-> - 🔄 **TASK-LEAD-054** Режимы отчётности «Управленческая / Финансовая» (P2, M) — sub-agent F после push 055
+> **Раунд 6 завершён (v0.25.0):** 055 breakdown popups + 054 reporting modes
+> **Раунд 7 завершён (v0.25.1):** 043 cross-source widget + reconciliation explainer
+>
+> **Раунд 8 запущен (2026-05-21 night — 2 потока):**
+> - 🔄 **TASK-LEAD-056** Per-store налоги + **TASK-UI-006** sidebar polish — main session
+> - 🔄 **UI compliance batch** (TASK-UI-001/003/013 audit + 002/004 .btn/.input/моно) — sub-agent H
 >
 > После завершения раунда — TASK-LEAD-051 (Weekly digest) и TASK-LEAD-053 (Транзит) в следующем заходе.
 >
