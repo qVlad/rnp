@@ -98,10 +98,9 @@ function monthlySeries(
   return out;
 }
 
-function fmtPct(v: number | null | undefined): string {
-  if (v === null || v === undefined || !Number.isFinite(v)) return "—";
-  return `${v >= 0 ? "" : ""}${fmtPct(v, 1)}`;
-}
+// Локальная функция убрана — sub-agent в TASK-UI-004 разрешил `${v.toFixed(1)}%`
+// → `${fmtPct(v, 1)}` через imported helper. См. `@/lib/format` (fmtPct
+// принимает 2 аргумента: значение и precision).
 
 function fmtYoY(curr: number, prev: number): { delta: number; pct: number | null } {
   const delta = curr - prev;

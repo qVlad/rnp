@@ -31,6 +31,7 @@ import {
   YAxis,
 } from "recharts";
 import { api, type TariffTimelineRow } from "@/api/client";
+import { fmtPct } from "@/lib/format";
 
 type Tab = "box" | "pallet" | "commission";
 

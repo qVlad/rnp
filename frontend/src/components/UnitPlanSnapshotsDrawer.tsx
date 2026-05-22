@@ -15,7 +15,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type UnitPlanSnapshotDiff } from "@/api/client";
 import { fmtNum, fmtRub } from "@/lib/format";
 import { Icon } from "./Icon";
-import { Icon } from "./Icon";
 
 interface Props {
   open: boolean;

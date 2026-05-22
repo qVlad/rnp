@@ -16,7 +16,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub, fmtNum, fmtPct } from "@/lib/format";
 import { Icon } from "./Icon";
-import { Icon } from "./Icon";
 
 type Format = "currency" | "percent" | "number";
 

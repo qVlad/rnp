@@ -22,7 +22,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AbTestVariantPhoto, abtestApi } from "@/api/abtest";
 import { Icon } from "../Icon";
-import { Icon } from "../Icon";
 
 export type StagedFile = {
   order: number;
