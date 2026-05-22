@@ -129,7 +129,8 @@
   - [x] кнопки получили `type="button"` + `onClick(e.stopPropagation)` + `onPointerDown(e.stopPropagation)`
   - [x] basket range расширен до 36 (с 28)
   - [x] failed-photo placeholder вместо `display:none` (заполняем cell серым «нет» с тем же aspect-ratio, не оставляем пустоту)
-- **Статус:** Исправлено — 2026-05-22
+  - [x] **Follow-up 2026-05-22 (v0.27.1):** native `confirm()` для archive-кнопки молча возвращал false в некоторых браузерных конфигурациях (pop-up blocker / cross-origin) → click фирился, но мутация не запускалась = «кнопка не работает». Заменено на React-modal с явными «Отмена» / «Архивировать» кнопками + `data-testid` + `aria-label`. Увеличена hit-area кнопок (px-2 py-1.5 + icon 14) и добавлен hover hint (accent/warning border).
+- **Статус:** Исправлено — 2026-05-22 (v0.27.1 follow-up)
 
 ---
 

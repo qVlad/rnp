@@ -236,6 +236,11 @@ export default function Units() {
   const clearPriceOverrides = () => setPriceOverrides({});
   const priceOverridesCount = Object.keys(priceOverrides).length;
   const [sizesModalFor, setSizesModalFor] = useState<number | null>(null);
+  // BUG-DEV-007 follow-up: native confirm() блокируется некоторыми браузерами
+  // (Chrome > 90 для cross-origin / pop-up-blocker контекстов). Кнопка archive
+  // "не работала" не потому что click не фирился — а потому что confirm()
+  // молча возвращал false. Заменили на React-modal.
+  const [archiveConfirmFor, setArchiveConfirmFor] = useState<number | null>(null);
   const [columnOrder, setColumnOrder] = useState<string[]>(() => {
     try {
       const raw = localStorage.getItem(COL_ORDER_KEY);
@@ -726,31 +731,33 @@ export default function Units() {
             <div className="flex gap-1">
               <button
                 type="button"
-                className="btn text-xs whitespace-nowrap"
+                data-testid={`units-sizes-btn-${r.nm_id}`}
+                className="btn text-xs whitespace-nowrap px-2 py-1.5 hover:border-accent hover:text-accent"
                 title="Разбивка по размерам"
                 aria-label="Разбивка по размерам"
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={(e) => {
                   e.stopPropagation();
+                  e.preventDefault();
                   setSizesModalFor(r.nm_id);
                 }}
               >
-                <Icon name="ruler" size={12} />
+                <Icon name="ruler" size={14} />
               </button>
               <button
                 type="button"
-                className="btn text-xs whitespace-nowrap"
+                data-testid={`units-archive-btn-${r.nm_id}`}
+                className="btn text-xs whitespace-nowrap px-2 py-1.5 hover:border-warning hover:text-warning"
                 title="Архивировать SKU"
                 aria-label="Архивировать SKU"
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (confirm(`Архивировать SKU ${r.nm_id}?`)) {
-                    archiveMut.mutate(r.nm_id);
-                  }
+                  e.preventDefault();
+                  setArchiveConfirmFor(r.nm_id);
                 }}
               >
-                <Icon name="archive" size={12} />
+                <Icon name="archive" size={14} />
               </button>
             </div>
           );
@@ -1290,6 +1297,45 @@ export default function Units() {
           }
           onClose={() => setSizesModalFor(null)}
         />
+      )}
+      {archiveConfirmFor !== null && (
+        <div
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+          onClick={() => setArchiveConfirmFor(null)}
+        >
+          <div
+            className="bg-bg border border-border rounded-lg shadow-xl max-w-sm w-full p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-base font-semibold mb-2">Архивировать SKU?</div>
+            <div className="text-sm text-muted mb-4">
+              SKU <span className="font-mono">#{archiveConfirmFor}</span> будет скрыт из всех
+              аналитических разделов. Можно вернуть позже через «Включая архив» + кнопку «↩».
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                className="btn text-sm"
+                onClick={() => setArchiveConfirmFor(null)}
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                className="btn-primary text-sm"
+                disabled={archiveMut.isPending}
+                onClick={() => {
+                  const nm = archiveConfirmFor;
+                  if (nm == null) return;
+                  archiveMut.mutate(nm);
+                  setArchiveConfirmFor(null);
+                }}
+              >
+                {archiveMut.isPending ? "Архивирую…" : "Архивировать"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
