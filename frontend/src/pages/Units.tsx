@@ -808,14 +808,9 @@ export default function Units() {
                 className="btn text-xs whitespace-nowrap px-2 py-1.5 hover:border-accent hover:text-accent"
                 title="Разбивка по размерам"
                 aria-label="Разбивка по размерам"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                  setSizesModalFor(r.nm_id);
-                }}
+                onClick={() => setSizesModalFor(r.nm_id)}
               >
-                <Icon name="ruler" size={14} />
+                <Icon name="ruler" size={14} /> Размеры
               </button>
               <button
                 type="button"
@@ -823,14 +818,9 @@ export default function Units() {
                 className="btn text-xs whitespace-nowrap px-2 py-1.5 hover:border-warning hover:text-warning"
                 title="Архивировать SKU"
                 aria-label="Архивировать SKU"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                  setArchiveConfirmFor(r.nm_id);
-                }}
+                onClick={() => setArchiveConfirmFor(r.nm_id)}
               >
-                <Icon name="archive" size={14} />
+                <Icon name="archive" size={14} /> Архив
               </button>
             </div>
           );
