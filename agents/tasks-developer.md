@@ -654,9 +654,10 @@
   - [x] vite build не падает (файл попадает в `dist/docs/` вербатим, nginx сервит как `/docs/PROMO_CALCULATOR.md`)
   - [x] Inline-link в PageHeader виден, открывает .md в новом tab
   - [x] `CLAUDE.md` обновлён
-  - [ ] Smoke: дёрнуть `https://rnp.sellerfriends.ru/docs/PROMO_CALCULATOR.md` после deploy → 200 + содержимое
+  - [x] Smoke: `https://rnp.sellerfriends.ru/docs/PROMO_CALCULATOR.md` → HTTP 200 + содержимое (verified 2026-05-22)
 - **Зависимости:** TASK-LEAD-050 ✅ (PromoCalculator фича существует)
-- **Статус:** В работе — 2026-05-22 — Developer (main session)
+- **Follow-up (опционально):** Content-Type сейчас `application/octet-stream` — в некоторых браузерах кликнет download вместо inline render. Можно добавить `types { text/markdown md; }` в `frontend/nginx-spa.conf` чтобы .md открывались inline. Не критично — raw текст всё равно читаем.
+- **Статус:** Выполнено — 2026-05-22 (commit `2508765` v0.28.1 → задеплоено в составе v0.28.2 commit `7eb6ca6` параллельной сессией)
 
 ---
 
