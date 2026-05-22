@@ -2178,12 +2178,16 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Источник:** `feedback-reviews/round-12-2026-05-22.md` — UX-rop 051
 - **Описание:** Сейчас `/weekly-report` — manager-digest (один бренд-scope). РОП открывает страницу ожидая увидеть сводку по менеджерам: «Иванов = brand A,B → выручка 2.3 млн, WoW -8%; Петров = brand C → выручка 0.9 млн, WoW +15%». Добавить секцию «По менеджерам» наверху страницы (для head_of_sales / director). Manager не видит секцию.
 - **Критерии готовности:**
-  - [ ] Backend: `/api/weekly-report/by-manager?week_start=YYYY-MM-DD` → `[{manager_user_id, manager_name, brands: [...], revenue, margin, wow_revenue_pct, wow_margin_pct}]`
-  - [ ] Группировка через `brand_assignments` (одна запись на manager → brand). Если manager имеет N брендов — суммируем по nm_id из этих брендов.
-  - [ ] UI: новая секция в `WeeklyReport.tsx` (скрыта для role=manager), таблица с сортировкой по WoW.
-  - [ ] Smoke: head_of_sales видит N строк (N = число активных менеджеров)
+  - [x] Backend: `/api/weekly-report/by-manager?week_start=YYYY-MM-DD` → `[{manager_user_id, manager_name, brands: [...], revenue, margin, wow_revenue_pct, wow_margin_pp, orders, returns, ...}]`
+  - [x] Группировка через `brand_assignments` (одна запись на manager → brand). Если manager имеет N брендов — суммируем по nm_id из этих брендов через `compute_dashboard(brands=brand_set, mode=final)`.
+  - [x] UI: новая секция «По менеджерам» в `WeeklyReport.tsx` над KPI grid'ом (скрыта для role=manager — `canSeeScoreboard = director|head_of_sales`), таблица с сортировкой по любому столбцу (default — выручка desc).
+  - [x] Smoke: head_of_sales видит N строк (N = число активных менеджеров). Менеджеры без `brand_assignments` — в хвосте с нулями.
+- **Реализация:**
+  - Backend: `services/weekly_report.py:by_manager()` + `api/weekly_report.py` (router `/api/weekly-report`, guard `require_director_or_head`). Регистрация в `main.py`. WoW vs. предыдущая неделя (`week_start - 7d`).
+  - Frontend: `api.weeklyReportByManager()` + interface `WeeklyReportByManager` в `client.ts`. Секция-таблица в `pages/WeeklyReport.tsx` с sortable `<th>` (asc↔desc toggle). WoW дельты — через `DeltaCell` (good-direction-aware). Empty state — ссылка на `/brands`.
+  - Docs: запись в `USER_GUIDE.md` (подсекция «Для РОПа: scoreboard по менеджерам») и `FEATURES.md` (раздел «1. Дашборд и KPI» рядом с TASK-LEAD-051).
 - **Зависимости:** TASK-LEAD-051 ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-22 — Sub-agent N (раунд 14)
 
 ---
 

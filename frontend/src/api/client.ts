@@ -73,6 +73,24 @@ export type AvailableTenant = {
   last_active_at: string | null;
 };
 
+// TASK-LEAD-061 — Multi-manager scoreboard в /weekly-report для head/director
+export interface WeeklyReportByManager {
+  manager_user_id: number;
+  manager_name: string;
+  username: string;
+  brands: string[];
+  no_brands: boolean;
+  revenue: number;
+  margin: number;
+  margin_pct: number;
+  orders: number;
+  returns: number;
+  prev_revenue: number;
+  prev_margin_pct: number;
+  wow_revenue_pct: number | null;
+  wow_margin_pp: number;
+}
+
 export interface Chargeback {
   id: number;
   rrd_id: number;
@@ -1542,6 +1560,13 @@ paymentOrderDelete: (payment_order_id: string) =>
         sparkline_revenue: number[];
       }>;
     }>(`/api/managers-kpi?year=${year}&month=${month}&mode=${mode}`),
+
+  // ── Weekly report — multi-manager scoreboard (TASK-LEAD-061) ──
+  weeklyReportByManager: (week_start: string) =>
+    request<{
+      week_start: string;
+      items: WeeklyReportByManager[];
+    }>(`/api/weekly-report/by-manager?week_start=${week_start}`),
 
   // ── Reconciliation 4-way (Stratege ставка #2) ──
   reconciliationImport: async (file: File, source: string = "bookkeeper") => {

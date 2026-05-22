@@ -11,12 +11,13 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/api/client";
+import { api, type WeeklyReportByManager } from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
 import { exportToPdf } from "@/lib/exportPdf";
 import { Icon } from "@/components/Icon";
 import PageHeader from "@/components/PageHeader";
+import DeltaCell from "@/components/DeltaCell";
 
 type Week = { from: string; to: string };
 
@@ -94,6 +95,27 @@ export default function WeeklyReport() {
   const reportRef = useRef<HTMLDivElement>(null);
   const [exporting, setExporting] = useState(false);
   const [shiftWeek, setShiftWeek] = useState(0); // 0 = last closed, -1 = prev, +1 = next
+
+  // TASK-LEAD-061 — сортировка scoreboard'а
+  type SortKey =
+    | "manager_name"
+    | "revenue"
+    | "margin"
+    | "wow_revenue_pct"
+    | "wow_margin_pp"
+    | "orders"
+    | "returns";
+  const [sortKey, setSortKey] = useState<SortKey>("revenue");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const onSort = (k: SortKey) => {
+    if (k === sortKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(k);
+      // По умолчанию для текстовых полей — asc, для числовых — desc.
+      setSortDir(k === "manager_name" ? "asc" : "desc");
+    }
+  };
 
   const baseWeek = useMemo(() => lastClosedWeek(), []);
   const current = useMemo(() => {
@@ -189,6 +211,18 @@ export default function WeeklyReport() {
   const curKpis = curQ.data?.kpis ?? [];
   const prevKpis = prevQ.data?.kpis ?? [];
 
+  // TASK-LEAD-061 — Multi-manager scoreboard (только для head/director).
+  const canSeeScoreboard =
+    user?.role === "director" || user?.role === "head_of_sales";
+  const scoreboardQ = useQuery<{
+    week_start: string;
+    items: WeeklyReportByManager[];
+  }>({
+    queryKey: ["weekly-report", "by-manager", current.from],
+    queryFn: () => api.weeklyReportByManager(current.from),
+    enabled: canSeeScoreboard,
+  });
+
   const doExport = async () => {
     if (!reportRef.current) return;
     setExporting(true);
@@ -276,6 +310,125 @@ export default function WeeklyReport() {
             </div>
           </div>
         </section>
+
+        {/* TASK-LEAD-061 — По менеджерам (только для head/director, видна над KPI grid'ом) */}
+        {canSeeScoreboard && (
+          <section className="card">
+            <h2 className="font-medium mb-3">По менеджерам</h2>
+            {scoreboardQ.isLoading ? (
+              <div className="text-muted text-sm">Загрузка…</div>
+            ) : scoreboardQ.isError ? (
+              <div className="text-danger text-sm">
+                Не удалось загрузить: {(scoreboardQ.error as Error)?.message || "ошибка"}
+              </div>
+            ) : !scoreboardQ.data?.items || scoreboardQ.data.items.length === 0 ? (
+              <div className="text-muted text-sm">
+                Менеджеры ещё не назначены. Настройка →{" "}
+                <a href="/brands" className="text-accent hover:underline">
+                  /brands
+                </a>
+              </div>
+            ) : (
+              (() => {
+                const items = [...scoreboardQ.data.items];
+                const dir = sortDir === "asc" ? 1 : -1;
+                items.sort((a, b) => {
+                  // no_brands всегда в конец
+                  if (a.no_brands !== b.no_brands) return a.no_brands ? 1 : -1;
+                  const av: any = (a as any)[sortKey];
+                  const bv: any = (b as any)[sortKey];
+                  // null-safe для wow_revenue_pct
+                  if (av == null && bv == null) return 0;
+                  if (av == null) return 1;
+                  if (bv == null) return -1;
+                  if (typeof av === "string") {
+                    return av.localeCompare(bv) * dir;
+                  }
+                  return (av - bv) * dir;
+                });
+                const sortIndicator = (k: SortKey) =>
+                  sortKey === k ? (sortDir === "asc" ? " ▲" : " ▼") : "";
+                const th = (k: SortKey, label: string, align: "left" | "right" = "right") => (
+                  <th
+                    className={`p-1 cursor-pointer select-none hover:text-fg ${
+                      align === "right" ? "text-right" : "text-left"
+                    }`}
+                    onClick={() => onSort(k)}
+                    title="Кликни для сортировки"
+                  >
+                    {label}
+                    <span className="text-accent">{sortIndicator(k)}</span>
+                  </th>
+                );
+                return (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="text-muted text-xs uppercase">
+                        <tr>
+                          {th("manager_name", "Менеджер", "left")}
+                          <th className="text-left p-1">Бренды</th>
+                          {th("revenue", "Выручка")}
+                          {th("margin", "Маржа")}
+                          {th("wow_revenue_pct", "WoW выручки")}
+                          {th("wow_margin_pp", "WoW маржи")}
+                          {th("orders", "Заказов")}
+                          {th("returns", "Возвратов")}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {items.map((m) => (
+                          <tr
+                            key={m.manager_user_id}
+                            className={`border-t border-border ${
+                              m.no_brands ? "text-muted" : ""
+                            }`}
+                          >
+                            <td className="p-1">{m.manager_name}</td>
+                            <td className="p-1 text-xs">
+                              {m.no_brands ? (
+                                <span className="text-muted italic">не назначены</span>
+                              ) : (
+                                m.brands.join(", ")
+                              )}
+                            </td>
+                            <td className="p-1 text-right font-mono">
+                              {fmtRub(m.revenue)}
+                            </td>
+                            <td className="p-1 text-right font-mono">
+                              {fmtRub(m.margin)}{" "}
+                              <span className="text-muted text-xs">
+                                ({fmtPct(m.margin_pct, 1)})
+                              </span>
+                            </td>
+                            <td className="p-1 text-right">
+                              <DeltaCell value={m.wow_revenue_pct} />
+                            </td>
+                            <td className="p-1 text-right">
+                              {/* WoW маржи — это разница в п.п., не процент. Передаём как value,
+                                  чтобы DeltaCell отрисовал ▲/▼ + цвет. lowerIsBetter=false (рост маржи = хорошо). */}
+                              <DeltaCell value={m.wow_margin_pp} />
+                            </td>
+                            <td className="p-1 text-right font-mono">
+                              {fmtNum(m.orders)}
+                            </td>
+                            <td className="p-1 text-right font-mono">
+                              {fmtNum(m.returns)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()
+            )}
+            <div className="text-xs text-muted mt-2">
+              Группировка через назначения брендов (`brand_assignments`). WoW —
+              относительно предыдущей закрытой недели. Источник: WB final
+              report (`wb_report_detail`).
+            </div>
+          </section>
+        )}
 
         {isLoading ? (
           <section className="card text-muted">Загрузка…</section>
