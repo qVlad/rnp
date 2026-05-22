@@ -12,9 +12,16 @@
  * `qc.invalidateQueries({queryKey: ["sku-tags-map"]})` после mutate'а в
  * ProductTagChips.
  */
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
+
+// Stable defaults — переиспользуем константы вместо `[]` / `{}` литералов
+// (новый reference каждый render → useMemo'ы и TanStack table думают, что
+// данные изменились, инвалидируют кеш и триггерят re-render loop, см.
+// BUG-DEV-007 fix #4).
+const EMPTY_TAGS: any[] = [];
+const EMPTY_BYNM: Record<string, number[]> = {};
 
 export function useTagFilter(storageKey: string) {
   const qc = useQueryClient();
@@ -31,8 +38,8 @@ export function useTagFilter(storageKey: string) {
     staleTime: 5 * 60 * 1000,
   });
 
-  const tags = tagsQ.data?.items ?? [];
-  const byNm = mapQ.data?.by_nm ?? {};
+  const tags = tagsQ.data?.items ?? EMPTY_TAGS;
+  const byNm = mapQ.data?.by_nm ?? EMPTY_BYNM;
 
   // Local-storage стейт: number | null. Хранится как строка "0" = none, иначе tag_id.
   const initial: number | null = (() => {
@@ -73,11 +80,17 @@ export function useTagFilter(storageKey: string) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tags, selectedTagId]);
 
-  const matchTag = (nm_id: number): boolean => {
-    if (selectedTagId == null) return true;
-    const list = byNm[String(nm_id)] ?? byNm[nm_id as any] ?? [];
-    return list.includes(selectedTagId);
-  };
+  // Stable reference — иначе useMemo'ы в потребителях (Units / AbcAnalysis /
+  // Funnel / Supply / UnitPlan) с `matchTag` в deps пересчитываются каждый
+  // render и инвалидируют TanStack data → re-render loop.
+  const matchTag = useCallback(
+    (nm_id: number): boolean => {
+      if (selectedTagId == null) return true;
+      const list = byNm[String(nm_id)] ?? byNm[nm_id as any] ?? EMPTY_TAGS;
+      return list.includes(selectedTagId);
+    },
+    [selectedTagId, byNm],
+  );
 
   return {
     tags,
