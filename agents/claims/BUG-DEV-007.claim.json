@@ -1,0 +1,7 @@
+{
+  "task_id": "BUG-DEV-007",
+  "agent": "Claude Opus 4.7 — main",
+  "started_at": "2026-05-22T09:28:37Z",
+  "expected_minutes": 30,
+  "notes": "perf fix /units page + verify modal"
+}
