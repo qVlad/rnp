@@ -47,6 +47,7 @@ import Jam from "./pages/Jam";
 import Localization from "./pages/Localization";
 import NewProducts from "./pages/NewProducts";
 import TransitCalculator from "./pages/TransitCalculator";
+import SupplyCalculator from "./pages/SupplyCalculator";
 import WeeklyReport from "./pages/WeeklyReport";
 import AbTestList from "./pages/AbTestList";
 import AbTestNew from "./pages/AbTestNew";
@@ -299,6 +300,8 @@ export default function App() {
               </DirectorOrHead>
             }
           />
+          {/* TASK-LEAD-077: разделение транзит / обычная поставка */}
+          <Route path="supply-calculator" element={<SupplyCalculator />} />
           <Route path="transit-calculator" element={<TransitCalculator />} />
           <Route path="weekly-report" element={<WeeklyReport />} />
           <Route

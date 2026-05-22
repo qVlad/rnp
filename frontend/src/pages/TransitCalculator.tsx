@@ -1,13 +1,21 @@
 /**
- * TASK-LEAD-053 — Калькулятор стоимости поставки на WB-склад.
+ * TASK-LEAD-077 (2026-05-22) — Калькулятор стоимости транзитной поставки WB.
  *
- * РОП хочет: «сколько стоит положить N штук партии на склад X?»
- * Формула WB box-тарифа (миграция 0040, sync ежедневно 08:00 MSK):
- *   - acceptance per unit = delivery_base + max(0, ceil(liters)-1) × delivery_liter
- *   - storage per unit per day = storage_base + max(0, ceil(liters)-1) × storage_liter
+ * Отличие от обычной поставки (`SupplyCalculator`):
+ *   - Транзитная поставка идёт через хаб → конечный склад.
+ *   - WB Tariffs API НЕ отдаёт транзитные тарифы (доступны только в ЛК WB →
+ *     Поставки → Транзитные направления). Поэтому юзер вводит тариф ₽/л вручную.
  *
- * Используем `tariffList('box')` — текущие тарифы по складам.
- * Frontend-only: backend ничего считать не нужно, всё на клиенте.
+ * Формула (см. research-transit-shipments-2026-05-22.md):
+ *   - total_volume = units × liters_per_unit
+ *   - rate = total_volume < threshold(=1500л) ? rate_small : rate_large
+ *   - transit_cost = total_volume × rate
+ *   - storage_cost = wb_tariff_box[final_warehouse].storage × units × days
+ *     (хранение после транзита на конечном складе — обычный тариф)
+ *
+ * Compare с обычной поставкой на тот же конечный склад показывает Δ.
+ *
+ * Frontend-only, persist в localStorage["transit-calculator.v2"].
  */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -15,29 +23,58 @@ import { api, type TariffTimelineRow } from "@/api/client";
 import { fmtRub, fmtNum } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 
-const TRANSIT_KEY = "transit-calc.params.v1";
+const STORAGE_KEY = "transit-calculator.v2";
 
 type SavedParams = {
-  warehouse: string;
+  hub: string; // транзитный склад (хаб) — свободный текст
+  final_warehouse: string; // конечный склад (из wb_tariff_box)
   units: number;
   liters_per_unit: number;
   storage_days: number;
+  rate_small: number; // ₽/л при объёме < threshold
+  rate_large: number; // ₽/л при объёме ≥ threshold
+  volume_threshold_l: number;
 };
 
 const DEFAULTS: SavedParams = {
-  warehouse: "",
+  hub: "",
+  final_warehouse: "",
   units: 100,
   liters_per_unit: 1,
   storage_days: 30,
+  rate_small: 8.0,
+  rate_large: 2.0,
+  volume_threshold_l: 1500,
 };
+
+// Известные хабы WB (на 2026-05, из research). Список свободно редактируется
+// юзером — это просто подсказки в datalist.
+const KNOWN_HUBS = [
+  "Обухово",
+  "Шушары",
+  "Чашниково",
+  "Чехов 1",
+  "Чехов 2",
+  "Электросталь",
+  "Подольск",
+  "Краснодар",
+  "Казань",
+  "Екатеринбург",
+  "Новосибирск",
+  "Тула",
+];
 
 function loadParams(): SavedParams {
   try {
-    const raw = localStorage.getItem(TRANSIT_KEY);
+    const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const v = JSON.parse(raw);
       return {
-        warehouse: typeof v.warehouse === "string" ? v.warehouse : DEFAULTS.warehouse,
+        hub: typeof v.hub === "string" ? v.hub : DEFAULTS.hub,
+        final_warehouse:
+          typeof v.final_warehouse === "string"
+            ? v.final_warehouse
+            : DEFAULTS.final_warehouse,
         units: Number.isFinite(v.units) ? Number(v.units) : DEFAULTS.units,
         liters_per_unit: Number.isFinite(v.liters_per_unit)
           ? Number(v.liters_per_unit)
@@ -45,6 +82,15 @@ function loadParams(): SavedParams {
         storage_days: Number.isFinite(v.storage_days)
           ? Number(v.storage_days)
           : DEFAULTS.storage_days,
+        rate_small: Number.isFinite(v.rate_small)
+          ? Number(v.rate_small)
+          : DEFAULTS.rate_small,
+        rate_large: Number.isFinite(v.rate_large)
+          ? Number(v.rate_large)
+          : DEFAULTS.rate_large,
+        volume_threshold_l: Number.isFinite(v.volume_threshold_l)
+          ? Number(v.volume_threshold_l)
+          : DEFAULTS.volume_threshold_l,
       };
     }
   } catch {}
@@ -53,42 +99,74 @@ function loadParams(): SavedParams {
 
 function saveParams(p: SavedParams) {
   try {
-    localStorage.setItem(TRANSIT_KEY, JSON.stringify(p));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(p));
   } catch {}
 }
 
-function computeCosts(
-  tariff: TariffTimelineRow | null,
-  units: number,
-  litersPerUnit: number,
-  storageDays: number,
-) {
-  if (!tariff) return null;
-  const base = tariff.delivery_base ?? 0;
-  const perLiter = tariff.delivery_liter ?? 0;
-  const storageBase = tariff.storage_base ?? 0;
-  const storageLiter = tariff.storage_liter ?? 0;
-  // WB-формула: round-up литров для unit-volume < 1, иначе ceil. Для >1 — учитываем extra liters.
-  const ceilL = Math.max(1, Math.ceil(litersPerUnit));
+type TransitResult = {
+  totalVolume: number;
+  appliedRate: number;
+  rateTier: "small" | "large";
+  transitCost: number;
+  storagePerUnitPerDay: number;
+  storageTotal: number;
+  grandTotal: number;
+};
+
+function computeTransit(
+  finalTariff: TariffTimelineRow | null,
+  p: SavedParams,
+): TransitResult | null {
+  const totalVolume = p.units * p.liters_per_unit;
+  if (!Number.isFinite(totalVolume) || totalVolume <= 0) return null;
+
+  const rateTier: "small" | "large" =
+    totalVolume < p.volume_threshold_l ? "small" : "large";
+  const appliedRate = rateTier === "small" ? p.rate_small : p.rate_large;
+  const transitCost = totalVolume * appliedRate;
+
+  // Хранение на конечном складе — обычный тариф box (если выбран и есть тариф)
+  let storagePerUnitPerDay = 0;
+  if (finalTariff) {
+    const storageBase = finalTariff.storage_base ?? 0;
+    const storageLiter = finalTariff.storage_liter ?? 0;
+    const ceilL = Math.max(1, Math.ceil(p.liters_per_unit));
+    const extraLiters = Math.max(0, ceilL - 1);
+    storagePerUnitPerDay = storageBase + extraLiters * storageLiter;
+  }
+  const storageTotal = storagePerUnitPerDay * p.units * p.storage_days;
+  const grandTotal = transitCost + storageTotal;
+
+  return {
+    totalVolume,
+    appliedRate,
+    rateTier,
+    transitCost,
+    storagePerUnitPerDay,
+    storageTotal,
+    grandTotal,
+  };
+}
+
+function computeDirectSupply(
+  finalTariff: TariffTimelineRow | null,
+  p: SavedParams,
+): { acceptanceTotal: number; storageTotal: number; grandTotal: number } | null {
+  if (!finalTariff) return null;
+  const base = finalTariff.delivery_base ?? 0;
+  const perLiter = finalTariff.delivery_liter ?? 0;
+  const storageBase = finalTariff.storage_base ?? 0;
+  const storageLiter = finalTariff.storage_liter ?? 0;
+  const ceilL = Math.max(1, Math.ceil(p.liters_per_unit));
   const extraLiters = Math.max(0, ceilL - 1);
   const acceptancePerUnit = base + extraLiters * perLiter;
   const storagePerUnitPerDay = storageBase + extraLiters * storageLiter;
-
-  const acceptanceTotal = acceptancePerUnit * units;
-  const storageTotal = storagePerUnitPerDay * units * storageDays;
-  const grandTotal = acceptanceTotal + storageTotal;
-
+  const acceptanceTotal = acceptancePerUnit * p.units;
+  const storageTotal = storagePerUnitPerDay * p.units * p.storage_days;
   return {
-    acceptancePerUnit,
-    storagePerUnitPerDay,
     acceptanceTotal,
     storageTotal,
-    grandTotal,
-    base,
-    perLiter,
-    storageBase,
-    storageLiter,
-    extraLiters,
+    grandTotal: acceptanceTotal + storageTotal,
   };
 }
 
@@ -113,39 +191,90 @@ export default function TransitCalculator() {
   });
 
   const warehouses = whQ.data?.items ?? [];
-  const tariff = useMemo<TariffTimelineRow | null>(() => {
-    if (!params.warehouse) return null;
+  const finalTariff = useMemo<TariffTimelineRow | null>(() => {
+    if (!params.final_warehouse) return null;
     const items = tariffsQ.data?.items ?? [];
-    return items.find((t) => t.warehouse_name === params.warehouse) ?? null;
-  }, [params.warehouse, tariffsQ.data]);
+    return items.find((t) => t.warehouse_name === params.final_warehouse) ?? null;
+  }, [params.final_warehouse, tariffsQ.data]);
 
-  const result = useMemo(
-    () => computeCosts(tariff, params.units, params.liters_per_unit, params.storage_days),
-    [tariff, params.units, params.liters_per_unit, params.storage_days],
-  );
+  const transit = useMemo(() => computeTransit(finalTariff, params), [
+    finalTariff,
+    params,
+  ]);
+  const direct = useMemo(() => computeDirectSupply(finalTariff, params), [
+    finalTariff,
+    params,
+  ]);
 
   return (
     <div className="flex flex-col gap-4 max-w-5xl">
       <PageHeader
-        title="Калькулятор стоимости поставки"
+        title="Калькулятор стоимости транзитной поставки"
         subtitle={
           <>
-            Считает <b>логистику</b> (acceptance) и <b>хранение</b> для партии
-            N штук на конкретный WB-склад. Использует текущие WB-тарифы
-            (миграция 0040, обновляется ежедневно 08:00 MSK).
+            Транзитная поставка идёт{" "}
+            <b>через хаб → конечный склад</b>: вы привозите партию в
+            транзитный пункт WB (Обухово / Шушары / …), оттуда WB сама развозит
+            по сети. Тарифы транзита WB <b>не отдаёт через API</b> — впиши{" "}
+            <code>₽/л</code> вручную из ЛК. Для прямой поставки см.{" "}
+            <a className="text-accent" href="/supply-calculator">
+              Калькулятор поставки
+            </a>
+            .
           </>
         }
       />
 
+      {/* Important warning */}
+      <section className="card text-xs" style={{ background: "rgba(255,193,7,0.08)" }}>
+        <p>
+          <b>⚠️ Где взять тариф транзита:</b>{" "}
+          <a
+            className="text-accent"
+            href="https://seller.wildberries.ru"
+            target="_blank"
+            rel="noreferrer"
+          >
+            ЛК WB
+          </a>{" "}
+          → Поставки и заказы → Поставки (FBW) → <b>Транзитные направления</b>.
+          Выбери пару «хаб → конечный_склад» и впиши <code>₽/л</code> ниже.
+          Тариф зависит от объёма (двухступенчатая шкала: до 1500 л — выше,
+          от 1500 л — ниже). С 1 апреля 2026 WB поднял тарифы транзита в
+          среднем на ~20%.
+        </p>
+      </section>
+
       {/* Form */}
       <section className="card">
+        <h3 className="font-medium mb-3 text-sm">Параметры партии</h3>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted uppercase tracking-wide">Склад WB</span>
+            <span className="text-xs text-muted uppercase tracking-wide">
+              Хаб (транзитный склад)
+            </span>
+            <input
+              type="text"
+              className="input"
+              list="transit-hubs"
+              value={params.hub}
+              onChange={(e: any) => update({ hub: e.target.value })}
+              placeholder="например, Обухово"
+            />
+            <datalist id="transit-hubs">
+              {KNOWN_HUBS.map((h) => (
+                <option key={h} value={h} />
+              ))}
+            </datalist>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-muted uppercase tracking-wide">
+              Конечный склад
+            </span>
             <select
               className="input"
-              value={params.warehouse}
-              onChange={(e: any) => update({ warehouse: e.target.value })}
+              value={params.final_warehouse}
+              onChange={(e: any) => update({ final_warehouse: e.target.value })}
               disabled={whQ.isLoading}
             >
               <option value="">— выбери склад —</option>
@@ -172,7 +301,7 @@ export default function TransitCalculator() {
           <label className="flex flex-col gap-1">
             <span
               className="text-xs text-muted uppercase tracking-wide"
-              title="Объём одного товара в литрах. WB округляет вверх (ceil) для тарифа."
+              title="Объём одного товара в литрах. Общий объём партии = units × liters_per_unit."
             >
               Литров / шт
             </span>
@@ -190,7 +319,7 @@ export default function TransitCalculator() {
           <label className="flex flex-col gap-1">
             <span
               className="text-xs text-muted uppercase tracking-wide"
-              title="Сколько дней партия пролежит на WB-складе. По умолчанию 30 = месяц."
+              title="Сколько дней партия пролежит на конечном WB-складе после транзита."
             >
               Хранение, дней
             </span>
@@ -208,134 +337,260 @@ export default function TransitCalculator() {
         </div>
       </section>
 
-      {/* Tariff info */}
-      {tariff && (
+      {/* Transit tariff inputs */}
+      <section className="card">
+        <h3 className="font-medium mb-3 text-sm">
+          Тариф транзита (вписать из ЛК WB)
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <label className="flex flex-col gap-1">
+            <span
+              className="text-xs text-muted uppercase tracking-wide"
+              title="Ставка ₽ за литр, когда общий объём партии меньше порога."
+            >
+              Тариф ₽/л (объём &lt; порога)
+            </span>
+            <input
+              type="number"
+              className="input"
+              min="0"
+              step="0.1"
+              value={params.rate_small}
+              onChange={(e: any) =>
+                update({ rate_small: Number(e.target.value) || 0 })
+              }
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span
+              className="text-xs text-muted uppercase tracking-wide"
+              title="Ставка ₽ за литр, когда общий объём партии больше или равен порогу. Обычно ниже."
+            >
+              Тариф ₽/л (объём ≥ порога)
+            </span>
+            <input
+              type="number"
+              className="input"
+              min="0"
+              step="0.1"
+              value={params.rate_large}
+              onChange={(e: any) =>
+                update({ rate_large: Number(e.target.value) || 0 })
+              }
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span
+              className="text-xs text-muted uppercase tracking-wide"
+              title="Порог переключения тарифов. У WB обычно 1500 л."
+            >
+              Порог переключения, л
+            </span>
+            <input
+              type="number"
+              className="input"
+              min="1"
+              step="100"
+              value={params.volume_threshold_l}
+              onChange={(e: any) =>
+                update({ volume_threshold_l: Number(e.target.value) || 0 })
+              }
+            />
+          </label>
+        </div>
+      </section>
+
+      {/* Tariff info for final warehouse */}
+      {finalTariff && (
         <section className="card text-xs text-muted">
-          <div className="font-medium text-fg mb-1">Тариф «{tariff.warehouse_name}» (box)</div>
+          <div className="font-medium text-fg mb-1">
+            Конечный склад «{finalTariff.warehouse_name}» — обычные WB-тарифы
+            (для хранения)
+          </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
             <div>
-              Базовая логистика: <span className="font-mono text-fg">{fmtRub(tariff.delivery_base ?? 0)}</span>
+              Хранение база/день:{" "}
+              <span className="font-mono text-fg">
+                {fmtRub(finalTariff.storage_base ?? 0)}
+              </span>
             </div>
             <div>
-              +₽ за литр сверх 1: <span className="font-mono text-fg">{fmtRub(tariff.delivery_liter ?? 0)}</span>
+              +₽ за литр сверх 1/день:{" "}
+              <span className="font-mono text-fg">
+                {fmtRub(finalTariff.storage_liter ?? 0)}
+              </span>
             </div>
             <div>
-              Хранение база/день: <span className="font-mono text-fg">{fmtRub(tariff.storage_base ?? 0)}</span>
+              Прямая логистика база:{" "}
+              <span className="font-mono text-fg">
+                {fmtRub(finalTariff.delivery_base ?? 0)}
+              </span>
             </div>
             <div>
-              +₽ за литр сверх 1/день: <span className="font-mono text-fg">{fmtRub(tariff.storage_liter ?? 0)}</span>
+              +₽ за литр сверх 1:{" "}
+              <span className="font-mono text-fg">
+                {fmtRub(finalTariff.delivery_liter ?? 0)}
+              </span>
             </div>
           </div>
-          {tariff.effective_from && (
-            <div className="mt-1">
-              Тариф действует с <span className="font-mono">{tariff.effective_from}</span>
-            </div>
-          )}
         </section>
       )}
 
       {/* Result */}
-      {!params.warehouse ? (
-        <section className="card text-muted">Выбери склад чтобы посмотреть расчёт.</section>
-      ) : tariffsQ.isLoading ? (
-        <section className="card text-muted">Загрузка тарифов…</section>
-      ) : !tariff ? (
-        <section className="card text-warn">
-          Тариф для склада «{params.warehouse}» не найден. Проверь актуальность
-          справочника (`/tariffs` → Sync).
+      {!transit ? (
+        <section className="card text-muted">
+          Введи кол-во штук и литров на шт, чтобы посмотреть расчёт.
         </section>
-      ) : result ? (
+      ) : (
         <>
           <section className="card">
-            <h2 className="font-medium mb-3">Стоимость партии {fmtNum(params.units)} шт</h2>
+            <h2 className="font-medium mb-3">
+              Стоимость партии {fmtNum(params.units)} шт через транзит
+              {params.hub ? <> «{params.hub}»</> : null}
+              {params.final_warehouse ? (
+                <> → «{params.final_warehouse}»</>
+              ) : null}
+            </h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
-                <div className="text-xs text-muted uppercase">Логистика (acceptance)</div>
+                <div className="text-xs text-muted uppercase">Транзит</div>
                 <div className="text-2xl font-mono font-semibold mt-1">
-                  {fmtRub(result.acceptanceTotal)}
+                  {fmtRub(transit.transitCost)}
                 </div>
                 <div className="text-xs text-muted mt-1">
-                  {fmtRub(result.acceptancePerUnit)} × {fmtNum(params.units)} шт
+                  {fmtNum(transit.totalVolume)} л × {fmtRub(transit.appliedRate)}/л
+                  <br />
+                  тариф «{transit.rateTier === "small" ? "до" : "от"}{" "}
+                  {fmtNum(params.volume_threshold_l)} л»
                 </div>
               </div>
               <div>
                 <div className="text-xs text-muted uppercase">
-                  Хранение за {params.storage_days} дн
+                  Хранение за {params.storage_days} дн (конечный склад)
                 </div>
                 <div className="text-2xl font-mono font-semibold mt-1">
-                  {fmtRub(result.storageTotal)}
+                  {fmtRub(transit.storageTotal)}
                 </div>
                 <div className="text-xs text-muted mt-1">
-                  {fmtRub(result.storagePerUnitPerDay)} × {fmtNum(params.units)} шт × {params.storage_days} дн
+                  {finalTariff ? (
+                    <>
+                      {fmtRub(transit.storagePerUnitPerDay)} × {fmtNum(params.units)}{" "}
+                      шт × {params.storage_days} дн
+                    </>
+                  ) : (
+                    <span className="text-warn">
+                      Выбери конечный склад, чтобы посчитать хранение
+                    </span>
+                  )}
                 </div>
               </div>
               <div>
                 <div className="text-xs text-muted uppercase">ИТОГО</div>
                 <div className="text-3xl font-mono font-semibold mt-1 text-accent">
-                  {fmtRub(result.grandTotal)}
+                  {fmtRub(transit.grandTotal)}
                 </div>
                 <div className="text-xs text-muted mt-1">
-                  ≈ {fmtRub(result.grandTotal / Math.max(1, params.units))} / шт
+                  ≈ {fmtRub(transit.grandTotal / Math.max(1, params.units))} / шт
                 </div>
               </div>
             </div>
           </section>
 
-          {/* Per-unit breakdown */}
-          <section className="card text-sm">
-            <h3 className="font-medium mb-2">Детализация per-единица</h3>
-            <table className="w-full font-mono">
-              <tbody>
-                <tr className="border-b border-border">
-                  <td className="p-2 text-muted">Базовая логистика</td>
-                  <td className="p-2 text-right font-mono">{fmtRub(result.base)}</td>
-                </tr>
-                <tr className="border-b border-border">
-                  <td className="p-2 text-muted">
-                    Доп. литры (ceil({params.liters_per_unit}) − 1 = {result.extraLiters} × {fmtRub(result.perLiter)})
-                  </td>
-                  <td className="p-2 text-right font-mono">
-                    {fmtRub(result.acceptancePerUnit - result.base)}
-                  </td>
-                </tr>
-                <tr className="border-b border-border font-semibold">
-                  <td className="p-2">Логистика на 1 шт</td>
-                  <td className="p-2 text-right font-mono">{fmtRub(result.acceptancePerUnit)}</td>
-                </tr>
-                <tr className="border-b border-border">
-                  <td className="p-2 text-muted">Хранение база / день</td>
-                  <td className="p-2 text-right font-mono">{fmtRub(result.storageBase)}</td>
-                </tr>
-                <tr className="border-b border-border">
-                  <td className="p-2 text-muted">
-                    Доп. литры хранение ({result.extraLiters} × {fmtRub(result.storageLiter)})
-                  </td>
-                  <td className="p-2 text-right font-mono">
-                    {fmtRub(result.storagePerUnitPerDay - result.storageBase)}
-                  </td>
-                </tr>
-                <tr className="font-semibold">
-                  <td className="p-2">Хранение на 1 шт / день</td>
-                  <td className="p-2 text-right font-mono">{fmtRub(result.storagePerUnitPerDay)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </section>
+          {/* Compare with direct supply */}
+          {direct && (
+            <section className="card">
+              <h3 className="font-medium mb-3 text-sm">
+                Сравнение с прямой поставкой на «{params.final_warehouse}»
+              </h3>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs text-muted uppercase">
+                    <th className="text-left p-2">Тип</th>
+                    <th className="text-right p-2">Логистика / транзит</th>
+                    <th className="text-right p-2">
+                      Хранение ({params.storage_days} дн)
+                    </th>
+                    <th className="text-right p-2">ИТОГО</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-t border-border">
+                    <td className="p-2">Прямая поставка (acceptance)</td>
+                    <td className="p-2 text-right font-mono">
+                      {fmtRub(direct.acceptanceTotal)}
+                    </td>
+                    <td className="p-2 text-right font-mono">
+                      {fmtRub(direct.storageTotal)}
+                    </td>
+                    <td className="p-2 text-right font-mono">
+                      {fmtRub(direct.grandTotal)}
+                    </td>
+                  </tr>
+                  <tr className="border-t border-border">
+                    <td className="p-2">Транзитная поставка</td>
+                    <td className="p-2 text-right font-mono">
+                      {fmtRub(transit.transitCost)}
+                    </td>
+                    <td className="p-2 text-right font-mono">
+                      {fmtRub(transit.storageTotal)}
+                    </td>
+                    <td className="p-2 text-right font-mono">
+                      {fmtRub(transit.grandTotal)}
+                    </td>
+                  </tr>
+                  <tr className="border-t border-border font-semibold">
+                    <td className="p-2">Δ (транзит − прямая)</td>
+                    <td className="p-2 text-right font-mono"></td>
+                    <td className="p-2 text-right font-mono"></td>
+                    <td
+                      className={
+                        "p-2 text-right font-mono " +
+                        (transit.grandTotal > direct.grandTotal
+                          ? "text-warn"
+                          : "text-success")
+                      }
+                    >
+                      {transit.grandTotal > direct.grandTotal ? "+" : ""}
+                      {fmtRub(transit.grandTotal - direct.grandTotal)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <p className="text-xs text-muted mt-2">
+                Транзит обычно дороже прямой поставки, но позволяет везти груз
+                на близкий хаб вместо удалённого конечного склада. Сравнение
+                имеет смысл только если у вас есть выбор.
+              </p>
+            </section>
+          )}
         </>
-      ) : null}
+      )}
 
       <section className="card text-xs text-muted">
         <p className="mb-1">
-          <b>Примечание:</b> расчёт — только WB-сторона (acceptance + storage). Не включает:
+          <b>Формула — рабочая гипотеза.</b> Сверена с открытой инструкцией WB
+          (postavleno.ru, seller.wildberries.ru) на 2026-05-22. Уточни точный
+          тариф через ЛК WB → Поставки → Транзитные направления — там видна
+          актуальная пара (хаб → склад) с ₽/л.
         </p>
         <ul className="list-disc list-inside space-y-1">
-          <li>Стоимость доставки до WB-склада из твоего склада / Китая — это твоя внешняя логистика</li>
-          <li>Платную приёмку (acceptance_fee), если она включена для склада</li>
-          <li>Себестоимость товара и комиссию WB при продаже</li>
+          <li>
+            Не входит: внешняя логистика до хаба (твоя), acceptance fee на хабе,
+            COGS товара, WB-комиссия при продаже.
+          </li>
+          <li>
+            Тариф транзита WB периодически пересматривается (последнее
+            обновление: с 2026-04-01 в среднем +20%).
+          </li>
+          <li>
+            Для типа «Монопаллета» формула другая: <code>тариф × паллет</code>.
+            Этот калькулятор для типа «Короб» (per-литр).
+          </li>
         </ul>
         <p className="mt-2">
-          Для полного CIF-расчёта (Китай → твой склад → WB) — смотри{" "}
-          <a className="text-accent" href="/new-products">/new-products</a>.
+          Research-методичка:{" "}
+          <code>agents/references/research-transit-shipments-2026-05-22.md</code>
+          .
         </p>
       </section>
     </div>

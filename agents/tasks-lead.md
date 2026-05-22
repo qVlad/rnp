@@ -2541,6 +2541,33 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 
 ---
 
+### TASK-LEAD-077: Транзит-калькулятор + переименование старого
+
+- **Исполнитель:** Sub-agent O (Developer + Design Engineer)
+- **Приоритет:** P1 (user feedback — собственник указал, что текущий «Калькулятор поставки» — не транзит, нужно разделить)
+- **Оценка:** S (1-2ч)
+- **Источник:** User session 2026-05-22 — «текущая страница /transit-calculator считает обычную поставку, а не транзит. Сделай две».
+- **Описание:** Разделить функционал на 2 калькулятора: обычная (прямая) поставка на склад WB и транзитная (через хаб).
+- **Критерии готовности:**
+  - [x] `TransitCalculator.tsx` → `SupplyCalculator.tsx` (git mv, переименована компонента + storage key с fallback на старый ключ)
+  - [x] Новый `TransitCalculator.tsx` с расчётом транзита: input хаб + конечный склад + tariff ₽/л (small/large/threshold) + compare с прямой поставкой
+  - [x] Routes в `App.tsx`: `/supply-calculator` (обычная) + `/transit-calculator` (новый транзит)
+  - [x] Меню в `Layout.tsx`: 2 пункта — «Калькулятор поставки» + «Калькулятор транзита»
+  - [x] Research-отчёт `agents/references/research-transit-shipments-2026-05-22.md` (формула + источники + что не нашли)
+  - [x] `USER_GUIDE.md` — переименована старая секция, добавлена новая, обновлено оглавление (6 пунктов)
+  - [x] `FEATURES.md` § 20 — 2 строки (Supply + Transit calculator), TASK-LEAD-077 mention
+  - [x] tsc --noEmit чистый (см. финальный отчёт)
+  - [x] Cross-link в обеих страницах (PageHeader subtitle): обычная → транзит, транзит → обычная
+  - [x] UI-warning в Transit: «WB не отдаёт тарифы транзита через API, впиши вручную из ЛК»
+- **Зависимости:** нет
+- **Не сделано (out of scope):**
+  - Импорт тарифной таблицы транзита из CSV/XLSX (как идея — в USER_GUIDE → «Планируется»)
+  - Backend-поля для транзита в `wb_tariff_box` (WB API не отдаёт — backend не трогали)
+  - Multi-route compare (несколько хабов)
+- **Статус:** Выполнено — 2026-05-22 — Sub-agent O
+
+---
+
 ### TASK-LEAD-076: Disk space guard в `scripts/remote.sh deploy`
 
 - **Исполнитель:** Lead
