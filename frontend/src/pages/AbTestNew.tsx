@@ -302,7 +302,11 @@ function TrafficEstimateBanner({
       }`}
     >
       <div className="font-medium">
-        {ok ? "✓ Параметры подходят" : "⚠ Внимание"}
+        {ok ? (
+          <><Icon name="check" size={12} /> Параметры подходят</>
+        ) : (
+          <><Icon name="warning" size={12} /> Внимание</>
+        )}
         <span className="ml-2 opacity-80 font-normal">
           Трафик ~{avg} показов/сутки ({data.days_observed} дн. истории)
         </span>

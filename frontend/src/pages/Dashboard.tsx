@@ -358,7 +358,11 @@ export default function Dashboard() {
           className={`btn text-xs ${compareOpen ? "border-accent text-accent" : ""}`}
           title="Сравнить два произвольных периода KPI бок-о-бок"
         >
-          {compareOpen ? "✕ Скрыть сравнение" : "Сравнить периоды"}
+          {compareOpen ? (
+            <><Icon name="close" size={12} /> Скрыть сравнение</>
+          ) : (
+            "Сравнить периоды"
+          )}
         </button>
         {compareOpen && (
           <PeriodComparePicker

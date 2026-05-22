@@ -166,7 +166,7 @@ function SkuMultiPicker({
                   </div>
                 </div>
                 <div className="text-xs">
-                  {isSelected ? "✓" : ""}
+                  {isSelected ? <Icon name="check" size={12} /> : null}
                 </div>
               </button>
             );

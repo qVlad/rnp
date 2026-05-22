@@ -116,7 +116,11 @@ export default function Reconciliation4Way() {
             onClick={() => fileInputRef.current?.click()}
             disabled={importMut.isPending}
           >
-            {importMut.isPending ? "Импортирую…" : "📥 Загрузить XLSX"}
+            {importMut.isPending ? (
+              "Импортирую…"
+            ) : (
+              <><Icon name="upload" size={12} /> Загрузить XLSX</>
+            )}
           </button>
         </div>
       </div>

@@ -173,6 +173,7 @@ export default function Checklist() {
                             : "text-muted"
                         }`}
                       >
+                        {/* math: integer days, no unit suffix */}
                         {it.summary.days_to_stockout != null
                           ? `${it.summary.days_to_stockout.toFixed(0)}`
                           : "—"}

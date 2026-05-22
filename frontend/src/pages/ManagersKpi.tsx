@@ -287,7 +287,7 @@ export default function ManagersKpi() {
                 const deltaLabel =
                   dRev == null
                     ? "—"
-                    : `${Number(dRev) > 0 ? "+" : ""}${Number(dRev).toFixed(1)}%`;
+                    : `${Number(dRev) > 0 ? "+" : ""}${fmtPct(Number(dRev), 1)}`;
                 const sparkData = (m.sparkline_revenue ?? []).map(
                   (v: number, i: number) => ({ i, v: Number(v) || 0 }),
                 );

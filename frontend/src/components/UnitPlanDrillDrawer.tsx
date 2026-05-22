@@ -382,6 +382,7 @@ function PvfTile({
       <div className="mt-1 flex items-baseline gap-2">
         <div className="font-mono font-semibold text-base">{fact}</div>
         <div className={"text-tiny " + diffColor}>
+          {/* math: conditional unit (%, пп) */}
           {diff == null
             ? "—"
             : `${diffSign}${diff.toFixed(1)}${diffUnit === "%" ? "%" : "пп"}`}

@@ -11,7 +11,7 @@ import {
   YAxis,
 } from "recharts";
 import { api } from "@/api/client";
-import { fmtNum, fmtRub, fmtPct } from "@/lib/format";
+import { fmtNum, fmtRub, fmtPct, fmtCompact } from "@/lib/format";
 import { GRID_PROPS, AXIS_PROPS, TOOLTIP_STYLE } from "@/lib/chartTheme";
 import { Icon } from "./Icon";
 
@@ -270,13 +270,8 @@ export default function MetricDrilldownModal({
                     {...AXIS_PROPS}
                     tickFormatter={(v) => {
                       if (metric === "orders") return fmtNum(v);
-                      // Компактный формат: 1.2M / 700k / 500 — чтобы и крупные
-                      // и мелкие значения читались на одинаковой шкале.
-                      const abs = Math.abs(v);
-                      if (abs >= 1_000_000)
-                        return `${(v / 1_000_000).toFixed(1)}M`;
-                      if (abs >= 1_000) return `${Math.round(v / 1000)}k`;
-                      return String(Math.round(v));
+                      // Компактный формат: 1.2M / 700k / 500.
+                      return fmtCompact(v);
                     }}
                     width={60}
                   />

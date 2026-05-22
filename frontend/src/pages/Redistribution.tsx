@@ -12,7 +12,7 @@ import {
 } from "recharts";
 import { api } from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { fmtRub, fmtNum, fmtLocalDt, fmtLocalTime, fmtPct } from "@/lib/format";
+import { fmtRub, fmtNum, fmtLocalDt, fmtLocalTime, fmtPct, fmtRatio } from "@/lib/format";
 import LkDisclaimerModal, {
   hasAgreedDisclaimer,
 } from "@/components/LkDisclaimerModal";
@@ -233,7 +233,7 @@ export default function Redistribution() {
                     </span>
                     {r.payback_days && (
                       <div className="text-[10px] text-muted">
-                        ~{r.payback_days.toFixed(1)} дн.
+                        ~{fmtRatio(r.payback_days, 1)} дн.
                       </div>
                     )}
                   </td>

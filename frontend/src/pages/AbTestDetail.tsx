@@ -29,6 +29,7 @@ import {
 } from "@/api/abtest";
 import { VariantPhotoGrid } from "@/components/abtest/VariantPhotoGrid";
 import { Icon } from "../components/Icon";
+import { fmtPct } from "@/lib/format";
 
 const STATUS_BADGE: Record<AbTestStatus | string, string> = {
   draft: "bg-surface-2 text-muted",
@@ -146,7 +147,11 @@ function TimelineSection({
                     <td
                       className={`p-2 ${r.success ? "text-success" : "text-warn"}`}
                     >
-                      {r.success ? "✓ OK" : "✕ FAIL"}
+                      {r.success ? (
+                        <><Icon name="check" size={12} /> OK</>
+                      ) : (
+                        <><Icon name="close" size={12} /> FAIL</>
+                      )}
                     </td>
                     <td className="p-2 text-muted text-xs">{r.error || "—"}</td>
                   </tr>
@@ -162,7 +167,11 @@ function TimelineSection({
                   <td className="p-2">{EVENT_LABELS[e.kind] || e.kind}</td>
                   <td className="p-2">{v?.label || (e.variant_id ? `#${e.variant_id}` : "—")}</td>
                   <td className="p-2 text-muted">
-                    {e.source === "auto" ? "🤖 auto" : "👤 manual"}
+                    {e.source === "auto" ? (
+                      <><Icon name="sparkles" size={12} /> auto</>
+                    ) : (
+                      <><Icon name="edit" size={12} /> manual</>
+                    )}
                   </td>
                   <td className="p-2 text-muted text-xs">
                     {e.event_metadata
@@ -437,7 +446,11 @@ function VariantCard({
           onClick={() => eliminateMut.mutate()}
           disabled={eliminateMut.isPending}
         >
-          {variant.eliminated_at ? "↩ Вернуть" : "✕ Отсеять"}
+          {variant.eliminated_at ? (
+            <><Icon name="refresh" size={12} /> Вернуть</>
+          ) : (
+            <><Icon name="close" size={12} /> Отсеять</>
+          )}
         </button>
       </div>
 
@@ -728,11 +741,11 @@ export default function AbTestDetail() {
                       <td className="p-2 text-right">{v.clicks}</td>
                       <td className="p-2 text-right font-mono">{v.orders}</td>
                       <td className="p-2 text-right font-mono">
-                        {(ctr?.rate * 100).toFixed(2)}%
+                        {fmtPct((ctr?.rate ?? 0) * 100, 2)}
                       </td>
                       <td className="p-2 text-right text-muted text-xs font-mono">
-                        {(ctr?.ci_low * 100).toFixed(2)}–
-                        {(ctr?.ci_high * 100).toFixed(2)}%
+                        {fmtPct((ctr?.ci_low ?? 0) * 100, 2)}–
+                        {fmtPct((ctr?.ci_high ?? 0) * 100, 2)}
                       </td>
                       <td className="p-2 text-right">
                         {prog?.current}/{prog?.target} ({prog?.pct}%)
@@ -752,6 +765,7 @@ export default function AbTestDetail() {
               <BarChart
                 data={result.variants.map((v) => ({
                   label: v.label,
+                  // math: round to 2 decimals for chart data
                   CTR: Number(
                     ((result.ctr[String(v.variant_id)]?.rate ?? 0) * 100).toFixed(2),
                   ),
@@ -786,7 +800,7 @@ export default function AbTestDetail() {
                       {p.ctr_p_value.toExponential(2)}
                     </td>
                     <td className="p-1 text-right">
-                      {p.ctr_significant ? "✓" : "—"}
+                      {p.ctr_significant ? <Icon name="check" size={12} /> : "—"}
                     </td>
                   </tr>
                 ))}

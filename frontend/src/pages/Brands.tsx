@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import PageHeader from "@/components/PageHeader";
+import { Skeleton, EmptyState } from "@/components/states";
 
 export default function Brands() {
   const qc = useQueryClient();
@@ -37,12 +38,13 @@ export default function Brands() {
         subtitle="Бренды берутся из карточек WB (поле products.brand). На один бренд можно назначить нескольких менеджеров; один менеджер может вести несколько брендов. РОП и директор видят все бренды; менеджер — только свои."
       />
 
-      {brandsQ.isLoading && <div className="text-muted">Загрузка…</div>}
+      {brandsQ.isLoading && <Skeleton variant="table" rows={5} />}
       {brandsQ.data && items.length === 0 && (
-        <div className="card text-muted text-sm">
-          Брендов пока нет — поле <code>brand</code> у карточек WB пустое или
-          синхронизация не прошла.
-        </div>
+        <EmptyState
+          icon="package"
+          title="Брендов пока нет"
+          hint="Поле brand у карточек WB пустое или синхронизация не прошла."
+        />
       )}
 
       {items.length > 0 && (

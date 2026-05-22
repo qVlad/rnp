@@ -17,6 +17,7 @@ import { fmtNum, fmtPct } from "@/lib/format";
 import { useTagFilter } from "@/lib/useTagFilter";
 import TagFilterDropdown from "@/components/TagFilterDropdown";
 import PageHeader from "@/components/PageHeader";
+import { Skeleton, EmptyState, ErrorState } from "@/components/states";
 
 type SortKey =
   | "views"
@@ -141,17 +142,14 @@ export default function Funnel() {
         </div>
       )}
 
-      {q.isLoading && <div className="text-muted">Загрузка…</div>}
-      {q.isError && (
-        <div className="card text-danger text-sm">
-          Ошибка: {(q.error as Error).message}
-        </div>
-      )}
+      {q.isLoading && <Skeleton variant="table" rows={5} />}
+      {q.isError && <ErrorState error={q.error} onRetry={() => q.refetch()} />}
       {q.data && items.length === 0 && (
-        <div className="card text-muted text-sm">
-          Нет SKU с рекламой за выбранный период. Если запустили рекламу
-          недавно — подождите следующего sync (4 раза в день).
-        </div>
+        <EmptyState
+          icon="search"
+          title="Нет SKU с рекламой за период"
+          hint="Если запустили рекламу недавно — подождите следующего sync (4 раза в день)."
+        />
       )}
 
       {items.length > 0 && (

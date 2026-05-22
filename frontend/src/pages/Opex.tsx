@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { fmtRub } from "@/lib/format";
+import { fmtRub, fmtPct } from "@/lib/format";
 import {
   OpexAllocationsEditor,
   type AllocationRow,
@@ -396,11 +396,11 @@ function AllocationsChip({ allocations }: { allocations: any[] }) {
           (a: any) =>
             `${a.scope_type}${
               a.scope_value ? `:${a.scope_value}` : ""
-            } = ${(Number(a.weight) * 100).toFixed(1)}%`,
+            } = ${fmtPct(Number(a.weight) * 100, 1)}`,
         )
         .join("\n")}
     >
-      {nonTenant.length} scope · Σ{(sum * 100).toFixed(0)}%
+      {nonTenant.length} scope · Σ{fmtPct(sum * 100, 0)}
     </span>
   );
 }

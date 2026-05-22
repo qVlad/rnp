@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { fmtRub } from "@/lib/format";
+import { fmtRub, fmtRatio } from "@/lib/format";
 import { Icon } from "../components/Icon";
 import PageHeader from "@/components/PageHeader";
 
@@ -175,7 +175,7 @@ export default function Supplies() {
                 <td className="py-2 px-2 font-mono">{s.nm_id ?? "—"}</td>
                 <td className="py-2 px-2 text-muted">{s.vendor_code || "—"}</td>
                 <td className="py-2 px-2 text-right font-mono">{s.qty}</td>
-                <td className="py-2 px-2 text-right font-mono">{s.cost_per_unit.toFixed(2)}</td>
+                <td className="py-2 px-2 text-right font-mono">{fmtRatio(s.cost_per_unit, 2)}</td>
                 <td className="py-2 px-2 text-right font-mono">{fmtRub(s.total_cost)}</td>
                 <td className="py-2 px-2 text-muted">{s.currency}</td>
                 <td className="py-2 px-2 text-muted">{s.vendor || "—"}</td>
@@ -258,7 +258,9 @@ function paidColor(s: PaidStatus) {
 }
 
 function paidLabel(s: PaidStatus) {
-  return s === "paid" ? "✓ оплачено" : s === "partial" ? "◐ частично" : "✗ не оплачено";
+  if (s === "paid") return (<><Icon name="check" size={12} /> оплачено</>);
+  if (s === "partial") return (<><Icon name="alert" size={12} /> частично</>);
+  return (<><Icon name="close" size={12} /> не оплачено</>);
 }
 
 function KpiBlock({ label, value, money, color }: {

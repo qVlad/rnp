@@ -35,6 +35,7 @@ function _signedRub(v: string | number | null | undefined): string {
 }
 
 function _signedPp(v: string | number | null | undefined): string {
+  // math: п.п. (percentage points) is a separate unit, not a %; local format
   const n = _num(v);
   if (n == null) return "—";
   const sign = n > 0 ? "+" : "";

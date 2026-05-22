@@ -402,7 +402,7 @@ export default function PnL() {
                           }`}
                         >
                           ({margin >= 0 ? "" : ""}
-                          {Number(margin).toFixed(1)}%)
+                          {fmtPct(margin, 1)})
                         </span>
                       )}
                     </td>

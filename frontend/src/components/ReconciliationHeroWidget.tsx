@@ -80,7 +80,11 @@ export default function ReconciliationHeroWidget() {
           className="btn text-xs"
           title="Подробная сверка по всем неделям — где Δ, почему"
         >
-          {latest.diff.alert ? "⚠ Объяснить →" : "Подробнее →"}
+          {latest.diff.alert ? (
+            <><Icon name="warning" size={12} /> Объяснить →</>
+          ) : (
+            "Подробнее →"
+          )}
         </Link>
       </div>
       <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">

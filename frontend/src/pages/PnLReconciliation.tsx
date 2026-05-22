@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Icon } from "@/components/Icon";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { fmtRub, fmtPct } from "@/lib/format";
+import { fmtRub, fmtPct, fmtRatio } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 
 // WB seller cabinet — раздел финансовых отчётов реализации.
@@ -209,7 +209,7 @@ export default function PnLReconciliation() {
                           : "text-muted"
                       }`}
                     >
-                      {p.diff.revenue_gross_abs.toFixed(2)}
+                      {fmtRatio(p.diff.revenue_gross_abs, 2)}
                     </td>
                     <td
                       className={`p-2 text-right ${
@@ -505,7 +505,7 @@ function WizardRow({ p, fees }: { p: any; fees: number }) {
                           bad ? "text-danger font-bold" : "text-muted"
                         }`}
                       >
-                        {diff.toFixed(2)}
+                        {fmtRatio(diff, 2)}
                       </td>
                     </tr>
                   );

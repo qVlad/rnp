@@ -332,7 +332,11 @@ export default function Settings() {
         <div className="mt-3 text-sm">
           Токен в <code>.env</code>:{" "}
           <span className={whoQ.data?.wb_token_configured ? "text-success" : "text-danger"}>
-            {whoQ.data?.wb_token_configured ? "✓ настроен" : "✗ не настроен"}
+            {whoQ.data?.wb_token_configured ? (
+              <><Icon name="check" size={12} /> настроен</>
+            ) : (
+              <><Icon name="close" size={12} /> не настроен</>
+            )}
           </span>
         </div>
 
@@ -368,7 +372,11 @@ export default function Settings() {
                   validateResult.ok ? "text-success" : "text-danger"
                 }`}
               >
-                {validateResult.ok ? "✓ Токен валиден" : "✗ Есть проблемы"}
+                {validateResult.ok ? (
+                  <><Icon name="check" size={14} /> Токен валиден</>
+                ) : (
+                  <><Icon name="close" size={14} /> Есть проблемы</>
+                )}
               </div>
               {validateResult.error && (
                 <div className="text-danger text-xs mt-1">{validateResult.error}</div>
@@ -1932,6 +1940,7 @@ function UnitPlanGlobalConfigHistory({ currentId }: { currentId?: number }) {
   // Latest = первая (DESC backend-сортировка); подсвечиваем явно по id если есть.
   const latestId = items[0].id;
 
+  // local helper equivalent to fmtPct from @/lib/format with 2-digit precision
   const fmtPct = (n: number | null | undefined) =>
     n == null ? "—" : `${Number(n).toFixed(2)}%`;
   const fmtNum = (n: number | null | undefined, suffix = "") =>

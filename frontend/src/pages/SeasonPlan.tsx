@@ -18,8 +18,9 @@ import {
   YAxis,
 } from "recharts";
 import { api } from "@/api/client";
-import { fmtRub } from "@/lib/format";
+import { fmtRub, fmtCompact, fmtRatio } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
+import { Skeleton } from "@/components/states";
 import { GRID_PROPS, AXIS_PROPS, TOOLTIP_STYLE, LEGEND_STYLE, CHART_COLORS } from "@/lib/chartTheme";
 
 const MONTH_LABELS = [
@@ -95,7 +96,7 @@ export default function SeasonPlan() {
         }
       />
 
-      {q.isLoading && <div className="card text-muted">Загрузка…</div>}
+      {q.isLoading && <Skeleton variant="chart" />}
       {data?.warning && (
         <div className="card bg-warn/10 border-warn/40 text-warn text-sm">
           <Icon name="warning" size={12} className="inline mr-1" />{data.warning}
@@ -136,13 +137,7 @@ export default function SeasonPlan() {
                   <XAxis {...AXIS_PROPS} dataKey="label" />
                   <YAxis
                     {...AXIS_PROPS}
-                    tickFormatter={(v: number) =>
-                      v >= 1_000_000
-                        ? `${(v / 1_000_000).toFixed(1)}M`
-                        : v >= 1000
-                          ? `${Math.round(v / 1000)}K`
-                          : `${v}`
-                    }
+                    tickFormatter={(v: number) => fmtCompact(v)}
                   />
                   <Tooltip
                     contentStyle={TOOLTIP_STYLE}
@@ -167,7 +162,7 @@ export default function SeasonPlan() {
                   <div key={m} className="bg-surface-2/50 rounded p-2 text-center">
                     <div className="text-xs text-muted">{MONTH_LABELS[m]}</div>
                     <div className={`text-sm font-mono ${tone}`}>
-                      ×{f.toFixed(2)}
+                      ×{fmtRatio(f, 2)}
                     </div>
                   </div>
                 );

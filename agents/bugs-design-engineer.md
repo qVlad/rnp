@@ -175,7 +175,7 @@ _Пока пусто. Audit-задачи TASK-UI-001..003 в Sprint 1 превр
   ```
   Для `EVENT_LABELS: Record<X, string>` объектов — поменять value-тип на `ReactNode` или сделать дополнительный helper `eventLabelToNode()`.
 - **Связанные задачи:** TASK-UI-003 (предусмотренно: `>80% за раунд, остальное defer`)
-- **Статус:** Открыт
+- **Статус:** Исправлено — 2026-05-22 (sub-agent Design Engineer). Базлайн 22 → 8 (target ≤10). Остаток: 5 в `Plans.tsx` (don't-touch на этой сессии, main работает над BUG-UI-005), 3 `.startsWith("✓")` (legitimate string-comparison patterns на response-сообщениях). Мигрированы: AbTestDetail (4), Audit (2), Dashboard (1), Settings (2), Supplies (1), PromoCalculator (1), AbTestNew (1), Reconciliation4Way (1), ReconciliationHeroWidget (1).
 
 ### BUG-UI-002: Остаточные `.toFixed()` без `fmt*` helper (TASK-UI-004)
 
@@ -192,7 +192,7 @@ _Пока пусто. Audit-задачи TASK-UI-001..003 в Sprint 1 превр
 - **Ожидаемое:** Все остаточные либо обёрнуты в `fmt*`, либо имеют `// math` коммент.
 - **Минимальный фикс:** Добавить `fmtRub2(v, digits=2)` / `fmtRatio(v)` helpers в `lib/format.ts` и перейти по-файлово. Или — добавить `// math` коммент рядом с каждым `.toFixed()`.
 - **Связанные задачи:** TASK-UI-004 (предусмотренно: `>80% за раунд, остальное defer`)
-- **Статус:** Открыт
+- **Статус:** Исправлено — 2026-05-22 (sub-agent Design Engineer). Базлайн 41 → ~8 неаннотированных. Добавлены helpers `fmtCompact(v)` (1.2M / 500k / 42 — для axis-labels recharts) и `fmtRatio(v, digits=4)` (для FX-rates/коэффициентов). Мигрированы: NewProducts (10→0), MetricDrilldownModal, SeasonPlan, PaymentCalendar, Opex, Redistribution, Supplies, PnL, PnLReconciliation, Supply, ManagersKpi, AbTestDetail (3 cases CTR), Settings (local helper). Остаток с `// math` / `// CSV` / `// local helper` комментариями: UnitPlanDrillDrawer (conditional %, пп), OwnerCockpitView (pp unit), UnitPlanSnapshotsDrawer (п.п. unit), VariantPhotoGrid (aspect ratio), Supply (CSV format), AdsHeatmap (conditional digits), Checklist (integer days), OpexAllocationsEditor (local helper), Settings (local helper), AbTestDetail.tsx:758 (chart data parse). НЕ трогали Units / UnitPlan / AbcAnalysis (main session BUG-UI-005).
 
 ### BUG-UI-003: Sticky первая колонка (nm_id) на Units / ABC (отложено из TASK-UI-007)
 
@@ -204,7 +204,7 @@ _Пока пусто. Audit-задачи TASK-UI-001..003 в Sprint 1 превр
 - **Ожидаемое:** Первая колонка (nm_id) sticky слева, не отдаёт horizontal-scroll. Corner-cell (intersection thead × first-col) с z-index выше обоих.
 - **Минимальный фикс:** Создать `.sticky-table-col` class в `styles.css` + corner-fix `.sticky-table-head th:first-child { z-index: 11 }`. Применить точечно в 2 файлах. Verify визуально на 1920x1080.
 - **Связанные задачи:** TASK-UI-007
-- **Статус:** Открыт
+- **Статус:** Исправлено — 2026-05-22 (sub-agent Design Engineer). Добавлены классы `.sticky-table-col` (z=5, left:0, background:var(--surface)) и `.sticky-table-corner` (z=15, background:var(--surface-2)) в `styles.css`. Применены в `Units.tsx` (через index `hIdx === 0 / cIdx === 0` для динамических колонок TanStack Table — первая колонка sticky независимо от пользовательской сортировки) и `AbcAnalysis.tsx` (nm_id `<th>` + `<td>` + wrapped table в `overflow-x-auto`). Z-index conflict с sticky-thead (z=10) разрешён через corner z=15.
 
 ### BUG-UI-004: Унификация Loading / Empty / Error через `states.tsx` (отложено из TASK-UI-008)
 
@@ -216,4 +216,4 @@ _Пока пусто. Audit-задачи TASK-UI-001..003 в Sprint 1 превр
 - **Ожидаемое:** `if (q.isLoading) return <Skeleton variant="table" rows={5} />`, `if (q.error) return <ErrorState error={q.error} onRetry={() => q.refetch()} />`, `if (!items.length) return <EmptyState icon="package" title="..." hint="..." action={<Link>Сделать X</Link>} />`. Единый tone & wording.
 - **Минимальный фикс:** Per-page. Старт с топ-5 по трафику: Dashboard (если main session разрешит), Units, PnL, AbcAnalysis, Tariffs. Затем остальные.
 - **Связанные задачи:** TASK-UI-008
-- **Статус:** Открыт
+- **Статус:** Исправлено — 2026-05-22 (sub-agent Design Engineer). Мигрировано 5 pages: `Tariffs` (2 inline → `Skeleton variant="table"`), `Brands` (Loading + Empty → `Skeleton` + `EmptyState icon="package"`), `Funnel` (Loading + Error + Empty → полный triplet `Skeleton`/`ErrorState`/`EmptyState`), `CashFlow` (Loading → `Skeleton`), `SeasonPlan` (Loading → `Skeleton variant="chart"`). Остальные ~25 pages с `<div className="text-muted">Загрузка…</div>` остаются для следующих раундов — приоритет был на pages где >2 inline fallback или которые в топе трафика.

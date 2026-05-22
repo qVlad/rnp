@@ -33,6 +33,7 @@ import {
 import { api, type TariffTimelineRow } from "@/api/client";
 import { fmtPct } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
+import { Skeleton } from "@/components/states";
 import { GRID_PROPS, AXIS_PROPS, TOOLTIP_STYLE, LEGEND_STYLE } from "@/lib/chartTheme";
 
 type Tab = "box" | "pallet" | "commission";
@@ -167,7 +168,7 @@ function WarehouseTab({ kind }: { kind: "box" | "pallet" }) {
         </span>
       </div>
 
-      {timelineQ.isLoading && <div className="card text-muted">Загрузка…</div>}
+      {timelineQ.isLoading && <Skeleton variant="table" rows={6} />}
       {timelineQ.isError && (
         <div className="card text-warn text-sm">
           Не удалось загрузить timeline: {(timelineQ.error as Error).message}
@@ -435,7 +436,7 @@ function CommissionTab() {
         </select>
       </div>
 
-      {timelineQ.isLoading && <div className="card text-muted">Загрузка…</div>}
+      {timelineQ.isLoading && <Skeleton variant="table" rows={6} />}
       {timelineQ.data && timelineQ.data.items.length === 0 && (
         <div className="card text-muted text-sm">
           Нет изменений для предмета «{subject}» в последние 180 дней.

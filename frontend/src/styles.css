@@ -121,6 +121,24 @@ html, body, #root {
   .sticky-table-head th {
     background: var(--surface-2);
   }
+  /* Sticky первая колонка для широких таблиц (BUG-UI-003).
+     Применять как <td className="sticky-table-col"> и <th className="sticky-table-col">.
+     z=5 ниже sticky-thead (z=10) — иначе ломается corner.
+     Corner-cell (thead × first-col) должен быть z=15 чтобы перекрывать обе оси:
+       <th className="sticky-table-col sticky-table-corner">
+  */
+  .sticky-table-col {
+    position: sticky;
+    left: 0;
+    z-index: 5;
+    background: var(--surface);
+  }
+  thead .sticky-table-col,
+  .sticky-table-head .sticky-table-col,
+  .sticky-table-corner {
+    background: var(--surface-2);
+    z-index: 15;
+  }
   /* H1-стандарт: 24px / 32px line-height. Перебивает inline text-xl font-semibold */
   h1 {
     @apply text-h2 font-semibold leading-tight;

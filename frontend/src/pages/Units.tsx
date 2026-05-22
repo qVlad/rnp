@@ -1108,13 +1108,14 @@ export default function Units() {
               <thead className="sticky top-0 bg-surface-2 z-20 shadow-[0_1px_0_var(--border)]">
                 {table.getHeaderGroups().map((hg) => (
                   <tr key={hg.id} className="text-muted text-[10px] uppercase">
-                    {hg.headers.map((h) => {
+                    {hg.headers.map((h, hIdx) => {
                       const tip = COL_TOOLTIPS[h.column.id];
+                      const stickyCls = hIdx === 0 ? "sticky-table-col sticky-table-corner" : "";
                       return (
                         <SortableHeader
                           key={h.id}
                           id={h.column.id}
-                          className={`text-right p-2 select-none whitespace-nowrap hover:text-white border-b border-border ${
+                          className={`text-right p-2 select-none whitespace-nowrap hover:text-white border-b border-border ${stickyCls} ${
                             h.column.getCanSort() ? "cursor-pointer" : ""
                           } ${tip ? "cursor-help" : ""}`}
                         >
@@ -1140,8 +1141,8 @@ export default function Units() {
             <tbody>
               {table.getRowModel().rows.map((r) => (
                 <tr key={r.id} className="border-t border-border hover:bg-surface-2/50">
-                  {r.getVisibleCells().map((c) => (
-                    <td key={c.id} className={`${cellPad} whitespace-nowrap text-right font-mono text-xs`}>
+                  {r.getVisibleCells().map((c, cIdx) => (
+                    <td key={c.id} className={`${cellPad} whitespace-nowrap text-right font-mono text-xs ${cIdx === 0 ? "sticky-table-col" : ""}`}>
                       {flexRender(c.column.columnDef.cell, c.getContext())}
                     </td>
                   ))}

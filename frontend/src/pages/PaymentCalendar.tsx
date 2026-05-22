@@ -11,7 +11,7 @@ import {
   YAxis,
 } from "recharts";
 import { api } from "@/api/client";
-import { fmtRub } from "@/lib/format";
+import { fmtRub, fmtCompact } from "@/lib/format";
 import { chartTheme, GRID_PROPS, AXIS_PROPS, TOOLTIP_STYLE } from "@/lib/chartTheme";
 import PageHeader from "@/components/PageHeader";
 
@@ -159,7 +159,7 @@ export default function PaymentCalendar() {
             <LineChart data={chartData} margin={{ top: 5, right: 16, left: 16, bottom: 5 }}>
               <CartesianGrid {...GRID_PROPS} />
               <XAxis {...AXIS_PROPS} dataKey="date" />
-              <YAxis {...AXIS_PROPS} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+              <YAxis {...AXIS_PROPS} tickFormatter={(v) => fmtCompact(v)} />
               <Tooltip
                 formatter={(v: any) => fmtRub(Number(v))}
                 contentStyle={TOOLTIP_STYLE}

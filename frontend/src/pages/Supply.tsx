@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { fmtNum, fmtPct } from "@/lib/format";
+import { fmtNum, fmtPct, fmtRatio } from "@/lib/format";
 import { useTagFilter } from "@/lib/useTagFilter";
 import TagFilterDropdown from "@/components/TagFilterDropdown";
 import { Icon } from "../components/Icon";
@@ -189,6 +189,7 @@ export default function Supply() {
       const s = String(v).replace(/"/g, '""');
       return /[;\n\r"]/.test(s) ? `"${s}"` : s;
     };
+    // CSV format: 2 decimals with comma separator (Excel ru-RU)
     const fmtNum2 = (v: any): string =>
       v == null ? "" : Number(v).toFixed(2).replace(".", ",");
     const lines = [headers.join(";")];
@@ -203,6 +204,7 @@ export default function Supply() {
           it.stock,
           it.in_way_to_client,
           it.in_way_from_client,
+          // CSV format
           (it.velocity_per_day ?? 0).toFixed(2).replace(".", ","),
           it.days_to_zero ?? "",
           it.recommended_supply_qty,
@@ -485,7 +487,7 @@ export default function Supply() {
                         {it.in_way_from_client}
                       </td>
                       <td className="p-2 text-right font-mono">
-                        {it.velocity_per_day.toFixed(2)}
+                        {fmtRatio(it.velocity_per_day, 2)}
                       </td>
                       <td className="p-2 text-right font-mono">
                         {it.days_to_zero == null ? (

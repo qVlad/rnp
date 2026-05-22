@@ -245,6 +245,7 @@ export default function AdsHeatmap() {
                       useOpacity && v != null && maxVal
                         ? { opacity: Math.max(0.2, Math.min(1, v / maxVal)) }
                         : undefined;
+                    // math: conditional digits per metric — drr 0 digits, others 1
                     const fmtCell = (val: number) => {
                       if (isPercentMetric(metric)) return `${val.toFixed(metric === "drr" ? 0 : 1)}`;
                       if (isRubMetric(metric))

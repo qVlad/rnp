@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@/components/Icon";
-import { fmtRub, fmtPct } from "@/lib/format";
+import { fmtRub, fmtPct, fmtRatio } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 import {
   DEFAULT_MARKET,
@@ -145,9 +145,9 @@ export default function NewProducts() {
         <section className="card flex items-center gap-3 text-xs bg-accent/5 border-accent/30">
           <span>
             <b className="text-accent">Курсы ЦБ РФ на {cbrRates.date}</b>:
-            {" "}1 ¥ = <b>{cbrRates.rub_cny.toFixed(4)} ₽</b>,
-            {" "}1 € = <b>{cbrRates.rub_eur.toFixed(4)} ₽</b>
-            {" "}<span className="text-muted">(сейчас {market.rub_cny.toFixed(2)} / {market.rub_eur.toFixed(2)})</span>
+            {" "}1 ¥ = <b>{fmtRatio(cbrRates.rub_cny, 4)} ₽</b>,
+            {" "}1 € = <b>{fmtRatio(cbrRates.rub_eur, 4)} ₽</b>
+            {" "}<span className="text-muted">(сейчас {fmtRatio(market.rub_cny, 2)} / {fmtRatio(market.rub_eur, 2)})</span>
           </span>
           <button className="btn text-xs ml-auto" onClick={applyCbr}>
             Применить курсы ЦБ
@@ -250,8 +250,8 @@ function ParamsPanel({
         </button>
         <div className="flex items-center gap-2 text-xs text-muted">
           {cbrRates ? (
-            <span title={`ЦБ РФ • USD ${cbrRates.rub_usd.toFixed(4)} ₽`}>
-              ЦБ {cbrRates.date}: 1¥={cbrRates.rub_cny.toFixed(2)} 1€={cbrRates.rub_eur.toFixed(2)}
+            <span title={`ЦБ РФ • USD ${fmtRatio(cbrRates.rub_usd, 4)} ₽`}>
+              ЦБ {cbrRates.date}: 1¥={fmtRatio(cbrRates.rub_cny, 2)} 1€={fmtRatio(cbrRates.rub_eur, 2)}
             </span>
           ) : (
             <span>курсы ЦБ не загружены</span>
@@ -361,7 +361,7 @@ function ImportTable({
                 <td className="p-1.5"><NumIn value={it.length_cm} on={(v) => update(it.id, { length_cm: v })} /></td>
                 <td className="p-1.5"><NumIn value={it.width_cm} on={(v) => update(it.id, { width_cm: v })} /></td>
                 <td className="p-1.5"><NumIn value={it.height_cm} on={(v) => update(it.id, { height_cm: v })} /></td>
-                <td className="p-1.5 text-right text-muted font-mono">{c.volume_l.toFixed(2)}</td>
+                <td className="p-1.5 text-right text-muted font-mono">{fmtRatio(c.volume_l, 2)}</td>
                 <td className="p-1.5"><NumIn value={it.weight_kg} on={(v) => update(it.id, { weight_kg: v })} step={0.01} /></td>
                 <td className="p-1.5"><NumIn value={it.cost_cny} on={(v) => update(it.id, { cost_cny: v })} /></td>
                 <td className="p-1.5"><NumIn value={it.duty_per_unit_eur} on={(v) => update(it.id, { duty_per_unit_eur: v })} step={0.01} /></td>
@@ -451,12 +451,12 @@ function WbTable({
                 </td>
                 <td className="p-1.5"><NumIn value={r.price_rub} on={(v) => update(r.id, { price_rub: v })} /></td>
                 <td className="p-1.5"><NumIn value={r.commission_pct} on={(v) => update(r.id, { commission_pct: v })} step={0.1} /></td>
-                <td className="p-1.5 text-right text-muted font-mono">{c.kvv_pct.toFixed(2)}</td>
+                <td className="p-1.5 text-right text-muted font-mono">{fmtRatio(c.kvv_pct, 2)}</td>
                 <td className="p-1.5"><NumIn value={r.buyout_pct} on={(v) => update(r.id, { buyout_pct: v })} /></td>
                 <td className="p-1.5"><NumIn value={r.turnover_days} on={(v) => update(r.id, { turnover_days: v })} /></td>
                 <td className="p-1.5"><NumIn value={r.promo_pct} on={(v) => update(r.id, { promo_pct: v })} step={0.1} /></td>
                 <td className="p-1.5"><NumIn value={r.other_rub} on={(v) => update(r.id, { other_rub: v })} /></td>
-                <td className="p-1.5 text-right text-muted font-mono">{c.volume_l.toFixed(2)}</td>
+                <td className="p-1.5 text-right text-muted font-mono">{fmtRatio(c.volume_l, 2)}</td>
                 <td className="p-1.5 text-right text-muted font-mono">{fmtRub(c.full_cost_with_vat)}</td>
                 <td className="p-1.5 text-right text-muted font-mono">{fmtRub(c.base_logistics)}</td>
                 <td className="p-1.5 text-right text-muted font-mono">{fmtRub(c.logistics_total)}</td>

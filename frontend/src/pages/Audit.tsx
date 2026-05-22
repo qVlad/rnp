@@ -276,8 +276,8 @@ export default function Audit() {
             <h2 className="font-medium">Сравнение по строкам ОПиУ</h2>
             <div className="text-xs text-muted">
               Расхождений: {compareQ.data.discrepancy_count} · WB:{" "}
-              {compareQ.data.source_status.wb_cabinet ? "✓" : "—"} · Бух:{" "}
-              {compareQ.data.source_status.bookkeeper ? "✓" : "—"}
+              {compareQ.data.source_status.wb_cabinet ? <Icon name="check" size={12} /> : "—"} · Бух:{" "}
+              {compareQ.data.source_status.bookkeeper ? <Icon name="check" size={12} /> : "—"}
             </div>
           </div>
           <table className="w-full text-sm">

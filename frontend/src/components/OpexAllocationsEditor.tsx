@@ -562,5 +562,6 @@ function clamp01(x: number): number {
 }
 
 function pct(x: number): string {
+  // local helper equivalent to fmtPct(x*100, 1); kept local to avoid extra import
   return `${(x * 100).toFixed(1)}%`;
 }

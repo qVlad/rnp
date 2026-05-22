@@ -186,6 +186,7 @@ export default function OwnerCockpitView() {
           {planLag != null && (
             <span className={planLag >= 0 ? "text-success ml-1" : "text-danger ml-1"}>
               ({planLag >= 0 ? "+" : ""}
+              {/* math: pp (percentage points) — not a %, separate unit */}
               {planLag.toFixed(0)}pp к темпу)
             </span>
           )}

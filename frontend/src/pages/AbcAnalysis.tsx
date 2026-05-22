@@ -206,10 +206,11 @@ export default function AbcAnalysis() {
           </div>
         )}
         {items.length > 0 && (
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="sticky-table-head">
               <tr className="text-muted text-xs uppercase">
-                <th className="text-left p-2">nmId</th>
+                <th className="text-left p-2 sticky-table-col sticky-table-corner">nmId</th>
                 <th className="text-left p-2">Артикул</th>
                 <th className="text-left p-2">Класс</th>
                 <th className="text-right p-2">Кол-во</th>
@@ -223,7 +224,7 @@ export default function AbcAnalysis() {
             <tbody>
               {items.map((it: any) => (
                 <tr key={it.nm_id} className="border-t border-border">
-                  <td className="p-2 font-mono">{it.nm_id}</td>
+                  <td className="p-2 font-mono sticky-table-col">{it.nm_id}</td>
                   <td className="p-2">{it.vendor_code ?? "—"}</td>
                   <td className="p-2">
                     <span className={`px-2 py-0.5 rounded text-xs mr-1 ${ABC_COLOR[it.abc_class]}`}>
@@ -243,6 +244,7 @@ export default function AbcAnalysis() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>

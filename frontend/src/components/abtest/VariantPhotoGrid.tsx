@@ -81,6 +81,7 @@ function checkAspectRatio(file: File): Promise<string | null> {
         const orientation =
           ratio > 1.05 ? "горизонтальное" : ratio < 0.7 ? "вертикальное" : "квадратное";
         resolve(
+          // math: aspect ratio with :1 suffix
           `${img.naturalWidth}×${img.naturalHeight} — ${orientation} фото (${ratio.toFixed(2)}:1), WB ждёт 3:4 (≈900×1200).`,
         );
       } else {

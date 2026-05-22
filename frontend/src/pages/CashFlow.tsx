@@ -4,6 +4,7 @@ import { fmtRub } from "@/lib/format";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import { usePeriod } from "@/contexts/PeriodContext";
 import PageHeader from "@/components/PageHeader";
+import { Skeleton } from "@/components/states";
 
 const SECTION_META: Record<string, { color: string; hint: string }> = {
   operating: {
@@ -113,7 +114,7 @@ export default function CashFlow() {
         </div>
       )}
 
-      {q.isLoading && <div className="card text-muted">Загрузка…</div>}
+      {q.isLoading && <Skeleton variant="table" rows={6} />}
 
       {q.data &&
         q.data.sections.map((s) => (
