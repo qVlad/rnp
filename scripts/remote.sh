@@ -140,6 +140,47 @@ cmd_deploy() {
     exit 0
   fi
 
+  # 0.7. Disk space guard. На проде 2026-05-22 был случай disk full
+  # (233G/233G = 100%) — Postgres падал на CREATE TABLE («No space left on
+  # device»), миграция не применилась, backend в crash-loop. Чтобы это не
+  # повторилось:
+  #
+  #   1) Проверяем `df -P /` на удалённом сервере, читаем use%.
+  #   2) Если use% >= DISK_THRESHOLD_PCT (default 70 = «свободно <30%») —
+  #      запускаем `docker image prune -a -f` + `docker builder prune -af`.
+  #      Это reclaim'ит висящие dangling images и кэш сборки — НЕ трогает
+  #      используемые images (rnp-app:latest и пр.) и НЕ трогает volumes
+  #      с данными postgres.
+  #   3) После очистки повторяем df — если всё равно >= threshold,
+  #      abort'имся (значит проблема не в Docker'е, нужен ручной разбор).
+  #
+  # Bypass: SKIP_DISK_CHECK=1 ./scripts/remote.sh deploy
+  # Tuning: DISK_THRESHOLD_PCT=80 ./scripts/remote.sh deploy
+  if [ "${SKIP_DISK_CHECK:-0}" != "1" ]; then
+    local disk_threshold="${DISK_THRESHOLD_PCT:-70}"
+    echo "→ Проверяю свободное место на сервере (порог: ${disk_threshold}% used)…"
+    local disk_use
+    disk_use="$(ssh_cmd "df -P / | awk 'NR==2 {gsub(\"%\",\"\",\$5); print \$5}'" 2>/dev/null || echo 0)"
+    disk_use="${disk_use//[!0-9]/}"
+    disk_use="${disk_use:-0}"
+    echo "  Использовано: ${disk_use}%"
+    if [ "${disk_use}" -ge "${disk_threshold}" ]; then
+      echo "  ⚠️  Превышен порог — запускаю docker image prune + builder prune"
+      ssh_cmd "docker image prune -a -f 2>&1 | tail -1; docker builder prune -af 2>&1 | tail -1" || true
+      disk_use="$(ssh_cmd "df -P / | awk 'NR==2 {gsub(\"%\",\"\",\$5); print \$5}'" 2>/dev/null || echo 0)"
+      disk_use="${disk_use//[!0-9]/}"
+      disk_use="${disk_use:-0}"
+      echo "  После очистки: ${disk_use}%"
+      if [ "${disk_use}" -ge 95 ]; then
+        echo "❌ После очистки всё равно ${disk_use}%/95 — abort. Нужен ручной разбор:" >&2
+        echo "   ssh ${SERVER}" >&2
+        echo "   df -h / && docker system df" >&2
+        echo "   Возможно нужен `docker volume prune` или удалить старые backups в ${REMOTE_DIR}/backups/" >&2
+        exit 1
+      fi
+    fi
+  fi
+
   # 1. ОБЯЗАТЕЛЬНЫЙ бэкап перед обновлением, если postgres уже запущен.
   echo "→ Проверяю запущенные контейнеры для pre-deploy бэкапа…"
   if ssh_cmd "cd ${REMOTE_DIR} && docker compose ps --status running --services 2>/dev/null | grep -qx postgres" 2>/dev/null; then

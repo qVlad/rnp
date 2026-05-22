@@ -76,9 +76,13 @@ PM).** Детали — [`agents/RULES.md`](agents/RULES.md) § Правило 2
 4. **Pre-deploy import check:** перед `docker compose up` стартует
    `python -c 'from app.main import app'` в свежем образе. Если упало
    (NameError/ImportError) — деплой aborts, текущие контейнеры живут.
-5. **Bypass на крайний случай:**
+5. **Disk space guard** (правило 2.9, инцидент 2026-05-22): если use% >= 70
+   на корневом FS — автоматический `docker image prune -a -f` +
+   `docker builder prune -af`. Если после очистки >= 95% — деплой aborts.
+6. **Bypass на крайний случай:**
    - `NO_LOCK=1 ./scripts/remote.sh deploy` — пропустить замок
    - `SKIP_IMPORT_CHECK=1 ./scripts/remote.sh deploy` — пропустить sanity
+   - `SKIP_DISK_CHECK=1` / `DISK_THRESHOLD_PCT=80` — для disk guard
 
 Замок защищает выкатку на прод; пушить в `main` можно когда угодно.
 

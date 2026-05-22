@@ -2539,6 +2539,29 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 
 ---
 
+---
+
+### TASK-LEAD-076: Disk space guard в `scripts/remote.sh deploy`
+
+- **Исполнитель:** Lead
+- **Приоритет:** P0 (обнаружено в инциденте 2026-05-22, раунд 14)
+- **Оценка:** XS (30 мин)
+- **Источник:** Инцидент 2026-05-22: при деплое v0.30.0 миграция 0058 упала с `psycopg2.errors.DiskFull` — на сервере диск 100% (233G/233G). Из них Docker images: 112GB, build cache: 65GB. Освобождение через `docker image prune -a` + `builder prune -af` вернуло 172GB; restart backend применил миграцию.
+- **Описание:** Добавить pre-deploy disk-check в `scripts/remote.sh` чтобы такая ситуация автоматически детектилась и (по возможности) самопочинялась.
+- **Критерии готовности:**
+  - [x] Шаг 0.7 в `cmd_deploy()` (между acquire-lock и pre-deploy backup):
+    - `df -P /` на сервере → use%
+    - Если `use% >= ${DISK_THRESHOLD_PCT:-70}` → `docker image prune -a -f && docker builder prune -af`
+    - Повторная проверка → если `>= 95%`, abort с подсказкой ручного разбора
+  - [x] Bypass: `SKIP_DISK_CHECK=1` + tuning `DISK_THRESHOLD_PCT=80`
+  - [x] Правило 2.9 в `agents/RULES.md` с описанием инцидента и поведения
+  - [x] Упоминание в `CLAUDE.md` § «Release-lock» (шаг 5)
+  - [x] Тест bash-syntax `bash -n scripts/remote.sh` чистый
+- **Зависимости:** нет
+- **Статус:** Выполнено — 2026-05-22 (раунд 14 follow-up)
+
+---
+
 ## Формат / Жизненный цикл
 
 См. `RULES.md` §«Формат задачи».

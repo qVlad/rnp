@@ -552,6 +552,63 @@ fetch и push). Но **явный сигнал** «занято с time / agent 
 
 ---
 
+## Правило 2.9 — Disk space guard в deploy (operational)
+
+**Контекст инцидента (2026-05-22, раунд 14):** при деплое v0.30.0 миграция 0058
+(`weekly_report_comment`) упала с `psycopg2.errors.DiskFull: could not extend
+file "base/16384/1249": No space left on device`. На сервере диск был 100%
+заполнен (233G/233G) — почти весь занят docker images (112GB) и build cache
+(65GB). Backend в crash-loop, миграция не применилась. Освобождение через
+`docker image prune -a -f && docker builder prune -af` вернуло 172GB; restart
+backend применил миграцию.
+
+### Что включено в `scripts/remote.sh deploy` после этого
+
+Шаг 0.7 (между acquire-lock и pre-deploy backup):
+
+1. **Проверка `df -P /` на сервере** → читаем use% корневого FS.
+2. Если `use% >= DISK_THRESHOLD_PCT` (default **70** = «свободно <30%»):
+   - Запускаем `docker image prune -a -f` + `docker builder prune -af` —
+     reclaim'ит dangling images и build cache. **Не трогает** используемые
+     images (rnp-app:latest и др.) и **не трогает** volumes с данными
+     postgres / abtest_photos.
+   - Повторяем `df -P /` после.
+3. Если после очистки `use% >= 95%` — **abort деплоя**, с подсказкой
+   ручного разбора (`docker volume prune`, удаление старых backups
+   в `${REMOTE_DIR}/backups/`).
+
+### Bypass
+
+- `SKIP_DISK_CHECK=1 ./scripts/remote.sh deploy` — пропустить целиком
+  (только в крайнем случае).
+- `DISK_THRESHOLD_PCT=80 ./scripts/remote.sh deploy` — поднять порог
+  (если временно ОК работать на меньшем запасе).
+
+### Когда вручную чистить
+
+`docker image prune -a` и `builder prune` — недеструктивны для прода
+(используемые images не удаляются). Можно запускать на сервере вручную
+если deploy aborts.
+
+Деструктивные операции (нельзя автоматизировать):
+
+- `docker volume prune` — удалит **abtest_photos** и любые orphaned
+  volumes. Только после явной проверки `docker volume ls`.
+- Удаление старых backups в `${REMOTE_DIR}/backups/` — оставить хотя бы
+  последние 3 (1 свежий + 2 «на откат»).
+- `journalctl --vacuum-size=...` — для logs на /var/log если discoking
+  заполнен ими.
+
+### Применимость
+
+Только к проду через `remote.sh deploy`. Локальный `docker compose up` не
+управляется этим правилом — на dev-машине пользователь сам следит за
+диском. Но при работе с миграциями локально перед `alembic upgrade head`
+рекомендуется глянуть `df -h .` — миграции на больших таблицах могут
+требовать в 2× места временно (`pg_dump` бэкап + новый снапшот).
+
+---
+
 ## Правило 3 — Бэкап БД перед изменениями (КРИТИЧНО)
 
 См. `CLAUDE.md` §«ОБЯЗАТЕЛЬНОЕ ПРАВИЛО». Любое из следующего требует pg_dump БЕЗУСЛОВНО:
