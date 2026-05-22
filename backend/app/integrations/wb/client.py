@@ -21,6 +21,7 @@ Category = Literal[
     "documents",
     "content",
     "tariffs",
+    "prices",
 ]
 
 
@@ -125,6 +126,11 @@ class WbApiClient:
             # но мы держим строгий потолок 6/мин с min_interval=10s — этого
             # достаточно с большим запасом для daily sync. См. UNIT_PLAN.md §7.
             "tariffs": TokenBucketLimiter(6, min_interval_s=10.0),
+            # discounts-prices-api: /api/v2/list/goods/filter. WB docs don't
+            # specify exact limits for Base token (Personal: ~10/min). We hold
+            # 6/min with min 10s between calls — safe headroom; sync runs every
+            # 30 min as one paginated burst. См. WB_API_REFERENCE §3.
+            "prices": TokenBucketLimiter(6, min_interval_s=10.0),
         }
         self._bases: dict[Category, str] = {
             "statistics": settings.wb_statistics_base,
@@ -138,6 +144,7 @@ class WbApiClient:
             # но крутятся через отдельный category-лимитер чтобы daily-tariffs
             # task не съедал бюджет других common-вызовов (ping и пр.).
             "tariffs": settings.wb_common_base,
+            "prices": settings.wb_prices_base,
         }
         self._client: httpx.AsyncClient | None = None
 

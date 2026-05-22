@@ -47,6 +47,7 @@ import {
   type UnitPlanFilters,
   type UnitPlanGlobalConfig,
   type UnitPlanOverrideUpdate,
+  type UnitPlanPricesStatus,
   type UnitPlanResponse,
   type UnitPlanRow,
 } from "@/api/client";
@@ -498,7 +499,15 @@ const COLUMNS: ColDef[] = [
     group: "price",
     label: "Базовая цена",
     visibleByDefault: true,
-    render: (r) => fmtRub(r.base_price || 0),
+    render: (r) => (
+      <span className="inline-flex items-center gap-1">
+        {fmtRub(r.base_price || 0)}
+        <PriceSourceBadge
+          source={r.price_source}
+          syncedAt={r.price_synced_at}
+        />
+      </span>
+    ),
   },
   {
     id: "discount_pct",
@@ -1405,6 +1414,22 @@ function UnitPlanDesktop() {
     retry: false,
   });
 
+  // TASK-LEAD-074 — health-индикатор актуальности цен.
+  const pricesStatusQ = useQuery({
+    queryKey: ["unit-plan-prices-status"],
+    queryFn: api.unitPlanPricesStatus,
+    refetchInterval: 60_000, // обновляем раз в минуту, без агрессивного polling
+    retry: false,
+  });
+
+  const syncPricesMut = useMutation({
+    mutationFn: api.unitPlanSyncPrices,
+    onSuccess: () => {
+      // Дёрнуть статус сразу — task в очереди, через 30-60с цифры обновятся.
+      qc.invalidateQueries({ queryKey: ["unit-plan-prices-status"] });
+    },
+  });
+
   const data = rowsQ.data;
   const config = configQ.data;
   const isMock = data === MOCK_RESPONSE;
@@ -1585,6 +1610,14 @@ function UnitPlanDesktop() {
 
       {/* ── Top-panel: глобальные константы (read-only chips) ── */}
       <TopConstants config={config} />
+
+      {/* TASK-LEAD-074 — health-индикатор актуальности цен + кнопка sync */}
+      <PricesHealthBar
+        status={pricesStatusQ.data}
+        totalRows={items.length}
+        onSync={() => syncPricesMut.mutate()}
+        isSyncing={syncPricesMut.isPending}
+      />
 
       {/* ── Quick filters (TASK-DEV-004): найти проблемные SKU в 1 клик ── */}
       <div className="card p-3 flex flex-wrap items-center gap-3 text-sm">
@@ -2749,3 +2782,121 @@ export const UNIT_PLAN_META = {
   defaultVisibleColumns: DEFAULT_VISIBLE,
   frozenColumns: FROZEN_COUNT,
 };
+
+// ──────────────────────────────────────────────────────────────────────────
+// TASK-LEAD-074 — Price source UI components
+// ──────────────────────────────────────────────────────────────────────────
+
+function formatAgo(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const synced = new Date(iso);
+  const minutes = Math.max(0, Math.round((Date.now() - synced.getTime()) / 60000));
+  if (minutes < 1) return "только что";
+  if (minutes < 60) return `${minutes} мин назад`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} ч назад`;
+  return `${Math.floor(hours / 24)} д назад`;
+}
+
+function PriceSourceBadge({
+  source,
+  syncedAt,
+}: {
+  source?: "wb_prices" | "wb_sales" | "none";
+  syncedAt?: string | null;
+}) {
+  if (!source || source === "none") {
+    return (
+      <sup
+        className="text-tiny text-warn cursor-help"
+        title="Цены нет ни в wb_prices, ни в wb_sales"
+      >
+        ?
+      </sup>
+    );
+  }
+  if (source === "wb_prices") {
+    return (
+      <sup
+        className="text-tiny text-success cursor-help"
+        title={`Источник: ЛК WB (Prices API) · обновлено ${formatAgo(
+          syncedAt,
+        )}`}
+      >
+        ●
+      </sup>
+    );
+  }
+  return (
+    <sup
+      className="text-tiny text-warn cursor-help"
+      title={`Источник: последняя продажа (wb_sales) от ${
+        syncedAt ? new Date(syncedAt).toLocaleDateString("ru-RU") : "?"
+      }. Нет данных в WB Prices API — sync ещё не прошёл или SKU архивный.`}
+    >
+      ◐
+    </sup>
+  );
+}
+
+function PricesHealthBar({
+  status,
+  totalRows,
+  onSync,
+  isSyncing,
+}: {
+  status: UnitPlanPricesStatus | undefined;
+  totalRows: number;
+  onSync: () => void;
+  isSyncing: boolean;
+}) {
+  const rows = status?.rows ?? 0;
+  const age = status?.age_minutes;
+  // Здоровый: возраст ≤ 60 мин, покрытие ≥ 50%.
+  const coveragePct =
+    totalRows > 0 ? Math.round((rows / totalRows) * 100) : null;
+  const isStale = age == null || age > 120;
+  const isLowCoverage = coveragePct != null && coveragePct < 50;
+  const tone = isStale || isLowCoverage ? "warn" : "success";
+
+  const ageText =
+    age == null
+      ? "никогда"
+      : age < 1
+        ? "только что"
+        : age < 60
+          ? `${Math.round(age)} мин назад`
+          : `${Math.floor(age / 60)} ч назад`;
+
+  return (
+    <div className="card p-3 flex flex-wrap items-center gap-3 text-sm">
+      <span className={`inline-flex items-center gap-1.5 text-${tone}`}>
+        <span className="text-base">{tone === "success" ? "●" : "◐"}</span>
+        <span className="font-medium">Цены WB:</span>
+      </span>
+      <span className="text-fg">
+        обновлены <span className="font-mono">{ageText}</span>
+        {coveragePct != null && (
+          <>
+            {" "}
+            (
+            <span className="font-mono">
+              {rows}
+            </span>{" "}
+            из <span className="font-mono">{totalRows}</span> SKU,{" "}
+            <span className="font-mono">{coveragePct}%</span>)
+          </>
+        )}
+      </span>
+      <button
+        type="button"
+        className="btn btn-secondary text-xs ml-auto"
+        onClick={onSync}
+        disabled={isSyncing}
+        title="Запустить ad-hoc sync — задача отправится в очередь, цифры обновятся через 30-60 сек"
+      >
+        {isSyncing ? "Запуск…" : "🔄 Обновить прайсы"}
+      </button>
+    </div>
+  );
+}

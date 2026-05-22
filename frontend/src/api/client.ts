@@ -2373,6 +2373,15 @@ paymentOrderDelete: (payment_order_id: string) =>
     request<void>(`/api/unit-plan/overrides/${nm_id}`, { method: "DELETE" }),
   unitPlanReferenceStatus: () =>
     request<UnitPlanReferenceStatus>(`/api/unit-plan/reference/status`),
+  /** TASK-LEAD-074: WB Prices sync — health-индикатор актуальности. */
+  unitPlanPricesStatus: () =>
+    request<UnitPlanPricesStatus>(`/api/unit-plan/prices-status`),
+  /** TASK-LEAD-074: ad-hoc запуск Celery `sync.prices` для текущего tenant'а. */
+  unitPlanSyncPrices: () =>
+    request<{ task_id: string; queued: boolean; tenant_id: number }>(
+      `/api/unit-plan/sync-prices`,
+      { method: "POST" },
+    ),
   unitPlanDetail: (nm_id: number) =>
     request<UnitPlanDetail>(`/api/unit-plan/${nm_id}/detail`),
   /** UNIT-PLAN-015: snapshots — список (grouped by date+label с count). */
@@ -2608,12 +2617,26 @@ export interface UnitPlanRow {
   orders_period_2?: number | null;
   orders_period_3?: number | null;
   stock_forecast?: number | null;
+  // TASK-LEAD-074 — источник цены (для UI badge + tooltip):
+  //   "wb_prices" — актуальная из WB Prices API (sync раз в 30 мин)
+  //   "wb_sales"  — fallback: последняя реальная продажа
+  //   "none"      — цены нет ни там ни там
+  price_source?: "wb_prices" | "wb_sales" | "none";
+  price_synced_at?: string | null; // ISO datetime
 }
 
 export interface UnitPlanReferenceStatus {
   box_age_days: number;
   commission_age_days: number;
   stale: boolean;
+}
+
+/** TASK-LEAD-074: статус актуальности `wb_prices` для шапки `/unit-plan`. */
+export interface UnitPlanPricesStatus {
+  rows: number;
+  synced_at_min: string | null;
+  synced_at_max: string | null;
+  age_minutes: number | null;
 }
 
 export interface UnitPlanResponse {

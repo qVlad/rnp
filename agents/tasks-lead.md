@@ -2480,7 +2480,17 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   9. **Deploy** через `./scripts/remote.sh deploy` — pre-deploy бэкап автоматический, сразу после деплоя один раз вручную дёрнуть task: `docker compose exec backend python -m app.sync.tasks_prices sync_wb_prices 1`. Подождать ~5 мин, проверить таблицу `wb_prices`: `SELECT COUNT(*), MIN(synced_at), MAX(synced_at) FROM wb_prices;`.
   10. **Prod-smoke:** на `/unit-plan` найти 5 SKU с разной активностью — 2 active (продаются ежедневно), 2 stale (продавались месяц назад), 1 архивный. Сверить с `wb_partners.wildberries.ru` для каждого. Ожидание: все 4 active+stale = 1:1. Архивный может остаться на fallback wb_sales (это ок, но source=wb_sales должен быть подсвечен в UI).
 
-- **Статус:** Открыта
+- **Статус:** Выполнено (backend + UI) — 2026-05-22. Реализация:
+  - Миграция `0057_wb_prices.py` — `wb_prices(tenant_id, nm_id) + wb_prices_size(tenant_id, nm_id, tech_size)`. Composite PK, без TenantScopedMixin (mixin несовместим с composite PK).
+  - SQLAlchemy модели `WbPrice` + `WbPriceSize` в `models.py`.
+  - WB-клиент `integrations/wb/prices.py` — `fetch_all_prices(client)` AsyncIterator с пагинацией через `offset`. Новая category `"prices"` в `client.py` (6/min, min 10s), base URL в `config.wb_prices_base = "https://discounts-prices-api.wildberries.ru"`.
+  - Celery task `sync/tasks_prices.sync_wb_prices(tenant_id=None)` — full sync per-tenant с bulk-upsert chunks по 500 рядов. Beat-schedule `sync-prices-30m` каждые 30 мин. При `tenant_id` указан — sync только его (ad-hoc через API).
+  - `_latest_price` в `unit_plan_loader.py` — primary `wb_prices`, fallback `wb_sales (is_return=False)`. Возвращает 4-tuple `(price_with_disc, discount_share, source, synced_at)`.
+  - `PriceSnapshot` + `UnitPlanRowDTO` расширены полями `source` + `synced_at`. Frontend type `UnitPlanRow` соответственно `price_source` + `price_synced_at`.
+  - API `GET /api/unit-plan/prices-status` (health: rows / age_minutes / synced_at_min/max) + `POST /api/unit-plan/sync-prices` (director/head).
+  - UI: `PriceSourceBadge` sup-иконка рядом с «Базовой ценой» (●/◐/? для wb_prices/wb_sales/none + tooltip). `PricesHealthBar` в шапке `/unit-plan` рядом с TopConstants — возраст + покрытие + кнопка «🔄 Обновить прайсы».
+  - Документация: CLAUDE.md (таблица миграций + API endpoints), UNIT_PLAN.md (§6 Цены), WB_API_REFERENCE.md (Prices API §3 row), FEATURES.md (services + Celery-task).
+  - **Не сделано в этом раунде (отложено):** sandbox-разведка реальных rate-limit headers WB Prices API (взяли консервативный 6/min с большим запасом — при первом проде с активным sync можно скорректировать). Unit-tests на `_latest_price` с приоритетом источников. Эти 2 пункта — TASK-LEAD-074 follow-up.
 
 ---
 

@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     wb_analytics_base: str = "https://seller-analytics-api.wildberries.ru"
     wb_finance_base: str = "https://finance-api.wildberries.ru"
     wb_content_base: str = "https://content-api.wildberries.ru"
+    # discounts-prices-api: /api/v2/list/goods/filter (TASK-LEAD-074).
+    # Sandbox: discounts-prices-api-sandbox.wildberries.ru.
+    wb_prices_base: str = "https://discounts-prices-api.wildberries.ru"
 
     # Rate limits:
     # Statistics (statistics-api.wildberries.ru):

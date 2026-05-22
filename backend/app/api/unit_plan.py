@@ -25,7 +25,7 @@ from __future__ import annotations
 import calendar
 import logging
 from dataclasses import asdict
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Annotated, Any
 
@@ -44,6 +44,7 @@ from app.db.models import (
     UnitPlanSnapshot,
     UnitPlanSnapshotConfig,
     WbOrder,
+    WbPrice,
     WbSale,
 )
 from app.services.audit import actor_from_request, audit_log
@@ -75,11 +76,13 @@ router = APIRouter(prefix="/api/unit-plan", tags=["unit-plan"])
 
 
 def _decimalize(value: Any) -> Any:
-    """Recursive: Decimal → str (avoid float round-trip in JSON)."""
+    """Recursive: Decimal → str (avoid float round-trip in JSON), datetime → ISO."""
     if value is None:
         return None
     if isinstance(value, Decimal):
         return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
     if isinstance(value, dict):
         return {k: _decimalize(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
@@ -1515,3 +1518,62 @@ async def get_nm_detail(
         "cogs_breakdown": cogs,
         "plan_vs_fact": plan_vs_fact,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# WB Prices sync (TASK-LEAD-074)
+# ─────────────────────────────────────────────────────────────────────────
+
+
+@router.get("/prices-status")
+async def prices_status(
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Health-индикатор актуальности цен для шапки `/unit-plan`.
+
+    Возвращает количество SKU с прайсом из `wb_prices`, минимальный/
+    максимальный `synced_at` и возраст самой свежей записи в минутах.
+    """
+    row = (
+        await session.execute(
+            select(
+                func.count(WbPrice.nm_id),
+                func.min(WbPrice.synced_at),
+                func.max(WbPrice.synced_at),
+            ).where(WbPrice.tenant_id == user.tenant_id)
+        )
+    ).one()
+    count, min_synced, max_synced = row
+    age_minutes: float | None = None
+    if max_synced is not None:
+        now = datetime.now(max_synced.tzinfo or timezone.utc)
+        age_minutes = (now - max_synced).total_seconds() / 60.0
+    return {
+        "rows": int(count or 0),
+        "synced_at_min": min_synced.isoformat() if min_synced else None,
+        "synced_at_max": max_synced.isoformat() if max_synced else None,
+        "age_minutes": age_minutes,
+    }
+
+
+@router.post(
+    "/sync-prices",
+    dependencies=[Depends(require_director_or_head)],
+)
+async def trigger_prices_sync(
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Ручной запуск Celery-таски `sync.prices` для текущего tenant'а.
+
+    Не ждёт результата — отправляет в очередь и возвращает task_id.
+    Реальный sync ходит в WB Prices API и UPSERT'ит таблицу `wb_prices`.
+    Прогресс — в SyncStatusIndicator в sidebar или `/api/sync/status`.
+    """
+    from app.sync.tasks_prices import sync_wb_prices
+
+    try:
+        result = sync_wb_prices.delay(user.tenant_id)
+    except Exception as exc:
+        raise HTTPException(503, f"celery broker unavailable: {exc}") from exc
+    return {"task_id": result.id, "queued": True, "tenant_id": user.tenant_id}

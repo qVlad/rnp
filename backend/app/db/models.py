@@ -2446,3 +2446,61 @@ class PlanEditRequest(Base, TenantScopedMixin):
     )
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     resolution_note: Mapped[str | None] = mapped_column(Text)
+
+
+class WbPrice(Base):
+    """Актуальная цена продавца по nm_id из WB Prices API.
+
+    Sync через `sync/tasks_prices.sync_wb_prices` раз в 30 мин.
+    Используется как primary source в `services/unit_plan_loader._latest_price`
+    (fallback — последняя `wb_sales` с `is_return=False`).
+
+    `price * (1 - discount_pct/100) = retail_price_with_disc` (без СПП и без
+    WB Клуба — это «цена на витрине после скидки продавца»).
+
+    Composite PK (tenant_id, nm_id) — потому НЕ через TenantScopedMixin.
+    """
+
+    __tablename__ = "wb_prices"
+
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    nm_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    discount_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    club_discount_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    editable_size_price: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    currency: Mapped[str] = mapped_column(
+        String(8), nullable=False, server_default=text("'RUB'")
+    )
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class WbPriceSize(Base):
+    """Per-size прайсы для SKU с `editable_size_price=true`.
+
+    Не используется в `/unit-plan` (тот агрегирует по nm_id). Хранится для
+    будущей размерной аналитики.
+    """
+
+    __tablename__ = "wb_prices_size"
+
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    nm_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    tech_size: Mapped[str] = mapped_column(String(64), primary_key=True)
+    price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    discount_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

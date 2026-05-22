@@ -11,6 +11,7 @@ celery_app = Celery(
         "app.sync.tasks",
         "app.sync.tasks_abtest",
         "app.sync.tasks_tariffs",
+        "app.sync.tasks_prices",
         "app.sync.tasks_product_volume",
         "app.sync.event_consumers",
     ],
@@ -87,6 +88,7 @@ celery_app.conf.update(
         "app.sync.tasks_abtest.sync_abtest_stats_for_tenant": {"queue": "advert"},
         # WB Tariffs (UNIT-PLAN-005). Один запрос в сутки — default queue.
         "sync.tariffs": {"queue": "default"},
+        "sync.prices": {"queue": "default"},
         "sync.product_volume": {"queue": "default"},
     },
     # Beat schedule design constraints:
@@ -299,6 +301,14 @@ celery_app.conf.update(
         "sync-product-volume-weekly": {
             "task": "sync.product_volume",
             "schedule": crontab(hour=4, minute=0, day_of_week="sun"),
+        },
+        # --- WB Prices (TASK-LEAD-074) ---
+        # Раз в 30 мин — full sync prices/discounts per-tenant. Источник
+        # правды для базовой цены в `/unit-plan` (заменяет fallback на
+        # `wb_sales.price_with_disc`). См. tasks_prices.py.
+        "sync-prices-30m": {
+            "task": "sync.prices",
+            "schedule": crontab(minute="*/30"),
         },
     },
 )

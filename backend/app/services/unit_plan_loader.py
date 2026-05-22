@@ -33,6 +33,7 @@ from app.db.models import (
     UnitPlanGlobalConfig,
     UnitPlanOverride,
     WbOrder,
+    WbPrice,
     WbSale,
     WbStockSnapshot,
     WbTariffBox,
@@ -524,53 +525,100 @@ async def _latest_price(
     *,
     tenant_id: int,
     nm_ids: list[int],
-) -> dict[int, tuple[Decimal | None, Decimal | None]]:
-    """Latest price (price_with_disc) per nm_id из `wb_sales`.
+) -> dict[int, tuple[Decimal | None, Decimal | None, str, datetime | None]]:
+    """Latest price per nm_id: primary `wb_prices` (WB Prices API), fallback `wb_sales`.
 
-    Модели `wb_prices` в текущей схеме нет — используем последнюю
-    `WbSale.price_with_disc` как best-effort для plan-расчёта. `discount_pct`
-    оставляем None (base_price ≈ price_after_discount). Если future-миграция
-    введёт wb_prices — заменить здесь.
+    Возвращает `(price_with_disc, discount_share, source, synced_at)`:
+      * primary `wb_prices` — `WbPrice.price * (1 - discount_pct/100)`. Это
+        актуальная цена продавца как в ЛК WB. Sync через
+        `sync.tasks_prices.sync_wb_prices` раз в 30 мин (TASK-LEAD-074).
+      * fallback `wb_sales` — последняя реальная продажа с `is_return=False`
+        (BUG-DEV-008). Используется для SKU, по которым sync ещё не пришёл,
+        или которые в WB Prices API не отдаются (архивные / снятые).
+      * `source` ∈ `{"wb_prices", "wb_sales", "none"}` — для UI бейджа источника.
+      * `synced_at` — когда зафиксировали цифру (для tooltip'а «обновлено N мин назад»).
     """
     if not nm_ids:
         return {}
-    # Latest sale_dt per nm_id, pick price_with_disc.
-    # BUG-DEV-008: фильтр `is_return=False` — у возвратов `price_with_disc`
-    # отрицательный (минусовая строка в wb_sales). Без фильтра, если самое
-    # свежее событие — возврат, base_price выходит отрицательной.
-    subq = (
-        select(
-            WbSale.nm_id,
-            func.max(WbSale.sale_dt).label("max_dt"),
-        )
-        .where(
-            WbSale.tenant_id == tenant_id,
-            WbSale.nm_id.in_(nm_ids),
-            WbSale.is_return.is_(False),
-        )
-        .group_by(WbSale.nm_id)
-        .subquery()
+
+    out: dict[int, tuple[Decimal | None, Decimal | None, str, datetime | None]] = {}
+
+    # --- Primary: wb_prices ----------------------------------------------
+    stmt_prices = select(
+        WbPrice.nm_id,
+        WbPrice.price,
+        WbPrice.discount_pct,
+        WbPrice.synced_at,
+    ).where(
+        WbPrice.tenant_id == tenant_id,
+        WbPrice.nm_id.in_(nm_ids),
     )
-    stmt = (
-        select(WbSale.nm_id, WbSale.price_with_disc, WbSale.discount_percent)
-        .join(
-            subq,
-            and_(
-                WbSale.nm_id == subq.c.nm_id,
-                WbSale.sale_dt == subq.c.max_dt,
-            ),
+    for nm, price, disc_pct, synced_at in (await session.execute(stmt_prices)).all():
+        if price is None:
+            continue
+        discount_share = (
+            _pct_to_share(disc_pct) if disc_pct is not None else D0
         )
-        .where(
-            WbSale.tenant_id == tenant_id,
-            WbSale.is_return.is_(False),
+        # `price` это базовая цена ДО скидки. price_with_disc =
+        # price * (1 - share). Это совпадает с тем что мы раньше получали
+        # из `wb_sales.price_with_disc` (т.е. retail-цена на витрине).
+        price_with_disc = (
+            Decimal(price) * (Decimal("1") - discount_share)
+            if discount_share is not None
+            else Decimal(price)
         )
-    )
-    out: dict[int, tuple[Decimal | None, Decimal | None]] = {}
-    for nm, price, disc in (await session.execute(stmt)).all():
         out[int(nm)] = (
-            Decimal(price) if price is not None else None,
-            _pct_to_share(disc) if disc is not None else D0,
+            price_with_disc,
+            discount_share,
+            "wb_prices",
+            synced_at,
         )
+
+    # --- Fallback: wb_sales для nm_id'ов, которых нет в wb_prices --------
+    missing = [nm for nm in nm_ids if nm not in out]
+    if missing:
+        # BUG-DEV-008: фильтр `is_return=False` — у возвратов
+        # `price_with_disc` отрицательный.
+        subq = (
+            select(
+                WbSale.nm_id,
+                func.max(WbSale.sale_dt).label("max_dt"),
+            )
+            .where(
+                WbSale.tenant_id == tenant_id,
+                WbSale.nm_id.in_(missing),
+                WbSale.is_return.is_(False),
+            )
+            .group_by(WbSale.nm_id)
+            .subquery()
+        )
+        stmt = (
+            select(
+                WbSale.nm_id,
+                WbSale.price_with_disc,
+                WbSale.discount_percent,
+                WbSale.sale_dt,
+            )
+            .join(
+                subq,
+                and_(
+                    WbSale.nm_id == subq.c.nm_id,
+                    WbSale.sale_dt == subq.c.max_dt,
+                ),
+            )
+            .where(
+                WbSale.tenant_id == tenant_id,
+                WbSale.is_return.is_(False),
+            )
+        )
+        for nm, price, disc, sale_dt in (await session.execute(stmt)).all():
+            out[int(nm)] = (
+                Decimal(price) if price is not None else None,
+                _pct_to_share(disc) if disc is not None else D0,
+                "wb_sales",
+                sale_dt,
+            )
+
     return out
 
 
@@ -672,7 +720,9 @@ async def load_per_nm_snapshots(
     out: dict[int, dict[str, Any]] = {}
     for p in products:
         nm = int(p.nm_id)
-        price_with_disc, discount_share = price_map.get(nm, (None, D0))
+        price_with_disc, discount_share, price_source, price_synced_at = (
+            price_map.get(nm, (None, D0, "none", None))
+        )
         # base_price ≈ price_with_disc / (1 - discount_share) если есть скидка.
         # Если discount=0 (или мы её не знаем) — base == after-discount.
         if (
@@ -707,6 +757,8 @@ async def load_per_nm_snapshots(
         price_snap = PriceSnapshot(
             base_price=base_price,
             discount_pct=discount_share,
+            source=price_source,
+            synced_at=price_synced_at,
         )
         cogs_snap = CogsSnapshot(cost_rub=cogs_map.get(nm))
         funnel_snap = FunnelSnapshot(

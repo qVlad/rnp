@@ -290,7 +290,7 @@ docker-compose.yml
 .claude/settings.json   permissions для агента
 ```
 
-## Миграции БД (50 шт., 0001-0056)
+## Миграции БД (51 шт., 0001-0057)
 
 > Полный список с деталями — в [`FEATURES.md`](FEATURES.md) → «Миграции». Здесь — топ-уровневое.
 
@@ -332,6 +332,7 @@ docker-compose.yml
 | **0054** | **users.tg_chat_id** — per-user Telegram binding для multi-recipient broadcast'а. Раньше TG-нотификации шли только в `AppSetting.tg_chat_id` тенанта. Теперь `services/tg_broadcast.broadcast_to_directors` сначала шлёт всем `User.tg_chat_id IS NOT NULL` подходящей роли, fallback на legacy AppSetting. UI: /settings → «Мой Telegram-чат». |
 | **0055** | **opex_entry_allocations** — many-to-many распределение OPEX (TASK-LEAD-030). Каждый `OpexEntry` → N scope'ов с весами 0..1 (`scope_type ∈ tenant/brand/group/nm`, Σweights ≤ 1.0). Backfill: 1 `tenant`-allocation weight=1.0 на каждый existing entry → **Δ=0₽ guard** для company-scope (читает `SUM(amount)` без JOIN). Manager-scope P&L теперь видит свою долю OPEX через `services/opex_allocations.manager_scope_effective_weights` (резолв nm→brand, group→fraction). API `POST /api/opex/entries/allocations/preview` (mode=`equal`/`revenue_share`) для UI-превью. UI в /opex — отдельная задача после деплоя backend. |
 | **0056** | **user_tenant_access** — M:N user↔tenant для multi-cabinet workspace (TASK-LEAD-048 / TASK-LEAD-039 Фаза B). Composite PK `(user_id, tenant_id)` + per-tenant `role` (в одной компании user может быть director'ом, в другой — manager'ом). `last_active_at` для сортировки dropdown'а. Backfill: 1 запись на каждого existing user'а из его `users.tenant_id` + `users.role`. `users.tenant_id` колонка остаётся **read-only legacy** (drop отложен в Фазу D). Middleware `services/active_tenant.py` резолвит active tenant (cookie `rnp_active_tenant` → header `X-Tenant-ID` → fallback). API `GET /api/auth/available-tenants` + `POST /api/auth/switch-tenant`. Audit-log событие `tenant.switch`. |
+| **0057** | **wb_prices + wb_prices_size** — актуальные цены продавца из WB Prices API (TASK-LEAD-074). Composite PK `(tenant_id, nm_id)` для wb_prices, `(tenant_id, nm_id, tech_size)` для wb_prices_size. Source of truth для базовой цены в `/unit-plan` — заменяет fallback на последнюю `wb_sales.price_with_disc` (давала устаревшие цифры для SKU, по которым не было продаж). Sync через `sync.tasks_prices.sync_wb_prices` каждые 30 мин (Celery beat) — full upsert per-tenant. Endpoint WB: `GET /api/v2/list/goods/filter` на `discounts-prices-api.wildberries.ru`. Скорость лимита: 6/min с min 10 сек между запросами. `_latest_price` в `services/unit_plan_loader` теперь возвращает `(price_with_disc, discount_share, source, synced_at)` где source ∈ `wb_prices`/`wb_sales`/`none` — отрисовка badge в UI. API: `GET /api/unit-plan/prices-status` (health-индикатор) + `POST /api/unit-plan/sync-prices` (ad-hoc запуск, director/head). |
 
 ## Роли и RBAC
 
@@ -450,7 +451,7 @@ activeTenantId + switchTenant(). Layout dropdown «Кабинет ▼» в ша�
 | `/api/checklist*` | tenant-scoped | онбординг чек-лист |
 | `/api/audit-mode*` | director_head_or_bookkeeper (read), director_or_head (write) | 3-source сверка для бухгалтерии: read открыт bookkeeper'у, writes (imports/decisions/templates) — только director/head |
 | `/api/sync/status` | tenant-scoped | sync checkpoints + WB cooldowns + celery active tasks |
-| `/api/unit-plan/*` | brands-filter (rows), director (global-config PUT), director_or_head (overrides/snapshots) | **UNIT-план** — плановая юнит-экономика на базе Excel-методики LeymanKids. См. [`UNIT_PLAN.md`](UNIT_PLAN.md). |
+| `/api/unit-plan/*` | brands-filter (rows), director (global-config PUT), director_or_head (overrides/snapshots/sync-prices) | **UNIT-план** — плановая юнит-экономика на базе Excel-методики LeymanKids. См. [`UNIT_PLAN.md`](UNIT_PLAN.md). **TASK-LEAD-074:** `GET /api/unit-plan/prices-status` (health актуальности цен) + `POST /api/unit-plan/sync-prices` (ad-hoc запуск Celery task). |
 | `/api/tariffs/*` | director_or_head (list/timeline/current), director (sync POST) | WB Tariffs box/pallet/commission — view (latest as-of, timeline, current) + manual sync. SCD2 reference-таблицы, sync ежедневно 08:00 MSK. |
 | `/api/promo-calculator/simulate` | brands-filter | **Калькулятор рентабельности WB-акций** (TASK-LEAD-050): симулирует impact акции (discount × duration × velocity_boost) на маржу/выручку per-SKU. Baseline из `wb_report_detail`. WB Promo Calendar API (`dp-calendar-api.wildberries.ru`) — опциональный preload, graceful fallback на manual-input. |
 | `/api/version`, `/api/whoami`, `/api/health` | публ. | служебные |

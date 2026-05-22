@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 
 # ---------------------------------------------------------------------------
@@ -70,6 +71,12 @@ class ProductSnapshot:
 class PriceSnapshot:
     base_price: Decimal | None  # K
     discount_pct: Decimal | None  # L (0-1, не 0-100)
+    # TASK-LEAD-074 — источник цены для отображения badge в UI:
+    #   "wb_prices" — актуальная из WB Prices API (sync раз в 30 мин)
+    #   "wb_sales"  — fallback: последняя реальная продажа (старые SKU)
+    #   "none"      — ни там ни там цены нет
+    source: str = "none"
+    synced_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -254,6 +261,12 @@ class UnitPlanRowDTO:
     orders_period_2: int | None = None        # BD
     orders_period_3: int | None = None        # BE
     stock_forecast: Decimal | None = None     # BF
+    # TASK-LEAD-074 — источник базовой цены для UI badge:
+    #   "wb_prices" — актуальная из WB Prices API (sync раз в 30 мин)
+    #   "wb_sales"  — fallback: последняя реальная продажа
+    #   "none"      — цены нет ни там ни там
+    price_source: str = "none"
+    price_synced_at: datetime | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -723,4 +736,7 @@ def compute_row(
         orders_period_2=(historical.orders_period_2 if historical else None),
         orders_period_3=(historical.orders_period_3 if historical else None),
         stock_forecast=(historical.stock_forecast if historical else None),
+        # TASK-LEAD-074 — источник цены для UI badge.
+        price_source=price.source,
+        price_synced_at=price.synced_at,
     )
