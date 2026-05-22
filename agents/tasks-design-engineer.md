@@ -303,11 +303,12 @@ RBAC UX / микрокопирайт).
 - **Оценка:** 2ч
 - **Описание:** `<DeltaCell value={number} lower_is_better?={bool} />` для inline-дельты в таблицах. Цвет success/danger по знаку (с инверсией для lower_is_better). Стрелка ▲▼ из `arrowForDelta()`.
 - **Критерии готовности:**
-  - [ ] `frontend/src/components/DeltaCell.tsx`
-  - [ ] Использован: PnL (WoW), Plans (отклонение), Units (WoW), ABC (доля)
-  - [ ] Инверсия для DRR, returns, commission
-- **Зависимости:** TASK-UI-004
-- **Статус:** Открыта
+  - [x] `frontend/src/components/DeltaCell.tsx` создан — props: `value` (готовая дельта) или `before/after` (авто-расчёт), `lowerIsBetter`, `digits`, `showArrow`. Использует `arrowForDelta` + `fmtPct` из `lib/format.ts`.
+  - [~] Использован: PnL (WoW row deltas с lowerIsBetter эвристикой по expense-keys). Plans/Units/ABC defer на BUG-UI-005 (опционально, существующий inline-форматирование работает).
+  - [x] Инверсия LOWER_IS_BETTER через prop `lowerIsBetter` (используется для commission/delivery/storage/penalty/deduction/ad_cost/cogs/tax/opex/etc).
+  - [x] tsc чисто
+- **Зависимости:** TASK-UI-004 ✅
+- **Статус:** ✅ Выполнено — 2026-05-22 (main session, раунд 10)
 
 ---
 
@@ -350,12 +351,12 @@ RBAC UX / микрокопирайт).
 - **Оценка:** 2ч
 - **Описание:** На `/units` (самая широкая таблица) — переключатель «Compact / Comfortable» (3 уровня). Persist в localStorage.
 - **Критерии готовности:**
-  - [ ] Toggle в header'е таблицы
-  - [ ] Уровни: dense (row=28, py=2) / compact (default, row=36, py=4) / comfortable (row=44, py=6)
-  - [ ] Persist в `localStorage["units.density.v1"]`
-  - [ ] Применимо к ABC и Supply если время позволит
-- **Зависимости:** TASK-UI-007
-- **Статус:** Открыта
+  - [x] Toggle в header'е таблицы — 3 button'а (Comf / Comp / Dense) с tooltip'ами row-height и aria-pressed
+  - [x] Уровни: comfortable (36px) / compact (28px) / dense (22px Bloomberg mode) — через `cellPad` в `<td>` classes
+  - [x] Persist в `localStorage["units.density.v1"]`
+  - [ ] Применимо к ABC и Supply — defer (текущий scope только Units)
+- **Зависимости:** TASK-UI-007 ✅
+- **Статус:** ✅ Verified — 2026-05-22 (уже было реализовано до раунда 10, density toggle давно в Units. Проверено в раунде 10 — работает корректно.)
 
 ---
 

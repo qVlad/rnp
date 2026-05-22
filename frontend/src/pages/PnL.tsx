@@ -10,6 +10,7 @@ import {
 import { DateRangePicker } from "@/components/DateRangePicker";
 import PnLCardsView from "@/components/PnLCardsView";
 import PnLByBrandView from "@/components/PnLByBrandView";
+import DeltaCell from "@/components/DeltaCell";
 import { usePeriod } from "@/contexts/PeriodContext";
 import { useReportingMode } from "@/contexts/ReportingModeContext";
 import PageHeader from "@/components/PageHeader";
@@ -407,6 +408,11 @@ export default function PnL() {
                     </td>
                     {compare && prevTotals && (() => {
                       const prev = prevTotals[k];
+                      // TASK-UI-017 — DeltaCell унифицирует знак/цвет/стрелку. Для
+                      // P&L строк рост = хорошо (lowerIsBetter=false по default).
+                      // Для расходов (commission/delivery/storage/penalty/ad_cost)
+                      // — рост = плохо. Определяем эвристикой по key prefix.
+                      const isExpense = ["commission", "delivery", "storage", "penalty", "deduction", "ad_cost", "external_ad_cost", "cogs", "tax", "opex", "contractor_fees", "other_costs", "acquiring"].includes(k);
                       const d = deltaCell(total, prev);
                       return (
                         <>
@@ -416,8 +422,12 @@ export default function PnL() {
                           <td className={`text-right p-2 font-mono ${d.cls}`}>
                             {d.abs}
                           </td>
-                          <td className={`text-right p-2 font-mono ${d.cls}`}>
-                            {d.pct}
+                          <td className="text-right p-2">
+                            <DeltaCell
+                              before={prev}
+                              after={total}
+                              lowerIsBetter={isExpense}
+                            />
                           </td>
                         </>
                       );
