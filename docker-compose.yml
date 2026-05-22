@@ -65,6 +65,8 @@ services:
       # FEATURES.md как single source of truth для UI-страницы /features.
       # Read-only mount чтобы изменения файла подхватывались без rebuild.
       - ./FEATURES.md:/app/FEATURES.md:ro
+      # USER_GUIDE.md — user-facing версия каталога функций (TASK-LEAD-075).
+      - ./USER_GUIDE.md:/app/USER_GUIDE.md:ro
 
   worker-stats:
     image: rnp-app:latest

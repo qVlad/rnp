@@ -2494,6 +2494,35 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 
 ---
 
+---
+
+### TASK-LEAD-075: USER_GUIDE.md + toggle в `/features` (user-facing vs dev-reference)
+
+- **Исполнитель:** Design Engineer + Lead
+- **Приоритет:** P1 (РОП-валидация заблокирована — текущий FEATURES.md слишком технический)
+- **Оценка:** S для 5 фич, M для полного переноса 60+ фич — делаем поэтапно.
+- **Источник:** Запрос пользователя 2026-05-22 — «Каталог функций написан как для разработчика, нужно для пользователя: для чего использовать, как настраивать, какие возможности, чем полезен для Собственника/Менеджера/РОП/Бухгалтера».
+- **Описание:**
+  1. Создать `USER_GUIDE.md` в корне репо — структура зеркальна `FEATURES.md` (те же h2-разделы) но с **бизнес-языком**:
+     - «Что это» — 1 предложение для роли
+     - «Зачем использовать / Когда полезно»
+     - «Как настроить» (если есть параметры)
+     - «Полезно для:» — таб роли (Собственник / РОП / Менеджер / Бухгалтер) + что именно роль получает
+     - НИКАКИХ `pages/X.tsx` / `api/Y.py` / SQL-формул — только пользовательский интерфейс
+  2. Backend endpoint `/api/user-guide-doc` по аналогии с `/api/features-doc`. Mount в `docker-compose.yml` (`./USER_GUIDE.md:/app/USER_GUIDE.md:ro`).
+  3. UI: на `/features` toggle «Для пользователя / Для разработчика» (segmented control). Persist в `localStorage["features.mode"]`. Default = «Для пользователя» (бизнес-юзер по умолчанию).
+  4. **Этап 1** (этот раунд): описать 5 фич для РОП-валидации — TASK-LEAD-049 (inline edit на /units), TASK-LEAD-050 (PromoCalculator), TASK-LEAD-051 (WeeklyReport), TASK-LEAD-052 (Localization), TASK-LEAD-053 (TransitCalculator).
+  5. **Этап 2** (отложен): остальные ~60 фич FEATURES.md перенести в USER_GUIDE.md. Сделать sub-agent'ом в worktree.
+- **Критерии готовности:**
+  - [ ] `USER_GUIDE.md` создан с user-facing описанием TASK-LEAD-049/050/051/052/053
+  - [ ] Endpoint `/api/user-guide-doc` + mount в docker-compose
+  - [ ] UI toggle в `/features`, persist
+  - [ ] Smoke на проде: /features → toggle переключает + поиск работает в обоих режимах
+- **Зависимости:** нет
+- **Статус:** Этап 1 в работе — 2026-05-22 (5 фич РОП-валидация). Этап 2 (остальные ~60 фич) — отдельный sub-agent в будущем раунде.
+
+---
+
 ## Формат / Жизненный цикл
 
 См. `RULES.md` §«Формат задачи».

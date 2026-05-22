@@ -2412,6 +2412,12 @@ paymentOrderDelete: (payment_order_id: string) =>
     if (!r.ok) throw new Error(`Failed to load FEATURES.md: ${r.status}`);
     return r.text();
   },
+  /** TASK-LEAD-075: user-facing версия каталога (USER_GUIDE.md). */
+  userGuideDoc: async (): Promise<string> => {
+    const r = await fetch("/api/user-guide-doc", { credentials: "include" });
+    if (!r.ok) throw new Error(`Failed to load USER_GUIDE.md: ${r.status}`);
+    return r.text();
+  },
 
   // ── Promo calculator (TASK-LEAD-050) ──
   promoCalculatorSimulate: (body: {

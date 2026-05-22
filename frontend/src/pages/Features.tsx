@@ -41,10 +41,23 @@ function extractH2(md: string): Heading[] {
   return out;
 }
 
+type CatalogMode = "user" | "dev";
+const MODE_KEY = "features.mode.v1";
+
 export default function Features() {
+  // TASK-LEAD-075 — toggle user-facing (USER_GUIDE.md) vs dev-reference (FEATURES.md).
+  // Default = "user" (бизнес-юзер по умолчанию).
+  const [mode, setMode] = useState<CatalogMode>(() => {
+    const saved = localStorage.getItem(MODE_KEY);
+    return saved === "dev" ? "dev" : "user";
+  });
+  useEffect(() => {
+    localStorage.setItem(MODE_KEY, mode);
+  }, [mode]);
+
   const { data, isLoading, error } = useQuery({
-    queryKey: ["features-doc"],
-    queryFn: () => api.featuresDoc(),
+    queryKey: ["features-doc", mode],
+    queryFn: () => (mode === "user" ? api.userGuideDoc() : api.featuresDoc()),
     staleTime: 60_000,
   });
 
@@ -107,7 +120,37 @@ export default function Features() {
             {/* TASK-UI-011: h1 живёт внутри sticky-sidebar (не page-shell),
                 PageHeader не подходит — оставлен inline. */}
             <h1 className="text-lg font-semibold">Каталог функций</h1>
-            <div className="text-xs text-muted">Полный реестр модулей сервиса</div>
+            <div className="text-xs text-muted">
+              {mode === "user"
+                ? "Описание для пользователя — что делает, чем полезно"
+                : "Технический реестр модулей сервиса"}
+            </div>
+          </div>
+
+          {/* TASK-LEAD-075 — segmented control user / dev */}
+          <div className="mb-3 inline-flex rounded-md border border-border overflow-hidden text-xs">
+            <button
+              type="button"
+              className={`px-2 py-1 ${
+                mode === "user"
+                  ? "bg-accent text-fg-on-accent font-medium"
+                  : "bg-surface-2 text-muted hover:text-fg"
+              }`}
+              onClick={() => setMode("user")}
+            >
+              Для пользователя
+            </button>
+            <button
+              type="button"
+              className={`px-2 py-1 ${
+                mode === "dev"
+                  ? "bg-accent text-fg-on-accent font-medium"
+                  : "bg-surface-2 text-muted hover:text-fg"
+              }`}
+              onClick={() => setMode("dev")}
+            >
+              Для разработчика
+            </button>
           </div>
 
           <div className="relative mb-3">
