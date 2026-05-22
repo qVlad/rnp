@@ -213,6 +213,14 @@ function renderInline(text: string, keyPrefix = ""): React.ReactNode[] {
   return out;
 }
 
+// In-app routes: backtick-код, матчящийся `^/[a-z][a-z0-9-/?#=&_]*$`,
+// рендерится как кликабельный <Link>. Это даёт quick-navigation в
+// `/features` (USER_GUIDE.md и FEATURES.md). External URLs (http://, https://)
+// обрабатываются отдельно — они используют [text](url) markdown синтаксис.
+function isInAppPath(s: string): boolean {
+  return /^\/[a-z][a-z0-9\-/?#=&_]*$/.test(s);
+}
+
 function renderInlineNoLinks(text: string, keyPrefix = ""): React.ReactNode[] {
   // Inline code (backticks) — highest priority, split first
   const out: React.ReactNode[] = [];
@@ -224,11 +232,25 @@ function renderInlineNoLinks(text: string, keyPrefix = ""): React.ReactNode[] {
     if (m.index > last) {
       out.push(...renderBoldItalic(text.slice(last, m.index), `${keyPrefix}c${k++}`));
     }
-    out.push(
-      <code key={`${keyPrefix}code${k++}`} className="bg-surface-2 text-accent px-1 py-0.5 rounded text-[0.85em] font-mono">
-        {m[1]}
-      </code>,
-    );
+    const codeText = m[1];
+    if (isInAppPath(codeText)) {
+      // Кликабельный путь — Link с тем же visual styling (mono + accent).
+      out.push(
+        <Link
+          key={`${keyPrefix}link${k++}`}
+          to={codeText}
+          className="bg-surface-2 text-accent hover:text-accent-strong hover:underline px-1 py-0.5 rounded text-[0.85em] font-mono"
+        >
+          {codeText}
+        </Link>,
+      );
+    } else {
+      out.push(
+        <code key={`${keyPrefix}code${k++}`} className="bg-surface-2 text-accent px-1 py-0.5 rounded text-[0.85em] font-mono">
+          {codeText}
+        </code>,
+      );
+    }
     last = m.index + m[0].length;
   }
   if (last < text.length) {
