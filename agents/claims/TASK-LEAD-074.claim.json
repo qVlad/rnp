@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-LEAD-074",
-  "agent": "Claude Opus 4.7 — main session (TASK-LEAD-074)",
-  "started_at": "2026-05-22T13:05:25Z",
-  "expected_minutes": 90,
-  "notes": "WB Prices API integration — migration + client + sync task + _latest_price + UI"
-}
