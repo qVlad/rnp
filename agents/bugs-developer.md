@@ -165,6 +165,69 @@
 
 ---
 
+## BUG-DEV-010: MetricBreakdownPopup — `fmtNum(0)` хардкод в truncated-тексте
+
+- **Приоритет:** P2
+- **Обнаружено:** 2026-05-22 (post-feature review round 12, sub-agent L — QA / seller)
+- **Среда:** production
+- **Источник:** `feedback-reviews/round-12-2026-05-22.md` → seller 055
+- **Причина:** `MetricBreakdownPopup.tsx:143-147` — текст «(показаны топ-{d.items.length}, остальные {fmtNum(0)} в «прочее»)» хардкодит `0`. Никогда не показывает реальный residual count/sum. Backend `kpi_breakdown` уже возвращает `truncated_count` и/или `truncated_sum`, но фронт их игнорирует.
+- **Затронутые файлы:** `frontend/src/components/MetricBreakdownPopup.tsx`, возможно `backend/app/services/kpi_breakdown.py` (добавить поле в response если нет)
+- **Критерии исправления:**
+  - [ ] Если backend уже возвращает `total_items` / `truncated_count` — использовать
+  - [ ] Если нет — добавить в `kpi_breakdown.py` response: `total_items_count`, `truncated_sum_rub`
+  - [ ] UI: «(топ-10 из 47 SKU; остальные суммарно X ₽)» если items есть, иначе скрыть строку
+  - [ ] Smoke: на period с >10 SKU — popup показывает реальное число остальных
+- **Статус:** Открыт
+
+---
+
+## BUG-DEV-011: WeekProfitHero не respect глобальный reporting_mode toggle
+
+- **Приоритет:** P2
+- **Обнаружено:** 2026-05-22 (post-feature review round 12)
+- **Среда:** production
+- **Источник:** `feedback-reviews/round-12-2026-05-22.md` → QA 042
+- **Причина:** `WeekProfitHero.tsx:70-75` всегда дёргает `api.compute_dashboard(period, mode="final")` без передачи глобального `reporting_mode` из `ReportingModeContext`. После TASK-LEAD-054 (toggle operational/financial) Hero игнорирует переключатель — остальной Dashboard цифры меняет, Hero нет → рассинхрон в шапке.
+- **Затронутые файлы:** `frontend/src/components/WeekProfitHero.tsx`, может быть `api/client.ts` сигнатура `computeDashboard`
+- **Критерии исправления:**
+  - [ ] Hero читает `reporting_mode` из `useReportingMode()` и передаёт в API
+  - [ ] Smoke: на проде switch toggle в footer → Hero меняет цифру синхронно с остальным дашбордом
+- **Статус:** Открыт
+
+---
+
+## BUG-DEV-012: kpi_breakdown — period.end inclusive vs canonical semi-open filter
+
+- **Приоритет:** P3
+- **Обнаружено:** 2026-05-22 (post-feature review round 12)
+- **Среда:** production
+- **Источник:** `feedback-reviews/round-12-2026-05-22.md` → QA 055
+- **Причина:** `services/kpi_breakdown.py:85-86` использует `WbReportDetail.sale_dt <= datetime.combine(period.end, time.max)` (inclusive). Canonical `period_aggregates.sale_dt_filter()` — semi-open `< end_date_exclusive`. На границах суток (sale_dt = 00:00:00 следующего дня после `period.end`) breakdown может включить лишнюю запись, что даст рассинхрон Σ breakdown vs Dashboard KPI.
+- **Затронутые файлы:** `backend/app/services/kpi_breakdown.py`
+- **Критерии исправления:**
+  - [ ] Использовать `period_aggregates.sale_dt_filter(period.start, period.end)` вместо ручного построения предиката
+  - [ ] Unit-test: на period с записями в полночь следующего дня — breakdown их не включает (matching Dashboard KPI)
+- **Статус:** Открыт
+
+---
+
+## BUG-DEV-013: kpi_breakdown — commission_wb знак на returns vs Dashboard KPI
+
+- **Приоритет:** P2
+- **Обнаружено:** 2026-05-22 (post-feature review round 12)
+- **Среда:** production
+- **Источник:** `feedback-reviews/round-12-2026-05-22.md` → QA 055
+- **Причина:** `kpi_breakdown.py:94-100` для `commission_wb` на возвратах применяет `case((OP_RETURN, -1 × retail × pct / 100))` — комиссия вычитается. Dashboard KPI `commission_wb` в `metrics.py:_final_*_aggregate` суммирует ровно положительные удержания (комиссия за возврат возвращается WB, но в управленческом учёте показывается как уменьшение комиссии — может быть). Если интенция одна и та же → знак в breakdown должен совпадать. Σ breakdown ≠ KPI = баг.
+- **Затронутые файлы:** `backend/app/services/kpi_breakdown.py`, `services/metrics.py` (сверка)
+- **Критерии исправления:**
+  - [ ] Сверить semantics в `metrics.py:_final_company_aggregate` для commission_wb (что включает / исключает)
+  - [ ] Привести `kpi_breakdown.commission_wb` case к той же логике
+  - [ ] Unit-test: на period с продажами+возвратами — `sum(breakdown.commission_wb.items[*].value) ≈ dashboard.commission_wb` (Δ ≤ 1 ₽)
+- **Статус:** Открыт
+
+---
+
 > На момент 2026-05-17 — открытых багов нет. Недавние P0 уже закрыты (см. git history):
 >
 > - `fix(auth): don't redirect to /login from /signup on initial 401` (commit `049ebb3`)

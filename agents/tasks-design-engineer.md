@@ -376,6 +376,18 @@ RBAC UX / микрокопирайт).
 
 - **Приоритет:** P3 (overkill для single-tenant)
 
+### TASK-UI-024: Dedupe `BREAKDOWN_KEYS` constant
+
+- **Приоритет:** P2
+- **Оценка:** XS (20 мин)
+- **Источник:** `agents/references/feedback-reviews/round-12-2026-05-22.md` — seller 055
+- **Описание:** `BREAKDOWN_KEYS` дублирован в двух местах: `MetricBreakdownPopup.tsx:186-192` (`BREAKDOWN_METRICS` set) и `KpiCard.tsx:67-73` (inline `BREAKDOWN_KEYS` set). Добавишь новую метрику — нужны правки в двух местах. Single source of truth в `lib/breakdownMetrics.ts`.
+- **Критерии готовности:**
+  - [ ] Создать `frontend/src/lib/breakdownMetrics.ts` с экспортом `BREAKDOWN_METRICS: ReadonlySet<string>`
+  - [ ] Оба места импортируют из этого файла
+  - [ ] tsc --noEmit чисто
+- **Статус:** Открыта
+
 ---
 
 ## UX-задачи (шаблон)

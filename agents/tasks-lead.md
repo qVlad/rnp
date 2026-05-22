@@ -39,6 +39,13 @@ Lead использует этот файл как master-view: сюда скл�
 > - ✅ **BUG-UI cleanup batch** (sub-agent K): ternary emoji 22→8, non-% .toFixed 41→8 (+ `fmtCompact`/`fmtRatio` helpers), sticky-first-col применён Units+ABC (z=5 cells / z=15 corner), states migration на 5 страницах.
 > - Совпадение: Units.tsx DeltaCell migration попал в perf-fix BUG-DEV-007 follow-up #2 commit (`7ecbb98 v0.27.2`) параллельной сессии. Конфликтов не было.
 >
+> **Раунд 12 завершён (2026-05-22, docs-only):** Post-feature review для пакета v0.27.x (TASK-LEAD-042/043/050/051/052/053/054/055). 2 параллельных персона-агента (QA+seller / rop+manager) → synthesis Product Strategist+Lead+PM. Результат:
+> - **5 BUG** заведено: BUG-DEV-010/011/012/013 + BUG-UI-006
+> - **17 TASK** заведено: TASK-LEAD-058..073 + TASK-UI-024 (6 P1, 7 P2, 4 P3)
+> - **3 HYP** в `feedback-reviews/round-12-2026-05-22.md`: composite hero-card, TG-share weekly, merge localization/transit в /redistribution
+> - **9 пунктов отброшены** с обоснованием (skeleton polish, custom-tooltip, N+1, presets — все «SaaS fit-and-finish» которые не нужны internal tool)
+> - **Главные инсайты:** reporting_mode UX-полировка ≠ backend (TASK-LEAD-058/059/060); WeeklyReport нужен dual-mode РОП/manager (TASK-LEAD-061/062); diagnostic pages нужны actionable CTA (TASK-LEAD-070).
+>
 > После завершения раунда — TASK-LEAD-051 (Weekly digest) и TASK-LEAD-053 (Транзит) в следующем заходе.
 >
 > **Завершено в этой сессии 2026-05-21 (раунд 2):**
@@ -2115,6 +2122,260 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [x] TASK-LEAD-057 в `tasks-lead.md` (этот блок)
 - **Зависимости:** нет
 - **Статус:** Выполнено — 2026-05-21
+
+---
+
+### TASK-LEAD-058: Скрыть `reporting_mode` toggle от manager'а
+
+- **Исполнитель:** Design Engineer
+- **Приоритет:** P1
+- **Оценка:** XS (30 мин)
+- **Источник:** `feedback-reviews/round-12-2026-05-22.md` — UX-rop/manager 054
+- **Описание:** Manager в financial-режиме не работает (его метрики = «сколько мой бренд заработал», а financial добавляет 1-2 недели lag по rr_dt). Случайное переключение → видит «у меня выручка пропала» → паника. Скрыть toggle из `Layout.tsx` footer для роли `manager`.
+- **Критерии готовности:**
+  - [ ] В `Layout.tsx` footer: `{user?.role !== 'manager' && user?.role !== 'bookkeeper' && <ReportingModeSelector />}`
+  - [ ] Smoke: залогиниться manager'ом → toggle не виден в sidebar
+- **Зависимости:** TASK-LEAD-054 ✅
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-059: Переименовать `reporting_mode` опции в plain language
+
+- **Исполнитель:** Design Engineer
+- **Приоритет:** P1
+- **Оценка:** XS (15 мин)
+- **Источник:** `feedback-reviews/round-12-2026-05-22.md` — UX-rop 054
+- **Описание:** «Управленческий (заказ)» / «Финансовый (выплата)» — методологическая терминология, не для UI. Заменить на plain language: «По дню выкупа» / «По дню платёжки». Это понятно без объяснения. Tooltip с подробностями оставить.
+- **Критерии готовности:**
+  - [ ] `frontend/src/contexts/ReportingModeContext.tsx` или `Layout.tsx` — labels изменены
+  - [ ] CLAUDE.md секция «Режим отчётности» обновлена с новыми labels
+- **Зависимости:** TASK-LEAD-054 ✅
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-060: Badge «По дню платёжки» на P&L/Dashboard при financial-режиме
+
+- **Исполнитель:** Design Engineer
+- **Приоритет:** P1
+- **Оценка:** S (1-2ч)
+- **Источник:** `feedback-reviews/round-12-2026-05-22.md` — UX-rop 054
+- **Описание:** В operational режиме (default) — silent. В financial — рядом с PageHeader на `/dashboard`, `/pnl` (любая страница где `useReportingMode()` влияет) показывать оранжевую плашку «📊 По дню платёжки». Юзер сразу видит что он не в дефолте.
+- **Критерии готовности:**
+  - [ ] Компонент `<ReportingModeBadge />` в `components/`. Чёрный в operational (или скрыт), оранжевый в financial.
+  - [ ] Встроить в PageHeader для Dashboard, PnL (минимум; идеально — все pages где `reporting_mode` используется)
+- **Зависимости:** TASK-LEAD-054 ✅, TASK-LEAD-059 (используют новые labels)
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-061: Multi-manager scoreboard в `/weekly-report` для head/director
+
+- **Исполнитель:** Developer + Design Engineer
+- **Приоритет:** P1
+- **Оценка:** M (3-5д)
+- **Источник:** `feedback-reviews/round-12-2026-05-22.md` — UX-rop 051
+- **Описание:** Сейчас `/weekly-report` — manager-digest (один бренд-scope). РОП открывает страницу ожидая увидеть сводку по менеджерам: «Иванов = brand A,B → выручка 2.3 млн, WoW -8%; Петров = brand C → выручка 0.9 млн, WoW +15%». Добавить секцию «По менеджерам» наверху страницы (для head_of_sales / director). Manager не видит секцию.
+- **Критерии готовности:**
+  - [ ] Backend: `/api/weekly-report/by-manager?week_start=YYYY-MM-DD` → `[{manager_user_id, manager_name, brands: [...], revenue, margin, wow_revenue_pct, wow_margin_pct}]`
+  - [ ] Группировка через `brand_assignments` (одна запись на manager → brand). Если manager имеет N брендов — суммируем по nm_id из этих брендов.
+  - [ ] UI: новая секция в `WeeklyReport.tsx` (скрыта для role=manager), таблица с сортировкой по WoW.
+  - [ ] Smoke: head_of_sales видит N строк (N = число активных менеджеров)
+- **Зависимости:** TASK-LEAD-051 ✅
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-062: Серверное хранение manager-комментария в WeeklyReport
+
+- **Исполнитель:** Developer + Design Engineer
+- **Приоритет:** P1
+- **Оценка:** S (1-2д)
+- **Источник:** `feedback-reviews/round-12-2026-05-22.md` — UX-rop + UX-manager 051
+- **Описание:** Сейчас manager-комментарий в `/weekly-report` хранится в `localStorage`. РОП открывает ту же неделю → пусто. Это полу-фича — комментарий «для меня», не «для команды». Заменить на серверное хранилище.
+- **Критерии готовности:**
+  - [ ] Миграция: `weekly_report_comment(id, tenant_id, brand, week_start, comment TEXT, author_user_id FK, updated_at TIMESTAMPTZ)`. UNIQUE на `(tenant_id, brand, week_start)`. tenant-scoped.
+  - [ ] API: `GET /api/weekly-report/comment?week_start=&brand=` + `PUT` (manager сохраняет для своих брендов; director/head — для всех).
+  - [ ] UI: WeeklyReport.tsx читает с сервера вместо localStorage. Indicator «обновлено N минут назад автором X».
+  - [ ] Migration script: если localStorage у current user — попросить перенести вручную (без auto, так как user-binding нечёткий).
+- **Зависимости:** TASK-LEAD-051 ✅
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-063: Deep-link «Объяснить →» из ReconciliationHeroWidget
+
+- **Исполнитель:** Design Engineer
+- **Приоритет:** P1
+- **Оценка:** XS (1ч)
+- **Источник:** `feedback-reviews/round-12-2026-05-22.md` — seller 043
+- **Описание:** Сейчас seller кликает «Подробнее →» в Hero виджете → попадает на `/pnl-reconciliation`, ищет глазами проблемную неделю → кликает строку → разворачивается wizard. 3 клика. Сделать deep-link через URL hash `#period=YYYY-MM-DD_YYYY-MM-DD` который на `/pnl-reconciliation` авто-разворачивает соответствующую строку.
+- **Критерии готовности:**
+  - [ ] `ReconciliationHeroWidget.tsx`: ссылка `Объяснить →` с `to={'/pnl-reconciliation#period=' + period.start + '_' + period.end}`
+  - [ ] `PnLReconciliation.tsx`: `useEffect` читает `window.location.hash`, скроллит к нужной строке + раскрывает wizard
+- **Зависимости:** TASK-LEAD-043 ✅
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-064: Top-3 рекомендации в `/weekly-report`
+
+- **Исполнитель:** Developer + Design Engineer
+- **Приоритет:** P2
+- **Оценка:** M (3-5д)
+- **Источник:** `feedback-reviews/round-12-2026-05-22.md` — UX-manager 051
+- **Описание:** Сейчас WeeklyReport = голые KPI. Менеджер открыл понедельник утром — хочет «брифинг»: «Top-3 действий на неделю». Auto-generated heuristics: stockout → «#X закончился, нужна поставка», DRR>20% → «#X — снизить ставки», returns_pct>30% → «#X — проверить размерную сетку». Heuristics простые, но превращают digest в actionable.
+- **Критерии готовности:**
+  - [ ] Backend: `services/weekly_recommendations.py` — 3 правила (stockout, drr_high, returns_high) → list of `{nm_id, vendor_code, brand, rule, suggestion_text}`
+  - [ ] API: `/api/weekly-report/recommendations?week_start=&brand=`
+  - [ ] UI: секция «Top-3 действий» вверху страницы (после Header, до KPI)
+- **Зависимости:** TASK-LEAD-051 ✅
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-065: `by_brand` разрез в `/api/localization/stats`
+
+- **Исполнитель:** Developer + Design Engineer
+- **Приоритет:** P2
+- **Оценка:** S (1д)
+- **Источник:** `feedback-reviews/round-12-2026-05-22.md` — UX-rop 052
+- **Описание:** Сейчас разрезы в `/localization` — `by_cluster`, `by_warehouse`, `by_sku`. Нет `by_brand` → РОП не может найти «кто из менеджеров просел в локализации». Добавить агрегацию по бренду + UI-таблицу для head_of_sales / director.
+- **Критерии готовности:**
+  - [ ] `services/localization.py` — функция `by_brand(period, tenant)` → `[{brand, orders, localized_orders, localization_pct, wow_pct}]`
+  - [ ] API endpoint
+  - [ ] UI: новая таб «По брендам» в `Localization.tsx`, видна для head_of_sales / director
+- **Зависимости:** TASK-LEAD-052 ✅
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-066: Per-SKU drill из MetricBreakdownPopup на /units?nm_id=X
+
+- **Исполнитель:** Design Engineer
+- **Приоритет:** P2
+- **Оценка:** XS (30 мин)
+- **Источник:** `feedback-reviews/round-12-2026-05-22.md` — seller 055
+- **Описание:** Сейчас в `MetricBreakdownPopup` ряды — статичные. Seller видит «#12345 съел 60к на логистику» и хочет копать → нет ссылки. Сделать каждый ряд click'абельным → `/units?nm_id=X` с фокусом на эту строку. Опционально показать миниатюру фото из `Products`.
+- **Критерии готовности:**
+  - [ ] `MetricBreakdownPopup.tsx`: ряд → `<Link to={'/units?nm_id=' + item.nm_id}>` с hover-эффектом
+  - [ ] `Units.tsx` уже умеет фильтр по nm_id через URL `?nm_id=X` (если нет — добавить)
+- **Зависимости:** TASK-LEAD-055 ✅
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-067: PromoCalculator polish — 2-col + plain naming
+
+- **Исполнитель:** Design Engineer
+- **Приоритет:** P2
+- **Оценка:** S (1д)
+- **Источник:** `feedback-reviews/round-12-2026-05-22.md` — seller 050
+- **Описание:** Несколько UX-улучшений PromoCalculator одним пакетом:
+  - 2-column layout: form слева 40%, results справа 60% (sticky after submit)
+  - Переименование: «Breakeven boost» → «Минимум для окупаемости»; «недостижим» → «не окупится — не вступать в акцию»; «velocity per day» → «Шт/день»; «Лучше baseline» → «Лучше чем без акции»
+  - 2-card breakdown: «✓ Будут прибыльны: 5 из 10» / «↗ Лучше чем без акции: 3 из 10»
+- **Критерии готовности:**
+  - [ ] Layout 2-col после симуляции
+  - [ ] Все термины заменены
+  - [ ] tsc --noEmit чисто
+- **Зависимости:** TASK-LEAD-050 ✅
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-068: Multi-warehouse compare в TransitCalculator
+
+- **Исполнитель:** Design Engineer
+- **Приоритет:** P2
+- **Оценка:** S (1-2д)
+- **Источник:** `feedback-reviews/round-12-2026-05-22.md` — UX-rop 053
+- **Описание:** Сейчас калькулятор одного склада за раз. РОП хочет «принимать решение» = сравнивать варианты. Чекбокс «Сравнить N складов» → multi-select → таблица сравнения по складам.
+- **Критерии готовности:**
+  - [ ] UI: checkbox «Сравнить склады» → dropdown превращается в multi-select (N выбранных, минимум 2)
+  - [ ] Таблица: 1 строка = 1 склад, колонки `склад / cost_per_unit / total_cost / delivery_days_avg` (если есть данные про сроки)
+  - [ ] Highlight cheapest row
+- **Зависимости:** TASK-LEAD-053 ✅
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-069: ReconciliationHeroWidget polish — payout share + абс ₽ + plain wizard
+
+- **Исполнитель:** Design Engineer
+- **Приоритет:** P2
+- **Оценка:** S (1-2д)
+- **Источник:** `feedback-reviews/round-12-2026-05-22.md` — seller 043
+- **Описание:** Hero виджет сейчас показывает только «Δ revenue +0.4% ✓». Для seller'а важнее «сколько реально пришло на счёт» (payout/gross share). Добавить третью цифру + абсолютное Δ в ₽ (0.4% от 8М/нед = 32к — не копейки). Из wizard explainer убрать dev-термины (`sync_report_detail`, `supplier_oper_name`).
+- **Критерии готовности:**
+  - [ ] Hero показывает 3 цифры: Δ%, Δ₽ (абс), payout-share (выплата как % от gross)
+  - [ ] Указать threshold явно: «Δ ≤ 1% = в пределах ₽X тыс»
+  - [ ] Wizard explainer: replace dev-терминов на user-language (`sync_report_detail` → «синхронизация финотчёта от WB», etc.)
+  - [ ] Опционально: `weeks=4` → `weeks=1` (используется [0])
+- **Зависимости:** TASK-LEAD-043 ✅
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-070: Localization actionability — CTA «Запланировать поставку»
+
+- **Исполнитель:** Developer + Design Engineer
+- **Приоритет:** P3
+- **Оценка:** M (3-5д)
+- **Источник:** `feedback-reviews/round-12-2026-05-22.md` — UX-rop + seller 052
+- **Описание:** Сейчас `/localization` — diagnostics-only. Worst-SKU таблица показывает «#12345 локализация 9%», но «куда отгрузить?» не подсказывает. Добавить колонку с рекомендуемым складом + CTA «Запланировать поставку → /redistribution?warehouse=X&nm=Y».
+- **Критерии готовности:**
+  - [ ] Backend: для каждого worst-SKU считать «модальный склад в кластере с наибольшей долей заказов этого SKU» (можно прямо в `localization.py:by_sku`)
+  - [ ] UI: колонка «Куда отгрузить» + кнопка «→ Поставка»
+  - [ ] `/redistribution` принимает query params `?warehouse=X&nm=Y` и предзаполняет форму
+- **Зависимости:** TASK-LEAD-052 ✅, /redistribution существует
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-071: TransitCalculator SKU-aware
+
+- **Исполнитель:** Design Engineer
+- **Приоритет:** P3
+- **Оценка:** S (1д)
+- **Источник:** `feedback-reviews/round-12-2026-05-22.md` — UX-manager 053
+- **Описание:** Сейчас menedzher вводит «volume_l» вручную. Если в `Product` уже есть `volume_l` — можно подтянуть. Также: «suggest units» из `avg(weekly_orders) × 4 недели` через `wb_orders`.
+- **Критерии готовности:**
+  - [ ] UI: dropdown «Выбрать товар» (search by vendor_code / nm_id)
+  - [ ] При выборе — автоматом fill `volume_l` (если есть в products) + `units` (suggest по 4-week avg)
+- **Зависимости:** TASK-LEAD-053 ✅
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-072: Tariff WoW δ в TransitCalculator
+
+- **Исполнитель:** Design Engineer
+- **Приоритет:** P3
+- **Оценка:** XS (1-2ч)
+- **Источник:** `feedback-reviews/round-12-2026-05-22.md` — UX-manager 053
+- **Описание:** Данные есть в `wb_tariff_*` SCD2. Показать «было 12 ₽/шт месяц назад, стало 14 ₽/шт (+12%)» прямо в калькуляторе.
+- **Критерии готовности:**
+  - [ ] Backend `/api/tariffs/wow?warehouse_id=&days_back=30` → `{current_rate, previous_rate, change_pct}`
+  - [ ] UI: badge рядом с total: «(тариф +12% к прошлому месяцу)»
+- **Зависимости:** TASK-LEAD-053 ✅, миграция 0040 (tariffs SCD2) ✅
+- **Статус:** Открыта
+
+---
+
+### TASK-LEAD-073: WeekProfitHero — header refinement + «vs 4-week avg» таб
+
+- **Исполнитель:** Design Engineer
+- **Приоритет:** P3
+- **Оценка:** XS (1ч)
+- **Источник:** `feedback-reviews/round-12-2026-05-22.md` — seller 042
+- **Описание:** Сейчас Hero header «Прибыль за прошлую закрытую неделю» — слова «прибыль» + «вчера» (в TodayVsYesterdayStrip ниже) путают seller'а. Изменить header на «За неделю 12-18 мая (закрыта)». Опционально: альтернативный таб «vs средняя за 4 недели» рядом с WoW% — даёт более устойчивый baseline.
+- **Критерии готовности:**
+  - [ ] Header показывает реальные даты недели (`startOfWeek - endOfWeek`)
+  - [ ] (опционально) Tab toggle «WoW / vs 4-нед средняя» с двумя источниками сравнения
+- **Зависимости:** TASK-LEAD-042 ✅
+- **Статус:** Открыта
 
 ---
 

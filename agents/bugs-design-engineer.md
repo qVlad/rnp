@@ -217,3 +217,20 @@ _Пока пусто. Audit-задачи TASK-UI-001..003 в Sprint 1 превр
 - **Минимальный фикс:** Per-page. Старт с топ-5 по трафику: Dashboard (если main session разрешит), Units, PnL, AbcAnalysis, Tariffs. Затем остальные.
 - **Связанные задачи:** TASK-UI-008
 - **Статус:** Исправлено — 2026-05-22 (sub-agent Design Engineer). Мигрировано 5 pages: `Tariffs` (2 inline → `Skeleton variant="table"`), `Brands` (Loading + Empty → `Skeleton` + `EmptyState icon="package"`), `Funnel` (Loading + Error + Empty → полный triplet `Skeleton`/`ErrorState`/`EmptyState`), `CashFlow` (Loading → `Skeleton`), `SeasonPlan` (Loading → `Skeleton variant="chart"`). Остальные ~25 pages с `<div className="text-muted">Загрузка…</div>` остаются для следующих раундов — приоритет был на pages где >2 inline fallback или которые в топе трафика.
+
+---
+
+## BUG-UI-006: WeekProfitHero без role-guard для manager'а (P3)
+
+- **Приоритет:** P3 (manager редко на дашборде — обычно сразу на брендах; но смешение терминов на видном Hero)
+- **Обнаружено:** 2026-05-22 (post-feature review round 12, sub-agent L QA)
+- **Среда:** production
+- **Источник:** `feedback-reviews/round-12-2026-05-22.md` → QA 042
+- **Причина:** `Dashboard.tsx:203` рендерит `<WeekProfitHero />` всем ролям без проверки. Manager попадает на дашборд (через main-link Layout) и видит Hero «Прибыль за прошлую закрытую неделю». Формулировка подразумевает компанию, но manager видит свой brand-scope net_profit (через brands-filter API). Терминологический рассинхрон.
+- **Затронутые файлы:** `frontend/src/pages/Dashboard.tsx`
+- **Ожидаемое:**
+  - **Вариант A** (минимум): подпись Hero для manager'а: «Прибыль ваших брендов за прошлую закрытую неделю» (динамически)
+  - **Вариант B** (cleaner): Hero показан только director/head_of_sales; manager видит другой компонент «Мои бренды за неделю» с другим коупом
+- **Минимальный фикс:** Вариант A — `{user.role === 'manager' ? 'Прибыль ваших брендов' : 'Прибыль'}` за прошлую закрытую неделю.
+- **Связанные задачи:** TASK-LEAD-042
+- **Статус:** Открыт
