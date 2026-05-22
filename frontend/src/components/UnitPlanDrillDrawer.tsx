@@ -27,6 +27,7 @@ import {
 } from "recharts";
 import { api, type UnitPlanDetail } from "@/api/client";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
+import { GRID_PROPS, AXIS_PROPS, TOOLTIP_STYLE, CHART_COLORS } from "@/lib/chartTheme";
 import { Icon } from "./Icon";
 
 interface Props {
@@ -191,24 +192,22 @@ function PriceHistorySection({
                   <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.05} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+              <CartesianGrid {...GRID_PROPS} />
               <XAxis
+                {...AXIS_PROPS}
                 dataKey="date"
-                tick={{ fontSize: 10, fill: "#94a3b8" }}
+                tick={{ fontSize: 10, fill: AXIS_PROPS.tick.fill }}
                 tickFormatter={(v: string) => v.slice(5)}
                 minTickGap={20}
               />
               <YAxis
-                tick={{ fontSize: 10, fill: "#94a3b8" }}
+                {...AXIS_PROPS}
+                tick={{ fontSize: 10, fill: AXIS_PROPS.tick.fill }}
                 tickFormatter={(v: number) => fmtNum(v)}
                 width={50}
               />
               <Tooltip
-                contentStyle={{
-                  background: "#0f172a",
-                  border: "1px solid #334155",
-                  fontSize: 12,
-                }}
+                contentStyle={TOOLTIP_STYLE}
                 formatter={(value: number, name: string) => {
                   if (name === "price_with_disc")
                     return [fmtRub(value), "Цена с СПП"];
@@ -247,9 +246,9 @@ function CogsBreakdownSection({
   }
 
   const bars = [
-    { name: "Закуп", value: cogs.cost_rub, color: "#3b82f6" },
-    { name: "Упаковка", value: cogs.packaging_rub, color: "#a855f7" },
-    { name: "Фулф.", value: cogs.fulfillment_rub, color: "#10b981" },
+    { name: "Закуп", value: cogs.cost_rub, color: CHART_COLORS[2] },
+    { name: "Упаковка", value: cogs.packaging_rub, color: CHART_COLORS[3] },
+    { name: "Фулф.", value: cogs.fulfillment_rub, color: CHART_COLORS[0] },
   ].filter((b) => b.value > 0);
 
   return (
@@ -267,22 +266,20 @@ function CogsBreakdownSection({
                 data={bars}
                 margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
               >
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                <CartesianGrid {...GRID_PROPS} />
                 <XAxis
+                  {...AXIS_PROPS}
                   dataKey="name"
-                  tick={{ fontSize: 10, fill: "#94a3b8" }}
+                  tick={{ fontSize: 10, fill: AXIS_PROPS.tick.fill }}
                 />
                 <YAxis
-                  tick={{ fontSize: 10, fill: "#94a3b8" }}
+                  {...AXIS_PROPS}
+                  tick={{ fontSize: 10, fill: AXIS_PROPS.tick.fill }}
                   tickFormatter={(v: number) => fmtNum(v)}
                   width={50}
                 />
                 <Tooltip
-                  contentStyle={{
-                    background: "#0f172a",
-                    border: "1px solid #334155",
-                    fontSize: 12,
-                  }}
+                  contentStyle={TOOLTIP_STYLE}
                   formatter={(v: number) => [fmtRub(v), "Сумма"]}
                 />
                 <Bar dataKey="value">

@@ -20,6 +20,7 @@ import {
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
+import { GRID_PROPS, AXIS_PROPS, TOOLTIP_STYLE, LEGEND_STYLE, CHART_COLORS } from "@/lib/chartTheme";
 
 const MONTH_LABELS = [
   "—", "Янв", "Фев", "Мар", "Апр", "Май", "Июн",
@@ -131,10 +132,10 @@ export default function SeasonPlan() {
             <div style={{ width: "100%", height: 320 }}>
               <ResponsiveContainer>
                 <BarChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#262a35" />
-                  <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                  <CartesianGrid {...GRID_PROPS} />
+                  <XAxis {...AXIS_PROPS} dataKey="label" />
                   <YAxis
-                    tick={{ fontSize: 11 }}
+                    {...AXIS_PROPS}
                     tickFormatter={(v: number) =>
                       v >= 1_000_000
                         ? `${(v / 1_000_000).toFixed(1)}M`
@@ -144,12 +145,12 @@ export default function SeasonPlan() {
                     }
                   />
                   <Tooltip
+                    contentStyle={TOOLTIP_STYLE}
                     formatter={(v: number) => fmtRub(v)}
-                    labelStyle={{ color: "#000" }}
                   />
-                  <Legend />
-                  <Bar dataKey="fact" name="Факт" fill="#10b981" />
-                  <Bar dataKey="forecast" name="Прогноз" fill="#3b82f6" />
+                  <Legend wrapperStyle={LEGEND_STYLE} />
+                  <Bar dataKey="fact" name="Факт" fill={CHART_COLORS[0]} />
+                  <Bar dataKey="forecast" name="Прогноз" fill={CHART_COLORS[2]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

@@ -19,7 +19,7 @@ import {
 import { api } from "@/api/client";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import { fmtRub, fmtNum, fmtPct } from "@/lib/format";
-import { chartTheme } from "@/lib/chartTheme";
+import { chartTheme, GRID_PROPS, AXIS_PROPS, TOOLTIP_STYLE } from "@/lib/chartTheme";
 import { usePeriod } from "@/contexts/PeriodContext";
 import PageHeader from "@/components/PageHeader";
 
@@ -117,11 +117,10 @@ export default function Inventory() {
           {dynQ.data && dynQ.data.points.length > 0 ? (
             <ResponsiveContainer>
               <AreaChart data={dynQ.data.points}>
-                <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
-                <XAxis dataKey="date" stroke={chartTheme.axis} fontSize={11} />
+                <CartesianGrid {...GRID_PROPS} />
+                <XAxis {...AXIS_PROPS} dataKey="date" />
                 <YAxis
-                  stroke={chartTheme.axis}
-                  fontSize={11}
+                  {...AXIS_PROPS}
                   tickFormatter={(v) =>
                     Math.abs(v) >= 1000
                       ? `${Math.round(v / 1000)}k`
@@ -129,7 +128,7 @@ export default function Inventory() {
                   }
                 />
                 <Tooltip
-                  contentStyle={chartTheme.tooltipStyle}
+                  contentStyle={TOOLTIP_STYLE}
                   formatter={(v: any) => fmtRub(Number(v))}
                 />
                 <Area

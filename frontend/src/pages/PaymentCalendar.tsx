@@ -12,7 +12,7 @@ import {
 } from "recharts";
 import { api } from "@/api/client";
 import { fmtRub } from "@/lib/format";
-import { chartTheme } from "@/lib/chartTheme";
+import { chartTheme, GRID_PROPS, AXIS_PROPS, TOOLTIP_STYLE } from "@/lib/chartTheme";
 import PageHeader from "@/components/PageHeader";
 
 export default function PaymentCalendar() {
@@ -157,12 +157,12 @@ export default function PaymentCalendar() {
         {chartData.length > 0 && (
           <ResponsiveContainer width="100%" height={280}>
             <LineChart data={chartData} margin={{ top: 5, right: 16, left: 16, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
-              <XAxis dataKey="date" stroke={chartTheme.axis} fontSize={11} />
-              <YAxis stroke={chartTheme.axis} fontSize={11} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+              <CartesianGrid {...GRID_PROPS} />
+              <XAxis {...AXIS_PROPS} dataKey="date" />
+              <YAxis {...AXIS_PROPS} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
               <Tooltip
                 formatter={(v: any) => fmtRub(Number(v))}
-                contentStyle={chartTheme.tooltipStyle}
+                contentStyle={TOOLTIP_STYLE}
               />
               <Line type="monotone" dataKey="balance" stroke={chartTheme.primary} dot={false} strokeWidth={2} />
               {todayInView && (

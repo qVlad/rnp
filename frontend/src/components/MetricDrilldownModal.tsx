@@ -12,6 +12,7 @@ import {
 } from "recharts";
 import { api } from "@/api/client";
 import { fmtNum, fmtRub, fmtPct } from "@/lib/format";
+import { GRID_PROPS, AXIS_PROPS, TOOLTIP_STYLE } from "@/lib/chartTheme";
 import { Icon } from "./Icon";
 
 export type MetricKey = "revenue" | "orders" | "ad_cost" | "profit";
@@ -257,20 +258,16 @@ export default function MetricDrilldownModal({
                       <stop offset="100%" stopColor={meta.color} stopOpacity={0.02} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="#262a35"
-                    vertical={false}
-                  />
+                  <CartesianGrid {...GRID_PROPS} />
                   <XAxis
+                    {...AXIS_PROPS}
                     dataKey="date"
-                    tick={{ fontSize: 11, fill: "#8b92a5" }}
                     tickFormatter={fmtDate}
                     interval="preserveStartEnd"
                     minTickGap={20}
                   />
                   <YAxis
-                    tick={{ fontSize: 11, fill: "#8b92a5" }}
+                    {...AXIS_PROPS}
                     tickFormatter={(v) => {
                       if (metric === "orders") return fmtNum(v);
                       // Компактный формат: 1.2M / 700k / 500 — чтобы и крупные
@@ -284,12 +281,7 @@ export default function MetricDrilldownModal({
                     width={60}
                   />
                   <Tooltip
-                    contentStyle={{
-                      background: "#1a1d26",
-                      border: "1px solid #262a35",
-                      borderRadius: 6,
-                      fontSize: 12,
-                    }}
+                    contentStyle={TOOLTIP_STYLE}
                     cursor={{ stroke: meta.color, strokeWidth: 1, strokeOpacity: 0.4 }}
                     content={({ active, payload, label }: any) => {
                       if (!active || !payload || payload.length === 0) return null;

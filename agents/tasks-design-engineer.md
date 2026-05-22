@@ -288,11 +288,11 @@ RBAC UX / микрокопирайт).
 - **Оценка:** 2ч
 - **Описание:** Создать `frontend/src/lib/chartTheme.ts` с константами: `GRID_PROPS`, `AXIS_PROPS`, `TOOLTIP_STYLE`, `LEGEND_STYLE`, `CHART_COLORS`. Использовать в `Dashboard.tsx`, `PnL.tsx`, `AdsHeatmap.tsx`, `Funnel.tsx`, `MetricDrilldownModal.tsx`.
 - **Критерии готовности:**
-  - [ ] `frontend/src/lib/chartTheme.ts` создан
-  - [ ] Минимум 5 файлов мигрированы
-  - [ ] Inline `stroke="#..."` / `fill: "#..."` заменены на `GRID_PROPS.stroke` / `AXIS_PROPS.tick.fill`
+  - [x] `frontend/src/lib/chartTheme.ts` создан (расширен до полного API: `GRID_PROPS`, `AXIS_PROPS`, `TOOLTIP_STYLE`, `LEGEND_STYLE`, `CHART_COLORS` (8-цветная палитра DESIGN_SYSTEM §3.4), `SPARKLINE_COLOR`)
+  - [x] Минимум 5 файлов мигрированы (фактически 8: `Dashboard.tsx`, `Tariffs.tsx`, `Redistribution.tsx`, `SeasonPlan.tsx`, `PaymentCalendar.tsx`, `Inventory.tsx`, `UnitPlanDrillDrawer.tsx`, `MetricDrilldownModal.tsx`). `PnL.tsx` и `PnLCardsView.tsx` оставлены — параллельная main session работает над UI-017
+  - [x] Inline `stroke="#..."` / `fill: "#..."` заменены на `GRID_PROPS` / `AXIS_PROPS` / `TOOLTIP_STYLE` / `CHART_COLORS[i]`
 - **Зависимости:** TASK-UI-001
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-22 — Design Engineer (Claude Opus 4.7, sub-agent J)
 
 ---
 
@@ -319,12 +319,12 @@ RBAC UX / микрокопирайт).
 - **Оценка:** 3ч
 - **Описание:** Collapsed-state = 1 строка «3 алерта: COGS missing, реклама paused, recon mismatch». Click → expand list. Серверный ack уже работает.
 - **Критерии готовности:**
-  - [ ] Collapsed-mode по умолчанию
-  - [ ] Expand с ack-кнопками
-  - [ ] Иконки lucide, не эмодзи
-  - [ ] Цветовая семантика: warn / danger / info (subtle backgrounds)
+  - [x] Collapsed-mode по умолчанию (persist в `localStorage["alertsBar.expanded.v1"]`). При `visible.length === 1` — collapsed не показывается, сразу expanded (1 alert не имеет смысла сворачивать)
+  - [x] Expand с ack-кнопками (severity-icon + message + link «открыть →» + close ack-button per строка)
+  - [x] Иконки lucide (`info` / `warning` / `alert` / `chevron-down` / `close`), не эмодзи
+  - [x] Цветовая семантика: `bg-accent-subtle text-accent` (info) / `bg-warn-subtle text-warn` (warning) / `bg-danger-subtle text-danger` (danger). Subtle backgrounds вместо прежнего border-left only — critical алерты (recon mismatch) теперь читаются с первого взгляда
 - **Зависимости:** TASK-UI-003
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-22 — Design Engineer (Claude Opus 4.7, sub-agent J)
 
 ---
 
@@ -335,12 +335,12 @@ RBAC UX / микрокопирайт).
 - **Оценка:** 1.5ч
 - **Описание:** Audit `transition-` по pages/components. Отклонения от стандарта (`transition-all`, `duration-500`, spring/bounce) — фикс.
 - **Критерии готовности:**
-  - [ ] `grep -rn "transition-all" frontend/src` — 0
-  - [ ] `grep -rn "duration-\(3\|5\|7\)00" frontend/src` — 0
-  - [ ] Нет `animate-bounce`, `animate-spin` (кроме loading-spinner)
-  - [ ] `prefers-reduced-motion` уважается
+  - [x] `grep -rn "transition-all" frontend/src` — 0 (был 1 в `UnitPlan.tsx:2691` — заменён на `transition-[width] duration-150 ease-out`, т.к. progress-bar реально анимирует width)
+  - [x] `grep -rEn "duration-(3|5|7)00" frontend/src` — 0 (нарушений не было)
+  - [x] Нет `animate-bounce`, `animate-spin` (кроме loading-spinner). `animate-spin` оставлен в legitimate местах: `SyncStatusIndicator.tsx:223` (refresh icon при `isFetching`), `Dashboard.tsx:335/343` (PDF/PNG export spinners), `Notifications.tsx:99` (dry-run spinner), `WeeklyReport.tsx:201` (export spinner). `animate-pulse` оставлен для loading-skeleton (`WeeklyChangesFeed.tsx:62`) + sync-индикатор + UnitPlan saving-dot — все loading-states
+  - [x] `prefers-reduced-motion` уважается глобально (см. `styles.css` media-query)
 - **Зависимости:** —
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-22 — Design Engineer (Claude Opus 4.7, sub-agent J)
 
 ---
 

@@ -33,6 +33,7 @@ import {
 import { api, type TariffTimelineRow } from "@/api/client";
 import { fmtPct } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
+import { GRID_PROPS, AXIS_PROPS, TOOLTIP_STYLE, LEGEND_STYLE } from "@/lib/chartTheme";
 
 type Tab = "box" | "pallet" | "commission";
 
@@ -254,11 +255,11 @@ function ChartCard<T extends Record<string, unknown>>({
       <h3 className="text-sm font-medium mb-2">{title}</h3>
       <ResponsiveContainer width="100%" height="90%">
         <LineChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-          <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-          <YAxis tick={{ fontSize: 11 }} />
-          <Tooltip />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <CartesianGrid {...GRID_PROPS} />
+          <XAxis {...AXIS_PROPS} dataKey="label" />
+          <YAxis {...AXIS_PROPS} />
+          <Tooltip contentStyle={TOOLTIP_STYLE} />
+          <Legend wrapperStyle={LEGEND_STYLE} />
           {lines.map((l) => (
             <Line
               key={l.key}

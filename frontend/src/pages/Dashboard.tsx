@@ -41,7 +41,7 @@ import { useReportingMode } from "@/contexts/ReportingModeContext";
 import ViewPresetsBar from "@/components/ViewPresetsBar";
 import { exportToPdf, exportToPng } from "@/lib/exportPdf";
 import { Icon } from "@/components/Icon";
-import { chartTheme } from "@/lib/chartTheme";
+import { chartTheme, GRID_PROPS, AXIS_PROPS, TOOLTIP_STYLE } from "@/lib/chartTheme";
 import { fmtNum, fmtRub } from "@/lib/format";
 
 type Period = "day" | "week" | "month";
@@ -440,29 +440,27 @@ export default function Dashboard() {
             {tsQ.data && (
               <ResponsiveContainer>
                 <LineChart data={tsQ.data.rows}>
-                  <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
-                  <XAxis dataKey="date" stroke={chartTheme.axis} fontSize={11} />
+                  <CartesianGrid {...GRID_PROPS} />
+                  <XAxis {...AXIS_PROPS} dataKey="date" />
                   {/* Двойная Y-ось: revenue (₽, слева) vs orders (шт, справа).
                       Без этого orders (~70) лежали на дне, потому что одна ось
                       масштабировалась под revenue (~700k). */}
                   <YAxis
+                    {...AXIS_PROPS}
                     yAxisId="revenue"
-                    stroke={chartTheme.axis}
-                    fontSize={11}
                     tickFormatter={(v) =>
                       Math.abs(v) >= 1000 ? `${Math.round(v / 1000)}k` : String(v)
                     }
                     hide={!showRevenue}
                   />
                   <YAxis
+                    {...AXIS_PROPS}
                     yAxisId="orders"
                     orientation="right"
-                    stroke={chartTheme.axis}
-                    fontSize={11}
                     hide={!showOrders}
                   />
                   <Tooltip
-                    contentStyle={chartTheme.tooltipStyle}
+                    contentStyle={TOOLTIP_STYLE}
                     formatter={(v: any, name: any) =>
                       name === "revenue" ? fmtRub(v) : fmtNum(v)
                     }

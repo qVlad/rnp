@@ -18,6 +18,7 @@ import LkDisclaimerModal, {
 } from "@/components/LkDisclaimerModal";
 import { Icon } from "../components/Icon";
 import PageHeader from "@/components/PageHeader";
+import { GRID_PROPS, AXIS_PROPS, TOOLTIP_STYLE, LEGEND_STYLE, CHART_COLORS } from "@/lib/chartTheme";
 
 export default function Redistribution() {
   const qc = useQueryClient();
@@ -789,33 +790,28 @@ function RoiMonthlyChart({ data }: { data: any[] }) {
     <div style={{ width: "100%", height: 220 }}>
       <ResponsiveContainer>
         <BarChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#444" />
-          <XAxis dataKey="month" stroke="#888" fontSize={11} />
+          <CartesianGrid {...GRID_PROPS} />
+          <XAxis {...AXIS_PROPS} dataKey="month" />
           <YAxis
-            stroke="#888"
-            fontSize={11}
+            {...AXIS_PROPS}
             tickFormatter={(v) =>
               Math.abs(v) >= 1000 ? `${Math.round(v / 1000)}k` : String(v)
             }
           />
           <ChartTooltip
-            contentStyle={{
-              background: "#1a1a1a",
-              border: "1px solid #444",
-              fontSize: 11,
-            }}
+            contentStyle={TOOLTIP_STYLE}
             formatter={(v: any) => fmtRub(v as number)}
           />
-          <ChartLegend wrapperStyle={{ fontSize: 11 }} />
+          <ChartLegend wrapperStyle={LEGEND_STYLE} />
           <Bar
             dataKey="saving_rub"
-            fill="#3ddc97"
+            fill={CHART_COLORS[0]}
             name="Экономия логистики"
             stackId="a"
           />
           <Bar
             dataKey="fee_rub"
-            fill="#ff4d6d"
+            fill={CHART_COLORS[4]}
             name="Комиссия +0.5%"
             stackId="b"
           />

@@ -2688,7 +2688,7 @@ function PasteVolumeModal({
               </div>
               <div className="h-1.5 bg-surface-2 rounded overflow-hidden mt-1">
                 <div
-                  className="h-full bg-accent transition-all"
+                  className="h-full bg-accent transition-[width] duration-150 ease-out"
                   style={{
                     width:
                       validRows.length > 0
