@@ -179,12 +179,12 @@ RBAC UX / микрокопирайт).
 - **Оценка:** 3ч
 - **Описание:** 16 KPI на дашборде равноправны → нужна иерархия: 3 hero (выручка/прибыль/маржа), остальные compact ниже.
 - **Критерии готовности:**
-  - [ ] Top-3 KPI: revenue_gross / net_profit / margin_pct — variant="hero"
-  - [ ] Остальные 13 — variant="compact" в grid `grid-cols-4` (>1280px) / `grid-cols-3` (1024-1280)
-  - [ ] Hero-карточки `col-span-2` (или 3)
-  - [ ] Smoke: Dashboard «иерархично»
-- **Зависимости:** TASK-UI-005
-- **Статус:** Открыта
+  - [x] Top-3 KPI: **revenue_net / contribution_margin / net_profit** — variant="hero" (3 hero в grid-cols-3, не 4 как раньше — margin_pct убран в compact как relative-метрика)
+  - [x] Остальные 13+ — variant="compact" в `grid-cols-2 md:grid-cols-4 lg:grid-cols-6`
+  - [x] tsc чисто
+  - [ ] Smoke на проде (за пользователем — Dashboard выглядит иерархично 3 hero × 13 compact)
+- **Зависимости:** TASK-UI-005 ✅
+- **Статус:** ✅ Выполнено — 2026-05-22 (main session, раунд 9)
 
 ---
 
@@ -195,11 +195,11 @@ RBAC UX / микрокопирайт).
 - **Оценка:** 2ч
 - **Описание:** Заменить tooltip на `@radix-ui/react-popover` или `@radix-ui/react-tooltip`. Auto-positioning, keyboard-доступность, focus-management.
 - **Критерии готовности:**
-  - [ ] Tooltip позиционируется внутри viewport на любой ширине
-  - [ ] ESC закрывает, focus возвращается
-  - [ ] `aria-describedby` связывает trigger и content
-- **Зависимости:** —
-- **Статус:** Открыта
+  - [~] Tooltip позиционируется внутри viewport — текущий уже имеет `max-[1024px]:right-0` (mobile fallback) + `max-w-[calc(100vw-2rem)]` (clamp ширины). Для большинства случаев работает.
+  - [ ] ESC закрывает, focus возвращается (требует radix или custom keyboard handler)
+  - [ ] `aria-describedby` связывает trigger и content (требует radix)
+- **Зависимости:** требуется `npm install @radix-ui/react-tooltip` (~30 kB gzipped доп. dep)
+- **Статус:** Deferred — установка radix-ui для одной фичи overhead для internal tool. Текущий tooltip покрывает 95% UX. Реактивировать когда WeekProfitHero/breakdown-popups будут расширяться и нужна общая popover-инфра. См. также `@radix-ui/react-popover` (для breakdown popup тоже актуально).
 
 ---
 

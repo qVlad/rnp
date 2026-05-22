@@ -563,11 +563,15 @@ export default function Dashboard() {
   );
 }
 
+// TASK-UI-009: 3 hero-KPI визуальная иерархия. Top-row из 3 равных hero
+// (выручка / contribution margin / net profit) — крупный шрифт + WoW. Остальные
+// 13 KPI — variant=compact ниже в grid-cols-4 / lg:grid-cols-6.
+// margin_pct убран из hero — он relative-метрика, лучше в compact (часто
+// дублирует net_profit / contribution_margin).
 const HERO_KEYS = new Set([
   "revenue_net",
-  "net_profit",
-  "margin_pct",
   "contribution_margin",
+  "net_profit",
 ]);
 
 function DashboardKpiGrid({
