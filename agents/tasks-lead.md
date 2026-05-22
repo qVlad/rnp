@@ -31,11 +31,11 @@ Lead использует этот файл как master-view: сюда скл�
 >
 > **Раунд 9 завершён (v0.26.0):** Sprint 2 UI batch (UI-007/008/009/011/012/014). UI-010 deferred (radix dep).
 >
-> **Раунд 10 запущен (2026-05-22 day — 2 потока):**
-> - 🔄 **TASK-UI-017** DeltaCell + **TASK-UI-020** density toggle Units — main session
-> - 🔄 **Sprint 3 batch** (TASK-UI-016 chartTheme.ts + UI-018 AlertsBar minimal + UI-019 micro-animations audit) — sub-agent J
+> **Раунд 10 завершён (v0.27.0):** Sprint 3 UI batch (UI-016/017/018/019/020). UI-015 — на самом деле уже реализован.
 >
-> **UI-015** (cmdk command palette) — Deferred (требует `npm install cmdk` ~10kB, отдельная задача).
+> **Раунд 11 запущен (2026-05-22 day — 2 потока):**
+> - 🔄 **BUG-UI-005** DeltaCell на Plans/Units/ABC + **UI-015** verify (CommandPalette уже работает, cmdk^1.1.1 в deps) — main
+> - 🔄 **BUG-UI cleanup batch** (BUG-UI-001 ternary emoji / 002 non-percent toFixed / 003 sticky-first-col / 004 states migration) — sub-agent K
 >
 > После завершения раунда — TASK-LEAD-051 (Weekly digest) и TASK-LEAD-053 (Транзит) в следующем заходе.
 >
