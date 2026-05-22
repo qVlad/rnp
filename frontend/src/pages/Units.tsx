@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type ColumnDef,
@@ -15,6 +15,7 @@ import { api } from "@/api/client";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import { DndTableProvider, SortableHeader } from "@/components/DraggableHeader";
 import { Icon } from "@/components/Icon";
+import DeltaCell from "@/components/DeltaCell";
 import TagFilterDropdown from "@/components/TagFilterDropdown";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
 import { useTagFilter } from "@/lib/useTagFilter";
@@ -129,6 +130,99 @@ const NUM_COLS: (keyof UnitRow)[] = [
 const UNITS_BRAND_FILTER_KEY = "units.brand-filter.v1";
 const UNITS_NO_BRAND = "__no_brand__";
 
+// Inline-editor overrides — per-nm subscription store.
+// Один глобальный объект на инстанс страницы, cells подписываются на
+// конкретный nm_id через useSyncExternalStore → keystroke в одной строке
+// не дёргает другие 49.
+type PriceOverride = { price?: number; discount?: number };
+type OverridesStore = {
+  get: (nm: number) => PriceOverride | undefined;
+  set: (nm: number, key: "price" | "discount", value: number | undefined) => void;
+  clear: () => void;
+  useCount: () => number;
+  useRow: (nm: number) => PriceOverride | undefined;
+};
+
+function useOverridesStore(storageKey: string): OverridesStore {
+  const stateRef = useRef<Record<number, PriceOverride>>(
+    (() => {
+      try {
+        const raw = localStorage.getItem(storageKey);
+        return raw ? JSON.parse(raw) : {};
+      } catch {
+        return {};
+      }
+    })(),
+  );
+  // Per-nm listeners + a global listener for the count.
+  const listenersRef = useRef<Map<number, Set<() => void>>>(new Map());
+  const globalListenersRef = useRef<Set<() => void>>(new Set());
+
+  const notify = (nm: number) => {
+    listenersRef.current.get(nm)?.forEach((l) => l());
+    globalListenersRef.current.forEach((l) => l());
+  };
+  const persist = () => {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(stateRef.current));
+    } catch {}
+  };
+
+  const store = useMemo<OverridesStore>(() => {
+    const subscribeRow = (nm: number, cb: () => void) => {
+      let set = listenersRef.current.get(nm);
+      if (!set) {
+        set = new Set();
+        listenersRef.current.set(nm, set);
+      }
+      set.add(cb);
+      return () => {
+        set!.delete(cb);
+        if (set!.size === 0) listenersRef.current.delete(nm);
+      };
+    };
+    const subscribeGlobal = (cb: () => void) => {
+      globalListenersRef.current.add(cb);
+      return () => globalListenersRef.current.delete(cb);
+    };
+    return {
+      get: (nm) => stateRef.current[nm],
+      set: (nm, key, value) => {
+        const cur = { ...(stateRef.current[nm] ?? {}) };
+        if (value == null || Number.isNaN(value)) {
+          delete cur[key];
+        } else {
+          cur[key] = value;
+        }
+        const next = { ...stateRef.current };
+        if (Object.keys(cur).length === 0) {
+          delete next[nm];
+        } else {
+          next[nm] = cur;
+        }
+        stateRef.current = next;
+        persist();
+        notify(nm);
+      },
+      clear: () => {
+        const affected = Object.keys(stateRef.current).map(Number);
+        stateRef.current = {};
+        persist();
+        affected.forEach((nm) => notify(nm));
+      },
+      useCount: () =>
+        useSyncExternalStore(subscribeGlobal, () => Object.keys(stateRef.current).length),
+      useRow: (nm: number) =>
+        useSyncExternalStore(
+          (cb) => subscribeRow(nm, cb),
+          () => stateRef.current[nm],
+        ),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageKey]);
+  return store;
+}
+
 export default function Units() {
   const qc = useQueryClient();
   // TASK-UI-005 continuation: two-way sync с PeriodContext.
@@ -203,38 +297,17 @@ export default function Units() {
   // увидел новую маржу» за секунду. Persist в localStorage чтобы сценарии
   // сохранялись между сессиями. Только frontend-computed: backend ничего не
   // знает об этих overrides.
-  type PriceOverride = { price?: number; discount?: number };
+  //
+  // BUG-DEV-007 follow-up #2: ранее `priceOverrides` лежал в deps useMemo для
+  // columns — каждое нажатие в input'е цены/скидки пересобирало все 30+
+  // column-def'ов и TanStack ре-маунтил все 50 строк (страница «очень сильно
+  // тормозила»). Теперь overrides живут в ref, cells читают через
+  // `useSyncExternalStore` с per-nm подпиской — только активная клетка
+  // ре-рендерится.
   const PRICE_OV_KEY = "units.price-overrides.v1";
-  const [priceOverrides, setPriceOverrides] = useState<Record<number, PriceOverride>>(() => {
-    try {
-      const raw = localStorage.getItem(PRICE_OV_KEY);
-      return raw ? JSON.parse(raw) : {};
-    } catch {
-      return {};
-    }
-  });
-  useEffect(() => {
-    try { localStorage.setItem(PRICE_OV_KEY, JSON.stringify(priceOverrides)); } catch {}
-  }, [priceOverrides]);
-  const updateOverride = (nm: number, key: "price" | "discount", value: number | undefined) => {
-    setPriceOverrides((p) => {
-      const next = { ...p };
-      const cur = { ...(next[nm] ?? {}) };
-      if (value == null || Number.isNaN(value)) {
-        delete cur[key];
-      } else {
-        cur[key] = value;
-      }
-      if (Object.keys(cur).length === 0) {
-        delete next[nm];
-      } else {
-        next[nm] = cur;
-      }
-      return next;
-    });
-  };
-  const clearPriceOverrides = () => setPriceOverrides({});
-  const priceOverridesCount = Object.keys(priceOverrides).length;
+  const overridesStore = useOverridesStore(PRICE_OV_KEY);
+  const priceOverridesCount = overridesStore.useCount();
+  const clearPriceOverrides = overridesStore.clear;
   const [sizesModalFor, setSizesModalFor] = useState<number | null>(null);
   // BUG-DEV-007 follow-up: native confirm() блокируется некоторыми браузерами
   // (Chrome > 90 для cross-origin / pop-up-blocker контекстов). Кнопка archive
@@ -764,8 +837,9 @@ export default function Units() {
         },
       },
       // TASK-LEAD-049 — Inline-редактор цены/скидки (P0 РОП-запрос).
-      // 3 колонки: «Новая цена», «Скидка %», «Новая маржа/ед» (computed).
-      // Без backend — frontend-only. Persist в localStorage.
+      // BUG-DEV-007 follow-up #2: cells подписываются на per-nm slice через
+      // useSyncExternalStore — keystroke в одной строке не дёргает остальные
+      // 49. priceOverrides убран из columns deps → страница не тормозит.
       {
         header: () => (
           <span title="Введи новую цену → автоматически пересчитает маржу. Сценарий — для подготовки к промо/изменению РРЦ.">
@@ -774,25 +848,9 @@ export default function Units() {
         ),
         id: "new_price_override",
         enableSorting: false,
-        cell: (c) => {
-          const row = c.row.original as UnitRow;
-          const ov = priceOverrides[row.nm_id];
-          return (
-            <input
-              type="number"
-              step="1"
-              min="0"
-              className="input text-xs"
-              style={{ width: 80 }}
-              placeholder={row.avg_price ? row.avg_price.toFixed(0) : "—"}
-              value={ov?.price ?? ""}
-              onChange={(e: any) => {
-                const v = e.target.value === "" ? undefined : Number(e.target.value);
-                updateOverride(row.nm_id, "price", v);
-              }}
-            />
-          );
-        },
+        cell: (c) => (
+          <NewPriceCell row={c.row.original as UnitRow} store={overridesStore} />
+        ),
       },
       {
         header: () => (
@@ -802,26 +860,9 @@ export default function Units() {
         ),
         id: "new_discount_override",
         enableSorting: false,
-        cell: (c) => {
-          const row = c.row.original as UnitRow;
-          const ov = priceOverrides[row.nm_id];
-          return (
-            <input
-              type="number"
-              step="1"
-              min="0"
-              max="90"
-              className="input text-xs"
-              style={{ width: 60 }}
-              placeholder="0"
-              value={ov?.discount ?? ""}
-              onChange={(e: any) => {
-                const v = e.target.value === "" ? undefined : Number(e.target.value);
-                updateOverride(row.nm_id, "discount", v);
-              }}
-            />
-          );
-        },
+        cell: (c) => (
+          <NewDiscountCell row={c.row.original as UnitRow} store={overridesStore} />
+        ),
       },
       {
         header: () => (
@@ -831,60 +872,12 @@ export default function Units() {
         ),
         id: "new_margin_unit",
         enableSorting: false,
-        cell: (c) => {
-          const row = c.row.original as UnitRow;
-          const ov = priceOverrides[row.nm_id];
-          if (!ov || (ov.price == null && ov.discount == null)) {
-            return <span className="text-muted">—</span>;
-          }
-          const basePrice = row.avg_price || 0;
-          const newPrice = ov.price ?? basePrice;
-          const discountPct = ov.discount ?? 0;
-          const effectivePrice = newPrice * (1 - discountPct / 100);
-          const sold = row.units_sold;
-          if (!sold || sold <= 0) {
-            return <span className="text-muted">нет продаж</span>;
-          }
-          const commissionRate = (row.commission_pct ?? 0) / 100;
-          const logisticsPerUnit = (row.delivery || 0) / sold;
-          const storagePerUnit = (row.storage || 0) / sold;
-          const adPerUnit =
-            ((row.ad_cost || 0) + (row.external_ad_cost || 0) + (row.cashback || 0)) / sold;
-          const newMargin =
-            effectivePrice
-            - (row.cogs_unit || 0)
-            - commissionRate * effectivePrice
-            - logisticsPerUnit
-            - storagePerUnit
-            - adPerUnit;
-          const currentMargin = row.margin_unit || 0;
-          const deltaPct =
-            currentMargin !== 0
-              ? ((newMargin - currentMargin) / Math.abs(currentMargin)) * 100
-              : null;
-          const cls = newMargin >= 0 ? "text-success" : "text-danger";
-          const deltaCls =
-            deltaPct == null
-              ? "text-muted"
-              : deltaPct > 0
-                ? "text-success"
-                : deltaPct < 0
-                  ? "text-danger"
-                  : "text-muted";
-          return (
-            <div className="flex flex-col items-end text-xs leading-tight">
-              <span className={cls + " font-mono font-semibold"}>{fmtRub(newMargin)}</span>
-              {deltaPct != null && (
-                <span className={deltaCls + " font-mono"}>
-                  {deltaPct >= 0 ? "+" : ""}{fmtPct(deltaPct, 1)}
-                </span>
-              )}
-            </div>
-          );
-        },
+        cell: (c) => (
+          <NewMarginCell row={c.row.original as UnitRow} store={overridesStore} />
+        ),
       },
     ],
-    [archiveMut, unarchiveMut, priceOverrides],
+    [archiveMut, unarchiveMut, overridesStore],
   );
 
   const table = useReactTable({
@@ -1337,6 +1330,80 @@ export default function Units() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function NewPriceCell({ row, store }: { row: UnitRow; store: OverridesStore }) {
+  const ov = store.useRow(row.nm_id);
+  return (
+    <input
+      type="number"
+      step="1"
+      min="0"
+      className="input text-xs"
+      style={{ width: 80 }}
+      placeholder={row.avg_price ? row.avg_price.toFixed(0) : "—"}
+      value={ov?.price ?? ""}
+      onChange={(e) => {
+        const v = e.target.value === "" ? undefined : Number(e.target.value);
+        store.set(row.nm_id, "price", v);
+      }}
+    />
+  );
+}
+
+function NewDiscountCell({ row, store }: { row: UnitRow; store: OverridesStore }) {
+  const ov = store.useRow(row.nm_id);
+  return (
+    <input
+      type="number"
+      step="1"
+      min="0"
+      max="90"
+      className="input text-xs"
+      style={{ width: 60 }}
+      placeholder="0"
+      value={ov?.discount ?? ""}
+      onChange={(e) => {
+        const v = e.target.value === "" ? undefined : Number(e.target.value);
+        store.set(row.nm_id, "discount", v);
+      }}
+    />
+  );
+}
+
+function NewMarginCell({ row, store }: { row: UnitRow; store: OverridesStore }) {
+  const ov = store.useRow(row.nm_id);
+  if (!ov || (ov.price == null && ov.discount == null)) {
+    return <span className="text-muted">—</span>;
+  }
+  const basePrice = row.avg_price || 0;
+  const newPrice = ov.price ?? basePrice;
+  const discountPct = ov.discount ?? 0;
+  const effectivePrice = newPrice * (1 - discountPct / 100);
+  const sold = row.units_sold;
+  if (!sold || sold <= 0) {
+    return <span className="text-muted">нет продаж</span>;
+  }
+  const commissionRate = (row.commission_pct ?? 0) / 100;
+  const logisticsPerUnit = (row.delivery || 0) / sold;
+  const storagePerUnit = (row.storage || 0) / sold;
+  const adPerUnit =
+    ((row.ad_cost || 0) + (row.external_ad_cost || 0) + (row.cashback || 0)) / sold;
+  const newMargin =
+    effectivePrice
+    - (row.cogs_unit || 0)
+    - commissionRate * effectivePrice
+    - logisticsPerUnit
+    - storagePerUnit
+    - adPerUnit;
+  const currentMargin = row.margin_unit || 0;
+  const cls = newMargin >= 0 ? "text-success" : "text-danger";
+  return (
+    <div className="flex flex-col items-end text-xs leading-tight">
+      <span className={cls + " font-mono font-semibold"}>{fmtRub(newMargin)}</span>
+      <DeltaCell before={currentMargin} after={newMargin} />
     </div>
   );
 }

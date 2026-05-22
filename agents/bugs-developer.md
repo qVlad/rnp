@@ -130,7 +130,8 @@
   - [x] basket range расширен до 36 (с 28)
   - [x] failed-photo placeholder вместо `display:none` (заполняем cell серым «нет» с тем же aspect-ratio, не оставляем пустоту)
   - [x] **Follow-up 2026-05-22 (v0.27.1):** native `confirm()` для archive-кнопки молча возвращал false в некоторых браузерных конфигурациях (pop-up blocker / cross-origin) → click фирился, но мутация не запускалась = «кнопка не работает». Заменено на React-modal с явными «Отмена» / «Архивировать» кнопками + `data-testid` + `aria-label`. Увеличена hit-area кнопок (px-2 py-1.5 + icon 14) и добавлен hover hint (accent/warning border).
-- **Статус:** Исправлено — 2026-05-22 (v0.27.1 follow-up)
+  - [x] **Follow-up 2026-05-22 (v0.27.2):** real root-cause — страница «очень сильно тормозила», клик регистрировался, но модалка не успевала отрисоваться. Причина: TASK-LEAD-049 inline-editor хранил `priceOverrides` в обычном `useState` + клал в deps useMemo для columns → каждый keystroke в input'е пересобирал все 30+ column-def'ов и TanStack ремаунтил все 50 строк × N клеток. Переписано на per-nm subscription store (`useSyncExternalStore`): cells подписываются на собственный `nm_id`-slice, keystroke в одной строке не дёргает остальные 49. priceOverrides убран из columns deps.
+- **Статус:** Исправлено — 2026-05-22 (v0.27.2 perf follow-up)
 
 ---
 
