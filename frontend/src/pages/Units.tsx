@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type ColumnDef,
@@ -130,98 +130,20 @@ const NUM_COLS: (keyof UnitRow)[] = [
 const UNITS_BRAND_FILTER_KEY = "units.brand-filter.v1";
 const UNITS_NO_BRAND = "__no_brand__";
 
-// Inline-editor overrides — per-nm subscription store.
-// Один глобальный объект на инстанс страницы, cells подписываются на
-// конкретный nm_id через useSyncExternalStore → keystroke в одной строке
-// не дёргает другие 49.
+// Inline-editor overrides — простой useState + React Context.
+// BUG-DEV-007 follow-up #3: предыдущая попытка через useSyncExternalStore
+// вызывала бесконечный re-render loop на /units (DOM mutations 6k/sec, 15 FPS).
+// `mcp__chrome-devtools__click` не успевал нажать кнопку — она ремаунтилась
+// раньше чем CDP'шный «element is interactive» условие сработало. Возвращаемся
+// к проверенной схеме useState + Context. Keystroke перерендеривает 150 cells
+// (50 строк × 3 inline-cell), но это терпимо и НЕ ломает click delivery.
 type PriceOverride = { price?: number; discount?: number };
-type OverridesStore = {
-  get: (nm: number) => PriceOverride | undefined;
-  set: (nm: number, key: "price" | "discount", value: number | undefined) => void;
-  clear: () => void;
-  useCount: () => number;
-  useRow: (nm: number) => PriceOverride | undefined;
+type OverridesCtxValue = {
+  overrides: Record<number, PriceOverride>;
+  update: (nm: number, key: "price" | "discount", value: number | undefined) => void;
 };
-
-function useOverridesStore(storageKey: string): OverridesStore {
-  const stateRef = useRef<Record<number, PriceOverride>>(
-    (() => {
-      try {
-        const raw = localStorage.getItem(storageKey);
-        return raw ? JSON.parse(raw) : {};
-      } catch {
-        return {};
-      }
-    })(),
-  );
-  // Per-nm listeners + a global listener for the count.
-  const listenersRef = useRef<Map<number, Set<() => void>>>(new Map());
-  const globalListenersRef = useRef<Set<() => void>>(new Set());
-
-  const notify = (nm: number) => {
-    listenersRef.current.get(nm)?.forEach((l) => l());
-    globalListenersRef.current.forEach((l) => l());
-  };
-  const persist = () => {
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(stateRef.current));
-    } catch {}
-  };
-
-  const store = useMemo<OverridesStore>(() => {
-    const subscribeRow = (nm: number, cb: () => void) => {
-      let set = listenersRef.current.get(nm);
-      if (!set) {
-        set = new Set();
-        listenersRef.current.set(nm, set);
-      }
-      set.add(cb);
-      return () => {
-        set!.delete(cb);
-        if (set!.size === 0) listenersRef.current.delete(nm);
-      };
-    };
-    const subscribeGlobal = (cb: () => void) => {
-      globalListenersRef.current.add(cb);
-      return () => globalListenersRef.current.delete(cb);
-    };
-    return {
-      get: (nm) => stateRef.current[nm],
-      set: (nm, key, value) => {
-        const cur = { ...(stateRef.current[nm] ?? {}) };
-        if (value == null || Number.isNaN(value)) {
-          delete cur[key];
-        } else {
-          cur[key] = value;
-        }
-        const next = { ...stateRef.current };
-        if (Object.keys(cur).length === 0) {
-          delete next[nm];
-        } else {
-          next[nm] = cur;
-        }
-        stateRef.current = next;
-        persist();
-        notify(nm);
-      },
-      clear: () => {
-        const affected = Object.keys(stateRef.current).map(Number);
-        stateRef.current = {};
-        persist();
-        affected.forEach((nm) => notify(nm));
-      },
-      useCount: () =>
-        useSyncExternalStore(subscribeGlobal, () => Object.keys(stateRef.current).length),
-      useRow: (nm: number) =>
-        useSyncExternalStore(
-          (cb) => subscribeRow(nm, cb),
-          () => stateRef.current[nm],
-        ),
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storageKey]);
-  return store;
-}
+const OverridesContext = createContext<OverridesCtxValue | null>(null);
+const PRICE_OV_KEY = "units.price-overrides.v1";
 
 export default function Units() {
   const qc = useQueryClient();
@@ -293,21 +215,52 @@ export default function Units() {
   }, [density]);
   const cellPad = density === "dense" ? "p-1" : density === "compact" ? "p-1.5" : "p-2";
 
-  // TASK-LEAD-049: inline-редактор цены/скидки. РОП хочет «изменил цену →
-  // увидел новую маржу» за секунду. Persist в localStorage чтобы сценарии
-  // сохранялись между сессиями. Только frontend-computed: backend ничего не
-  // знает об этих overrides.
+  // TASK-LEAD-049: inline-редактор цены/скидки. State в useState, передаётся
+  // в cells через React Context — columns useMemo не зависит от overrides, не
+  // ре-маунтит таблицу на keystroke.
   //
-  // BUG-DEV-007 follow-up #2: ранее `priceOverrides` лежал в deps useMemo для
-  // columns — каждое нажатие в input'е цены/скидки пересобирало все 30+
-  // column-def'ов и TanStack ре-маунтил все 50 строк (страница «очень сильно
-  // тормозила»). Теперь overrides живут в ref, cells читают через
-  // `useSyncExternalStore` с per-nm подпиской — только активная клетка
-  // ре-рендерится.
-  const PRICE_OV_KEY = "units.price-overrides.v1";
-  const overridesStore = useOverridesStore(PRICE_OV_KEY);
-  const priceOverridesCount = overridesStore.useCount();
-  const clearPriceOverrides = overridesStore.clear;
+  // BUG-DEV-007 follow-up #3: ранее использовали useSyncExternalStore с
+  // per-nm subscribe — оказалось, что unstable subscribe-functions внутри
+  // useSyncExternalStore вызывали бесконечный re-render loop. Кнопки не
+  // успевали стать interactive до следующего ремаунта. Заменено на простой
+  // useState + Context.
+  const [priceOverrides, setPriceOverrides] = useState<Record<number, PriceOverride>>(() => {
+    try {
+      const raw = localStorage.getItem(PRICE_OV_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(PRICE_OV_KEY, JSON.stringify(priceOverrides)); } catch {}
+  }, [priceOverrides]);
+  const updateOverride = useCallback(
+    (nm: number, key: "price" | "discount", value: number | undefined) => {
+      setPriceOverrides((p) => {
+        const cur = { ...(p[nm] ?? {}) };
+        if (value == null || Number.isNaN(value)) {
+          delete cur[key];
+        } else {
+          cur[key] = value;
+        }
+        const next = { ...p };
+        if (Object.keys(cur).length === 0) {
+          delete next[nm];
+        } else {
+          next[nm] = cur;
+        }
+        return next;
+      });
+    },
+    [],
+  );
+  const clearPriceOverrides = useCallback(() => setPriceOverrides({}), []);
+  const priceOverridesCount = Object.keys(priceOverrides).length;
+  const overridesCtxValue = useMemo<OverridesCtxValue>(
+    () => ({ overrides: priceOverrides, update: updateOverride }),
+    [priceOverrides, updateOverride],
+  );
   const [sizesModalFor, setSizesModalFor] = useState<number | null>(null);
   // BUG-DEV-007 follow-up: native confirm() блокируется некоторыми браузерами
   // (Chrome > 90 для cross-origin / pop-up-blocker контекстов). Кнопка archive
@@ -838,9 +791,7 @@ export default function Units() {
         ),
         id: "new_price_override",
         enableSorting: false,
-        cell: (c) => (
-          <NewPriceCell row={c.row.original as UnitRow} store={overridesStore} />
-        ),
+        cell: (c) => <NewPriceCell row={c.row.original as UnitRow} />,
       },
       {
         header: () => (
@@ -850,9 +801,7 @@ export default function Units() {
         ),
         id: "new_discount_override",
         enableSorting: false,
-        cell: (c) => (
-          <NewDiscountCell row={c.row.original as UnitRow} store={overridesStore} />
-        ),
+        cell: (c) => <NewDiscountCell row={c.row.original as UnitRow} />,
       },
       {
         header: () => (
@@ -862,12 +811,11 @@ export default function Units() {
         ),
         id: "new_margin_unit",
         enableSorting: false,
-        cell: (c) => (
-          <NewMarginCell row={c.row.original as UnitRow} store={overridesStore} />
-        ),
+        cell: (c) => <NewMarginCell row={c.row.original as UnitRow} />,
       },
     ],
-    [archiveMut, unarchiveMut, overridesStore],
+    // BUG-DEV-007 fix #3: columns stable across renders (overrides via Context).
+    [archiveMut, unarchiveMut],
   );
 
   const table = useReactTable({
@@ -893,6 +841,7 @@ export default function Units() {
   const columnMenuItems = table.getAllLeafColumns().filter((c) => c.id !== "actions" && c.id !== "photo");
 
   return (
+    <OverridesContext.Provider value={overridesCtxValue}>
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Юнит-экономика"
@@ -1322,11 +1271,19 @@ export default function Units() {
         </div>
       )}
     </div>
+    </OverridesContext.Provider>
   );
 }
 
-function NewPriceCell({ row, store }: { row: UnitRow; store: OverridesStore }) {
-  const ov = store.useRow(row.nm_id);
+function useOverridesCtx() {
+  const v = useContext(OverridesContext);
+  if (!v) throw new Error("OverridesContext not provided");
+  return v;
+}
+
+function NewPriceCell({ row }: { row: UnitRow }) {
+  const { overrides, update } = useOverridesCtx();
+  const ov = overrides[row.nm_id];
   return (
     <input
       type="number"
@@ -1338,14 +1295,15 @@ function NewPriceCell({ row, store }: { row: UnitRow; store: OverridesStore }) {
       value={ov?.price ?? ""}
       onChange={(e) => {
         const v = e.target.value === "" ? undefined : Number(e.target.value);
-        store.set(row.nm_id, "price", v);
+        update(row.nm_id, "price", v);
       }}
     />
   );
 }
 
-function NewDiscountCell({ row, store }: { row: UnitRow; store: OverridesStore }) {
-  const ov = store.useRow(row.nm_id);
+function NewDiscountCell({ row }: { row: UnitRow }) {
+  const { overrides, update } = useOverridesCtx();
+  const ov = overrides[row.nm_id];
   return (
     <input
       type="number"
@@ -1358,14 +1316,15 @@ function NewDiscountCell({ row, store }: { row: UnitRow; store: OverridesStore }
       value={ov?.discount ?? ""}
       onChange={(e) => {
         const v = e.target.value === "" ? undefined : Number(e.target.value);
-        store.set(row.nm_id, "discount", v);
+        update(row.nm_id, "discount", v);
       }}
     />
   );
 }
 
-function NewMarginCell({ row, store }: { row: UnitRow; store: OverridesStore }) {
-  const ov = store.useRow(row.nm_id);
+function NewMarginCell({ row }: { row: UnitRow }) {
+  const { overrides } = useOverridesCtx();
+  const ov = overrides[row.nm_id];
   if (!ov || (ov.price == null && ov.discount == null)) {
     return <span className="text-muted">—</span>;
   }
