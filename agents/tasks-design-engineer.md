@@ -127,12 +127,14 @@ RBAC UX / микрокопирайт).
 - **Оценка:** 1.5ч
 - **Описание:** Доточить sidebar: smooth scroll к активному пункту при mount, focus-state collapse-кнопки, persist key, aria-expanded.
 - **Критерии готовности:**
-  - [ ] Активный nav-link виден без ручного скролла при mount
-  - [ ] Кнопка collapse: `aria-expanded={!collapsed}` + `aria-controls` на `<aside>`
-  - [ ] `[` toggle не срабатывает когда фокус в `<input>` / `<textarea>`
-  - [ ] Tooltip на кнопке collapse — через `title=`
+  - [x] Активный nav-link виден без ручного скролла при mount (через `ref` callback + `scrollIntoView({block: 'nearest'})` на `.active-nav-item`)
+  - [x] Кнопка collapse: `aria-expanded={!collapsed}` + `aria-controls="sidebar-nav"` (id добавлен на `<nav>`)
+  - [x] `[` toggle не срабатывает в input/textarea (уже работало с TASK-LEAD-035)
+  - [x] Tooltip на кнопке collapse — через `title=` (был и остался)
+  - [x] Focus-visible style на collapse-кнопке: `focus-visible:ring-2 focus-visible:ring-accent`
+  - [x] aria-label динамический: «Свернуть боковую панель» / «Развернуть боковую панель» в зависимости от состояния
 - **Зависимости:** —
-- **Статус:** Открыта
+- **Статус:** ✅ Выполнено — 2026-05-21 (main session, раунд 8)
 
 ---
 

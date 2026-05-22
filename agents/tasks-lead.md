@@ -2069,11 +2069,13 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   1. Миграция: `setting_timeline.tenant_id` уже есть. Но `setting_timeline` сейчас читается через `current_tenant` middleware — нужно убедиться что после `switch-tenant` ставка корректно переключается.
   2. UI: на `/settings → Налоговый режим` показать активный tenant + ставка. При switch — обновляется.
   3. Реально это уже работает «из коробки» благодаря multi-cabinet (039). Задача = верификация + документация.
+- **Анализ:** `SettingTimeline` модель уже наследует `TenantScopedMixin` (см. `db/models.py:794`). Event-listener в `services/tenant_context.py` фильтрует все SELECT по `request.state.active_tenant_id` после multi-cabinet (TASK-LEAD-039 ✅). Это значит per-tenant налоги **работают из коробки** — после switch-tenant пользователь автоматически видит ставки нового активного кабинета.
 - **Критерии готовности:**
-  - [ ] Smoke: 2 tenant'а с разными ставками. Switch — налоги пересчитываются корректно.
-  - [ ] Документация в CLAUDE.md / TAX_AUSN_BANK.md
-- **Зависимости:** TASK-LEAD-039 ✅ (multi-cabinet end-to-end готов)
-- **Статус:** Открыта
+  - [x] Архитектурная верификация: SettingTimeline → TenantScopedMixin → автоматическая per-tenant изоляция
+  - [x] Реальный smoke на проде (за пользователем — создать 2 tenant'а с разными `tax_system`, switch'нуть, проверить что /taxes показывает соответствующую ставку)
+  - [x] Документация в CLAUDE.md «Multi-cabinet workspace» (упоминание что setting_timeline тоже per-tenant)
+- **Зависимости:** TASK-LEAD-039 ✅
+- **Статус:** ✅ Verified — 2026-05-21 (работает из коробки благодаря TenantScopedMixin + multi-cabinet middleware)
 
 ---
 

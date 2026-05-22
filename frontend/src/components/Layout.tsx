@@ -261,14 +261,16 @@ export default function Layout() {
           <button
             type="button"
             onClick={() => setCollapsed((c) => !c)}
-            className="ml-auto text-muted hover:text-fg transition-colors"
+            className="ml-auto text-muted hover:text-fg focus-visible:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded transition-colors"
             title="Свернуть/развернуть (горячая [ )"
-            aria-label="Свернуть/развернуть"
+            aria-label={collapsed ? "Развернуть боковую панель" : "Свернуть боковую панель"}
+            aria-expanded={!collapsed}
+            aria-controls="sidebar-nav"
           >
             <Icon name="menu" size={14} />
           </button>
         </div>
-        <nav className="flex-1 overflow-y-auto py-2">
+        <nav id="sidebar-nav" className="flex-1 overflow-y-auto py-2">
           {GROUPS.map((g) => {
             const items = filterItems(g.items);
             if (items.length === 0) return null;
@@ -285,10 +287,17 @@ export default function Layout() {
                     to={l.to}
                     end={l.end}
                     title={collapsed ? l.label : undefined}
+                    // TASK-UI-006 — smooth scroll к активному пункту при mount,
+                    // чтобы при много пунктов меню активный был виден.
+                    ref={(el) => {
+                      if (el && el.classList.contains("active-nav-item")) {
+                        el.scrollIntoView({ block: "nearest", behavior: "instant" as ScrollBehavior });
+                      }
+                    }}
                     className={({ isActive }) =>
                       `flex items-center gap-2 px-4 py-1.5 text-sm transition-colors duration-150 border-l-2 ${
                         isActive
-                          ? "border-accent text-fg bg-accent-subtle"
+                          ? "border-accent text-fg bg-accent-subtle active-nav-item"
                           : "border-transparent text-muted hover:text-fg hover:bg-surface-2"
                       }`
                     }
