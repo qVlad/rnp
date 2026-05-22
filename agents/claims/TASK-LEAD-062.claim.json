@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-LEAD-062",
-  "agent": "Claude Opus 4.7 — main (round 14)",
-  "started_at": "2026-05-22T15:43:28Z",
-  "expected_minutes": 60,
-  "notes": "weekly_report_comment table + API + UI"
-}
