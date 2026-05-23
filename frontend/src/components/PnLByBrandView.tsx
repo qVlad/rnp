@@ -206,10 +206,24 @@ export default function PnLByBrandView() {
                     {monthLabel(m)}
                   </th>
                 ))}
-                <th className="text-right p-2 whitespace-nowrap border-l border-border pl-3">
-                  Итого ₽
+                <th
+                  className="text-right p-2 whitespace-nowrap border-l border-border pl-3"
+                  title="Выручка без НДС за весь выбранный период"
+                >
+                  Выручка ₽
                 </th>
-                <th className="text-right p-2 whitespace-nowrap">Маржа %</th>
+                <th
+                  className="text-right p-2 whitespace-nowrap"
+                  title="Прибыль (P&L «Чистая прибыль») = выручка без НДС − COGS − комиссии WB − логистика/хранение − реклама − OPEX − налоги"
+                >
+                  Прибыль ₽
+                </th>
+                <th
+                  className="text-right p-2 whitespace-nowrap"
+                  title="Маржа % = Прибыль / Выручка без НДС × 100. Подсветка: <5% — красная (убыток / тонкая маржа), 5-15% — жёлтая, >15% — зелёная"
+                >
+                  Маржа %
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -252,6 +266,15 @@ export default function PnLByBrandView() {
                   })}
                   <td className="p-2 text-right border-l border-border pl-3 font-medium font-mono">
                     {fmtRub(row.total_revenue_net)}
+                  </td>
+                  <td
+                    className={`p-2 text-right font-medium font-mono ${
+                      Number(row.total_profit) < 0
+                        ? "text-danger"
+                        : "text-fg"
+                    }`}
+                  >
+                    {fmtRub(row.total_profit)}
                   </td>
                   <td
                     className={`p-2 text-right ${marginColor(Number(row.total_margin_pct))} font-medium`}

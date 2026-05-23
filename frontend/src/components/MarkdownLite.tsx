@@ -99,23 +99,49 @@ function parse(md: string): Block[] {
       continue;
     }
 
-    // Unordered list
+    // Unordered list. Допускаем:
+    //   - пустые строки между bullet'ами (не разбивать на 2 списка),
+    //   - continuation-строки (отступ ≥ 2 пробела) — приклеиваем к текущему item.
     if (/^[-*]\s+/.test(line)) {
       const items: string[] = [];
-      while (i < lines.length && /^[-*]\s+/.test(lines[i])) {
-        items.push(lines[i].replace(/^[-*]\s+/, ""));
-        i++;
+      while (i < lines.length) {
+        const cur = lines[i];
+        if (/^[-*]\s+/.test(cur)) {
+          items.push(cur.replace(/^[-*]\s+/, ""));
+          i++;
+        } else if (cur.trim() === "" && i + 1 < lines.length &&
+                   /^[-*]\s+/.test(lines[i + 1])) {
+          // Пустая строка внутри списка — пропустить, не закрывая <ul>.
+          i++;
+        } else if (/^\s{2,}\S/.test(cur) && items.length > 0) {
+          // Continuation: текст с отступом, приклеить к последнему item.
+          items[items.length - 1] += " " + cur.trim();
+          i++;
+        } else {
+          break;
+        }
       }
       blocks.push({ type: "ul", items });
       continue;
     }
 
-    // Ordered list
+    // Ordered list — те же правила что и для ul.
     if (/^\d+\.\s+/.test(line)) {
       const items: string[] = [];
-      while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
-        items.push(lines[i].replace(/^\d+\.\s+/, ""));
-        i++;
+      while (i < lines.length) {
+        const cur = lines[i];
+        if (/^\d+\.\s+/.test(cur)) {
+          items.push(cur.replace(/^\d+\.\s+/, ""));
+          i++;
+        } else if (cur.trim() === "" && i + 1 < lines.length &&
+                   /^\d+\.\s+/.test(lines[i + 1])) {
+          i++;
+        } else if (/^\s{2,}\S/.test(cur) && items.length > 0) {
+          items[items.length - 1] += " " + cur.trim();
+          i++;
+        } else {
+          break;
+        }
       }
       blocks.push({ type: "ol", items });
       continue;
@@ -294,18 +320,18 @@ function renderBoldItalic(text: string, keyPrefix = ""): React.ReactNode[] {
 export default function MarkdownLite({ source }: { source: string }) {
   const blocks = parse(source);
   return (
-    <div className="space-y-4 leading-relaxed text-sm">
+    <div className="space-y-2 leading-snug text-sm">
       {blocks.map((b, idx) => {
         switch (b.type) {
           case "h": {
             const sizeCls =
               b.level === 1
-                ? "text-2xl font-bold mt-6 mb-2 pb-2 border-b border-border"
+                ? "text-2xl font-bold mt-5 mb-2 pb-2 border-b border-border"
                 : b.level === 2
-                  ? "text-xl font-semibold mt-6 mb-2"
+                  ? "text-xl font-semibold mt-5 mb-1.5"
                   : b.level === 3
-                    ? "text-lg font-semibold mt-4 mb-2"
-                    : "text-base font-semibold mt-3 mb-1";
+                    ? "text-lg font-semibold mt-3 mb-1"
+                    : "text-base font-semibold mt-2 mb-0.5";
             const Tag = `h${b.level}` as keyof JSX.IntrinsicElements;
             return (
               <Tag key={idx} id={b.id} className={sizeCls}>
@@ -315,23 +341,27 @@ export default function MarkdownLite({ source }: { source: string }) {
           }
           case "p":
             return (
-              <p key={idx} className="text-fg">
+              <p key={idx} className="text-fg leading-snug">
                 {renderInline(b.text, `p${idx}`)}
               </p>
             );
           case "ul":
             return (
-              <ul key={idx} className="list-disc pl-5 space-y-1">
+              <ul key={idx} className="list-disc pl-5 space-y-0.5">
                 {b.items.map((it, j) => (
-                  <li key={j}>{renderInline(it, `ul${idx}_${j}`)}</li>
+                  <li key={j} className="leading-snug">
+                    {renderInline(it, `ul${idx}_${j}`)}
+                  </li>
                 ))}
               </ul>
             );
           case "ol":
             return (
-              <ol key={idx} className="list-decimal pl-5 space-y-1">
+              <ol key={idx} className="list-decimal pl-5 space-y-0.5">
                 {b.items.map((it, j) => (
-                  <li key={j}>{renderInline(it, `ol${idx}_${j}`)}</li>
+                  <li key={j} className="leading-snug">
+                    {renderInline(it, `ol${idx}_${j}`)}
+                  </li>
                 ))}
               </ol>
             );

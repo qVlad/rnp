@@ -197,7 +197,7 @@ export default function Features() {
         </div>
       </aside>
 
-      <article className="card flex-1 min-w-0 max-w-4xl">
+      <article className="card flex-1 min-w-0">
         {isLoading && <div className="text-muted">Загружаю каталог…</div>}
         {error && (
           <div className="text-danger">
