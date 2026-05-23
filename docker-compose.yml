@@ -34,6 +34,14 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # AOF (append-only file) персистит каждую write-операцию → broker queue
+    # Celery переживает рестарт Redis. Без --appendonly yes очередь была бы
+    # in-memory only и task'и в transit пропадали бы при reboot/restart.
+    # См. https://redis.io/docs/manual/persistence/ — AOF + fsync every-second
+    # это разумный default (потеря max 1 сек tasks при power-cut).
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1000"]
+    volumes:
+      - redisdata:/data
     expose:
       - "6379"
     healthcheck:
@@ -160,4 +168,5 @@ services:
 
 volumes:
   pgdata:
+  redisdata:
   abtest_photos:

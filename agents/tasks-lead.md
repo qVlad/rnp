@@ -2668,6 +2668,32 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 
 ---
 
+### TASK-LEAD-079: Self-recovery аудит — Redis persistence + Celery broker
+
+- **Исполнитель:** Lead
+- **Приоритет:** P0 (запрос пользователя 2026-05-23: «проверь что везде заложено самовосстановление после перезагрузки инфраструктуры»)
+- **Оценка:** XS
+- **Источник:** Запрос пользователя на инфраструктурный health-check.
+- **Аудит результаты:**
+  - ✅ Все 9 сервисов имеют `restart: unless-stopped` в `docker-compose.yml`
+  - ✅ Docker daemon `enabled` на проде (auto-start при host reboot)
+  - ✅ Postgres data в named volume `pgdata`
+  - ✅ A/B-test photos в named volume `abtest_photos`
+  - ❌ **Redis БЕЗ persistent volume** → Celery broker queue терялась при restart. **Исправлено** — добавлен volume `redisdata` + `--appendonly yes --save 60 1000` (AOF + RDB snapshot)
+  - ✅ Celery `task_acks_late=True` + `task_reject_on_worker_lost=True` → worker crash безопасен
+  - ✅ Все sync-state в Postgres (sync_checkpoints + wb_tariff_* + wb_prices + wb_transit_tariff)
+  - ✅ WB-токены encrypted в БД (не теряются)
+  - ✅ Release-lock в git-branch (атомарный push, не зависит от состояния сервера)
+- **Критерии готовности:**
+  - [x] Redis volume в docker-compose.yml
+  - [x] CLAUDE.md § «Подводные камни» — пункт 16 про self-recovery
+  - [x] TASK-LEAD-079 в backlog
+  - [ ] Smoke на проде: после deploy выполнить `docker compose restart redis` и убедиться что Celery beat продолжает шедулить tasks (можно через `/api/sync/status`)
+- **Зависимости:** нет
+- **Статус:** Выполнено — 2026-05-23
+
+---
+
 ## Формат / Жизненный цикл
 
 См. `RULES.md` §«Формат задачи».

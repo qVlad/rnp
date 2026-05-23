@@ -704,6 +704,16 @@ fallback на `Authorization: Bearer <jwt>` если cookie не валидна.
 13. **WB CDN мигрировал на `wbbasket.ru`** (2026-04..05). Старый `wb.ru` ещё работает для legacy SKU — `_wb_photo_urls` пробует сначала новый, потом старый.
 14. **`WbSale.commission_percent` пустой** для текущего токена — реальную WB-комиссию считаем из `wb_report_detail`: `(retail_with_disc − ppvz) / retail × 100`. Code: `unit_economics.py:commission_by_nm`.
 15. **`sync_ad_stats` default `days_back=60`** (был 30). Иначе для периодов >30 дней назад дыра в рекламе.
+16. **Self-recovery после reboot инфры:**
+    - Все 9 сервисов в `docker-compose.yml` имеют `restart: unless-stopped` → переживут container crash, docker restart и host reboot (если docker daemon enabled — на проде он `systemctl is-enabled docker` = enabled).
+    - **Postgres** — данные в named volume `pgdata` (persistent).
+    - **Redis** — данные в named volume `redisdata` с `--appendonly yes --save 60 1000` (AOF + RDB snapshot). Это критично для Celery broker queue: tasks в очереди переживают reboot (без AOF terjadi бы потери).
+    - **abtest_photos** — A/B-test фото в named volume `abtest_photos`.
+    - **Celery acks_late=True + task_reject_on_worker_lost=True** — если worker умирает posередине задачи, она возвращается в очередь.
+    - **WB-токены** — encrypted в `tenants.wb_token` (Fernet с `SECRETS_ENCRYPTION_KEY` из `.env`).
+    - **Sync state** — в `sync_checkpoints` + `wb_tariff_*` / `wb_prices` / `wb_transit_tariff` — все в Postgres.
+    - **JWT sessions** — TTL 12h, при reboot пользователи перелогинятся в норме.
+    - **Release-lock (git-branch)** — атомарный push в `release-lock` ветку, не зависит от состояния сервера.
 
 ## Стиль работы
 
