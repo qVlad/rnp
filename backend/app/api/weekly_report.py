@@ -21,7 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
-from app.db.models import User, WeeklyReportComment
+from app.db.models import ManagerWeeklyScoreboard, User, WeeklyReportComment
 from app.services.auth import (
     CurrentUser,
     current_brands_filter,
@@ -40,6 +40,30 @@ log = get_logger(__name__)
 router = APIRouter(prefix="/api/weekly-report", tags=["weekly-report"])
 
 
+def _scoreboard_row_to_item(row: ManagerWeeklyScoreboard) -> dict[str, Any]:
+    """Convert ManagerWeeklyScoreboard row → API item (same shape as by_manager)."""
+    return {
+        "manager_user_id": row.manager_user_id,
+        "manager_name": row.manager_name,
+        "username": None,  # Не сохраняем отдельно — UI использует manager_name.
+        "brands": list(row.brands or []),
+        "no_brands": bool(row.no_brands),
+        "revenue": float(row.revenue or 0),
+        "margin": float(row.margin or 0),
+        "margin_pct": float(row.margin_pct or 0),
+        "orders": int(row.orders or 0),
+        "returns": int(row.returns or 0),
+        "prev_revenue": float(row.prev_revenue or 0),
+        "prev_margin_pct": float(row.prev_margin_pct or 0),
+        "wow_revenue_pct": (
+            float(row.wow_revenue_pct)
+            if row.wow_revenue_pct is not None
+            else None
+        ),
+        "wow_margin_pp": float(row.wow_margin_pp or 0),
+    }
+
+
 @router.get("/by-manager", dependencies=[Depends(require_director_or_head)])
 async def weekly_report_by_manager(
     week_start: Annotated[date, Query(description="Понедельник недели (YYYY-MM-DD)")],
@@ -50,11 +74,50 @@ async def weekly_report_by_manager(
 
     WoW дельты считаются относительно предыдущей недели
     (`week_start - 7 дней`). Источник — `wb_report_detail` (mode=final).
+
+    Реализация (TASK-LEAD-087):
+      1) Сначала пытаемся прочитать pre-aggregated `manager_weekly_scoreboard`
+         (обновляется ежедневно в 04:30 МСК Celery beat'ом
+         `sync.manager_scoreboard`).
+      2) Если таблица пустая для этого `(tenant, week_start)` — fallback на
+         live-compute через `by_manager()` (новый менеджер / pre-deploy период
+         / нет ещё ни одного nightly run'а).
+
+    Источник = таблица предпочтительнее: на тенантах с 10+ менеджерами
+    разница latency ~3-5s → ~50ms.
     """
+    rows = (
+        await session.execute(
+            select(ManagerWeeklyScoreboard)
+            .where(ManagerWeeklyScoreboard.tenant_id == user.tenant_id)
+            .where(ManagerWeeklyScoreboard.week_start == week_start)
+        )
+    ).scalars().all()
+
+    if rows:
+        items = [_scoreboard_row_to_item(r) for r in rows]
+        # Та же сортировка что и в by_manager(): по выручке desc,
+        # «без брендов» — в хвост.
+        items.sort(
+            key=lambda x: (-1 if x["no_brands"] else 0, -float(x["revenue"])),
+        )
+        return {
+            "week_start": week_start.isoformat(),
+            "items": items,
+            "source": "scoreboard",
+        }
+
+    # Fallback на live-compute. Может быть медленно, но безопасно — лучше
+    # отдать актуальные цифры с задержкой, чем 404.
+    log.info(
+        "weekly_report.by_manager: scoreboard miss tenant=%s week=%s — live fallback",
+        user.tenant_id, week_start.isoformat(),
+    )
     items = await by_manager(session, user.tenant_id, week_start)
     return {
         "week_start": week_start.isoformat(),
         "items": items,
+        "source": "live",
     }
 
 

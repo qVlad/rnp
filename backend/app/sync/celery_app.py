@@ -13,6 +13,7 @@ celery_app = Celery(
         "app.sync.tasks_tariffs",
         "app.sync.tasks_prices",
         "app.sync.tasks_product_volume",
+        "app.sync.tasks_scoreboard",
         "app.sync.event_consumers",
     ],
 )
@@ -90,6 +91,10 @@ celery_app.conf.update(
         "sync.tariffs": {"queue": "default"},
         "sync.prices": {"queue": "default"},
         "sync.product_volume": {"queue": "default"},
+        # Manager weekly scoreboard pre-aggregation (TASK-LEAD-087).
+        # Тяжёлая задача (per-tenant × N managers × 4 weeks × 2 dashboards
+        # для WoW) — но раз в сутки, в 04:30 МСК — default queue ok.
+        "sync.manager_scoreboard": {"queue": "default"},
     },
     # Beat schedule design constraints:
     #   - WB Statistics: docs say 1 req/min sustained, but the *real* burst
@@ -309,6 +314,15 @@ celery_app.conf.update(
         "sync-prices-30m": {
             "task": "sync.prices",
             "schedule": crontab(minute="*/30"),
+        },
+        # --- Manager weekly scoreboard pre-aggregation (TASK-LEAD-087) ---
+        # Ежедневно 04:30 МСК — сразу после `sync_report_detail` (04:15),
+        # чтобы закрытые цифры за вчера попали в scoreboard. Перерасчёт
+        # последних 4 недель × per-tenant × per-manager. Один тяжёлый
+        # task, дешевле чем N×compute_dashboard на каждом запросе UI.
+        "sync-manager-scoreboard-daily": {
+            "task": "sync.manager_scoreboard",
+            "schedule": crontab(hour=4, minute=30),
         },
     },
 )

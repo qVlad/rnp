@@ -1196,6 +1196,13 @@ paymentOrderDelete: (payment_order_id: string) =>
         orders: number;
         localized_orders: number;
         localization_pct: number;
+        // TASK-LEAD-088: per-SKU «куда отгрузить» (модальный buyer-cluster
+        // ИМЕННО ЭТОГО SKU × top-склад в этом кластере). null = у SKU нет
+        // buyer'ов в «нормальном» кластере (только OTHER/INTL) — UI делает
+        // fallback на tenant-wide эвристику.
+        recommended_warehouse: string | null;
+        recommended_cluster: string | null;
+        recommended_cluster_label: string | null;
       }>;
       heatmap: Array<{
         warehouse: string;

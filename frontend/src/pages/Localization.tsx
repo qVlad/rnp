@@ -337,13 +337,15 @@ export default function Localization() {
         <div className="text-xs text-muted mb-3">
           Минимум 5 заказов — исключаем статистический шум. Идея: эти SKU
           можно пере-распределить на склад из «своего» кластера покупателей.
+          {" "}
+          <span className="text-fg">Рекомендация per-SKU</span> на основе
+          фактического распределения покупателей этого артикула: модальный
+          buyer-cluster × top-склад tenant'а в этом кластере (TASK-LEAD-088).
           {recommendedWarehouse && (
             <>
-              {" "}
-              <span className="text-fg">Рекомендуемый склад</span> = top-склад
-              в доминантном кластере покупателей (
-              <code>{recommendedWarehouse.cluster_label}</code>) — MVP-эвристика
-              tenant-wide, точечный per-SKU расчёт см. roadmap TASK-LEAD-070.
+              {" "}Fallback на tenant-wide эвристику (top-склад в доминантном
+              кластере <code>{recommendedWarehouse.cluster_label}</code>) если
+              у SKU нет «нормального» кластера покупателей.
             </>
           )}
         </div>
@@ -367,47 +369,86 @@ export default function Localization() {
               </tr>
             </thead>
             <tbody>
-              {d.worst_skus.map((s) => (
-                <tr key={s.nm_id} className="border-b border-subtle/30">
-                  <td className="py-2 font-mono text-xs">{s.nm_id}</td>
-                  <td className="py-2">{s.vendor_code ?? "—"}</td>
-                  <td className="py-2">{s.brand ?? "—"}</td>
-                  <td className="py-2 text-xs">{s.subject ?? "—"}</td>
-                  <td className="py-2 text-right font-mono">{fmtNum(s.orders)}</td>
-                  <td className="py-2 text-right font-mono">{fmtNum(s.localized_orders)}</td>
-                  <td className={`py-2 text-right font-semibold ${pctColor(s.localization_pct)}`}>
-                    {fmtPct(s.localization_pct)}
-                  </td>
-                  <td
-                    className="py-2 text-xs max-w-[180px] truncate"
-                    title={recommendedWarehouse?.warehouse ?? ""}
-                  >
-                    {recommendedWarehouse ? (
-                      <>
-                        {recommendedWarehouse.warehouse}{" "}
-                        <span className="text-muted">
-                          ({recommendedWarehouse.cluster})
-                        </span>
-                      </>
-                    ) : (
-                      <span className="text-muted">—</span>
-                    )}
-                  </td>
-                  <td className="py-2 text-right">
-                    {recommendedWarehouse && (
-                      <Link
-                        to={`/redistribution?warehouse=${encodeURIComponent(
-                          recommendedWarehouse.warehouse,
-                        )}&nm=${s.nm_id}`}
-                        className="btn text-xs"
-                        title={`Открыть /redistribution с фильтром: склад=${recommendedWarehouse.warehouse}, nm=${s.nm_id}`}
-                      >
-                        → Поставка
-                      </Link>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {d.worst_skus.map((s) => {
+                // TASK-LEAD-088: предпочитаем per-SKU рекомендацию из API,
+                // fallback на tenant-wide эвристику если backend не вернул.
+                const perSkuWh = s.recommended_warehouse;
+                const perSkuCluster = s.recommended_cluster;
+                const perSkuClusterLabel = s.recommended_cluster_label;
+                const useWh = perSkuWh ?? recommendedWarehouse?.warehouse ?? null;
+                const useCluster =
+                  perSkuCluster ?? recommendedWarehouse?.cluster ?? null;
+                const useClusterLabel =
+                  perSkuClusterLabel ??
+                  recommendedWarehouse?.cluster_label ??
+                  null;
+                const recSource: "per_sku" | "tenant_wide" | "none" = perSkuWh
+                  ? "per_sku"
+                  : recommendedWarehouse
+                    ? "tenant_wide"
+                    : "none";
+                const tooltipLines: string[] = [];
+                if (useWh) tooltipLines.push(useWh);
+                if (useClusterLabel) tooltipLines.push(`Кластер: ${useClusterLabel}`);
+                if (recSource === "per_sku") {
+                  tooltipLines.push(
+                    "Рекомендация per-SKU на основе фактического распределения покупателей этого артикула",
+                  );
+                } else if (recSource === "tenant_wide") {
+                  tooltipLines.push(
+                    "Fallback: tenant-wide эвристика (у SKU нет «нормального» кластера покупателей)",
+                  );
+                }
+                return (
+                  <tr key={s.nm_id} className="border-b border-subtle/30">
+                    <td className="py-2 font-mono text-xs">{s.nm_id}</td>
+                    <td className="py-2">{s.vendor_code ?? "—"}</td>
+                    <td className="py-2">{s.brand ?? "—"}</td>
+                    <td className="py-2 text-xs">{s.subject ?? "—"}</td>
+                    <td className="py-2 text-right font-mono">{fmtNum(s.orders)}</td>
+                    <td className="py-2 text-right font-mono">{fmtNum(s.localized_orders)}</td>
+                    <td className={`py-2 text-right font-semibold ${pctColor(s.localization_pct)}`}>
+                      {fmtPct(s.localization_pct)}
+                    </td>
+                    <td
+                      className="py-2 text-xs max-w-[180px] truncate"
+                      title={tooltipLines.join("\n")}
+                    >
+                      {useWh ? (
+                        <>
+                          {useWh}{" "}
+                          {useCluster && (
+                            <span className="text-muted">({useCluster})</span>
+                          )}
+                          {recSource === "tenant_wide" && (
+                            <span
+                              className="ml-1 text-[10px] text-warn"
+                              title="Tenant-wide fallback — у SKU не нашлось buyer-cluster'а"
+                            >
+                              *
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-muted">—</span>
+                      )}
+                    </td>
+                    <td className="py-2 text-right">
+                      {useWh && (
+                        <Link
+                          to={`/redistribution?warehouse=${encodeURIComponent(
+                            useWh,
+                          )}&nm=${s.nm_id}`}
+                          className="btn text-xs"
+                          title={`Открыть /redistribution с фильтром: склад=${useWh}, nm=${s.nm_id}`}
+                        >
+                          → Поставка
+                        </Link>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

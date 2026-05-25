@@ -2574,3 +2574,89 @@ class WbTransitTariff(Base, TenantScopedMixin):
             name="uq_wb_transit_tariff_tenant_hub_dest",
         ),
     )
+
+
+class ManagerWeeklyScoreboard(Base):
+    """Pre-aggregated scoreboard для `/weekly-report/by-manager` (TASK-LEAD-087).
+
+    Раньше `/api/weekly-report/by-manager` делал N×`compute_dashboard` (по
+    числу менеджеров × 2 для WoW) — на тенантах с 10+ менеджерами заметно
+    медленно. Celery beat `sync.manager_scoreboard` ежедневно в 04:30 МСК
+    (после report_detail 04:15) для каждого tenant'а × менеджера × последних
+    4 недель → upsert сюда. Endpoint читает напрямую, fallback на
+    live-compute если запрошенный week_start ещё не пред-агрегирован.
+
+    Composite PK `(tenant_id, manager_user_id, week_start)` — idempotent
+    upsert. `brands` снапшот бренд-назначений на момент агрегата (если позже
+    manager получит новый бренд — agg за прошлые недели не пересчитывается,
+    nightly job накатит обновлённое значение в течение 24ч).
+
+    Не наследуется от `TenantScopedMixin` — `tenant_id` входит в composite
+    PK, mixin'овый `@declared_attr` колоннoй конфликтует с PK-определением
+    (см. WbPriceSize / WbPrice для аналогичного паттерна).
+    """
+
+    __tablename__ = "manager_weekly_scoreboard"
+
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        primary_key=True,
+    )
+    manager_user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        primary_key=True,
+    )
+    week_start: Mapped[date] = mapped_column(Date, nullable=False, primary_key=True)
+    revenue: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), nullable=False, server_default=text("0")
+    )
+    margin: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), nullable=False, server_default=text("0")
+    )
+    margin_pct: Mapped[Decimal] = mapped_column(
+        Numeric(8, 2), nullable=False, server_default=text("0")
+    )
+    orders: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    returns: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    prev_revenue: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), nullable=False, server_default=text("0")
+    )
+    prev_margin_pct: Mapped[Decimal] = mapped_column(
+        Numeric(8, 2), nullable=False, server_default=text("0")
+    )
+    wow_revenue_pct: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
+    wow_margin_pp: Mapped[Decimal] = mapped_column(
+        Numeric(8, 2), nullable=False, server_default=text("0")
+    )
+    brands: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    no_brands: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    manager_name: Mapped[str | None] = mapped_column(String(255))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_manager_weekly_scoreboard_tenant_week",
+            "tenant_id",
+            "week_start",
+        ),
+        # tenant_id отдельным индексом — для FK-сканов и потенциальных
+        # join'ов из других tenant-scoped запросов.
+        Index(
+            "ix_manager_weekly_scoreboard_tenant",
+            "tenant_id",
+        ),
+    )

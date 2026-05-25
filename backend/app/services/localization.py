@@ -97,6 +97,18 @@ class SkuLocalization:
     orders: int
     localized_orders: int
     localization_pct: float
+    # TASK-LEAD-088: per-SKU «куда отгрузить» рекомендация на основе
+    # модального buyer-cluster ИМЕННО ЭТОГО SKU. Расчёт:
+    #   1) Доминантный buyer_cluster заказов SKU (max orders, OTHER/INTL
+    #      исключены).
+    #   2) Топ-warehouse tenant'а в этом кластере (max orders в by_warehouse).
+    # `recommended_warehouse` = None если SKU не имеет ни одного buyer'а в
+    # «нормальном» кластере (только OTHER/INTL), или у tenant'а нет складов
+    # в нужном кластере. UI должен gracefully fallback'нуться на tenant-wide
+    # эвристику.
+    recommended_warehouse: str | None = None
+    recommended_cluster: str | None = None
+    recommended_cluster_label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -314,6 +326,9 @@ async def compute_localization(
     warehouse_buckets: dict[str, dict[str, float]] = {}
     sku_buckets: dict[int, dict[str, float | str | None]] = {}
     heatmap_buckets: dict[tuple[str, str, str], int] = {}
+    # TASK-LEAD-088: per-SKU buyer-cluster распределение для per-SKU
+    # recommendation (модальный кластер → top-склад в этом кластере).
+    sku_cluster_orders: dict[int, dict[str, int]] = {}
 
     for r in rows:
         wh_cluster = cluster_for_warehouse(r.warehouse_name)
@@ -371,6 +386,14 @@ async def compute_localization(
         sb["orders"] = int(sb["orders"]) + 1  # type: ignore[arg-type]
         if localized_flag:
             sb["localized"] = int(sb["localized"]) + 1  # type: ignore[arg-type]
+
+        # TASK-LEAD-088: per-SKU buyer_cluster distribution для per-SKU
+        # recommendation. Считаем рядом с sku_bucket, чтобы не делать
+        # второй проход по rows.
+        sku_cluster_orders.setdefault(int(r.nm_id), {})
+        sku_cluster_orders[int(r.nm_id)][buyer_cluster] = (
+            sku_cluster_orders[int(r.nm_id)].get(buyer_cluster, 0) + 1
+        )
 
         # heatmap warehouse × buyer_cluster
         hkey = (wh_key, wh_cluster, buyer_cluster)
@@ -450,6 +473,46 @@ async def compute_localization(
     ]
     by_warehouse.sort(key=lambda x: x.orders, reverse=True)
 
+    # TASK-LEAD-088: pre-compute «топ-склад в кластере K» map один раз для
+    # tenant'а — будем переиспользовать при per-SKU recommendation.
+    # cluster → (warehouse_name, orders_in_cluster). Игнорируем складy без
+    # cluster mapping (OTHER) и склады с 0 заказов в нужном кластере.
+    top_warehouse_by_cluster: dict[str, tuple[str, int]] = {}
+    for (wh, whc, _bc), cnt in heatmap_buckets.items():
+        if whc == "OTHER":
+            continue
+        cur = top_warehouse_by_cluster.get(whc)
+        if cur is None or cnt > cur[1]:
+            top_warehouse_by_cluster[whc] = (wh, cnt)
+
+    def _pick_recommendation(
+        nm_id: int,
+    ) -> tuple[str | None, str | None, str | None]:
+        """Per-SKU «куда отгрузить» = модальный buyer-cluster SKU × top-warehouse.
+
+        Возвращает `(warehouse, cluster, cluster_label)` или (None, None, None)
+        если рекомендации нет (нет «нормального» кластера у SKU / нет складов
+        у tenant'а в нужном кластере).
+        """
+        clusters = sku_cluster_orders.get(nm_id) or {}
+        # Игнорируем OTHER/INTL — они не дают actionable рекомендацию (нет
+        # складов WB вне РФ, OTHER — статистический шум).
+        candidates = [
+            (c, n) for c, n in clusters.items()
+            if c not in ("OTHER", "INTL") and n > 0
+        ]
+        if not candidates:
+            return (None, None, None)
+        # Модальный = max orders. Tie-break: алфавитный порядок кода кластера
+        # для детерминированности тестов.
+        candidates.sort(key=lambda x: (-x[1], x[0]))
+        dominant_cluster = candidates[0][0]
+        wh_entry = top_warehouse_by_cluster.get(dominant_cluster)
+        if wh_entry is None:
+            return (None, None, None)
+        wh_name = wh_entry[0]
+        return (wh_name, dominant_cluster, cluster_label(dominant_cluster))
+
     # worst_skus — низкая локализация при достаточном объёме (>= 5 заказов).
     sku_items: list[SkuLocalization] = []
     for nm_id, b in sku_buckets.items():
@@ -457,6 +520,7 @@ async def compute_localization(
         if orders_n < 5:
             continue
         loc_n = int(b["localized"])  # type: ignore[arg-type]
+        rec_wh, rec_cluster, rec_label = _pick_recommendation(nm_id)
         sku_items.append(
             SkuLocalization(
                 nm_id=nm_id,
@@ -468,6 +532,9 @@ async def compute_localization(
                 orders=orders_n,
                 localized_orders=loc_n,
                 localization_pct=_safe_pct(loc_n, orders_n),
+                recommended_warehouse=rec_wh,
+                recommended_cluster=rec_cluster,
+                recommended_cluster_label=rec_label,
             )
         )
     # худшие = низкий localization_pct + tie-break по объёму (больше заказов
