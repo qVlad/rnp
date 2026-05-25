@@ -20,6 +20,12 @@ import LkDisclaimerModal, {
 import { Icon } from "../components/Icon";
 import PageHeader from "@/components/PageHeader";
 import { GRID_PROPS, AXIS_PROPS, TOOLTIP_STYLE, LEGEND_STYLE, CHART_COLORS } from "@/lib/chartTheme";
+// HYP-003: soft-merge expander'ы (localization / supply / transit). См.
+// agents/tasks-lead.md → «Инициатива: HYP-003».
+import ExpanderCard from "@/components/redistribution/ExpanderCard";
+import LocalizationMini from "@/components/redistribution/LocalizationMini";
+import SupplyCalculatorMini from "@/components/redistribution/SupplyCalculatorMini";
+import TransitCalculatorMini from "@/components/redistribution/TransitCalculatorMini";
 
 export default function Redistribution() {
   const qc = useQueryClient();
@@ -204,6 +210,31 @@ export default function Redistribution() {
           </button>
         }
       />
+
+      {/* HYP-003 (soft merge): quick-view expander'ы. Свернуты по default,
+          состояние persist в localStorage. Полные standalone-страницы
+          /localization / /supply-calculator / /transit-calculator остаются
+          (back-compat для bookmarks + manager-scope для localization). */}
+      <ExpanderCard
+        storageKey="redistribution.expander.localization.v1"
+        title={<>📍 Локализация заказов</>}
+      >
+        <LocalizationMini />
+      </ExpanderCard>
+
+      <ExpanderCard
+        storageKey="redistribution.expander.supply.v1"
+        title={<>🚚 Калькулятор обычной поставки</>}
+      >
+        <SupplyCalculatorMini />
+      </ExpanderCard>
+
+      <ExpanderCard
+        storageKey="redistribution.expander.transit.v1"
+        title={<>🚛 Калькулятор транзита</>}
+      >
+        <TransitCalculatorMini />
+      </ExpanderCard>
 
       <div className="card text-xs text-muted leading-relaxed">
         Связка прогноз → план → автобронь для услуги WB «Перераспределение

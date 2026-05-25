@@ -3052,7 +3052,18 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 
 ### Статус
 
-**Research / spec:** Открыта — заведена 2026-05-25 как initiative. Owner Product Strategist + Lead. Требуется собрать usage-метрики (сколько раз открываются standalone-страницы) перед решением.
+**Research / spec:** Выполнено — 2026-05-25 (soft merge выбран, full lockin отложен до получения usage-метрик).
+
+**Реализация (soft merge):**
+- `/redistribution` — добавлены 3 collapsible expander'а (свернуты по default, persist в localStorage):
+  1. 📍 Локализация заказов — hero «% локализации» + top-5 worst SKU, кнопка «Полная версия → /localization»
+  2. 🚚 Калькулятор обычной поставки — мини-форма (склад / шт / литры / дней) → total ₽
+  3. 🚛 Калькулятор транзита — мини-форма (хаб / склад / шт / литры / rate small/large/threshold) → total ₽, auto-fill из `wb_transit_tariff` при выборе пары
+- Standalone-страницы `/localization`, `/supply-calculator`, `/transit-calculator` остаются (back-compat для bookmarks + manager-scope для /localization, которой нет на /redistribution из-за director_or_head guard'а).
+- Sidebar menu не тронут.
+- Файлы: `frontend/src/components/redistribution/{ExpanderCard,LocalizationMini,SupplyCalculatorMini,TransitCalculatorMini}.tsx` + edits в `pages/Redistribution.tsx`.
+
+**Lockin отложен:** full merge с redirect'ом (`<Navigate to="/redistribution#localization">`) — после сбора usage-метрик (через 2-4 недели). Если standalone используется < 10% от expander-open events → отдельная follow-up задача на удаление.
 
 ---
 
