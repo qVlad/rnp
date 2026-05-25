@@ -211,13 +211,20 @@ export default function Redistribution() {
         }
       />
 
-      {/* HYP-003 (soft merge): quick-view expander'ы. Свернуты по default,
-          состояние persist в localStorage. Полные standalone-страницы
+      {/* TASK-LEAD-110: hint про quick-view expander'ы */}
+      <div className="card text-xs text-muted">
+        Quick-view виджеты ниже. Для глубокого анализа — полные страницы в меню.
+      </div>
+
+      {/* HYP-003 (soft merge): quick-view expander'ы. Локализация открыта по
+          default (TASK-LEAD-110 — entry point workflow'а), остальные — свёрнуты.
+          Состояние persist в localStorage. Полные standalone-страницы
           /localization / /supply-calculator / /transit-calculator остаются
           (back-compat для bookmarks + manager-scope для localization). */}
       <ExpanderCard
         storageKey="redistribution.expander.localization.v1"
         title={<>📍 Локализация заказов</>}
+        defaultOpen={true}
       >
         <LocalizationMini />
       </ExpanderCard>

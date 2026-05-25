@@ -206,18 +206,50 @@ export default function WeeklyReport() {
     const extra = (user?.brands ?? []) as string[];
     return Array.from(new Set([...fromList, ...extra])).sort();
   }, [isManager, user?.brands, allBrandsQ.data]);
-  // Default: manager → его первый бренд (он пишет в свой scope), director/head → overall.
+  // TASK-LEAD-108: persist selected brand-scope в localStorage. Ключ —
+  // `weekly-report.comment-scope.v1`, значение — `__overall__` (для null)
+  // или имя бренда. Read на mount, write при каждом change.
+  const COMMENT_SCOPE_KEY = "weekly-report.comment-scope.v1";
+  const loadPersistedScope = (): string | null | undefined => {
+    try {
+      const raw = localStorage.getItem(COMMENT_SCOPE_KEY);
+      if (raw === null) return undefined;
+      return raw === "__overall__" ? null : raw;
+    } catch {
+      return undefined;
+    }
+  };
+  // Default: localStorage (если есть и валидно) → manager: его первый бренд /
+  // director/head: overall.
   const defaultBrand: string | null = useMemo(() => {
     if (isManager) return availableBrands[0] ?? null;
     return null;
   }, [isManager, availableBrands]);
-  const [selectedBrand, setSelectedBrand] = useState<string | null>(defaultBrand);
-  // Когда AvailableBrands подтянутся (для manager'а), обновим default.
+  const [selectedBrand, setSelectedBrand] = useState<string | null>(() => {
+    const persisted = loadPersistedScope();
+    if (persisted !== undefined) return persisted;
+    return defaultBrand;
+  });
+  // Когда AvailableBrands подтянутся (для manager'а), обновим default —
+  // только если ещё не выбран бренд и localStorage пустой.
   useEffect(() => {
     if (isManager && selectedBrand === null && availableBrands.length > 0) {
-      setSelectedBrand(availableBrands[0]);
+      // Если в localStorage уже был overall (null) — не перезаписываем silently
+      const persisted = loadPersistedScope();
+      if (persisted === undefined) {
+        setSelectedBrand(availableBrands[0]);
+      }
     }
   }, [isManager, availableBrands, selectedBrand]);
+  // Persist на каждое изменение scope.
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        COMMENT_SCOPE_KEY,
+        selectedBrand === null ? "__overall__" : selectedBrand,
+      );
+    } catch {}
+  }, [selectedBrand]);
 
   const commentQ = useQuery({
     queryKey: ["weekly-report-comment", current.from, selectedBrand],
@@ -231,6 +263,10 @@ export default function WeeklyReport() {
   });
   const [comment, setComment] = useState<string>("");
   const [dirty, setDirty] = useState(false);
+  // TASK-LEAD-108: разворачивание списка чужих комментариев + ref на textarea
+  // для auto-focus при «Ответить».
+  const [othersExpanded, setOthersExpanded] = useState(true);
+  const commentRef = useRef<HTMLTextAreaElement | null>(null);
 
   // HYP-004: overall (brand=null) для manager'а — read-only (backend 403 на write).
   const isReadOnlyComment = isManager && selectedBrand === null;
@@ -952,10 +988,36 @@ export default function WeeklyReport() {
               )}
             </section>
 
-            {/* Comment — TASK-LEAD-062 + HYP-004: серверное хранение + per-brand */}
+            {/* Comment — TASK-LEAD-062 + HYP-004: серверное хранение + per-brand.
+                TASK-LEAD-108: counter «N от команды», persisted scope, «↩ Ответить». */}
             <section className="card">
               <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
-                <h2 className="font-medium">Комментарий за неделю</h2>
+                <h2 className="font-medium">
+                  Комментарий за неделю
+                  {(() => {
+                    const othersCount = (commentsAllQ.data?.items ?? []).filter(
+                      (c) => {
+                        if (selectedBrand === null) return c.brand !== null;
+                        return c.brand !== selectedBrand;
+                      },
+                    ).length;
+                    if (othersCount === 0) return null;
+                    return (
+                      <button
+                        type="button"
+                        className="text-sm text-muted hover:text-accent ml-2 underline-offset-2 hover:underline"
+                        onClick={() => setOthersExpanded((v) => !v)}
+                        title={
+                          othersExpanded
+                            ? "Свернуть список комментариев"
+                            : "Развернуть список комментариев"
+                        }
+                      >
+                        ({othersCount} от команды) {othersExpanded ? "▼" : "▶"}
+                      </button>
+                    );
+                  })()}
+                </h2>
                 <div className="flex items-center gap-2">
                   <label className="text-xs text-muted">Scope:</label>
                   <select
@@ -985,6 +1047,7 @@ export default function WeeklyReport() {
                 </div>
               </div>
               <textarea
+                ref={commentRef}
                 className="input w-full text-sm"
                 rows={5}
                 placeholder={
@@ -1020,41 +1083,91 @@ export default function WeeklyReport() {
                   {saveMut.isPending ? "Сохранение…" : dirty ? "Сохранить" : "Сохранено"}
                 </button>
               </div>
-              {/* HYP-004: список других комментариев за эту же неделю */}
-              {(() => {
+              {/* HYP-004: список других комментариев за эту же неделю.
+                  TASK-LEAD-108: «↩ Ответить» под каждым чужим комментарием
+                  + collapse через counter в заголовке. */}
+              {othersExpanded && (() => {
                 const others = (commentsAllQ.data?.items ?? []).filter((c) => {
                   // Отфильтровать текущий scope (не дублировать textarea)
                   if (selectedBrand === null) return c.brand !== null;
                   return c.brand !== selectedBrand;
                 });
                 if (others.length === 0) return null;
+                // Manager — может писать только в свои бренды (RBAC backend).
+                // Disabled-tooltip когда чужой бренд.
+                const managerCanReplyToBrand = (brand: string | null): boolean => {
+                  if (!isManager) return true;
+                  if (brand === null) return false; // overall — RBAC read-only
+                  return availableBrands.includes(brand);
+                };
                 return (
                   <div className="mt-3 pt-3 border-t border-border">
                     <div className="text-xs text-muted uppercase mb-2">
                       Другие комментарии за эту неделю
                     </div>
-                    <ul className="flex flex-col gap-2 text-sm">
-                      {others.map((c) => (
-                        <li
-                          key={`${c.brand ?? "__overall__"}`}
-                          className="flex flex-col"
-                        >
-                          <div className="flex items-baseline gap-2 text-xs text-muted">
-                            <span className="font-medium text-fg">
-                              {c.author_name || "—"}
-                            </span>
-                            <span>
-                              {c.brand
-                                ? `· бренд ${c.brand}`
-                                : "· общий"}
-                            </span>
-                            <span>· {formatAgo(c.updated_at)}</span>
-                          </div>
-                          <div className="whitespace-pre-wrap text-fg">
-                            {c.comment}
-                          </div>
-                        </li>
-                      ))}
+                    <ul className="flex flex-col gap-3 text-sm">
+                      {others.map((c) => {
+                        const canReply = managerCanReplyToBrand(c.brand);
+                        const onReply = () => {
+                          // (a) switch scope на бренд того комментария
+                          setSelectedBrand(c.brand);
+                          // (b) prefix «@author, » в textarea (если пусто)
+                          //     + auto-focus
+                          const prefix = c.author_name ? `@${c.author_name}, ` : "";
+                          setComment((prev) =>
+                            prev && prev.trim().length > 0 ? prev : prefix,
+                          );
+                          setDirty(true);
+                          // Focus после микротика, когда textarea доступна.
+                          setTimeout(() => {
+                            commentRef.current?.focus();
+                            // Курсор в конец
+                            const el = commentRef.current;
+                            if (el) {
+                              const len = el.value.length;
+                              el.setSelectionRange(len, len);
+                            }
+                          }, 0);
+                        };
+                        return (
+                          <li
+                            key={`${c.brand ?? "__overall__"}`}
+                            className="flex flex-col"
+                          >
+                            <div className="flex items-baseline gap-2 text-xs text-muted">
+                              <span className="font-medium text-fg">
+                                {c.author_name || "—"}
+                              </span>
+                              <span>
+                                {c.brand
+                                  ? `· бренд ${c.brand}`
+                                  : "· общий"}
+                              </span>
+                              <span>· {formatAgo(c.updated_at)}</span>
+                            </div>
+                            <div className="whitespace-pre-wrap text-fg">
+                              {c.comment}
+                            </div>
+                            <div className="mt-1">
+                              <button
+                                type="button"
+                                className="btn text-xs"
+                                onClick={onReply}
+                                disabled={!canReply}
+                                title={
+                                  !canReply
+                                    ? "Только в свои бренды"
+                                    : c.brand
+                                      ? `Ответить — переключит scope на бренд «${c.brand}»`
+                                      : "Ответить — переключит scope на общий"
+                                }
+                              >
+                                ↩ Ответить
+                              </button>
+                            </div>
+                          </li>
+                        );
+                      })}
                     </ul>
                   </div>
                 );
@@ -1087,6 +1200,15 @@ export default function WeeklyReport() {
           </div>
         }
         confirmLabel="Отправить"
+        extraAction={{
+          // TASK-LEAD-111: inline alternative — закрыть dialog + скачать PDF.
+          label: "↓ Скачать PDF вместо",
+          onClick: () => {
+            setShareDialog(null);
+            setSharing(false);
+            void doExport();
+          },
+        }}
         onConfirm={() => performShare("self")}
         onCancel={cancelShareDialog}
       />

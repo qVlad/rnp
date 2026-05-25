@@ -120,7 +120,7 @@ export default function LocalizationMini() {
 
       <div className="flex justify-end pt-2">
         <Link to="/localization" className="btn text-xs">
-          Полная версия →
+          ↗ Полная версия на /localization
         </Link>
       </div>
     </div>

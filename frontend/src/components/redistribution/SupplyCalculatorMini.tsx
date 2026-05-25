@@ -223,7 +223,7 @@ export default function SupplyCalculatorMini() {
 
       <div className="flex justify-end pt-2">
         <Link to="/supply-calculator" className="btn text-xs">
-          Полная версия →
+          ↗ Полная версия на /supply-calculator
         </Link>
       </div>
     </div>

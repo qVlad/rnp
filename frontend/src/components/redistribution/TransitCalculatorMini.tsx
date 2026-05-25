@@ -328,7 +328,7 @@ export default function TransitCalculatorMini() {
 
       <div className="flex justify-end pt-2">
         <Link to="/transit-calculator" className="btn text-xs">
-          Полная версия →
+          ↗ Полная версия на /transit-calculator
         </Link>
       </div>
     </div>

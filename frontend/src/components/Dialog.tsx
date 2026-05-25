@@ -43,6 +43,13 @@ export interface DialogProps {
   cancelLabel?: string;
   /** `default` — синяя primary-кнопка. `danger` — красная для destructive actions. */
   variant?: "default" | "danger";
+  /**
+   * TASK-LEAD-111: опциональная inline-кнопка (третья) рядом с Cancel/Confirm.
+   * Используется для alternative-action сценариев («Скачать PDF вместо»). Рендерится
+   * слева от Cancel-кнопки. Click — не закрывает диалог сам по себе, handler сам
+   * вызывает onCancel() если нужно.
+   */
+  extraAction?: { label: string; onClick: () => void };
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -54,6 +61,7 @@ export default function Dialog({
   confirmLabel = "OK",
   cancelLabel = "Отмена",
   variant = "default",
+  extraAction,
   onConfirm,
   onCancel,
 }: DialogProps) {
@@ -112,7 +120,16 @@ export default function Dialog({
             {description}
           </div>
         )}
-        <div className="flex gap-2 justify-end">
+        <div className="flex gap-2 justify-end flex-wrap">
+          {extraAction && (
+            <button
+              type="button"
+              className="btn text-xs"
+              onClick={extraAction.onClick}
+            >
+              {extraAction.label}
+            </button>
+          )}
           <button type="button" className="btn text-xs" onClick={onCancel}>
             {cancelLabel}
           </button>

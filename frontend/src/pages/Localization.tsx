@@ -416,21 +416,31 @@ export default function Localization() {
                     >
                       {useWh ? (
                         <>
+                          {/* TASK-LEAD-109: explicit ★ (per-SKU) vs ☆ (tenant-wide fallback). */}
+                          <span
+                            className={`mr-1 text-[12px] ${
+                              recSource === "per_sku" ? "text-success" : "text-warn"
+                            }`}
+                            title={
+                              recSource === "per_sku"
+                                ? "Per-SKU рекомендация (на основе фактических покупателей этого артикула)"
+                                : "Tenant-wide fallback — у SKU не нашлось buyer-cluster'а"
+                            }
+                          >
+                            {recSource === "per_sku" ? "★" : "☆"}
+                          </span>
                           {useWh}{" "}
                           {useCluster && (
                             <span className="text-muted">({useCluster})</span>
                           )}
-                          {recSource === "tenant_wide" && (
-                            <span
-                              className="ml-1 text-[10px] text-warn"
-                              title="Tenant-wide fallback — у SKU не нашлось buyer-cluster'а"
-                            >
-                              *
-                            </span>
-                          )}
                         </>
                       ) : (
-                        <span className="text-muted">—</span>
+                        <span
+                          className="text-muted"
+                          title="Недостаточно данных для рекомендации (нет фактических покупателей по этому SKU и tenant-wide эвристика не сработала)"
+                        >
+                          —
+                        </span>
                       )}
                     </td>
                     <td className="py-2 text-right">

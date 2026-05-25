@@ -207,13 +207,27 @@ export default function ManagerSummary() {
           </>
         }
         actions={
-          <Link
-            to={`/weekly-report`}
-            className="btn text-xs"
-            title="К общему weekly-report"
-          >
-            ← к /weekly-report
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link
+              to={`/weekly-report`}
+              className="btn text-xs"
+              title="К общему weekly-report"
+            >
+              ← к /weekly-report
+            </Link>
+            {manager.brands.length > 0 && (
+              // TASK-LEAD-111: deep-link на weekly-report с активным brand-filter
+              // (post-filter URL-параметр, RBAC-override KPI всё ещё нет — это
+              // известное ограничение, задокументировано в WeeklyReport.tsx).
+              <Link
+                to={`/weekly-report?brand=${encodeURIComponent(manager.brands.join(","))}`}
+                className="btn text-xs"
+                title={`Открыть /weekly-report с фильтром по брендам: ${manager.brands.join(", ")}`}
+              >
+                ← /weekly-report с фильтром брендов: {manager.brands.join(", ")}
+              </Link>
+            )}
+          </div>
         }
       />
 
