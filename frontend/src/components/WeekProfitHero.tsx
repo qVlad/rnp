@@ -1,9 +1,14 @@
 /**
- * TASK-LEAD-042 — Hero-line «Прибыль за прошлую закрытую неделю».
+ * TASK-LEAD-042 — Hero-line за последнюю закрытую WB-неделю.
  *
  * Один большой KPI наверху Dashboard'а: net_profit за последнюю закрытую
  * неделю (пн-вс) в final mode + WoW сравнение. Закрывает daily-сценарий
  * собственника «сколько заработал?» одним взглядом.
+ *
+ * TASK-LEAD-073 (2026-05-25): header заменён с «Прибыль за прошлую закрытую
+ * неделю» на «За неделю 12-18 мая (закрыта)» — устраняет путаницу с
+ * TodayVsYesterdayStrip («Прибыль вчера»). Сама цифра — это net_profit, но
+ * слово «прибыль» из заголовка убрали, чтобы не двоилось.
  *
  * «Закрытая неделя» = today - 14 дней, округлённое назад к ближайшему
  * воскресенью (грубое приближение для WB final-отчётов, лаг ~14 дней).
@@ -81,7 +86,9 @@ export default function WeekProfitHero() {
   if (curQ.isLoading || prevQ.isLoading) {
     return (
       <div className="card">
-        <div className="text-xs text-muted uppercase mb-1">Прибыль вчера (за прошлую закрытую неделю)</div>
+        <div className="text-xs text-muted uppercase mb-1">
+          За неделю {fmtPeriod(current)} (закрыта)
+        </div>
         <div className="text-3xl font-mono font-medium opacity-30">— ₽</div>
       </div>
     );
@@ -134,8 +141,13 @@ export default function WeekProfitHero() {
     <div className="card" title={tooltip}>
       <div className="flex items-baseline justify-between flex-wrap gap-2">
         <div className="flex items-baseline gap-3 flex-wrap">
-          <div className="text-xs text-muted uppercase">Прибыль за прошлую закрытую неделю</div>
-          <div className="text-xs text-muted font-mono">{fmtPeriod(current)} · final</div>
+          {/* TASK-LEAD-073: header — реальные даты недели вместо слова
+              «Прибыль» (которое путало seller'а с «Прибыль вчера» в
+              TodayVsYesterdayStrip ниже). */}
+          <div className="text-xs text-muted uppercase">
+            За неделю {fmtPeriod(current)} (закрыта)
+          </div>
+          <div className="text-xs text-muted font-mono">final</div>
         </div>
         {wow != null && (
           <div className={`text-xs font-mono ${wowCls}`}>

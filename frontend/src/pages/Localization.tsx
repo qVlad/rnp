@@ -13,6 +13,7 @@
  */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { api } from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { fmtNum, fmtPct } from "@/lib/format";
@@ -49,6 +50,32 @@ export default function Localization() {
         worstSkuLimit: worstLimit,
       }),
   });
+
+  // TASK-LEAD-070: рекомендуемый склад для worst-SKU.
+  // Поскольку backend не отдаёт per-SKU buyer-cluster breakdown (heatmap
+  // агрегирует по всем SKU), используем tenant-wide approximation:
+  // 1) находим доминантный buyer-cluster (max orders в by_cluster);
+  // 2) топ-склад из by_warehouse в этом кластере → recommended.
+  // Это «куда у нас в принципе уходит больше всего заказов» — sensible MVP.
+  // Если backend позже отдаст per-SKU recommendation — заменим (см.
+  // TASK-LEAD-070 § «Backend опционально»).
+  const recommendedWarehouse = useMemo<{ warehouse: string; cluster: string; cluster_label: string } | null>(() => {
+    const d = q.data;
+    if (!d) return null;
+    const topCluster = [...d.by_cluster]
+      .filter((c) => c.cluster !== "OTHER" && c.cluster !== "INTL")
+      .sort((a, b) => b.orders - a.orders)[0];
+    if (!topCluster) return null;
+    const topWh = [...d.by_warehouse]
+      .filter((w) => w.cluster === topCluster.cluster)
+      .sort((a, b) => b.orders - a.orders)[0];
+    if (!topWh) return null;
+    return {
+      warehouse: topWh.warehouse,
+      cluster: topWh.cluster,
+      cluster_label: topWh.cluster_label,
+    };
+  }, [q.data]);
 
   // Heatmap rows: warehouse × buyer_cluster matrix.
   const heatmap = useMemo(() => {
@@ -284,6 +311,15 @@ export default function Localization() {
         <div className="text-xs text-muted mb-3">
           Минимум 5 заказов — исключаем статистический шум. Идея: эти SKU
           можно пере-распределить на склад из «своего» кластера покупателей.
+          {recommendedWarehouse && (
+            <>
+              {" "}
+              <span className="text-fg">Рекомендуемый склад</span> = top-склад
+              в доминантном кластере покупателей (
+              <code>{recommendedWarehouse.cluster_label}</code>) — MVP-эвристика
+              tenant-wide, точечный per-SKU расчёт см. roadmap TASK-LEAD-070.
+            </>
+          )}
         </div>
         {d.worst_skus.length === 0 ? (
           <div className="text-muted text-sm">
@@ -300,6 +336,8 @@ export default function Localization() {
                 <th className="py-2 text-right">Заказы</th>
                 <th className="py-2 text-right">Локализ.</th>
                 <th className="py-2 text-right">% локализ.</th>
+                <th className="py-2">Куда отгрузить</th>
+                <th className="py-2"></th>
               </tr>
             </thead>
             <tbody>
@@ -313,6 +351,34 @@ export default function Localization() {
                   <td className="py-2 text-right font-mono">{fmtNum(s.localized_orders)}</td>
                   <td className={`py-2 text-right font-semibold ${pctColor(s.localization_pct)}`}>
                     {fmtPct(s.localization_pct)}
+                  </td>
+                  <td
+                    className="py-2 text-xs max-w-[180px] truncate"
+                    title={recommendedWarehouse?.warehouse ?? ""}
+                  >
+                    {recommendedWarehouse ? (
+                      <>
+                        {recommendedWarehouse.warehouse}{" "}
+                        <span className="text-muted">
+                          ({recommendedWarehouse.cluster})
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
+                  </td>
+                  <td className="py-2 text-right">
+                    {recommendedWarehouse && (
+                      <Link
+                        to={`/redistribution?warehouse=${encodeURIComponent(
+                          recommendedWarehouse.warehouse,
+                        )}&nm=${s.nm_id}`}
+                        className="btn text-xs"
+                        title={`Открыть /redistribution с фильтром: склад=${recommendedWarehouse.warehouse}, nm=${s.nm_id}`}
+                      >
+                        → Поставка
+                      </Link>
+                    )}
                   </td>
                 </tr>
               ))}

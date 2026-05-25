@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bar,
@@ -25,6 +26,21 @@ export default function Redistribution() {
   const { user } = useAuth();
   const seesAllBrands = user?.role === "director" || user?.role === "head_of_sales";
   const [recsTab, setRecsTab] = useState<"pending" | "queued" | "executed">("pending");
+
+  // TASK-LEAD-070: deep-link из /localization → /redistribution?warehouse=X&nm=Y.
+  // Если приходим с предзаполненными параметрами — отрисовываем баннер с
+  // активным фильтром + фильтруем таблицу рекомендаций. Кнопка «Сбросить» —
+  // очищает query-params (вместе с фильтром).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const filterWarehouse = searchParams.get("warehouse")?.trim() || null;
+  const filterNm = searchParams.get("nm")?.trim() || null;
+  const hasFilter = Boolean(filterWarehouse || filterNm);
+  const clearFilter = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete("warehouse");
+    next.delete("nm");
+    setSearchParams(next, { replace: true });
+  };
 
   // TASK-DEV-009: модалка с согласием до первого подключения LK WB через
   // extension proxy. Показывается если юзер ещё не согласился И ещё не
@@ -95,6 +111,20 @@ export default function Redistribution() {
     onError: (e: any) => alert(`Не удалось отменить: ${e.message}`),
   });
 
+  // Применяем deep-link фильтр локально по результатам recsQ.
+  // Совпадение по nm_id и/или по складу-приёмнику (case-insensitive).
+  const filteredRecs = useMemo(() => {
+    const items = recsQ.data?.items ?? [];
+    if (!hasFilter) return items;
+    const wh = filterWarehouse?.toLowerCase() ?? null;
+    const nm = filterNm ? Number(filterNm) : null;
+    return items.filter((r) => {
+      if (nm != null && Number.isFinite(nm) && Number(r.nm_id) !== nm) return false;
+      if (wh && (r.to_office_name ?? "").toLowerCase() !== wh) return false;
+      return true;
+    });
+  }, [recsQ.data, filterWarehouse, filterNm, hasFilter]);
+
   return (
     <div className="flex flex-col gap-4">
       <LkDisclaimerModal
@@ -118,6 +148,40 @@ export default function Redistribution() {
               onClick={() => setDisclaimerOpen(true)}
             >
               Открыть согласие
+            </button>
+          </div>
+        </div>
+      )}
+
+      {hasFilter && (
+        <div className="card border-accent/40 bg-accent/5 text-sm">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <span>
+              Фильтр из <code>/localization</code>:{" "}
+              {filterNm && (
+                <>
+                  nm_id = <code className="font-mono">{filterNm}</code>
+                  {filterWarehouse ? ", " : ""}
+                </>
+              )}
+              {filterWarehouse && (
+                <>
+                  склад-приёмник = <code className="font-mono">{filterWarehouse}</code>
+                </>
+              )}
+              {". "}
+              <span className="text-muted">
+                Если в pending-рекомендациях ничего не показано — пересчитайте
+                (рекомендации генерируются автоматически по ROI; deep-link с
+                /localization носит контекстный характер).
+              </span>
+            </span>
+            <button
+              type="button"
+              className="btn text-xs"
+              onClick={clearFilter}
+            >
+              Сбросить фильтр
             </button>
           </div>
         </div>
@@ -197,12 +261,14 @@ export default function Redistribution() {
           </div>
         </div>
         {recsQ.isLoading && <div className="text-muted">Загрузка…</div>}
-        {recsQ.data && recsQ.data.items.length === 0 && (
+        {recsQ.data && filteredRecs.length === 0 && (
           <div className="text-muted text-sm">
-            Нет рекомендаций. Нажмите «Пересчитать» (нужна подключённая LK-сессия).
+            {hasFilter && recsQ.data.items.length > 0
+              ? "Под текущий фильтр (nm/склад из /localization) рекомендаций нет. Сбросьте фильтр чтобы увидеть все."
+              : "Нет рекомендаций. Нажмите «Пересчитать» (нужна подключённая LK-сессия)."}
           </div>
         )}
-        {recsQ.data && recsQ.data.items.length > 0 && (
+        {recsQ.data && filteredRecs.length > 0 && (
           <table className="w-full text-sm">
             <thead className="text-muted text-xs uppercase">
               <tr className="border-b border-border">
@@ -217,7 +283,7 @@ export default function Redistribution() {
               </tr>
             </thead>
             <tbody>
-              {recsQ.data.items.map((r) => (
+              {filteredRecs.map((r) => (
                 <tr key={r.id} className="border-t border-border hover:bg-bg/40">
                   <td className="p-2 font-mono text-xs">
                     {r.nm_id}

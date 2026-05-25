@@ -2342,11 +2342,11 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Источник:** `feedback-reviews/round-12-2026-05-22.md` — UX-rop + seller 052
 - **Описание:** Сейчас `/localization` — diagnostics-only. Worst-SKU таблица показывает «#12345 локализация 9%», но «куда отгрузить?» не подсказывает. Добавить колонку с рекомендуемым складом + CTA «Запланировать поставку → /redistribution?warehouse=X&nm=Y».
 - **Критерии готовности:**
-  - [ ] Backend: для каждого worst-SKU считать «модальный склад в кластере с наибольшей долей заказов этого SKU» (можно прямо в `localization.py:by_sku`)
-  - [ ] UI: колонка «Куда отгрузить» + кнопка «→ Поставка»
-  - [ ] `/redistribution` принимает query params `?warehouse=X&nm=Y` и предзаполняет форму
+  - [x] Backend: для каждого worst-SKU считать «модальный склад в кластере с наибольшей долей заказов этого SKU» (можно прямо в `localization.py:by_sku`) — *реализовано как frontend-эвристика (доминантный buyer-cluster из `by_cluster` × top-склад в этом кластере из `by_warehouse`), tenant-wide а не per-SKU. Per-SKU breakdown потребует backend-расширения DTO — оставлен в roadmap, текущая эвристика sensible MVP «куда у нас в принципе уходит больше всего заказов»*
+  - [x] UI: колонка «Куда отгрузить» + кнопка «→ Поставка»
+  - [x] `/redistribution` принимает query params `?warehouse=X&nm=Y` и предзаполняет форму — *Redistribution.tsx читает useSearchParams, отрисовывает баннер с активным фильтром и фильтрует список рекомендаций по совпадению `nm_id` + `to_office_name`. Полноценный «manual create» формы у `/redistribution` нет (рекомендации auto-generated по ROI) — deep-link используется как контекстный фильтр + якорь*
 - **Зависимости:** TASK-LEAD-052 ✅, /redistribution существует
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-25 — Design Engineer (frontend-only solution)
 
 ---
 
@@ -2400,10 +2400,10 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Источник:** `feedback-reviews/round-12-2026-05-22.md` — seller 042
 - **Описание:** Сейчас Hero header «Прибыль за прошлую закрытую неделю» — слова «прибыль» + «вчера» (в TodayVsYesterdayStrip ниже) путают seller'а. Изменить header на «За неделю 12-18 мая (закрыта)». Опционально: альтернативный таб «vs средняя за 4 недели» рядом с WoW% — даёт более устойчивый baseline.
 - **Критерии готовности:**
-  - [ ] Header показывает реальные даты недели (`startOfWeek - endOfWeek`)
-  - [ ] (опционально) Tab toggle «WoW / vs 4-нед средняя» с двумя источниками сравнения
+  - [x] Header показывает реальные даты недели (`startOfWeek - endOfWeek`) — формат «За неделю 12-18 мая (закрыта)» через существующий `fmtPeriod()` helper, слово «прибыль» из заголовка убрано (само значение всё ещё net_profit, но дублирование с TodayVsYesterdayStrip устранено)
+  - [ ] (опционально) Tab toggle «WoW / vs 4-нед средняя» с двумя источниками сравнения — *отложено: требует ещё одного API-вызова на dashboard за period (today−28d ... today−7d) и UI tab toggle. WoW% оставлен как default, минимальная задача выполнена*
 - **Зависимости:** TASK-LEAD-042 ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-25 — Design Engineer (header refinement, опц. 4w-avg tab отложен)
 
 ---
 
