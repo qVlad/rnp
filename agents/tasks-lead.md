@@ -2718,7 +2718,8 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Источник:** round 13 — Σ breakdown ≠ KPI в financial
 - **Описание:** Endpoint `/api/dashboard/kpi-breakdown` принимает `reporting_mode`, `compute_kpi_breakdown` использует `get_period_filter()` вместо `sale_dt_filter()`. Unit-test «Σ breakdown ≈ KPI» в обоих режимах.
 - **Зависимости:** BUG-DEV-014
-- **Статус:** Открыта
+- **Реализация:** v0.34.1 — `compute_kpi_breakdown` принимает `reporting_mode`, `/api/dashboard/kpi-breakdown` тоже. `MetricBreakdownPopup` подключён к `useReportingMode()` + добавлен в queryKey. Σ breakdown теперь синхронен с Dashboard KPI в обоих режимах. (BUG-DEV-014 закрыт.)
+- **Статус:** Выполнено — 2026-05-25
 
 ### TASK-LEAD-081: Units.tsx `?nm_id` filter + scroll
 - **Приоритет:** P1
@@ -2726,7 +2727,8 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Источник:** round 13 — half-feature 066
 - **Описание:** `useSearchParams("nm_id")` → авто-применить фильтр + scrollIntoView. Без этого breakdown drill (LEAD-066) бессмыслен — popup ведёт на /units, но фильтра нет.
 - **Зависимости:** TASK-LEAD-066 ✅
-- **Статус:** Открыта
+- **Реализация:** v0.34.1 — `Units.tsx` читает `useSearchParams('nm_id')` → применяет filter + `scrollIntoView({block:'center'})` + кратковременный ring-accent highlight 2s. `<tr id="unit-row-{nm_id}">` для якоря. Досайка half-feature 066.
+- **Статус:** Выполнено — 2026-05-25
 
 ---
 
@@ -2737,7 +2739,8 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Оценка:** XS (30 мин)
 - **Источник:** round 13 — extension LEAD-060
 - **Описание:** Расширить `<ReportingModeBadge />` на все страницы где `useReportingMode()` влияет на цифры. Сейчас только Dashboard + PnL.
-- **Статус:** Открыта
+- **Реализация:** v0.35.0 — `<ReportingModeBadge />` добавлен на /units, /weekly-report, /pnl-reconciliation (через `<PageHeader title={<span>…<ReportingModeBadge /></span>} />`). В operational badge сам себя скрывает.
+- **Статус:** Выполнено — 2026-05-25
 
 ### TASK-LEAD-083: WeekProfitHero role-guard для manager'а (закрыть BUG-UI-006)
 - **Приоритет:** P2
@@ -2745,7 +2748,8 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Источник:** round 13 — coverage gap from round 12
 - **Описание:** Либо скрыть от manager'а полностью, либо явная подпись «по твоим брендам» в header при `user.role === 'manager'`. Сейчас тихое смешение терминов.
 - **Зависимости:** BUG-UI-006
-- **Статус:** Открыта
+- **Реализация:** v0.35.0 — Вариант A: `WeekProfitHero` для manager'а показывает header «За неделю DD-DD месяц **по твоим брендам** (закрыта)». Manager продолжает видеть виджет, но scope явный. BUG-UI-006 закрыт.
+- **Статус:** Выполнено — 2026-05-25
 
 ### TASK-LEAD-084: TransitCalculator multi-warehouse per-pair tariff
 - **Приоритет:** P2
@@ -2753,7 +2757,8 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Источник:** round 13 — U2 feedback
 - **Описание:** Compare-таблица использует `wb_transit_tariff(hub, candidate_warehouse)` lookup для каждого candidate (не общий manual). Если для пары нет — оставить fallback на общий manual.
 - **Зависимости:** TASK-LEAD-068 ✅, TASK-LEAD-078 ✅
-- **Статус:** Открыта
+- **Реализация:** v0.35.0 — `computeTransit(finalTariff, p, tariffOverride?)` расширен опциональным override. В Compare для каждого candidate-склада lookup в `transitListQ.data.items` по паре `(hub.toLowerCase(), candidate.toLowerCase())`. Footnote «(per-pair)» если нашли, «(общий тариф)» если fallback.
+- **Статус:** Выполнено — 2026-05-25
 
 ### TASK-LEAD-085: Localization by_brand — wow_pct + min_orders threshold
 - **Приоритет:** P2
@@ -2761,7 +2766,8 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Источник:** round 13 — U2 feedback
 - **Описание:** `wow_pct` колонка (за прошлую неделю с offset −7d) + `min_orders ≥ 10` threshold для фильтрации статистического шума. Сейчас бренд с 5 заказами может попасть в TOP с искажением.
 - **Зависимости:** TASK-LEAD-065 ✅
-- **Статус:** Открыта
+- **Реализация:** v0.35.0 — `BrandLocalization.wow_pct: float | None`, helper `_compute_brand_pct_map` для prev-period. Параметр `brand_min_orders=10` (range 0..10000) фильтрует by_brand. UI колонка «WoW п.п.» с `WoWPpCell` (good-direction-aware: рост = зелёный).
+- **Статус:** Выполнено — 2026-05-25
 
 ### TASK-LEAD-086: WeeklyReport scoreboard manager_name → drill
 - **Приоритет:** P2
