@@ -14,12 +14,9 @@ import { api } from "@/api/client";
 import { fmtPct, fmtRub } from "@/lib/format";
 import { Icon } from "./Icon";
 
-export type BreakdownMetric =
-  | "logistics_wb"
-  | "storage_wb"
-  | "commission_wb"
-  | "deduction"
-  | "penalty";
+// Re-export для back-compat (TASK-UI-024). Sourcefor truth — `lib/breakdownMetrics.ts`.
+export type { BreakdownMetric } from "@/lib/breakdownMetrics";
+import type { BreakdownMetric } from "@/lib/breakdownMetrics";
 
 export type BreakdownItem = {
   nm_id: number;
@@ -221,10 +218,5 @@ export default function MetricBreakdownPopup({
   );
 }
 
-export const BREAKDOWN_METRICS: ReadonlySet<BreakdownMetric> = new Set([
-  "logistics_wb",
-  "storage_wb",
-  "commission_wb",
-  "deduction",
-  "penalty",
-]);
+// Re-export для back-compat. Single source — `lib/breakdownMetrics.ts`.
+export { BREAKDOWN_METRICS } from "@/lib/breakdownMetrics";

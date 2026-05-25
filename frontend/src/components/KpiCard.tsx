@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { fmtChange, formatValue } from "@/lib/format";
+import { isBreakdownMetric } from "@/lib/breakdownMetrics";
 import { Icon } from "@/components/Icon";
 import CompositionBar, {
   type CompositionSegment,
@@ -63,15 +64,8 @@ export default function KpiCard({
   compositionTotal?: number;
 }) {
   const drillMetric = DRILLDOWN_METRIC[kpi.key];
-  // KPI с breakdown'ом (расшифровка по SKU): commission/logistics/storage/...
-  const BREAKDOWN_KEYS = new Set([
-    "logistics_wb",
-    "storage_wb",
-    "commission_wb",
-    "deduction",
-    "penalty",
-  ]);
-  const hasBreakdown = BREAKDOWN_KEYS.has(kpi.key) && !!onBreakdown;
+  // KPI с breakdown'ом — single source of truth (TASK-UI-024).
+  const hasBreakdown = isBreakdownMetric(kpi.key) && !!onBreakdown;
   const isClickable = (!!drillMetric && !!onDrillDown) || hasBreakdown;
   const positive = (kpi.change_pct ?? 0) >= 0;
   const lowerIsBetter = LOWER_IS_BETTER.has(kpi.key);
