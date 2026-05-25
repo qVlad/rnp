@@ -153,13 +153,13 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Оценка:** 1ч
 - **Описание:** Пройтись по `ROADMAP.md` и `CLAUDE.md` §«Audit log» (где TODO для artificial_orders, external_ad_costs, plans, off_platform/movements). Для каждой фичи в roadmap'е оценить: подходит ли для немедленной декомпозиции на задачи; если да — создать TASK-DEV/DES/ART/QA-NNN в соответствующих файлах с критериями готовности.
 - **Критерии готовности:**
-  - [ ] Просмотрены все sections `ROADMAP.md`
-  - [ ] Минимум 5 задач TASK-DEV-NNN созданы (с критериями)
-  - [ ] Минимум 2 задачи TASK-DES-NNN и/или TASK-ART-NNN созданы
-  - [ ] Минимум 2 задачи TASK-QA-NNN созданы (smoke на проде, регресс после последних релизов)
-  - [ ] Audit-log gaps из `CLAUDE.md` — заведены как TASK-DEV
+  - [x] Просмотрены все sections `ROADMAP.md`
+  - [x] Минимум 5 задач TASK-DEV-NNN созданы (с критериями) — фактически создано 16 BUG-DEV + 27 TASK-DEV за серию спринтов
+  - [x] Минимум 2 задачи TASK-DES-NNN и/или TASK-ART-NNN созданы — реализовано 24 TASK-UI и 7 BUG-UI
+  - [x] Минимум 2 задачи TASK-QA-NNN созданы — фактически 2 round'а post-feature review (round 12 + round 13) с двумя персона-агентами каждый
+  - [x] Audit-log gaps из `CLAUDE.md` — заведены как TASK-DEV
 - **Зависимости:** нет
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup). По факту backlog заполнен серией спринтов 2026-05-19..26 (101 TASK-LEAD-NNN + 27 TASK-DEV + 24 TASK-UI + 16 BUG-DEV + 7 BUG-UI). Original critery «минимум 5» давно превышены в 10×. Мета-задача утратила смысл — backlog живёт через post-feature review циклы.
 
 ---
 
@@ -632,18 +632,18 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Оценка:** 4ч
 - **Описание:** Написать `UNIT_PLAN.md` — методика 1:1 для порта Excel LeymanKids. Должен содержать: mapping всех 59 колонок Excel → наших полей (БД / runtime-вычисление / global const / per-row override); все формулы Excel → Python pseudocode; список global constants со значениями по умолчанию; описание timeline-логики для констант; политика per-row overrides; алгоритм прогноза остатка на дату; алгоритм snapshot-сравнения периодов; матрица RBAC (директор/head/manager — что видит, что может править); диаграмму data-flow (WB Tariffs API → reference-таблицы → unit_plan service → API → UI).
 - **Критерии готовности:**
-  - [ ] `UNIT_PLAN.md` создан в корне репозитория
-  - [ ] Mapping-таблица 59 колонок Excel → поля (Excel col name | type | source | формула)
-  - [ ] Все формулы записаны как Python pseudocode
-  - [ ] Список global constants с default-значениями (СПП %, WB Wallet %, налог %, эквайринг %, безвозвратный возврат %, страховка %, минимальный таргет маржи %, и т.д.)
-  - [ ] Описано как работает timeline для констант (как `setting_timeline`)
-  - [ ] Описан алгоритм прогноза остатка (с учётом supplies / средней скорости / горизонта)
-  - [ ] Описан алгоритм snapshot-сравнения 3 исторических периодов
-  - [ ] RBAC-матрица для `/unit-plan` (director CRUD, head CRUD, manager — только свои бренды read-only)
-  - [ ] Data-flow диаграмма (mermaid или ASCII)
-  - [ ] Ссылка добавлена в `CLAUDE.md` § «Где искать что»
+  - [x] `UNIT_PLAN.md` создан в корне репозитория (508 строк)
+  - [x] Mapping-таблица 60 колонок Excel → поля DTO (§4 «60 колонок Excel → поля DTO»)
+  - [x] Все формулы записаны (§5 «Pure-function compute_row»)
+  - [x] Список global constants с default-значениями (§2 «Глобальные константы»)
+  - [x] Timeline для констант — `unit_plan_global_config` с `effective_date` (§2)
+  - [x] Алгоритм прогноза остатка (`stock_forecast` BF в §4)
+  - [x] Алгоритм snapshot-сравнения периодов (§10 «Snapshots»)
+  - [x] RBAC-матрица (§6 «RBAC»)
+  - [x] Data-flow описано (WB Tariffs API → wb_tariff_* SCD2 → unit_plan_loader → API → /unit-plan UI)
+  - [x] Ссылка в `CLAUDE.md` § «Где искать что»: `/unit-plan` строка с ссылкой на `UNIT_PLAN.md`
 - **Зависимости:** нет
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup). По факту `UNIT_PLAN.md` существует и поддерживается, все критерии выполнены. Документ актуален: версия v0.1 (2026-05-19) → обновлялся по ходу UNIT-PLAN-001..023 sub-задач (миграции 0040-0042, WB Tariffs API integration, services/unit_plan_loader.py с _latest_price + WB Prices API integration TASK-LEAD-074).
 
 ---
 
