@@ -467,9 +467,23 @@ export default function TransitCalculator() {
   };
 
   // TASK-LEAD-071: загрузка suggestion при выборе SKU.
+  // HYP-006: weeks_window slider — селлеры сезонных товаров (Новый год,
+  // школьная форма) хотят увеличить окно чтобы baseline не сбился на
+  // прошедших 4 неделях с нерепрезентативным спросом.
+  const [weeksWindow, setWeeksWindow] = useState<number>(() => {
+    try {
+      const v = Number(localStorage.getItem("transit.weeks_window.v1"));
+      return Number.isFinite(v) && v >= 1 && v <= 12 ? v : 4;
+    } catch {
+      return 4;
+    }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("transit.weeks_window.v1", String(weeksWindow)); } catch {}
+  }, [weeksWindow]);
   const suggestQ = useQuery({
-    queryKey: ["transit-sku-suggest", selectedNmId],
-    queryFn: () => api.productTransitSuggest(selectedNmId as number, 4),
+    queryKey: ["transit-sku-suggest", selectedNmId, weeksWindow],
+    queryFn: () => api.productTransitSuggest(selectedNmId as number, weeksWindow),
     enabled: selectedNmId != null,
   });
   useEffect(() => {
@@ -765,6 +779,31 @@ export default function TransitCalculator() {
                 setSuggestInfo(null);
               }}
             />
+            {/* HYP-006: weeks_window selector — для сезонных товаров. */}
+            {selectedNmId != null && (
+              <div className="flex items-center gap-2 mt-1">
+                <span
+                  className="text-tiny text-muted"
+                  title="За какой период взять среднюю скорость продаж для suggest units. Сезонные товары (Новый Год, школьная форма) — увеличь окно чтобы baseline не сбился на нерепрезентативной паузе."
+                >
+                  Горизонт для среднего:
+                </span>
+                <select
+                  className="input text-xs py-0.5 px-1"
+                  value={weeksWindow}
+                  onChange={(e: any) =>
+                    setWeeksWindow(Number(e.target.value) || 4)
+                  }
+                  style={{ width: "auto" }}
+                >
+                  {[1, 2, 4, 8, 12].map((w) => (
+                    <option key={w} value={w}>
+                      {w} нед
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             {selectedNmId != null && suggestQ.isLoading && (
               <span className="text-tiny text-muted">
                 Подгружаем литры и среднюю продажу…
@@ -781,10 +820,10 @@ export default function TransitCalculator() {
                 suggestInfo.avg_weekly_orders > 0
                   ? `Средняя продажа ${fmtNum(
                       suggestInfo.avg_weekly_orders,
-                    )} шт/нед за 4 недели → suggest ${fmtNum(
+                    )} шт/нед за ${weeksWindow} нед → suggest ${fmtNum(
                       suggestInfo.suggested_units ?? 0,
-                    )} шт на 4 недели.`
-                  : "Заказов за последние 4 недели нет — units оставлены прежними."}
+                    )} шт на ${weeksWindow} нед.`
+                  : `Заказов за последние ${weeksWindow} нед нет — units оставлены прежними.`}
               </span>
             )}
           </label>

@@ -563,12 +563,20 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Что нужно:**
   1. Юзер: открыт Chrome, залогинен в seller.wildberries.ru, расширение reload'нуто
   2. Иметь хотя бы 1 chrt_id в src-складе с count > 0 (можно посмотреть через UI кабинета или get_stocks job)
-  3. Создать `redistribution_task` (через UI «Пересчитать» после LEAD-020 ИЛИ руками в БД для smoke сейчас)
+  3. Создать `redistribution_task` (через UI «Пересчитать» после LEAD-020 ✅ ИЛИ руками в БД для smoke сейчас)
   4. Ждать окно (09:00:00..09:00:30 МСК или 18:00...)
-  5. Видеть в БД: task.status=accepted, RedistributionCooldown.cooldown_until=+72h
-  6. В кабинете WB: заявка появилась в «Перемещение остатков» → История
-- **Зависимости:** LEAD-019 ✅, LEAD-020 (опционально)
-- **Статус:** Открыта.
+  5. Запустить **`./scripts/redistribution-smoke.sh`** (создан 2026-05-25) — покажет:
+     - WbLkSession latest (свежий auth_v3 + lk_seller cookie?)
+     - Active + accepted redistribution_task за 2 часа
+     - Свежие RedistributionCooldown (создано за 30 мин)
+     - wb_lk_jobs op='create_order' status
+     - Audit-log lk.*/redistribution.* events
+     - Worker-default logs grep
+  6. Ожидаемое в БД: task.status=accepted, RedistributionCooldown.cooldown_until=+72h
+  7. В кабинете WB: заявка появилась в «Перемещение остатков» → История
+- **Зависимости:** LEAD-019 ✅, LEAD-020 ✅
+- **Tools:** `scripts/redistribution-smoke.sh` (✅ создан 2026-05-25) — автоматизирует шаг 5 (1 команда вместо 6 ручных psql/log запросов).
+- **Статус:** Готово к выполнению пользователем в окно (tools на месте).
 
 ---
 
@@ -2950,6 +2958,101 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 **Этап 1:** Открыта (TASK-LEAD-099)
 **Этап 2:** Открыта (TASK-LEAD-100)
 **Этап 3:** Открыта (TASK-LEAD-101)
+
+---
+
+## Инициатива: Dashboard — composite «State of Business» (HYP-001)
+
+**Дата открытия:** 2026-05-25
+**Owner:** Lead + Product Strategist + Design Engineer
+**Связано:** HYP-001 (round 12 + round 13 повтор), TASK-LEAD-042 (WeekProfitHero), TASK-LEAD-043 (ReconciliationHero), TASK-LEAD-064 (Top-3 рекомендации).
+
+### Why
+
+На топе `/dashboard` сейчас **6+ Hero-виджетов**:
+1. WeekProfitHero
+2. ReconciliationHeroWidget (3-cell grid)
+3. TodayVsYesterdayStrip
+4. WeeklyChangesFeed
+5. AlertsBar
+6. CustomMetricsCard
+7. ManagerPlanProgressCard (для manager)
+
+Это **70-80% viewport на laptop'е**. Round 12 пометил «overload» как Moderate, round 13 — как **прагматично необходимое исправление**. Seller'у непонятно «что важнее?» — каждый виджет претендует на attention.
+
+**Цель:** composite «State of Business» карточка, которая агрегирует key signals в одном месте, с tabbed-view для деталей. Остальные hero — либо в expander «Show more», либо удалить.
+
+### Scope (research first, потом implementation)
+
+#### Этап 1 — UX-research (1 нед)
+
+- **Какие 3-5 сигналов реально критичны** для seller'а утром? (Не «всё важно», конкретный приоритет.)
+- Опрос: показать 3 mockup'а (current 6 widgets / composite single-card / hybrid) — пользователю что лучше работает?
+- Конкуренты: как делают TrueStats, MPump, Eggheads. Скриншоты top-of-dashboard.
+- Output: spec в `agents/references/spec-state-of-business.md`.
+
+#### Этап 2 — Implementation
+
+- Новый компонент `<StateOfBusinessCard>` (после согласованного spec'а).
+- Существующие hero — либо удалены, либо в expander «Подробнее».
+- A/B-toggle: пользователь может вернуть старый view (для адаптации) — токен в localStorage.
+
+### Открытые вопросы для Product Strategist
+
+- Что главное — прибыль / выручка / маржа / WoW δ / алерты?
+- Tabbed (1 видный, кнопки переключения) или layered (small + drill)?
+- 1 общая карточка vs 3 фокусные (revenue / margin / alerts)?
+
+### Зависимости / риски
+
+- Сильное изменение primary view — риск регресса в UX для текущих пользователей. **Обязательно A/B toggle.**
+- Старые hero компоненты — не удалять, оставить за expander'ом до подтверждения метриками (>2 недели после деплоя без revert'ов).
+
+### Статус
+
+**Этап 1 (research):** Открыта — заведена 2026-05-25 как initiative. Owner Product Strategist.
+**Этап 2 (implementation):** Не начат — ждёт research-spec'а.
+
+---
+
+## Инициатива: HYP-003 — merge /localization + /transit-calculator → /redistribution
+
+**Дата открытия:** 2026-05-25
+**Owner:** Lead + Design Engineer + Product Strategist
+**Связано:** HYP-003 (round 12 + round 13), `/redistribution` существующая страница рекомендаций.
+
+### Why
+
+Round 12 пометил: «standalone-страницы /localization и /transit-calculator для seller'а / РОПа — много изолированных вкладок. Логически они часть одного workflow: «куда грузить → сколько стоит → закажу».»
+
+`/redistribution` сейчас показывает auto-рекомендации по ROI (через extension proxy). Идея — встроить туда expander'ы:
+1. **Localization heatmap** (свернут по default) — «откуда заказы → где пусто»
+2. **Transit cost** (свернут) — «сколько стоит довезти на рекомендуемый склад»
+
+Сейчас юзер ходит между 3 вкладками. После merge — одна страница, всё под рукой.
+
+### Scope
+
+- **Решение lockin:** убрать standalone-страницы или оставить как back-compat?
+  - **Вариант A:** убрать `/localization` и `/transit-calculator` из меню, перенаправить на `/redistribution#localization` / `#transit`. Bookmark'и старых URL делают `<Navigate>` с anchor.
+  - **Вариант B:** оставить standalone + добавить expander'ы в `/redistribution` (контент дублируется). Простой, но fragmented.
+- **UX:** где expander'ы открываются — над таблицей рекомендаций или сбоку? Может быть split-view?
+- **RBAC:** /redistribution — director_or_head. /localization — brands-filter (manager видит свой scope). Если merge — manager теряет /localization standalone? Не хотим.
+
+### Открытые вопросы
+
+- Если merge — куда деть manager-scope для /localization? (Manager на /redistribution не пускается.)
+- Это «strict merge» (заменить) или «soft merge» (доп. expander)?
+- Замеры: сколько раз в день/неделю seller открывает /localization и /transit-calculator? Если редко → merge оправдан, если часто → standalone лучше.
+
+### Зависимости / риски
+
+- Локальные URL'ы существующие — bookmark'и пользователей могут оказаться broken.
+- Manager-scope для /localization — если merge, нужен альтернативный entry-point.
+
+### Статус
+
+**Research / spec:** Открыта — заведена 2026-05-25 как initiative. Owner Product Strategist + Lead. Требуется собрать usage-метрики (сколько раз открываются standalone-страницы) перед решением.
 
 ---
 
