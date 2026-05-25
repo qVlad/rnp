@@ -7,7 +7,7 @@
  *
  * Использует backend endpoint `GET /api/dashboard/kpi-breakdown`.
  */
-import { useEffect } from "react";
+import { useEffect, type MouseEvent as ReactMouseEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
@@ -179,15 +179,37 @@ export default function MetricBreakdownPopup({
                     // ещё <Link> для accessible tab-навигации и cmd+click открыть
                     // в новой вкладке. Closing popup при переходе — иначе он
                     // остаётся поверх /units.
-                    const goToUnits = () => {
-                      navigate(`/units?nm_id=${row.nm_id}`);
-                      onClose();
-                    };
+                    //
+                    // BUG-UI-007: middle-click / meta / ctrl / shift = «открыть
+                    // в новой вкладке/окне» — popup НЕ закрываем, юзер ожидает
+                    // что текущий контекст остался.
+                    const isOpenInNewTab = (
+                      e:
+                        | ReactMouseEvent<HTMLTableRowElement>
+                        | ReactMouseEvent<HTMLAnchorElement>,
+                    ) =>
+                      e.button === 1 ||
+                      e.metaKey ||
+                      e.ctrlKey ||
+                      e.shiftKey;
                     return (
                       <tr
                         key={row.nm_id}
                         className="border-t border-border hover:bg-surface-2 cursor-pointer transition-colors"
-                        onClick={goToUnits}
+                        onClick={(e: any) => {
+                          if (isOpenInNewTab(e)) return;
+                          navigate(`/units?nm_id=${row.nm_id}`);
+                          onClose();
+                        }}
+                        // onAuxClick срабатывает на middle-click (button=1).
+                        // Без этого hadler'а Chrome всё равно откроет ссылку из
+                        // вложенного <Link> в новой вкладке (стандартное
+                        // поведение браузера), но bubbling до tr.onClick не
+                        // дойдёт — нам ничего делать не нужно. Оставляем для
+                        // явности: middle-click = noop на tr-уровне.
+                        onAuxClick={(e: any) => {
+                          if (e.button === 1) e.preventDefault();
+                        }}
                         title="Открыть в /units"
                       >
                         <td className="p-2">
@@ -199,6 +221,10 @@ export default function MetricBreakdownPopup({
                               // tr.onClick (двойной navigate). Сам Link уже
                               // делает переход — но нам нужен onClose.
                               e.stopPropagation();
+                              // BUG-UI-007: при middle-click / cmd+click /
+                              // ctrl+click / shift+click — Link открывает в
+                              // новой вкладке/окне, popup закрывать НЕ нужно.
+                              if (isOpenInNewTab(e)) return;
                               onClose();
                             }}
                           >

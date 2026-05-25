@@ -534,27 +534,115 @@ export default function TransitCalculator() {
     );
   }, [params.hub, params.final_warehouse, transitListQ.data]);
 
-  // Auto-fill rate_small/rate_large/threshold_l из backend если нашли пару.
-  // НЕ перезатираем если юзер уже что-то правил — следим за изменением пары
-  // и применяем 1 раз когда тариф появился. Юзер может в любой момент
-  // вписать своё значение поверх.
+  // BUG-DEV-016: Auto-fill rate_small/rate_large/threshold_l из backend.
+  // Юзер может в любой момент вписать своё значение поверх — `manuallyEdited`
+  // отслеживает какие поля он изменил руками после загрузки. Если приходит
+  // новый auto-fill и у поля есть manual-edit с конфликтующим значением —
+  // спрашиваем через `confirm()` хочет ли применить новый тариф.
+  // Если manual-edit нет — overwrite silently (как раньше).
   const [autoFilled, setAutoFilled] = useState<string | null>(null);
+  const [manuallyEdited, setManuallyEdited] = useState<{
+    rate_small?: boolean;
+    rate_large?: boolean;
+    volume_threshold_l?: boolean;
+  }>({});
+
+  // Помечаем поле как manually-edited при изменении через onChange. Сброс
+  // флага происходит при смене пары хаб+склад (новая пара — чистый старт).
+  const markManual = (
+    field: "rate_small" | "rate_large" | "volume_threshold_l",
+  ) => {
+    setManuallyEdited((m) => ({ ...m, [field]: true }));
+  };
+
+  // Сброс manual-флагов при смене пары — для новой пары auto-fill должен
+  // отработать silently. Иначе юзер переключит хаб/склад и поля сохранят
+  // флаг от старой пары → ложные confirm'ы.
+  useEffect(() => {
+    setManuallyEdited({});
+  }, [params.hub, params.final_warehouse]);
+
   useEffect(() => {
     if (!transitFromBackend) return;
     const key = `${params.hub}|${params.final_warehouse}|${transitFromBackend.synced_at}`;
     if (autoFilled === key) return;
     setAutoFilled(key);
-    const patch: Partial<SavedParams> = {};
-    if (transitFromBackend.rate_small !== null) {
-      patch.rate_small = transitFromBackend.rate_small;
+
+    type FieldKey = "rate_small" | "rate_large" | "volume_threshold_l";
+    const candidates: Array<{
+      field: FieldKey;
+      newValue: number | null;
+      currentValue: number;
+      label: string;
+    }> = [
+      {
+        field: "rate_small",
+        newValue: transitFromBackend.rate_small,
+        currentValue: params.rate_small,
+        label: "Тариф ₽/л (объём < порога)",
+      },
+      {
+        field: "rate_large",
+        newValue: transitFromBackend.rate_large,
+        currentValue: params.rate_large,
+        label: "Тариф ₽/л (объём ≥ порога)",
+      },
+      {
+        field: "volume_threshold_l",
+        newValue: transitFromBackend.threshold_l,
+        currentValue: params.volume_threshold_l,
+        label: "Порог переключения, л",
+      },
+    ];
+
+    const conflicts = candidates.filter(
+      (c) =>
+        c.newValue !== null &&
+        c.newValue !== c.currentValue &&
+        manuallyEdited[c.field],
+    );
+    const silent = candidates.filter(
+      (c) =>
+        c.newValue !== null &&
+        c.newValue !== c.currentValue &&
+        !manuallyEdited[c.field],
+    );
+
+    // Сначала применяем silent-обновления (поля без manual-edit).
+    if (silent.length > 0) {
+      const patch: Partial<SavedParams> = {};
+      for (const c of silent) {
+        (patch as any)[c.field] = c.newValue;
+      }
+      update(patch);
     }
-    if (transitFromBackend.rate_large !== null) {
-      patch.rate_large = transitFromBackend.rate_large;
+
+    // Для конфликтов — спрашиваем юзера. Минимальный фикс: один confirm
+    // на все конфликтующие поля сразу. Default = оставить мой (cancel).
+    if (conflicts.length > 0) {
+      const summary = conflicts
+        .map((c) => `  • ${c.label}: ${c.currentValue} → ${c.newValue}`)
+        .join("\n");
+      const apply = window.confirm(
+        `📊 Тариф обновлён в ЛК WB. Применить новые значения?\n\n` +
+          summary +
+          `\n\nOK — применить, Отмена — оставить ваши значения.`,
+      );
+      if (apply) {
+        const patch: Partial<SavedParams> = {};
+        for (const c of conflicts) {
+          (patch as any)[c.field] = c.newValue;
+        }
+        update(patch);
+        // После применения — сбрасываем manual-флаги для этих полей,
+        // считаем что юзер согласился с auto-fill для них.
+        setManuallyEdited((m) => {
+          const next = { ...m };
+          for (const c of conflicts) delete next[c.field];
+          return next;
+        });
+      }
     }
-    if (transitFromBackend.threshold_l !== null) {
-      patch.volume_threshold_l = transitFromBackend.threshold_l;
-    }
-    if (Object.keys(patch).length > 0) update(patch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transitFromBackend?.synced_at, params.hub, params.final_warehouse]);
 
@@ -978,9 +1066,10 @@ export default function TransitCalculator() {
               min="0"
               step="0.1"
               value={params.rate_small}
-              onChange={(e: any) =>
-                update({ rate_small: Number(e.target.value) || 0 })
-              }
+              onChange={(e: any) => {
+                markManual("rate_small");
+                update({ rate_small: Number(e.target.value) || 0 });
+              }}
             />
           </label>
           <label className="flex flex-col gap-1">
@@ -996,9 +1085,10 @@ export default function TransitCalculator() {
               min="0"
               step="0.1"
               value={params.rate_large}
-              onChange={(e: any) =>
-                update({ rate_large: Number(e.target.value) || 0 })
-              }
+              onChange={(e: any) => {
+                markManual("rate_large");
+                update({ rate_large: Number(e.target.value) || 0 });
+              }}
             />
           </label>
           <label className="flex flex-col gap-1">
@@ -1014,9 +1104,10 @@ export default function TransitCalculator() {
               min="1"
               step="100"
               value={params.volume_threshold_l}
-              onChange={(e: any) =>
-                update({ volume_threshold_l: Number(e.target.value) || 0 })
-              }
+              onChange={(e: any) => {
+                markManual("volume_threshold_l");
+                update({ volume_threshold_l: Number(e.target.value) || 0 });
+              }}
             />
           </label>
         </div>

@@ -255,4 +255,4 @@ _Пока пусто. Audit-задачи TASK-UI-001..003 в Sprint 1 превр
   }}
   ```
 - **Связанные задачи:** TASK-LEAD-066
-- **Статус:** Открыт
+- **Статус:** Исправлено — 2026-05-25 (onClick детектит `button===1 || metaKey || ctrlKey || shiftKey` — на tr и на вложенном Link; popup НЕ закрывается при middle/cmd/ctrl/shift-click)

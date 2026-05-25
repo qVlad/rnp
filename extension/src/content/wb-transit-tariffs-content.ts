@@ -51,11 +51,21 @@ window.addEventListener("message", (e: MessageEvent) => {
   if (hash === lastSentHash) return;
   lastSentHash = hash;
 
+  // BUG-DEV-015: пробрасываем URL который extension перехватил
+  // (`location.href` страницы где сработал interceptor) — backend
+  // использует это для whitelist-проверки и тренировки парсера.
+  const sourceUrl = typeof location !== "undefined" ? location.href : null;
+
   console.log(
-    `[rnp-ext content transit] forwarding ${rows.length} transit tariffs to SW (hash=${hash})`,
+    `[rnp-ext content transit] forwarding ${rows.length} transit tariffs to SW (hash=${hash}, src=${sourceUrl})`,
   );
   chrome.runtime
-    .sendMessage({ type: "rnp:transit-tariffs", rows, hash })
+    .sendMessage({
+      type: "rnp:transit-tariffs",
+      rows,
+      hash,
+      source_url: sourceUrl,
+    })
     .then((r) => {
       console.log("[rnp-ext content transit] SW →", r);
     })

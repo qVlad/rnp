@@ -514,6 +514,9 @@ async function maybeUploadTransitTariffs(payload: {
     threshold_l: number | null;
   }>;
   hash: string;
+  // BUG-DEV-015: URL страницы где extension перехватил тариф. Backend
+  // использует для whitelist-проверки + audit_log.
+  source_url?: string | null;
 }): Promise<TransitUploadResult> {
   const settings = await getSettings();
   if (!settings.rnpUrl || !settings.rnpToken) return { status: "no-rnp-token" };
@@ -545,7 +548,10 @@ async function maybeUploadTransitTariffs(payload: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${settings.rnpToken}`,
         },
-        body: JSON.stringify({ items }),
+        body: JSON.stringify({
+          items,
+          source_url: payload.source_url ?? null,
+        }),
       },
     );
     if (r.status === 403) {
@@ -704,6 +710,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           threshold_l: number | null;
         }>,
         hash: msg.hash,
+        source_url:
+          typeof msg.source_url === "string" ? msg.source_url : null,
       });
       console.log(`[rnp-ext SW] transit-tariffs →`, result);
       sendResponse(result);

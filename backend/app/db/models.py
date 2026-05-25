@@ -2561,6 +2561,10 @@ class WbTransitTariff(Base, TenantScopedMixin):
     synced_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    # BUG-DEV-015: audit URL источника (с какой страницы ЛК WB extension
+    # перехватил тариф). nullable — legacy записи без source_url остаются.
+    # Whitelist-валидация (`seller.wildberries.ru/*`) — на backend при upload.
+    source_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     __table_args__ = (
         UniqueConstraint(

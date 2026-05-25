@@ -257,10 +257,10 @@
 - **Причина:** Extension MAIN-world interceptor парсит произвольные WB-ответы по shape (`looksLikeTransitTariffs` требует ≥2 строки с числовым полем + warehouseFrom/To). Если WB изменит формат и shape-парсер случайно подхватит non-tariff данные с похожими полями — backend примет без алерта. Backend `POST /api/transit-tariffs/upload` валидирует только `rate ≥ 0` + min_length. Нет аудит-поля «откуда взяли» (URL который перехватили) — невозможно тренировать парсер по реальным данным.
 - **Затронутые файлы:** `extension/src/content/wb-transit-tariffs-interceptor-main.ts:146-159`, `backend/app/api/transit_tariffs.py:134-242`
 - **Критерии исправления:**
-  - [ ] Backend сохраняет source-URL в `wb_transit_tariff.source_url` (новая колонка миграцией) или в audit_log
-  - [ ] Backend strict-validation на shape (Pydantic strict mode для TariffRowUpload)
-  - [ ] Alert если upload пришёл с URL не из whitelist (`seller.wildberries.ru/...`)
-- **Статус:** Открыт
+  - [x] Backend сохраняет source-URL в `wb_transit_tariff.source_url` (новая колонка миграцией 0060) + audit_log meta
+  - [x] Backend strict-validation на shape (Pydantic `extra='forbid'` для `TariffRowUpload` + `TransitTariffUploadIn`)
+  - [x] Alert если upload пришёл с URL не из whitelist (`*.wildberries.ru` / `*.wb.ru`) — logger.warning + `suspicious_source=true` в audit_log meta
+- **Статус:** Исправлено — 2026-05-25
 
 ---
 
@@ -273,9 +273,9 @@
 - **Причина:** `useEffect` в TransitCalculator зависит от `transitFromBackend?.synced_at`. Когда extension синкает новый тариф — useEffect триггерится → fields `rate_small/large/threshold` обновляются. Условие `autoFilled === key` защищает только в рамках одной сессии. Если юзер открыл страницу, тариф ещё не синканулся, ввёл свой `rate_small=10`, extension через 5 минут синканул тариф 8 — поле молча обновится на 8. Юзер не увидит что его правка ушла, кроме banner «обновлён только что».
 - **Затронутые файлы:** `frontend/src/pages/TransitCalculator.tsx:496-513`
 - **Критерии исправления:**
-  - [ ] При наличии manual-edit (юзер изменил значение после загрузки) — не overwrite автоматически
-  - [ ] Если auto-fill хочет overwrite — показать toast «Тариф обновлён в ЛК WB. Применить? [да / отмена]» с дефолтом отмена
-- **Статус:** Открыт
+  - [x] При наличии manual-edit (юзер изменил значение после загрузки) — не overwrite автоматически. Флаг `manuallyEdited.{rate_small|rate_large|volume_threshold_l}` ставится в onChange.
+  - [x] Если auto-fill хочет overwrite поле с manual-edit — `window.confirm()` «📊 Тариф обновлён в ЛК WB. Применить? OK/Отмена» с дефолтом Отмена (= оставить мой). Поля без manual-edit обновляются silently как раньше.
+- **Статус:** Исправлено — 2026-05-25
 
 ---
 

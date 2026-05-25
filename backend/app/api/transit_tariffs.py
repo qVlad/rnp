@@ -21,11 +21,13 @@ Write только для director/head (как и `/lk/connect` в redistributi
 """
 from __future__ import annotations
 
+import logging
+import re
 from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func as sa_func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,6 +43,15 @@ from app.services.auth import (
 
 
 router = APIRouter(prefix="/api/transit-tariffs", tags=["transit-tariffs"])
+logger = logging.getLogger(__name__)
+
+# BUG-DEV-015: whitelist URL'ов из ЛК WB. Если extension прислал upload с
+# URL не из этого списка — логируем warning (потенциально подозрительный
+# источник: shape-парсер случайно подхватил non-tariff данные).
+_SOURCE_URL_WHITELIST_RE = re.compile(
+    r"^https?://([a-z0-9-]+\.)*(wildberries\.ru|wb\.ru)\b",
+    re.IGNORECASE,
+)
 
 
 class TransitTariffRow(BaseModel):
@@ -54,6 +65,13 @@ class TransitTariffRow(BaseModel):
 
 
 class TransitTariffUploadItem(BaseModel):
+    """BUG-DEV-015: strict-validation — `extra='forbid'` reject'ит unknown
+    поля (если WB изменит shape и парсер захватит мусор, мы не сохраним
+    его молча). Поля типизированы конкретно — Pydantic выкинет 422 если
+    rate_small приходит строкой "abc" или dict вместо числа."""
+
+    model_config = ConfigDict(extra="forbid", strict=False)
+
     hub_name: str = Field(min_length=1, max_length=255)
     destination_warehouse: str = Field(min_length=1, max_length=255)
     rate_small: float | None = Field(default=None, ge=0)
@@ -63,7 +81,15 @@ class TransitTariffUploadItem(BaseModel):
 
 
 class TransitTariffUploadIn(BaseModel):
+    """BUG-DEV-015: `source_url` опциональное audit-поле — URL страницы ЛК WB
+    с которой extension перехватил тариф. Используется для whitelist-проверки
+    и тренировки shape-парсера. `extra='forbid'` reject'ит unknown поля на
+    верхнем уровне (если extension пришлёт лишний мусор — увидим 422)."""
+
+    model_config = ConfigDict(extra="forbid")
+
     items: list[TransitTariffUploadItem] = Field(default_factory=list)
+    source_url: str | None = Field(default=None, max_length=512)
 
 
 def _row_to_dto(r: WbTransitTariff) -> dict[str, Any]:
@@ -152,6 +178,20 @@ async def upload_transit_tariffs(
     if not items:
         return {"inserted_or_updated": 0, "skipped": 0, "total_received": 0}
 
+    # BUG-DEV-015: whitelist-проверка URL. Не reject'им (тариф может быть
+    # валидным), но логируем warning — alertable через grep по логам и
+    # audit_log (meta.suspicious_source).
+    source_url = (payload.source_url or "").strip()[:512] or None
+    suspicious_source = False
+    if source_url and not _SOURCE_URL_WHITELIST_RE.match(source_url):
+        suspicious_source = True
+        logger.warning(
+            "transit-tariffs upload from suspicious URL: %s (tenant=%s actor=%s)",
+            source_url,
+            user.tenant_id,
+            user.username,
+        )
+
     skipped = 0
     rows_to_upsert: list[dict[str, Any]] = []
     seen_keys: set[tuple[str, str]] = set()
@@ -185,6 +225,7 @@ async def upload_transit_tariffs(
                     Decimal(str(it.threshold_l)) if it.threshold_l is not None else None
                 ),
                 "currency": (it.currency or "RUB")[:8],
+                "source_url": source_url,
             }
         )
 
@@ -216,6 +257,7 @@ async def upload_transit_tariffs(
                 "rate_large": stmt.excluded.rate_large,
                 "threshold_l": stmt.excluded.threshold_l,
                 "currency": stmt.excluded.currency,
+                "source_url": stmt.excluded.source_url,
                 "synced_at": sa_func.now(),
             },
         )
@@ -231,6 +273,8 @@ async def upload_transit_tariffs(
             "rows": total_upserted,
             "skipped": skipped,
             "source": "chrome-extension",
+            "source_url": source_url,
+            "suspicious_source": suspicious_source,
         },
         actor=user.username,
     )
