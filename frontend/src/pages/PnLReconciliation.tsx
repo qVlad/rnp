@@ -62,6 +62,15 @@ export default function PnLReconciliation() {
           </span>
         }
         subtitle="сравнение нашей P&L с финальным отчётом WB по каждой неделе"
+        actions={
+          <a
+            href="/docs/reconciliation"
+            className="btn text-xs"
+            title="Методика сверки P&L с WB (TASK-LEAD-095)"
+          >
+            📖 Методика
+          </a>
+        }
       />
 
       <div className="card text-xs text-muted leading-relaxed">

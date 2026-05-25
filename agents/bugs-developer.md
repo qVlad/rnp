@@ -290,10 +290,10 @@
   - `frontend/src/components/ReconciliationHeroWidget.tsx:85`
   - `frontend/src/components/StateOfBusinessCard.tsx:248-249`
 - **Критерии исправления:**
-  - [ ] Унифицировать threshold — `>= 95 && <= 105` (capture положительную WB-компенсацию)
-  - [ ] Вынести константу в один общий модуль (например `services/reconciliation_thresholds.ts`) чтобы не дрейфовало в будущем
-  - [ ] Обновить tooltip-объяснение в обоих компонентах
-- **Статус:** Открыт
+  - [x] Унифицировать threshold — `>= 95 && <= 105` (capture положительную WB-компенсацию)
+  - [x] Вынести константу в один общий модуль `frontend/src/lib/reconciliationThresholds.ts` (`PAYOUT_SHARE_NORM_MIN/MAX/DANGER_BELOW` + `payoutShareClass()`)
+  - [x] Обновить tooltip-объяснение в обоих компонентах
+- **Статус:** Исправлено — 2026-05-26 (`payoutShareClass` теперь shared; ReconciliationHeroWidget + StateOfBusinessCard оба читают единый threshold)
 
 ---
 

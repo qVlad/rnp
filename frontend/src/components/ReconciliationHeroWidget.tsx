@@ -17,6 +17,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "@/api/client";
 import { fmtRub, fmtPct } from "@/lib/format";
+import { payoutShareClass, PAYOUT_SHARE_DANGER_BELOW } from "@/lib/reconciliationThresholds";
 import { Icon } from "./Icon";
 
 interface PeriodRow {
@@ -78,17 +79,15 @@ export default function ReconciliationHeroWidget() {
   const periodLabel = `${latest.period_from} — ${latest.period_to}`;
 
   // ── Карточка 2: «Доля выплаты» (payout / gross %)
+  // BUG-DEV-017 — единый threshold через `lib/reconciliationThresholds`
+  // (раньше у этого компонента было >=95 && <=100, у StateOfBusinessCard — <=105,
+  // payout >100% от положительной WB-компенсации давал разный цвет).
   const payoutShare = latest.diff.payout_to_gross_pct;
-  const payoutCls =
-    payoutShare == null
-      ? "text-muted"
-      : payoutShare >= 95 && payoutShare <= 100
-        ? "text-success"
-        : payoutShare < 85
-          ? "text-danger"
-          : "text-warn";
+  const payoutCls = payoutShareClass(payoutShare);
   const payoutBgCls =
-    payoutShare != null && payoutShare < 85 ? "border border-danger/40" : "";
+    payoutShare != null && payoutShare < PAYOUT_SHARE_DANGER_BELOW
+      ? "border border-danger/40"
+      : "";
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

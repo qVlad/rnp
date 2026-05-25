@@ -144,6 +144,15 @@ export default function SupplyCalculator() {
             .
           </>
         }
+        actions={
+          <a
+            href="/docs/supply-calculator"
+            className="btn text-xs"
+            title="Методика расчёта прямой поставки (TASK-LEAD-095)"
+          >
+            📖 Методика
+          </a>
+        }
       />
 
       {/* Form */}

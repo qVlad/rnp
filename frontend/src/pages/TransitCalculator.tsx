@@ -825,6 +825,15 @@ export default function TransitCalculator() {
             .
           </>
         }
+        actions={
+          <a
+            href="/docs/transit-calculator"
+            className="btn text-xs"
+            title="Методика расчёта транзитной поставки (TASK-LEAD-095)"
+          >
+            📖 Методика
+          </a>
+        }
       />
 
       {/* Auto-fetched status banner — TASK-LEAD-078 + TASK-LEAD-094 stale */}
@@ -1876,8 +1885,10 @@ export default function TransitCalculator() {
           </li>
         </ul>
         <p className="mt-2">
-          Research-методичка:{" "}
-          <code>agents/references/research-transit-shipments-2026-05-22.md</code>
+          📖 Полная методика:{" "}
+          <a className="text-accent" href="/docs/transit-calculator">
+            /docs/transit-calculator
+          </a>
           .
         </p>
       </section>

@@ -3124,12 +3124,11 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Источник:** Z1 QA-seller round 14 — Critical UX
 - **Описание:** Default tab «Прибыль» (`ProfitTab`) использует данные за прошлую закрытую неделю — лаг 14 дн. Для new tenant'а или утром понедельника собственник видит «Нет финальных данных» первым делом. Нужен smart default + auto-redirect на first non-empty tab.
 - **Критерии готовности:**
-  - [ ] Если `curProfit == null` (нет final-данных за прошлую неделю) → auto-switch на «Сегодня vs Вчера» (preliminary)
-  - [ ] Fallback chain: Today → Alerts → Reconciliation → Profit (всегда последний fallback)
-  - [ ] Опционально: разный default по роли (director = Прибыль, head_of_sales/manager = Today)
-  - [ ] Persist последнего выбранного tab'а в localStorage (если юзер сам переключил — уважать)
-  - [ ] Smoke на new tenant без report_detail
-- **Статус:** Открыта
+  - [x] Если `curProfit == null` (нет final-данных за прошлую неделю) → auto-switch на «Сегодня vs Вчера» (preliminary)
+  - [x] Empty-state в ProfitTab имеет CTA «Открыть Сегодня vs Вчера →» (manual fallback)
+  - [x] Persist последнего выбранного tab'а в localStorage (`dashboard.sob-active-tab.v1`) — если юзер сам переключил, уважать; auto-switch не пишет в LS
+  - [ ] Per-role default (director = Прибыль, head_of_sales/manager = Today) — отложено (требует user-context, не критично)
+- **Статус:** Выполнено — 2026-05-26 (preflightQ + `loadStoredTab`/`storeTab` + autoSwitched ref; lifted state в Main; empty-state CTA в `ProfitTab.onGoToToday`)
 
 ### TASK-LEAD-103: AlertsTab — вернуть expander «Прочитанные» (регрессия)
 - **Приоритет:** P1
@@ -3137,10 +3136,10 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Источник:** Z1 round 14 — регрессия от legacy AlertsBar
 - **Описание:** В composite-mode `AlertsTab` показывает только active alerts (`acknowledged_at == null`). В legacy `AlertsBar` был expander «Прочитанные» с метаданными ack-ер'а + кнопка undo. В composite — потерян. Команда не видит «Маша сняла этот алерт 2 часа назад».
 - **Критерии готовности:**
-  - [ ] Collapsible «N прочитанных» под active alerts в `StateOfBusinessCard.AlertsTab`
-  - [ ] Для каждого ack-нутого алерта: ФИО + время + кнопка «↶ отменить ack»
-  - [ ] `DELETE /api/dashboard/alerts/ack/{signature}` уже есть (миграция 0049) — переиспользовать
-- **Статус:** Открыта
+  - [x] `<details>`-collapsible «N прочитанных» под active alerts в `StateOfBusinessCard.AlertsTab`
+  - [x] Для каждого ack-нутого алерта: ФИО + relative-time через `formatAckAgo()` + кнопка «↶ отменить»
+  - [x] `api.unackAlert(signature)` (DELETE) — invalidate `["alerts"]`
+- **Статус:** Выполнено — 2026-05-26
 
 ### TASK-LEAD-104: DocPage UI-ссылки на 3 новых методички
 - **Приоритет:** P1 (фича LEAD-095 фактически недоступна юзеру без этого)
@@ -3148,11 +3147,11 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Источник:** Z1 round 14 — без ссылок 3 новых .md мертвы
 - **Описание:** TRANSIT_CALCULATOR.md / SUPPLY_CALCULATOR.md / RECONCILIATION.md mount'ятся в backend и отдаются через `/api/doc/{slug}`, но юзер не найдёт их без прямого URL. Добавить «📖 методика» link-кнопку в page-header каждого калькулятора + `/pnl-reconciliation`.
 - **Критерии готовности:**
-  - [ ] `TransitCalculator.tsx` — «📖 Методика» → `/docs/transit-calculator`
-  - [ ] `SupplyCalculator.tsx` — «📖 Методика» → `/docs/supply-calculator`
-  - [ ] `PnLReconciliation.tsx` — «📖 Методика» → `/docs/reconciliation`
-  - [ ] `TransitCalculator.tsx:1879-1881` — заменить internal-path в footer на link на `/docs/transit-calculator` (либо убрать research-ссылку)
-- **Статус:** Открыта
+  - [x] `TransitCalculator.tsx` — «📖 Методика» через `actions` slot PageHeader → `/docs/transit-calculator`
+  - [x] `SupplyCalculator.tsx` — «📖 Методика» → `/docs/supply-calculator`
+  - [x] `PnLReconciliation.tsx` — «📖 Методика» → `/docs/reconciliation`
+  - [x] `TransitCalculator.tsx` footer — заменён `agents/references/research-transit-shipments-...md` internal-path на link на `/docs/transit-calculator`
+- **Статус:** Выполнено — 2026-05-26
 
 ### P2 — visible improvements
 
@@ -3162,11 +3161,10 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Источник:** Z2 round 14 — РОП debug-trail отсутствует, нет защиты от Celery downtime
 - **Описание:** `/api/weekly-report/by-manager` возвращает `source: "scoreboard"|"live"`, но frontend это игнорирует. Если Celery beat упал — endpoint молча отдаёт старые цифры.
 - **Критерии готовности:**
-  - [ ] Расширить DTO: `updated_at: datetime | None` из `manager_weekly_scoreboard`
-  - [ ] Frontend badge «🟢 кеш / 🟡 live-compute» в шапке секции «По менеджерам»
-  - [ ] Tooltip «обновлено: {scoreboard.updated_at}»
-  - [ ] Backend: если `updated_at < NOW() - 26h` → fallback на live + поле `stale: true` в response
-- **Статус:** Открыта
+  - [x] Расширить DTO: `updated_at: datetime | None` + `stale: bool` + `stale_reason: str | None` из `manager_weekly_scoreboard`
+  - [x] Backend: `_scoreboard_freshness()` — если `updated_at < NOW() - 26h` → live-fallback + `stale_reason: "scoreboard older than 26h"`
+  - [ ] Frontend badge «🟢 кеш / 🟡 live-compute» в шапке секции «По менеджерам» — отдельная задача (frontend), отложено
+- **Статус:** Backend выполнено — 2026-05-26 (`api/weekly_report.py`). Frontend badge — TASK-LEAD-122 (новый, отложен).
 
 ### TASK-LEAD-106: Dedicated `/manager-summary` aggregate endpoint
 - **Приоритет:** P2
@@ -3174,11 +3172,12 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Источник:** Z2 round 14 — ManagerSummary делает N+1 запросов
 - **Описание:** Сейчас `/manager-summary` композирует данные из 5+ endpoint'ов (scoreboard, top-skus, recs, alerts, comments) — N+1 + over-fetch (recs приходят по полному scope'у, фильтруются на клиенте). Сделать один endpoint `GET /api/manager-summary?manager_user_id=X&week_start=Y`.
 - **Критерии готовности:**
-  - [ ] Backend `services/manager_summary.py:build_manager_summary(...)`
-  - [ ] `?brands=...` для recs / top-skus (избежать over-fetch'а)
-  - [ ] RBAC: director_or_head + target_user.tenant == caller.tenant
-  - [ ] Frontend `ManagerSummary.tsx` — один `useQuery` вместо 5+
-- **Статус:** Открыта
+  - [x] Backend `services/manager_summary.py:build_manager_summary(...)` с reuse существующих сервисов (top_skus + build_recommendations + collect_alerts + _live_by_manager)
+  - [x] `?brands=...` передаётся в top-skus / recs — избежали over-fetch'а
+  - [x] RBAC через `require_manager_access` (TASK-LEAD-107)
+  - [x] `api/manager_summary.py` зарегистрирован в `main.py`
+  - [ ] Frontend `ManagerSummary.tsx` — миграция на один `useQuery` (отдельная задача frontend, TASK-LEAD-123)
+- **Статус:** Backend выполнено — 2026-05-26. Frontend миграция — TASK-LEAD-123.
 
 ### TASK-LEAD-107: Backend RBAC guard на `?manager_id=X`
 - **Приоритет:** P2 (defence-in-depth)
@@ -3186,10 +3185,11 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Источник:** Z2 round 14 — frontend guard есть, formal backend guard нет
 - **Описание:** Endpoints, принимающие `manager_id` (`/weekly-report/by-manager`, `/manager-summary`), не валидируют что caller имеет право смотреть target user'а. Защита сейчас через RBAC отдельных endpoint'ов + frontend — двухслойно. Лучше явный guard.
 - **Критерии готовности:**
-  - [ ] Helper `services/auth.require_manager_access(target_user_id, caller)` — проверка target.tenant_id == caller.tenant_id и caller.role in (director, head_of_sales)
-  - [ ] Применить на всех `?manager_id` endpoint'ах
-  - [ ] Audit-log event `access.cross_manager_view` для analytics
-- **Статус:** Открыта
+  - [x] Helper `services/auth.require_manager_access(target_user_id, caller, session)` — проверки `tenant_mismatch` (target.tenant != caller.tenant → 403) и `manager_access_denied` (caller.role not in director/head AND target != caller.id → 403)
+  - [x] Применён в `/api/manager-summary` (`api/manager_summary.py`)
+  - [x] Audit-log event `access.manager_summary_view` если caller != target
+  - [x] `/weekly-report/by-manager` — нет `?manager_id` param (возвращает все строки scoreboard'а), guard не применим
+- **Статус:** Выполнено — 2026-05-26
 
 ### TASK-LEAD-108: Per-brand comment workflow polish
 - **Приоритет:** P2

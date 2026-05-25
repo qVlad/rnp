@@ -19,15 +19,38 @@
  * Spec: agents/references/spec-state-of-business.md
  */
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
+import { payoutShareClass } from "@/lib/reconciliationThresholds";
 import { Icon, type IconName } from "./Icon";
 import { useReportingMode } from "@/contexts/ReportingModeContext";
 
 type TabKey = "profit" | "reconciliation" | "today" | "alerts";
+
+const TAB_STORAGE_KEY = "dashboard.sob-active-tab.v1";
+
+function loadStoredTab(): TabKey | null {
+  try {
+    const v = localStorage.getItem(TAB_STORAGE_KEY);
+    if (v === "profit" || v === "reconciliation" || v === "today" || v === "alerts") {
+      return v;
+    }
+  } catch {
+    /* SSR / privacy mode */
+  }
+  return null;
+}
+
+function storeTab(tab: TabKey): void {
+  try {
+    localStorage.setItem(TAB_STORAGE_KEY, tab);
+  } catch {
+    /* SSR / privacy mode */
+  }
+}
 
 interface Alert {
   level: "info" | "warning" | "danger";
@@ -113,7 +136,7 @@ function fmtByKey(key: string, val: number | string | null): string {
 // Tab: Прибыль
 // ─────────────────────────────────────────────────────────────────────
 
-function ProfitTab() {
+function ProfitTab({ onGoToToday }: { onGoToToday?: () => void }) {
   const current = lastClosedWeek();
   const previous = previousWeek(current);
   const { reportingMode } = useReportingMode();
@@ -144,9 +167,20 @@ function ProfitTab() {
 
   if (curProfit == null) {
     return (
-      <div className="text-sm text-muted">
-        Нет финальных данных за прошлую неделю. WB обычно закрывает
-        отчёт реализации с лагом ~14 дн.
+      <div className="flex flex-col gap-2 text-sm text-muted">
+        <div>
+          Нет финальных данных за прошлую неделю. WB обычно закрывает отчёт
+          реализации с лагом ~14 дн.
+        </div>
+        {onGoToToday && (
+          <button
+            type="button"
+            onClick={onGoToToday}
+            className="btn text-xs self-start"
+          >
+            Открыть «Сегодня vs Вчера» →
+          </button>
+        )}
       </div>
     );
   }
@@ -241,15 +275,9 @@ function ReconciliationTab() {
     : Math.abs(latest.diff.revenue_gross_pct) > 3
       ? "text-danger"
       : "text-warn";
+  // BUG-DEV-017 — единый threshold через `lib/reconciliationThresholds`.
   const payoutShare = latest.diff.payout_to_gross_pct;
-  const payoutCls =
-    payoutShare == null
-      ? "text-muted"
-      : payoutShare >= 95 && payoutShare <= 105
-        ? "text-success"
-        : payoutShare < 85
-          ? "text-danger"
-          : "text-warn";
+  const payoutCls = payoutShareClass(payoutShare);
 
   const grossForThreshold =
     latest.wb.revenue_gross || latest.ours.revenue_gross || 0;
@@ -394,59 +422,119 @@ function TodayTab() {
 // Tab: Алерты
 // ─────────────────────────────────────────────────────────────────────
 
+function formatAckAgo(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return "—";
+  const sec = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (sec < 60) return `${sec} сек назад`;
+  const min = Math.round(sec / 60);
+  if (min < 60) return `${min} мин назад`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr} ч назад`;
+  const d = Math.round(hr / 24);
+  return `${d} дн назад`;
+}
+
 function AlertsTab({ alerts }: { alerts: Alert[] }) {
   const qc = useQueryClient();
   const ackMut = useMutation({
     mutationFn: (a: Alert) => api.ackAlert(a.signature, a.code),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["alerts"] }),
   });
+  // TASK-LEAD-103 — undo ack (регрессия от legacy AlertsBar).
+  const unackMut = useMutation({
+    mutationFn: (a: Alert) => api.unackAlert(a.signature),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["alerts"] }),
+  });
 
   const visible = alerts.filter((a) => !a.acknowledged_at);
-  if (visible.length === 0) {
-    return (
-      <div className="text-sm text-muted">
-        <Icon name="check" size={14} /> Нет активных алертов.
-      </div>
-    );
-  }
+  const acked = alerts.filter((a) => !!a.acknowledged_at);
 
   return (
-    <div className="flex flex-col gap-1.5">
-      {visible.map((a) => (
-        <div
-          key={a.signature || a.code}
-          role="alert"
-          className={`flex items-start gap-2 px-3 py-2 rounded text-sm ${
-            ALERT_ROW_CLS[a.level] ?? ALERT_ROW_CLS.info
-          }`}
-        >
-          <Icon
-            name={ALERT_ICON_BY_LEVEL[a.level] ?? "info"}
-            size={14}
-            className="mt-0.5 shrink-0"
-          />
-          <span className="flex-1 leading-relaxed">{a.message}</span>
-          {a.link && (
-            <Link
-              to={a.link}
-              className="opacity-80 hover:opacity-100 underline underline-offset-2 whitespace-nowrap shrink-0"
-              title="Перейти"
-            >
-              открыть →
-            </Link>
-          )}
-          <button
-            type="button"
-            onClick={() => ackMut.mutate(a)}
-            disabled={ackMut.isPending}
-            className="opacity-80 hover:opacity-100 disabled:opacity-50 shrink-0"
-            aria-label="Прочитано"
-            title="Пометить прочитанным для всей команды"
-          >
-            <Icon name="close" size={14} />
-          </button>
+    <div className="flex flex-col gap-3">
+      {visible.length === 0 ? (
+        <div className="text-sm text-muted">
+          <Icon name="check" size={14} /> Нет активных алертов.
         </div>
-      ))}
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {visible.map((a) => (
+            <div
+              key={a.signature || a.code}
+              role="alert"
+              className={`flex items-start gap-2 px-3 py-2 rounded text-sm ${
+                ALERT_ROW_CLS[a.level] ?? ALERT_ROW_CLS.info
+              }`}
+            >
+              <Icon
+                name={ALERT_ICON_BY_LEVEL[a.level] ?? "info"}
+                size={14}
+                className="mt-0.5 shrink-0"
+              />
+              <span className="flex-1 leading-relaxed">{a.message}</span>
+              {a.link && (
+                <Link
+                  to={a.link}
+                  className="opacity-80 hover:opacity-100 underline underline-offset-2 whitespace-nowrap shrink-0"
+                  title="Перейти"
+                >
+                  открыть →
+                </Link>
+              )}
+              <button
+                type="button"
+                onClick={() => ackMut.mutate(a)}
+                disabled={ackMut.isPending}
+                className="opacity-80 hover:opacity-100 disabled:opacity-50 shrink-0"
+                aria-label="Прочитано"
+                title="Пометить прочитанным для всей команды"
+              >
+                <Icon name="close" size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {acked.length > 0 && (
+        <details className="text-xs text-muted">
+          <summary className="cursor-pointer select-none hover:text-fg">
+            {acked.length} прочитанных
+          </summary>
+          <div className="flex flex-col gap-1 mt-2 pl-2 border-l border-border">
+            {acked.map((a) => (
+              <div
+                key={a.signature || a.code}
+                className="flex items-start gap-2 py-1"
+              >
+                <Icon
+                  name={ALERT_ICON_BY_LEVEL[a.level] ?? "info"}
+                  size={12}
+                  className="mt-0.5 shrink-0 opacity-60"
+                />
+                <div className="flex-1 leading-relaxed">
+                  <div className="line-through opacity-70">{a.message}</div>
+                  <div className="text-[10px] opacity-70 font-mono">
+                    {a.acknowledged_by ?? "—"}
+                    {a.acknowledged_at
+                      ? ` · ${formatAckAgo(a.acknowledged_at)}`
+                      : ""}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => unackMut.mutate(a)}
+                  disabled={unackMut.isPending}
+                  className="opacity-70 hover:opacity-100 disabled:opacity-40 shrink-0 text-[11px] underline"
+                  title="Отменить прочитанным"
+                >
+                  ↶ отменить
+                </button>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
     </div>
   );
 }
@@ -467,7 +555,39 @@ const TAB_LABELS: Record<TabKey, string> = {
 };
 
 export default function StateOfBusinessCard({ alerts }: Props) {
-  const [active, setActive] = useState<TabKey>("profit");
+  // TASK-LEAD-102 — smart default tab.
+  // Если у юзера есть persisted choice → уважаем. Иначе — preflight profit query;
+  // когда видим curProfit==null (new tenant / empty week), auto-switch на «Сегодня
+  // vs Вчера» (preliminary, более вероятно есть данные). User clicks → persist.
+  const storedTab = useRef<TabKey | null>(loadStoredTab());
+  const [active, setActive] = useState<TabKey>(storedTab.current ?? "profit");
+  const autoSwitched = useRef(false);
+
+  const current = lastClosedWeek();
+  const { reportingMode } = useReportingMode();
+  const preflightQ = useQuery<any>({
+    queryKey: ["sob-profit", "current", current.from, current.to, reportingMode],
+    queryFn: () =>
+      api.dashboard({ start: current.from, end: current.to }, "final", reportingMode),
+    enabled: storedTab.current === null,
+  });
+
+  useEffect(() => {
+    if (autoSwitched.current) return;
+    if (storedTab.current !== null) return;
+    if (!preflightQ.data) return;
+    const curProfit = getKpi(preflightQ.data.kpis ?? [], "net_profit");
+    if (curProfit == null) {
+      autoSwitched.current = true;
+      setActive("today");
+    }
+  }, [preflightQ.data]);
+
+  const handleSetActive = (tab: TabKey) => {
+    storedTab.current = tab;
+    storeTab(tab);
+    setActive(tab);
+  };
 
   const activeAlerts = (alerts ?? []).filter((a) => !a.acknowledged_at);
   const alertsCount = activeAlerts.length;
@@ -489,7 +609,7 @@ export default function StateOfBusinessCard({ alerts }: Props) {
               type="button"
               role="tab"
               aria-selected={isActive}
-              onClick={() => setActive(k)}
+              onClick={() => handleSetActive(k)}
               className={`px-3 py-2 text-sm whitespace-nowrap border-b-2 transition-colors ${
                 isActive
                   ? "border-accent text-accent font-medium"
@@ -516,7 +636,9 @@ export default function StateOfBusinessCard({ alerts }: Props) {
       </div>
 
       <div className="pt-4">
-        {active === "profit" && <ProfitTab />}
+        {active === "profit" && (
+          <ProfitTab onGoToToday={() => handleSetActive("today")} />
+        )}
         {active === "reconciliation" && <ReconciliationTab />}
         {active === "today" && <TodayTab />}
         {active === "alerts" && <AlertsTab alerts={alerts ?? []} />}
