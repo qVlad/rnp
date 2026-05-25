@@ -37,6 +37,18 @@ type SavedParams = {
   // Прямой тариф довоза (если знаешь точное значение и не хочешь возиться
   // с двухступенчатой шкалой). Когда > 0 — используется ВМЕСТО small/large.
   rate_direct: number;
+  // External-логистика: физическая доставка партии от селлера/склада в
+  // транзитный хаб WB. WB этим не занимается, делает подрядчик/собственник.
+  // Можно указать одним числом за всю партию (delivery_to_hub_total) или
+  // ₽/шт (delivery_to_hub_per_unit). Если оба >0 — суммируются.
+  delivery_to_hub_total: number;
+  delivery_to_hub_per_unit: number;
+  // Override для «прямой поставки» в compare-блоке. По умолчанию мы считаем
+  // её из wb_tariff_box (delivery_base + delivery_liter × extraLiters per
+  // unit × units). Если у тебя другие условия (контракт WB, динамическая
+  // платная приёмка, или собственный довоз на конечный склад без WB) —
+  // впиши сюда сумму за всю партию. > 0 → используется вместо auto-расчёта.
+  direct_delivery_override: number;
 };
 
 const DEFAULTS: SavedParams = {
@@ -49,6 +61,9 @@ const DEFAULTS: SavedParams = {
   rate_large: 2.0,
   volume_threshold_l: 1500,
   rate_direct: 0,
+  delivery_to_hub_total: 0,
+  delivery_to_hub_per_unit: 0,
+  direct_delivery_override: 0,
 };
 
 // Известные хабы WB (на 2026-05, из research). Список свободно редактируется
@@ -98,6 +113,15 @@ function loadParams(): SavedParams {
         rate_direct: Number.isFinite(v.rate_direct)
           ? Number(v.rate_direct)
           : DEFAULTS.rate_direct,
+        delivery_to_hub_total: Number.isFinite(v.delivery_to_hub_total)
+          ? Number(v.delivery_to_hub_total)
+          : DEFAULTS.delivery_to_hub_total,
+        delivery_to_hub_per_unit: Number.isFinite(v.delivery_to_hub_per_unit)
+          ? Number(v.delivery_to_hub_per_unit)
+          : DEFAULTS.delivery_to_hub_per_unit,
+        direct_delivery_override: Number.isFinite(v.direct_delivery_override)
+          ? Number(v.direct_delivery_override)
+          : DEFAULTS.direct_delivery_override,
       };
     }
   } catch {}
@@ -114,6 +138,8 @@ type TransitResult = {
   totalVolume: number;
   appliedRate: number;
   rateTier: "small" | "large";
+  // External: довоз партии от селлера в транзитный хаб (manual user input).
+  deliveryToHubTotal: number;
   transitCost: number;
   storagePerUnitPerDay: number;
   storageTotal: number;
@@ -140,6 +166,11 @@ function computeTransit(
       : p.rate_large;
   const transitCost = totalVolume * appliedRate;
 
+  // External-логистика: довоз до хаба (manual user input).
+  const hubPerUnit = Math.max(0, p.delivery_to_hub_per_unit || 0);
+  const hubTotal = Math.max(0, p.delivery_to_hub_total || 0);
+  const deliveryToHubTotal = hubTotal + hubPerUnit * p.units;
+
   // Хранение на конечном складе — обычный тариф box (если выбран и есть тариф)
   let storagePerUnitPerDay = 0;
   if (finalTariff) {
@@ -150,12 +181,13 @@ function computeTransit(
     storagePerUnitPerDay = storageBase + extraLiters * storageLiter;
   }
   const storageTotal = storagePerUnitPerDay * p.units * p.storage_days;
-  const grandTotal = transitCost + storageTotal;
+  const grandTotal = deliveryToHubTotal + transitCost + storageTotal;
 
   return {
     totalVolume,
     appliedRate,
     rateTier,
+    deliveryToHubTotal,
     transitCost,
     storagePerUnitPerDay,
     storageTotal,
@@ -166,20 +198,47 @@ function computeTransit(
 function computeDirectSupply(
   finalTariff: TariffTimelineRow | null,
   p: SavedParams,
-): { acceptanceTotal: number; storageTotal: number; grandTotal: number } | null {
-  if (!finalTariff) return null;
-  const base = finalTariff.delivery_base ?? 0;
-  const perLiter = finalTariff.delivery_liter ?? 0;
-  const storageBase = finalTariff.storage_base ?? 0;
-  const storageLiter = finalTariff.storage_liter ?? 0;
-  const ceilL = Math.max(1, Math.ceil(p.liters_per_unit));
-  const extraLiters = Math.max(0, ceilL - 1);
-  const acceptancePerUnit = base + extraLiters * perLiter;
-  const storagePerUnitPerDay = storageBase + extraLiters * storageLiter;
-  const acceptanceTotal = acceptancePerUnit * p.units;
+): {
+  acceptanceTotal: number;
+  acceptanceSource: "wb_tariff" | "manual" | "none";
+  storageTotal: number;
+  grandTotal: number;
+} | null {
+  // Если юзер задал override — используем его (даже если нет finalTariff).
+  const override = Math.max(0, p.direct_delivery_override || 0);
+  const useOverride = override > 0;
+
+  if (!useOverride && !finalTariff) return null;
+
+  let acceptanceTotal = 0;
+  let acceptanceSource: "wb_tariff" | "manual" | "none" = "none";
+  let storagePerUnitPerDay = 0;
+
+  if (useOverride) {
+    acceptanceTotal = override;
+    acceptanceSource = "manual";
+  } else if (finalTariff) {
+    const base = finalTariff.delivery_base ?? 0;
+    const perLiter = finalTariff.delivery_liter ?? 0;
+    const ceilL = Math.max(1, Math.ceil(p.liters_per_unit));
+    const extraLiters = Math.max(0, ceilL - 1);
+    const acceptancePerUnit = base + extraLiters * perLiter;
+    acceptanceTotal = acceptancePerUnit * p.units;
+    acceptanceSource = "wb_tariff";
+  }
+
+  if (finalTariff) {
+    const storageBase = finalTariff.storage_base ?? 0;
+    const storageLiter = finalTariff.storage_liter ?? 0;
+    const ceilL = Math.max(1, Math.ceil(p.liters_per_unit));
+    const extraLiters = Math.max(0, ceilL - 1);
+    storagePerUnitPerDay = storageBase + extraLiters * storageLiter;
+  }
   const storageTotal = storagePerUnitPerDay * p.units * p.storage_days;
+
   return {
     acceptanceTotal,
+    acceptanceSource,
     storageTotal,
     grandTotal: acceptanceTotal + storageTotal,
   };
@@ -587,6 +646,90 @@ export default function TransitCalculator() {
         </div>
       </section>
 
+      {/* External logistics — physically deliver to hub */}
+      <section className="card">
+        <h3 className="font-medium mb-1 text-sm">
+          Внешняя логистика — довоз до хаба
+        </h3>
+        <p className="text-xs text-muted mb-3">
+          WB <b>не считает</b> доставку партии от склада/производителя до
+          транзитного хаба (Обухово, Шушары и т.д.) — это твои затраты на
+          подрядчика / собственный транспорт. Введи как одно число за всю
+          партию <i>или</i> ₽/шт — если оба заполнены, суммируются. Оставь
+          нули если довозишь бесплатно (например, хаб рядом).
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-muted uppercase tracking-wide">
+              Доставка до хаба, всего ₽
+            </span>
+            <input
+              type="number"
+              className="input"
+              min="0"
+              step="100"
+              value={params.delivery_to_hub_total}
+              placeholder="напр. 5000 за фуру"
+              onChange={(e: any) =>
+                update({ delivery_to_hub_total: Number(e.target.value) || 0 })
+              }
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-muted uppercase tracking-wide">
+              Доставка до хаба, ₽/шт
+            </span>
+            <input
+              type="number"
+              className="input"
+              min="0"
+              step="0.1"
+              value={params.delivery_to_hub_per_unit}
+              placeholder="напр. 12.5 если оплата за штуку"
+              onChange={(e: any) =>
+                update({
+                  delivery_to_hub_per_unit: Number(e.target.value) || 0,
+                })
+              }
+            />
+          </label>
+        </div>
+      </section>
+
+      {/* Direct delivery override — для compare-блока */}
+      <section className="card">
+        <h3 className="font-medium mb-1 text-sm">
+          Прямая поставка — переопределение (опционально)
+        </h3>
+        <p className="text-xs text-muted mb-3">
+          Compare-блок ниже сравнивает «транзит через хаб» vs «прямая
+          поставка на конечный склад». По умолчанию <b>прямая</b> считается
+          из тарифа WB (<code>delivery_base + delivery_liter × литры</code>{" "}
+          из <code>wb_tariff_box</code> — приёмка WB). Если у тебя другие
+          условия (контракт с WB, динамическая платная приёмка, или ты сам
+          довозишь на конечный склад без WB) — впиши итоговую сумму за всю
+          партию. <b>0 = использовать тариф WB.</b>
+        </p>
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-muted uppercase tracking-wide">
+            Прямая поставка, всего ₽ (override)
+          </span>
+          <input
+            type="number"
+            className="input md:w-1/2"
+            min="0"
+            step="100"
+            value={params.direct_delivery_override}
+            placeholder="0 = тариф WB по умолчанию"
+            onChange={(e: any) =>
+              update({
+                direct_delivery_override: Number(e.target.value) || 0,
+              })
+            }
+          />
+        </label>
+      </section>
+
       {/* Tariff info for final warehouse */}
       {finalTariff && (
         <section className="card text-xs text-muted">
@@ -638,9 +781,27 @@ export default function TransitCalculator() {
                 <> → «{params.final_warehouse}»</>
               ) : null}
             </h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div>
-                <div className="text-xs text-muted uppercase">Транзит</div>
+                <div
+                  className="text-xs text-muted uppercase"
+                  title="Внешняя логистика: ваша доставка от склада/производителя до транзитного хаба WB. Считается из полей выше «Доставка до хаба, всего ₽» + «₽/шт» × кол-во."
+                >
+                  Довоз до хаба
+                </div>
+                <div className="text-2xl font-mono font-semibold mt-1">
+                  {fmtRub(transit.deliveryToHubTotal)}
+                </div>
+                <div className="text-xs text-muted mt-1">
+                  {transit.deliveryToHubTotal > 0
+                    ? "ваш подрядчик / транспорт"
+                    : "не указано (бесплатно?)"}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-muted uppercase">
+                  Транзит WB (хаб→склад)
+                </div>
                 <div className="text-2xl font-mono font-semibold mt-1">
                   {fmtRub(transit.transitCost)}
                 </div>
@@ -702,7 +863,26 @@ export default function TransitCalculator() {
                 </thead>
                 <tbody>
                   <tr className="border-t border-border">
-                    <td className="p-2">Прямая поставка (acceptance)</td>
+                    <td className="p-2">
+                      Прямая поставка{" "}
+                      <span
+                        className="text-tiny text-faint"
+                        title={
+                          direct.acceptanceSource === "manual"
+                            ? "Источник: твой ручной override (поле «Прямая поставка, всего ₽» выше)"
+                            : direct.acceptanceSource === "wb_tariff"
+                              ? `Источник: тариф WB (delivery_base + delivery_liter × литры из wb_tariff_box). Чтобы переопределить — заполни поле «Прямая поставка, всего ₽» выше.`
+                              : "Нет тарифа WB для выбранного склада — заполни override выше"
+                        }
+                      >
+                        ({direct.acceptanceSource === "manual"
+                          ? "manual"
+                          : direct.acceptanceSource === "wb_tariff"
+                            ? "тариф WB"
+                            : "?"}
+                        )
+                      </span>
+                    </td>
                     <td className="p-2 text-right font-mono">
                       {fmtRub(direct.acceptanceTotal)}
                     </td>
@@ -714,9 +894,41 @@ export default function TransitCalculator() {
                     </td>
                   </tr>
                   <tr className="border-t border-border">
-                    <td className="p-2">Транзитная поставка</td>
+                    <td className="p-2">
+                      Транзит — довоз до хаба{" "}
+                      <span
+                        className="text-tiny text-faint"
+                        title="Внешняя логистика: подрядчик/собственный транспорт от склада до хаба WB. Заполняется вручную."
+                      >
+                        (manual)
+                      </span>
+                    </td>
+                    <td className="p-2 text-right font-mono">
+                      {fmtRub(transit.deliveryToHubTotal)}
+                    </td>
+                    <td className="p-2 text-right font-mono">—</td>
+                    <td className="p-2 text-right font-mono">
+                      {fmtRub(transit.deliveryToHubTotal)}
+                    </td>
+                  </tr>
+                  <tr className="border-t border-border">
+                    <td className="p-2">Транзит — хаб → конечный склад (WB)</td>
                     <td className="p-2 text-right font-mono">
                       {fmtRub(transit.transitCost)}
+                    </td>
+                    <td className="p-2 text-right font-mono">
+                      {fmtRub(transit.storageTotal)}
+                    </td>
+                    <td className="p-2 text-right font-mono">
+                      {fmtRub(transit.transitCost + transit.storageTotal)}
+                    </td>
+                  </tr>
+                  <tr className="border-t border-border font-semibold">
+                    <td className="p-2">Транзит — ИТОГО (довоз + WB)</td>
+                    <td className="p-2 text-right font-mono">
+                      {fmtRub(
+                        transit.deliveryToHubTotal + transit.transitCost,
+                      )}
                     </td>
                     <td className="p-2 text-right font-mono">
                       {fmtRub(transit.storageTotal)}
@@ -744,9 +956,10 @@ export default function TransitCalculator() {
                 </tbody>
               </table>
               <p className="text-xs text-muted mt-2">
-                Транзит обычно дороже прямой поставки, но позволяет везти груз
-                на близкий хаб вместо удалённого конечного склада. Сравнение
-                имеет смысл только если у вас есть выбор.
+                Транзит обычно дороже WB-прямой поставки <i>по WB-тарифу</i>,
+                но позволяет везти груз на близкий хаб вместо удалённого
+                конечного склада → экономия на внешней логистике (вашей).
+                Сравнение имеет смысл только если есть выбор куда везти.
               </p>
             </section>
           )}
