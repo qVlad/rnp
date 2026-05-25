@@ -66,6 +66,27 @@ export default function ReconciliationHeroWidget() {
 
   const bgCls = latest.diff.alert ? "border border-warn/40" : "";
 
+  // Threshold = 1% от gross — сколько рублей расхождения мы считаем нормой.
+  // Берём WB gross как baseline (он обычно ближе к «истинной» цифре).
+  const grossForThreshold =
+    latest.wb.revenue_gross || latest.ours.revenue_gross || 0;
+  const thresholdRub = grossForThreshold * 0.01;
+  // Округляем до тысяч для подписи: 123_456 → «~123 тыс ₽»
+  const thresholdThousands = Math.round(thresholdRub / 1000);
+
+  // 3-я цифра — «Доля выплаты» (payout / gross). Бэк уже считает это в
+  // diff.payout_to_gross_pct (см. /api/pnl/reconciliation). Это самый
+  // важный для seller'а индикатор — «сколько реально пришло на счёт».
+  const payoutShare = latest.diff.payout_to_gross_pct;
+  const payoutCls =
+    payoutShare == null
+      ? "text-muted"
+      : payoutShare >= 95 && payoutShare <= 105
+        ? "text-success"
+        : payoutShare < 85
+          ? "text-danger"
+          : "text-warn";
+
   return (
     <div className={`card ${bgCls}`}>
       <div className="flex items-baseline justify-between flex-wrap gap-2">
@@ -89,38 +110,63 @@ export default function ReconciliationHeroWidget() {
       </div>
       <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
         <div>
-          <div className="text-xs text-muted uppercase">Наш P&L (revenue gross)</div>
-          <div className="text-xl font-mono font-semibold mt-1">
-            {fmtRub(latest.ours.revenue_gross)}
-          </div>
-        </div>
-        <div>
-          <div className="text-xs text-muted uppercase">WB-кабинет</div>
-          <div className="text-xl font-mono font-semibold mt-1">
-            {fmtRub(latest.wb.revenue_gross)}
-          </div>
-          <div className="text-xs text-muted">payout: {fmtRub(latest.wb.payout)}</div>
-        </div>
-        <div>
-          <div className="text-xs text-muted uppercase">Δ revenue</div>
+          <div className="text-xs text-muted uppercase">Δ выручки</div>
           <div className={`text-xl font-mono font-semibold mt-1 ${deltaCls}`}>
             {fmtPctSigned(latest.diff.revenue_gross_pct)}
           </div>
           <div className="text-xs text-muted">
             {latest.diff.revenue_gross_abs >= 0 ? "+" : ""}
-            {fmtRub(latest.diff.revenue_gross_abs)} абс
+            {fmtRub(latest.diff.revenue_gross_abs)}
+          </div>
+          <div className="text-xs text-muted mt-0.5">
+            Наш P&L: {fmtRub(latest.ours.revenue_gross)} · WB:{" "}
+            {fmtRub(latest.wb.revenue_gross)}
+          </div>
+        </div>
+        <div>
+          <div
+            className="text-xs text-muted uppercase"
+            title="Сколько от валовой выручки реально пришло на расчётный счёт после WB-удержаний (комиссия, логистика, хранение, штрафы). Норма 95-100%."
+          >
+            Доля выплаты
+          </div>
+          <div className={`text-xl font-mono font-semibold mt-1 ${payoutCls}`}>
+            {payoutShare != null ? fmtPct(payoutShare, 1) : "—"}
+          </div>
+          <div className="text-xs text-muted">
+            payout {fmtRub(latest.wb.payout)} / gross
+          </div>
+          <div className="text-xs text-muted mt-0.5">
+            Норма 95-100% (то, что пришло на счёт)
+          </div>
+        </div>
+        <div>
+          <div className="text-xs text-muted uppercase">Порог Δ</div>
+          <div className="text-xl font-mono font-semibold mt-1 text-muted">
+            ≤ 1%
+          </div>
+          <div className="text-xs text-muted">
+            ≈ {thresholdThousands.toLocaleString("ru-RU")} тыс ₽ за эту неделю
+          </div>
+          <div className="text-xs text-muted mt-0.5">
+            Меньше — норма, больше — разобраться
           </div>
         </div>
       </div>
       {latest.diff.alert && (
         <div className="mt-3 text-xs text-warn">
-          <Icon name="warning" size={12} /> Δ &gt; 1% — есть расхождение. Открой подробную сверку чтобы понять причину
-          (неучтённые удержания / задержка sync / ретроспективная корректировка WB).
+          <Icon name="warning" size={12} /> Δ &gt; 1% (порог ≈{" "}
+          {thresholdThousands.toLocaleString("ru-RU")} тыс ₽) — есть
+          расхождение. Открой подробную сверку чтобы понять причину
+          (неучтённые удержания / задержка синхронизации / ретроспективная
+          корректировка WB).
         </div>
       )}
       {!latest.diff.alert && (
         <div className="mt-2 text-xs text-success">
-          <Icon name="check" size={12} /> Δ ≤ 1% — наши цифры сходятся с WB-кабинетом.
+          <Icon name="check" size={12} /> Δ ≤ 1% — наши цифры сходятся с
+          WB-кабинетом в пределах ≈{" "}
+          {thresholdThousands.toLocaleString("ru-RU")} тыс ₽.
         </div>
       )}
     </div>

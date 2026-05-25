@@ -224,6 +224,7 @@ export default function PromoCalculator() {
   }, [result]);
 
   const canSubmit = nmIds.length > 0 && !mut.isPending;
+  const hasResult = !!result;
 
   return (
     <div className="flex flex-col gap-4">
@@ -247,8 +248,26 @@ export default function PromoCalculator() {
         }
       />
 
+      {/*
+        TASK-LEAD-067: после симуляции — 2-col layout (sticky-form слева 40%,
+        results справа 60%). До симуляции — full-width форма для удобства
+        ввода параметров. На мобильном md- → stack (1-col).
+      */}
+      <div
+        className={
+          hasResult
+            ? "grid grid-cols-1 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-4 items-start"
+            : "flex flex-col gap-4"
+        }
+      >
       {/* Form */}
-      <div className="card flex flex-col gap-4">
+      <div
+        className={
+          hasResult
+            ? "card flex flex-col gap-4 md:sticky md:top-4 self-start"
+            : "card flex flex-col gap-4"
+        }
+      >
         <div>
           <label className="block text-sm font-medium mb-2">
             Артикулы для расчёта
@@ -262,7 +281,13 @@ export default function PromoCalculator() {
           <SkuMultiPicker value={nmIds} onChange={setNmIds} />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div
+          className={
+            hasResult
+              ? "grid grid-cols-1 sm:grid-cols-2 gap-3"
+              : "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3"
+          }
+        >
           <div>
             <label className="block text-sm font-medium mb-1">
               Скидка акции, %
@@ -365,7 +390,7 @@ export default function PromoCalculator() {
       {result && (
         <div className="card overflow-x-auto">
           {/* Totals */}
-          <div className="mb-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+          <div className="mb-3 grid grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
             <div>
               <div className="text-muted">Выручка без акции</div>
               <div className="font-mono">
@@ -545,6 +570,7 @@ export default function PromoCalculator() {
           </table>
         </div>
       )}
+      </div>
     </div>
   );
 }

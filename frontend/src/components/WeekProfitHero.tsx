@@ -12,6 +12,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub, fmtPct } from "@/lib/format";
+import { useReportingMode } from "@/contexts/ReportingModeContext";
 
 type Week = { from: string; to: string };
 
@@ -64,14 +65,17 @@ function fmtPeriod(w: Week): string {
 export default function WeekProfitHero() {
   const current = lastClosedWeek();
   const previous = previousWeek(current);
+  const { reportingMode } = useReportingMode();
 
   const curQ = useQuery<any>({
-    queryKey: ["week-profit-hero", "current", current.from, current.to],
-    queryFn: () => api.dashboard({ start: current.from, end: current.to }, "final"),
+    queryKey: ["week-profit-hero", "current", current.from, current.to, reportingMode],
+    queryFn: () =>
+      api.dashboard({ start: current.from, end: current.to }, "final", reportingMode),
   });
   const prevQ = useQuery<any>({
-    queryKey: ["week-profit-hero", "previous", previous.from, previous.to],
-    queryFn: () => api.dashboard({ start: previous.from, end: previous.to }, "final"),
+    queryKey: ["week-profit-hero", "previous", previous.from, previous.to, reportingMode],
+    queryFn: () =>
+      api.dashboard({ start: previous.from, end: previous.to }, "final", reportingMode),
   });
 
   if (curQ.isLoading || prevQ.isLoading) {
