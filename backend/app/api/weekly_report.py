@@ -12,7 +12,7 @@ Endpoints:
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -40,6 +40,12 @@ log = get_logger(__name__)
 router = APIRouter(prefix="/api/weekly-report", tags=["weekly-report"])
 
 
+# TASK-LEAD-105: pre-aggregate stale window. Если scoreboard старше 26h —
+# не отдаём silently старые цифры, а live-fallback. 26h = 24h nightly cycle
+# + 2h grace для случая когда beat запустился чуть позже.
+_SCOREBOARD_STALE_AFTER = timedelta(hours=26)
+
+
 def _scoreboard_row_to_item(row: ManagerWeeklyScoreboard) -> dict[str, Any]:
     """Convert ManagerWeeklyScoreboard row → API item (same shape as by_manager)."""
     return {
@@ -62,6 +68,30 @@ def _scoreboard_row_to_item(row: ManagerWeeklyScoreboard) -> dict[str, Any]:
         ),
         "wow_margin_pp": float(row.wow_margin_pp or 0),
     }
+
+
+def _scoreboard_freshness(
+    rows: list[ManagerWeeklyScoreboard],
+) -> tuple[datetime | None, bool]:
+    """Возвращает (max updated_at, stale_flag).
+
+    `stale=True` если самая старая `updated_at` среди rows старше 26h —
+    значит nightly job либо не запускался, либо упал. UI получает signal.
+    """
+    if not rows:
+        return None, False
+    timestamps = [r.updated_at for r in rows if r.updated_at is not None]
+    if not timestamps:
+        return None, False
+    newest = max(timestamps)
+    oldest = min(timestamps)
+    now = datetime.now(timezone.utc)
+    # `updated_at` хранится с tz=UTC (DateTime(timezone=True)). На случай если
+    # сравниваем naive vs aware — нормализуем.
+    if oldest.tzinfo is None:
+        oldest = oldest.replace(tzinfo=timezone.utc)
+    stale = (now - oldest) > _SCOREBOARD_STALE_AFTER
+    return newest, stale
 
 
 @router.get("/by-manager", dependencies=[Depends(require_director_or_head)])
@@ -94,7 +124,12 @@ async def weekly_report_by_manager(
         )
     ).scalars().all()
 
-    if rows:
+    updated_at, stale = _scoreboard_freshness(rows)
+
+    # TASK-LEAD-105: если есть rows но они stale (>26h) — fallback на
+    # live-compute. Иначе можно случайно отдать «зависшие» цифры если
+    # nightly job упал. UI получает source="live" + stale_reason для UX.
+    if rows and not stale:
         items = [_scoreboard_row_to_item(r) for r in rows]
         # Та же сортировка что и в by_manager(): по выручке desc,
         # «без брендов» — в хвост.
@@ -105,19 +140,34 @@ async def weekly_report_by_manager(
             "week_start": week_start.isoformat(),
             "items": items,
             "source": "scoreboard",
+            "updated_at": updated_at.isoformat() if updated_at else None,
+            "stale": False,
         }
 
     # Fallback на live-compute. Может быть медленно, но безопасно — лучше
-    # отдать актуальные цифры с задержкой, чем 404.
-    log.info(
-        "weekly_report.by_manager: scoreboard miss tenant=%s week=%s — live fallback",
-        user.tenant_id, week_start.isoformat(),
-    )
+    # отдать актуальные цифры с задержкой, чем 404 / stale цифры.
+    if rows and stale:
+        log.warning(
+            "weekly_report.by_manager: scoreboard STALE tenant=%s week=%s "
+            "(oldest updated_at > 26h ago) — live fallback",
+            user.tenant_id, week_start.isoformat(),
+        )
+        stale_reason: str | None = "scoreboard older than 26h"
+    else:
+        log.info(
+            "weekly_report.by_manager: scoreboard miss tenant=%s week=%s — live fallback",
+            user.tenant_id, week_start.isoformat(),
+        )
+        stale_reason = None
+
     items = await by_manager(session, user.tenant_id, week_start)
     return {
         "week_start": week_start.isoformat(),
         "items": items,
         "source": "live",
+        "updated_at": updated_at.isoformat() if updated_at else None,
+        "stale": bool(stale),
+        "stale_reason": stale_reason,
     }
 
 

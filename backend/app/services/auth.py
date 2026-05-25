@@ -353,3 +353,57 @@ async def current_brands_filter_with_bookkeeper(
         )
     ).scalars().all()
     return {b for b in rows if b}
+
+
+async def require_manager_access(
+    target_user_id: int,
+    caller: CurrentUser,
+    session: AsyncSession,
+) -> User:
+    """RBAC guard на `?manager_id=X` (TASK-LEAD-107).
+
+    Проверяет что `caller` имеет право смотреть scope менеджера
+    `target_user_id`. Логика:
+
+    1. Если `target_user_id == caller.id` → разрешаем (manager-as-self,
+       смотрит свой scope).
+    2. Иначе caller должен быть `director` / `head_of_sales` —
+       РОП смотрит чужого менеджера.
+    3. `target.tenant_id == caller.tenant_id` — cross-tenant запрещён
+       даже для director'а (multi-cabinet, каждый кабинет изолирован).
+
+    Возвращает `User` ORM-объект target'а (полезно вызывающему — full_name,
+    role и т.д.). Кидает 403 с понятным `detail`-кодом если access denied.
+
+    Использование::
+
+        target = await require_manager_access(manager_user_id, user, session)
+    """
+    target = await session.get(User, int(target_user_id))
+    if target is None:
+        raise HTTPException(404, "manager not found")
+
+    # Cross-tenant — запрещён всем, включая director'а (multi-cabinet).
+    if int(target.tenant_id) != int(caller.tenant_id):
+        raise HTTPException(
+            403,
+            {
+                "code": "tenant_mismatch",
+                "message": "target user belongs to another tenant",
+            },
+        )
+
+    # Self-access — manager смотрит свой scope.
+    if int(target.id) == int(caller.id):
+        return target
+
+    # Иначе — только director / head_of_sales.
+    if caller.role not in ("director", "head_of_sales"):
+        raise HTTPException(
+            403,
+            {
+                "code": "manager_access_denied",
+                "message": "only director / head_of_sales can view other managers' scope",
+            },
+        )
+    return target
