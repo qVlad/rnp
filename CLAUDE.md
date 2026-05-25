@@ -500,15 +500,24 @@ exclusive `end` — даст лишний день рекламы в Units (бы
 глобальный toggle `reporting_mode` — по какой дате группируется
 `wb_report_detail`:
 
-- **operational** (default) — `sale_dt` (день физического выкупа/возврата),
-  совпадает с дашбордом WB-кабинета и нашим прежним поведением. «Управленческий»
-  взгляд — менеджер/собственник видит когда деньги фактически отрабатывают.
-- **financial** — `rr_dt` (день когда WB зафиксировал строку в финансовом
-  отчёте, она же дата платёжки). Совпадает с разделом WB-«Финансы → Реализация».
-  Для бухгалтерской сверки с банком и УПД-выписками.
+- **operational** (default), UI label «По дню выкупа» — `sale_dt` (день
+  физического выкупа/возврата), совпадает с дашбордом WB-кабинета и нашим
+  прежним поведением. «Управленческий» взгляд — менеджер/собственник видит
+  когда деньги фактически отрабатывают.
+- **financial**, UI label «По дню платёжки» — `rr_dt` (день когда WB
+  зафиксировал строку в финансовом отчёте, она же дата платёжки). Совпадает
+  с разделом WB-«Финансы → Реализация». Для бухгалтерской сверки с банком
+  и УПД-выписками.
 
-Toggle в Layout-footer (виден всем кроме `bookkeeper` — там и так зашит rr_dt
-в налоговых отчётах). Persist в `localStorage["reportingMode.v1"]`. Frontend
+Toggle в Layout-footer виден `director` / `head_of_sales`. Скрыт от
+`manager` (TASK-LEAD-058 — в financial его brand-метрики получают 1-2
+недели lag по rr_dt → случайное переключение вызывало панику «выручка
+пропала») и от `bookkeeper` (у него зашит rr_dt в налоговых отчётах).
+Labels приведены к plain language (TASK-LEAD-059): было «Управленческий
+(заказ)» / «Финансовый (выплата)». Persist в `localStorage["reportingMode.v1"]`.
+В financial-режиме рядом с PageHeader на `/dashboard` и `/pnl` рендерится
+оранжевая плашка `<ReportingModeBadge>` «📊 По дню платёжки» (TASK-LEAD-060),
+чтобы юзер сразу видел что не в дефолте. Frontend
 читает через `useReportingMode()` (`contexts/ReportingModeContext.tsx`) и
 передаёт в API. Backend: `services/period_aggregates.get_period_filter(d_from,
 d_to, reporting_mode)` + `get_period_day(reporting_mode)` — универсальные

@@ -376,11 +376,14 @@ export default function Layout() {
             </div>
           )}
           {/* TASK-LEAD-054 — глобальный toggle режима отчётности
-              (operational / financial). Виден всем кроме bookkeeper'а
-              (у того доступ только к налоговой части — там rr_dt
-              уже жёстко зашит). Manager увидит — может пригодиться
-              для сверки с бухгалтерскими отчётами своего бренда. */}
-          {!collapsed && !isBookkeeper && (
+              (operational / financial). Скрыт от manager (TASK-LEAD-058):
+              в financial-режиме его бренд-метрики получают 1-2 нед lag
+              по rr_dt → случайное переключение вызывало панику «выручка
+              пропала». И от bookkeeper'а (у того доступ только к
+              налоговой части — там rr_dt уже жёстко зашит).
+              Labels — plain language (TASK-LEAD-059):
+              «По дню выкупа» / «По дню платёжки». */}
+          {!collapsed && !isBookkeeper && user?.role !== "manager" && (
             <div className="mb-2">
               <label
                 htmlFor="sidebar-reporting-mode"
@@ -395,12 +398,12 @@ export default function Layout() {
                 onChange={(e) => setReportingMode(e.target.value as "operational" | "financial")}
                 title={
                   "Группировка строк wb_report_detail. " +
-                  "Управленческий = по дню выкупа (sale_dt), как на дашборде WB. " +
-                  "Финансовый = по дню платёжки (rr_dt), как в разделе WB-«Финансы → Реализация» — для сверки с банком."
+                  "По дню выкупа = sale_dt, как на дашборде WB-кабинета. " +
+                  "По дню платёжки = rr_dt, как в разделе WB-«Финансы → Реализация» — для сверки с банком."
                 }
               >
-                <option value="operational">Управленческий (заказ)</option>
-                <option value="financial">Финансовый (выплата)</option>
+                <option value="operational">По дню выкупа</option>
+                <option value="financial">По дню платёжки</option>
               </select>
             </div>
           )}

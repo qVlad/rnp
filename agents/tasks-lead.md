@@ -2140,10 +2140,10 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Источник:** `feedback-reviews/round-12-2026-05-22.md` — UX-rop/manager 054
 - **Описание:** Manager в financial-режиме не работает (его метрики = «сколько мой бренд заработал», а financial добавляет 1-2 недели lag по rr_dt). Случайное переключение → видит «у меня выручка пропала» → паника. Скрыть toggle из `Layout.tsx` footer для роли `manager`.
 - **Критерии готовности:**
-  - [ ] В `Layout.tsx` footer: `{user?.role !== 'manager' && user?.role !== 'bookkeeper' && <ReportingModeSelector />}`
-  - [ ] Smoke: залогиниться manager'ом → toggle не виден в sidebar
+  - [x] В `Layout.tsx` footer: `{!isBookkeeper && user?.role !== 'manager' && <ReportingModeSelector />}` (условие `!collapsed && !isBookkeeper && user?.role !== "manager"` в строке 383)
+  - [x] Smoke: залогиниться manager'ом → toggle не виден в sidebar
 - **Зависимости:** TASK-LEAD-054 ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-25
 
 ---
 
@@ -2155,10 +2155,10 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Источник:** `feedback-reviews/round-12-2026-05-22.md` — UX-rop 054
 - **Описание:** «Управленческий (заказ)» / «Финансовый (выплата)» — методологическая терминология, не для UI. Заменить на plain language: «По дню выкупа» / «По дню платёжки». Это понятно без объяснения. Tooltip с подробностями оставить.
 - **Критерии готовности:**
-  - [ ] `frontend/src/contexts/ReportingModeContext.tsx` или `Layout.tsx` — labels изменены
-  - [ ] CLAUDE.md секция «Режим отчётности» обновлена с новыми labels
+  - [x] `Layout.tsx` — labels изменены (`По дню выкупа` / `По дню платёжки`), tooltip обновлён под новые названия.
+  - [x] CLAUDE.md секция «Режим отчётности» обновлена с новыми labels
 - **Зависимости:** TASK-LEAD-054 ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-25
 
 ---
 
@@ -2170,10 +2170,10 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Источник:** `feedback-reviews/round-12-2026-05-22.md` — UX-rop 054
 - **Описание:** В operational режиме (default) — silent. В financial — рядом с PageHeader на `/dashboard`, `/pnl` (любая страница где `useReportingMode()` влияет) показывать оранжевую плашку «📊 По дню платёжки». Юзер сразу видит что он не в дефолте.
 - **Критерии готовности:**
-  - [ ] Компонент `<ReportingModeBadge />` в `components/`. Чёрный в operational (или скрыт), оранжевый в financial.
-  - [ ] Встроить в PageHeader для Dashboard, PnL (минимум; идеально — все pages где `reporting_mode` используется)
-- **Зависимости:** TASK-LEAD-054 ✅, TASK-LEAD-059 (используют новые labels)
-- **Статус:** Открыта
+  - [x] Компонент `<ReportingModeBadge />` в `components/ReportingModeBadge.tsx`. В operational рендерит `null` (silent), в financial — `bg-warn/10 text-warn` плашка с иконкой 📊 и текстом «По дню платёжки» + tooltip с пояснением.
+  - [x] Встроен в `Dashboard.tsx` (рядом с h1 «Главное») и `PnL.tsx` (внутри `PageHeader.title` через wrapping span).
+- **Зависимости:** TASK-LEAD-054 ✅, TASK-LEAD-059 ✅
+- **Статус:** Выполнено — 2026-05-25
 
 ---
 

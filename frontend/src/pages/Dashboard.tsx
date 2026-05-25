@@ -36,6 +36,7 @@ import TodayVsYesterdayStrip from "@/components/TodayVsYesterdayStrip";
 import WeekProfitHero from "@/components/WeekProfitHero";
 import WeeklyChangesFeed from "@/components/WeeklyChangesFeed";
 import ReconciliationHeroWidget from "@/components/ReconciliationHeroWidget";
+import ReportingModeBadge from "@/components/ReportingModeBadge";
 import { usePeriod } from "@/contexts/PeriodContext";
 import { useReportingMode } from "@/contexts/ReportingModeContext";
 import ViewPresetsBar from "@/components/ViewPresetsBar";
@@ -226,6 +227,8 @@ export default function Dashboard() {
       <div className="flex items-center justify-between">
         <div className="flex items-baseline gap-3 flex-wrap">
           <h1 className="text-xl font-semibold">Главное</h1>
+          <ReportingModeBadge />
+
           <div className="flex items-center gap-1">
             <button
               type="button"

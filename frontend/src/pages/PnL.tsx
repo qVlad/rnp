@@ -14,6 +14,7 @@ import DeltaCell from "@/components/DeltaCell";
 import { usePeriod } from "@/contexts/PeriodContext";
 import { useReportingMode } from "@/contexts/ReportingModeContext";
 import PageHeader from "@/components/PageHeader";
+import ReportingModeBadge from "@/components/ReportingModeBadge";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const daysAgo = (n: number) => {
@@ -238,7 +239,12 @@ export default function PnL() {
         </div>
       )}
       <PageHeader
-        title="P&L — Отчёт о прибылях и убытках"
+        title={
+          <span className="inline-flex items-center gap-3 flex-wrap">
+            <span>P&amp;L — Отчёт о прибылях и убытках</span>
+            <ReportingModeBadge />
+          </span>
+        }
         actions={
           <div className="flex items-end gap-3 flex-wrap">
             <div className="flex gap-1" title="Вид отчёта">
