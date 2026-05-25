@@ -21,6 +21,7 @@ import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
 import { exportToPdf } from "@/lib/exportPdf";
 import { Icon } from "@/components/Icon";
 import PageHeader from "@/components/PageHeader";
+import ReportingModeBadge from "@/components/ReportingModeBadge";
 import DeltaCell from "@/components/DeltaCell";
 
 type Week = { from: string; to: string };
@@ -353,7 +354,12 @@ export default function WeeklyReport() {
   return (
     <div className="flex flex-col gap-4 max-w-5xl">
       <PageHeader
-        title="Еженедельный отчёт"
+        title={
+          <span className="inline-flex items-center gap-3 flex-wrap">
+            <span>Еженедельный отчёт</span>
+            <ReportingModeBadge />
+          </span>
+        }
         subtitle="Сводка за последнюю закрытую WB-неделю (mode=final) для отчётности РОПу."
         actions={
           <div className="flex items-center gap-2">

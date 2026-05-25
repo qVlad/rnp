@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub, fmtPct, fmtRatio } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
+import ReportingModeBadge from "@/components/ReportingModeBadge";
 
 // WB seller cabinet — раздел финансовых отчётов реализации.
 // Прямого URL на конкретный realization_id у WB нет — селлер открывает
@@ -54,7 +55,12 @@ export default function PnLReconciliation() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        title="Сверка с WB"
+        title={
+          <span className="inline-flex items-center gap-3 flex-wrap">
+            <span>Сверка с WB</span>
+            <ReportingModeBadge />
+          </span>
+        }
         subtitle="сравнение нашей P&L с финальным отчётом WB по каждой неделе"
       />
 

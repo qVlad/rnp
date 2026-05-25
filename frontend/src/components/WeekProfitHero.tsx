@@ -18,6 +18,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub, fmtPct } from "@/lib/format";
 import { useReportingMode } from "@/contexts/ReportingModeContext";
+import { useAuth } from "@/contexts/AuthContext";
 
 type Week = { from: string; to: string };
 
@@ -71,6 +72,17 @@ export default function WeekProfitHero() {
   const current = lastClosedWeek();
   const previous = previousWeek(current);
   const { reportingMode } = useReportingMode();
+  const { user } = useAuth();
+  // TASK-LEAD-083 (закрывает BUG-UI-006): для manager'а виджет считается по
+  // его brand-scope (через brands-filter на /api/dashboard), но заголовок
+  // «За неделю DD-DD месяц (закрыта)» терминологически читался как
+  // company-wide → менеджер сверял с цифрой собственника и недоумевал.
+  // Меняем заголовок на «по твоим брендам» — явный scope без скрытия виджета
+  // (он полезен manager'у: своя недельная прибыль одной строкой).
+  const isManager = user?.role === "manager";
+  const headerLabel = isManager
+    ? `За неделю ${fmtPeriod(current)} по твоим брендам`
+    : `За неделю ${fmtPeriod(current)} (закрыта)`;
 
   const curQ = useQuery<any>({
     queryKey: ["week-profit-hero", "current", current.from, current.to, reportingMode],
@@ -87,7 +99,7 @@ export default function WeekProfitHero() {
     return (
       <div className="card">
         <div className="text-xs text-muted uppercase mb-1">
-          За неделю {fmtPeriod(current)} (закрыта)
+          {headerLabel}
         </div>
         <div className="text-3xl font-mono font-medium opacity-30">— ₽</div>
       </div>
@@ -145,7 +157,7 @@ export default function WeekProfitHero() {
               «Прибыль» (которое путало seller'а с «Прибыль вчера» в
               TodayVsYesterdayStrip ниже). */}
           <div className="text-xs text-muted uppercase">
-            За неделю {fmtPeriod(current)} (закрыта)
+            {headerLabel}
           </div>
           <div className="text-xs text-muted font-mono">final</div>
         </div>

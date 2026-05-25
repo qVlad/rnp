@@ -22,6 +22,7 @@ import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
 import { useTagFilter } from "@/lib/useTagFilter";
 import { usePeriod } from "@/contexts/PeriodContext";
 import PageHeader from "@/components/PageHeader";
+import ReportingModeBadge from "@/components/ReportingModeBadge";
 
 const COL_VIS_KEY = "units.columnVisibility.v2";
 const COL_ORDER_KEY = "units.columnOrder.v1";
@@ -866,7 +867,12 @@ export default function Units() {
     <OverridesContext.Provider value={overridesCtxValue}>
     <div className="flex flex-col gap-4">
       <PageHeader
-        title="Юнит-экономика"
+        title={
+          <span className="inline-flex items-center gap-3 flex-wrap">
+            <span>Юнит-экономика</span>
+            <ReportingModeBadge />
+          </span>
+        }
         actions={
         <div className="flex items-end gap-2 flex-wrap">
           <input
