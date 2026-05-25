@@ -2813,7 +2813,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Оценка:** M (нужен backend + ML-light)
 - **Описание:** Если у тенанта есть данные прошлых акций — взять avg velocity_boost, подставить как default в picker. Fallback на manual ввод.
 - **Зависимости:** TASK-LEAD-050 ✅
-- **Статус:** Открыта
+- **Статус:** Поглощена эпиком 2026-05-25 → см. **Инициатива: PromoCalculator — прогноз спроса под акцию** (Этап 2 = TASK-LEAD-100). Не делать отдельно.
 
 ### TASK-LEAD-093: TransitCalculator wizard-mode (упрощённый)
 - **Приоритет:** P3
@@ -2859,6 +2859,133 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Оценка:** done сразу при создании этой задачи
 - **Описание:** TASK-LEAD-065/067/068/069 в backlog числились «Открыта», хотя реализованы в v0.32-0.33. Обновлены на «Выполнено» в составе round-13 synthesis.
 - **Статус:** Выполнено — 2026-05-25
+
+---
+
+## Инициатива: PromoCalculator — прогноз спроса под акцию
+
+**Дата открытия:** 2026-05-25
+**Owner:** Lead → Developer + Design Engineer (+ Product Strategist для метрик)
+**Связано:** TASK-LEAD-050 (базовый калькулятор, v0.23+ в проде), TASK-LEAD-067 (polish v0.33), TASK-LEAD-092 (auto-suggest из истории — теперь поглощён эпиком как Этап 2).
+
+### Why
+
+В текущем PromoCalculator юзер вводит `expected_velocity_boost_pct` руками (default 80%). Round-12 seller-feedback зафиксировал это как **Critical** боль:
+
+> «Откуда я знаю какой % роста ожидать? Слайдер 0-500% без объяснения — паралич выбора. Default +80% — авторитарная подсказка.»
+
+Селлер сам гадает, калькулятор лишь проверяет «при такой гипотезе выгодно или нет». Это превращает решение в догадку, а не в data-driven choice.
+
+**Цель эпика:** заменить «гадание про boost» на **обоснованный прогноз спроса**, опираясь сначала на простые публичные бенчмарки, затем на собственную историю акций тенанта, затем на полноценный forecast с учётом сезонности.
+
+### Scope (3 этапа)
+
+#### Этап 1 — Quick wins (пресеты + benchmarks) — **S, 1-2 часа**
+
+- 3 кнопки-пресета рядом со слайдером boost: **Conservative +30%** / **Typical +80%** / **Optimistic +150%**.
+- Подсказка под слайдером: «Цифры из публичных бенчмарков WB (категория «Одежда» — типичный buyback boost +50…120% при скидке 20-30%). Точнее — см. свою историю в /promotions».
+- Опционально: дифференциация default по категории SKU из `Product.subject` (детская одежда — выше boost, электроника — ниже). Если sub-agent найдёт публичные данные.
+- **DoD:** пресет-кнопки + подсказка в `/promo-calculator`. Без backend-изменений.
+
+#### Этап 2 — Auto-suggest по истории тенанта — **M, 1 неделя**
+
+(Бывший TASK-LEAD-092 — поглощён эпиком.)
+
+- Backend: для каждой прошлой WB-акции (есть в `wb_promotions` через TASK-LEAD-050 preload) посчитать **ретроспективный boost** = `velocity_during_promo / velocity_baseline_pre_promo`. Источник — `wb_report_detail` или `wb_sales` за период акции vs 14d до.
+- Endpoint `GET /api/promo-calculator/historical-boost?nm_ids[]=…` → возвращает `{avg_boost_pct, std, sample_size, per_category_breakdown}`.
+- Frontend: при выборе SKU подсказывает «У тебя средний boost +65% (по 8 прошлым акциям на этих SKU). 1-σ диапазон: 30%-100%». Кнопка «Применить» подставляет в slider.
+- **Edge cases:**
+  - Если у тенанта < 3 акций — fallback на пресеты этапа 1.
+  - Если для конкретного SKU < 2 акций — использовать avg по бренду / категории.
+  - Учитывать только акции с реальным participation (есть `wb_report_detail` строки с `seller_promo_id`).
+- **DoD:** auto-suggest с метрикой confidence (sample size) + fallback на этап 1.
+
+#### Этап 3 — Полноценный forecast спроса — **L, 2-4 недели**
+
+- **Модель:** seasonal-naive baseline + simple regression на (скидка %, длительность, день недели старта, сезон). Не ML black-box — интерпретируемая формула. Например:
+  ```
+  expected_boost = base_boost × (1 + discount_premium) × seasonal_factor × scarcity_factor
+  ```
+  где `base_boost` из истории тенанта (этап 2), `discount_premium` = (discount − 15) × 0.04, `seasonal_factor` из year-over-year, `scarcity_factor` от остатков.
+- Endpoint `POST /api/promo-calculator/forecast` → `{expected_boost_pct, p10, p90, confidence_score, drivers: [{factor, impact_pct}]}`.
+- UI: график прогноз vs baseline по дням, ленты P10/P90, список факторов (что больше всего на прогноз влияет).
+- **Зависимости:** Этап 2 (нужен historical boost как baseline).
+- **Альтернатива (если timeframe не позволит):** WB Promo Calendar API — если WB отдаёт «ожидаемый boost» по конкретной акции, использовать его как primary, наш forecast как secondary.
+- **DoD:** forecast endpoint + UI график + factors-explainer. Точность ±20% от факт-boost на backtest за последние 6 мес.
+
+### Декомпозиция в TASK-LEAD
+
+| Задача | Этап | Эффорт |
+|---|---|---|
+| **TASK-LEAD-099** | Этап 1: пресеты + benchmarks hint | S (1-2ч) |
+| **TASK-LEAD-100** | Этап 2: backend `historical-boost` + frontend auto-suggest | M (1 нед) |
+| **TASK-LEAD-101** | Этап 3: forecast service + endpoint + UI график | L (2-4 нед) |
+| **TASK-LEAD-092** | Поглощён эпиком (Этап 2). Статус → reroute. |
+
+### Метрики успеха (Product Strategist)
+
+- **% сессий с применённым пресетом или auto-suggest** (vs ручной ввод) — после этапа 1: >40%, после этапа 2: >70%.
+- **Decision quality:** доля акций где после симуляции селлер принял решение «вступить» **и** факт-маржа оказалась в диапазоне ±15% от прогноза.
+- **Time-to-decision** на акцию — до калькулятора брало 30+ мин (сравнивать руками в Excel), цель: 5 мин.
+
+### Зависимости / риски
+
+- **WB Promo Calendar API** (`integrations/wb/promotions.py`) — уже есть, отдаёт акции с участниками. Для исторического анализа нужны фактические даты start/end акции — проверить наличие.
+- **Малый history-объём:** новые селлеры с <3 акциями — этап 2 не сработает, fallback на этап 1. Ок.
+- **WB меняет правила акций** (с 2026-04-01 уже подняли тарифы транзита). Прогноз нужно re-tune минимум раз в квартал на свежих данных.
+
+### Связанные документы
+
+- `PROMO_CALCULATOR.md` — текущая методика без forecast'а; обновить после каждого этапа.
+- `USER_GUIDE.md` — секция «Калькулятор акций»; описать пресеты (Этап 1) + auto-suggest (Этап 2).
+
+### Статус
+
+**Этап 1:** Открыта (TASK-LEAD-099)
+**Этап 2:** Открыта (TASK-LEAD-100)
+**Этап 3:** Открыта (TASK-LEAD-101)
+
+---
+
+### TASK-LEAD-099: PromoCalculator пресеты boost + benchmarks hint
+
+- **Эпик:** Прогноз спроса под акцию (Этап 1)
+- **Приоритет:** P2
+- **Оценка:** S (1-2ч)
+- **Описание:** 3 кнопки-пресета рядом со слайдером velocity_boost: «Conservative +30%», «Typical +80%», «Optimistic +150%». Каждая при клике устанавливает соответствующее значение в slider. Под slider'ом — подсказка с публичными бенчмарками по категориям (одежда / электроника / косметика и т.д.) + ссылка на собственную историю «/promotions».
+- **Критерии готовности:**
+  - [ ] 3 кнопки-пресета в `frontend/src/pages/PromoCalculator.tsx` (стиль consistent с другими btn'ами)
+  - [ ] Подсказка под slider'ом (≤2 строки)
+  - [ ] Опционально: differentiated default по `Product.subject` если найдены публичные benchmarks
+- **Статус:** Открыта
+
+### TASK-LEAD-100: PromoCalculator auto-suggest boost из истории акций тенанта
+
+- **Эпик:** Прогноз спроса под акцию (Этап 2). Поглощает прежнюю TASK-LEAD-092.
+- **Приоритет:** P3 (но если будет много акций в кабинете — повысить)
+- **Оценка:** M (1 нед)
+- **Описание:** Backend новый endpoint `GET /api/promo-calculator/historical-boost?nm_ids[]=…` возвращает avg boost по прошлым акциям для каждого SKU (или fallback по бренду / категории). Frontend подсказывает «У тебя средний boost +65% по 8 акциям» + кнопка «Применить» в slider.
+- **Критерии готовности:**
+  - [ ] `services/promo_calculator.py:compute_historical_boost(session, tenant_id, nm_ids)` — расчёт velocity_during_promo / velocity_baseline_pre_promo
+  - [ ] Endpoint + Pydantic-модель `HistoricalBoostResponse{avg_boost_pct, std, sample_size}`
+  - [ ] Frontend: hint card с «📊 Прошлые акции: avg +X% (по N акциям)» + кнопка «Применить»
+  - [ ] Fallback chain: per-SKU → per-brand → per-category → пресеты этапа 1
+- **Зависимости:** TASK-LEAD-099 (пресеты как fallback)
+- **Статус:** Открыта
+
+### TASK-LEAD-101: PromoCalculator full forecast с factors
+
+- **Эпик:** Прогноз спроса под акцию (Этап 3)
+- **Приоритет:** P3
+- **Оценка:** L (2-4 нед)
+- **Описание:** Полноценный прогноз boost'а с учётом seasonal-naive + regression на (скидка %, длительность, день старта, сезон, остатки). Интерпретируемая формула (не black-box ML). Endpoint возвращает `{expected_boost_pct, p10, p90, confidence_score, drivers}`. UI: график прогноз vs baseline + factors-explainer.
+- **Критерии готовности:**
+  - [ ] `services/promo_forecast.py` — модель + backtest на последних 6 мес
+  - [ ] Endpoint `POST /api/promo-calculator/forecast` с factors breakdown
+  - [ ] Frontend: график (recharts) с P10/P90 lentas + список drivers
+  - [ ] Точность ±20% от факт-boost на backtest за последние 6 мес — задокументировать в `PROMO_CALCULATOR.md`
+- **Зависимости:** TASK-LEAD-100 (historical boost как baseline)
+- **Статус:** Открыта
 
 ---
 
