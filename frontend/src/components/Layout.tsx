@@ -171,6 +171,9 @@ const PROFILE_WHITELIST: Record<Exclude<Profile, "full">, Set<string>> = {
     "/promo-calculator",
     "/funnel",
     "/ads",
+    // TASK-LEAD-091: alert rules — часть РОП workflow (мониторинг продаж,
+    // отгрузок, провалов плана). Без notifications РОП не настроит TG-алерты.
+    "/notifications",
   ]),
   manager: new Set([
     "/",

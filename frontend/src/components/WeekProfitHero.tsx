@@ -14,11 +14,27 @@
  * воскресенью (грубое приближение для WB final-отчётов, лаг ~14 дней).
  * Если final-данных нет (новый кабинет) — показываем no-data state.
  */
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub, fmtPct } from "@/lib/format";
 import { useReportingMode } from "@/contexts/ReportingModeContext";
 import { useAuth } from "@/contexts/AuthContext";
+
+// TASK-LEAD-097: режим сравнения — WoW (текущая vs прошлая неделя) или
+// vs 4-нед среднее (средняя прибыль за 3 полных недели до текущей закрытой).
+// Persist в localStorage. Если данных за 3 предыдущих недели нет (новый
+// кабинет / пустой бэкап) — режим «vs 4w avg» disabled.
+type CompareMode = "wow" | "avg4w";
+const COMPARE_MODE_KEY = "week-profit-hero.compare-mode.v1";
+
+function readCompareMode(): CompareMode {
+  try {
+    const v = localStorage.getItem(COMPARE_MODE_KEY);
+    if (v === "wow" || v === "avg4w") return v;
+  } catch {}
+  return "wow";
+}
 
 type Week = { from: string; to: string };
 
@@ -48,6 +64,17 @@ function previousWeek(week: Week): Week {
   return { from: isoDate(mon), to: isoDate(sun) };
 }
 
+// TASK-LEAD-097: окно «3 предыдущие полные недели до current» (week-1, week-2,
+// week-3 относительно current). Конец = воскресенье ровно за неделю до from
+// current, начало = понедельник за 3 недели до этого (21 день).
+function priorThreeWeeks(week: Week): Week {
+  const sun = new Date(week.from);
+  sun.setDate(sun.getDate() - 1); // воскресенье перед current
+  const mon = new Date(sun);
+  mon.setDate(mon.getDate() - 20); // 21 день включая sun → mon на 20 дней раньше
+  return { from: isoDate(mon), to: isoDate(sun) };
+}
+
 function getKpi(kpis: any[], key: string): number | null {
   if (!Array.isArray(kpis)) return null;
   const k = kpis.find((x) => x.key === key);
@@ -71,8 +98,15 @@ function fmtPeriod(w: Week): string {
 export default function WeekProfitHero() {
   const current = lastClosedWeek();
   const previous = previousWeek(current);
+  const prior3w = priorThreeWeeks(current);
   const { reportingMode } = useReportingMode();
   const { user } = useAuth();
+  const [compareMode, setCompareMode] = useState<CompareMode>(readCompareMode);
+  useEffect(() => {
+    try {
+      localStorage.setItem(COMPARE_MODE_KEY, compareMode);
+    } catch {}
+  }, [compareMode]);
   // TASK-LEAD-083 (закрывает BUG-UI-006): для manager'а виджет считается по
   // его brand-scope (через brands-filter на /api/dashboard), но заголовок
   // «За неделю DD-DD месяц (закрыта)» терминологически читался как
@@ -93,6 +127,25 @@ export default function WeekProfitHero() {
     queryKey: ["week-profit-hero", "previous", previous.from, previous.to, reportingMode],
     queryFn: () =>
       api.dashboard({ start: previous.from, end: previous.to }, "final", reportingMode),
+  });
+  // TASK-LEAD-097: 21-day window до current — для расчёта среднего за 3
+  // полные предыдущие недели. Загружаем только если выбран режим avg4w
+  // (lazy) — но кеш TanStack Query сохранит ответ при переключении назад.
+  const avg4wQ = useQuery<any>({
+    queryKey: [
+      "week-profit-hero",
+      "prior3w",
+      prior3w.from,
+      prior3w.to,
+      reportingMode,
+    ],
+    queryFn: () =>
+      api.dashboard(
+        { start: prior3w.from, end: prior3w.to },
+        "final",
+        reportingMode,
+      ),
+    enabled: compareMode === "avg4w",
   });
 
   if (curQ.isLoading || prevQ.isLoading) {
@@ -118,13 +171,40 @@ export default function WeekProfitHero() {
       ? ((curProfit - prevProfit) / Math.abs(prevProfit)) * 100
       : null;
 
-  const arrow = wow == null ? "" : wow > 0 ? "▲" : wow < 0 ? "▼" : "→";
+  // TASK-LEAD-097: средняя прибыль за 3 предыдущие полные недели.
+  // dashboard за окно 21 день возвращает суммарный net_profit за весь период.
+  const avg3wProfitTotal = getKpi(avg4wQ.data?.kpis ?? [], "net_profit");
+  const avgWeeklyProfit =
+    avg3wProfitTotal != null ? avg3wProfitTotal / 3 : null;
+  // Disable tab если данных за prior3w нет вообще (новый кабинет / нет
+  // продаж в окне). curQ загрузка отдельно — её состояние не блокирует
+  // toggle, только наличие предыдущих недель.
+  const avg4wAvailable = avgWeeklyProfit != null && avgWeeklyProfit !== 0;
+  const vsAvg =
+    avgWeeklyProfit != null && avgWeeklyProfit !== 0
+      ? ((curProfit - avgWeeklyProfit) / Math.abs(avgWeeklyProfit)) * 100
+      : null;
+
+  // Если выбран avg4w но данных нет — fallback на WoW (показывать что-то).
+  const effectiveMode: CompareMode =
+    compareMode === "avg4w" && !avg4wAvailable && !avg4wQ.isLoading
+      ? "wow"
+      : compareMode;
+
+  const compareValue = effectiveMode === "avg4w" ? vsAvg : wow;
+  const compareLabel =
+    effectiveMode === "avg4w" ? "vs ср. за 4 нед" : "WoW";
+  const baselineForLabel =
+    effectiveMode === "avg4w" ? avgWeeklyProfit : prevProfit;
+
+  const arrow =
+    compareValue == null ? "" : compareValue > 0 ? "▲" : compareValue < 0 ? "▼" : "→";
   const wowCls =
-    wow == null
+    compareValue == null
       ? "text-muted"
-      : wow > 0
+      : compareValue > 0
         ? "text-success"
-        : wow < 0
+        : compareValue < 0
           ? "text-danger"
           : "text-muted";
 
@@ -160,10 +240,55 @@ export default function WeekProfitHero() {
             {headerLabel}
           </div>
           <div className="text-xs text-muted font-mono">final</div>
+          {/* TASK-LEAD-097: toggle WoW vs 4-week avg. */}
+          <div
+            className="inline-flex rounded border border-border overflow-hidden text-xs"
+            role="tablist"
+            aria-label="Способ сравнения"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={effectiveMode === "wow"}
+              className={`px-2 py-0.5 ${
+                effectiveMode === "wow"
+                  ? "bg-accent-subtle text-fg"
+                  : "text-muted hover:text-fg"
+              }`}
+              onClick={() => setCompareMode("wow")}
+              title="Сравнить текущую неделю с предыдущей (WoW). Чувствительно к разовым всплескам — если прошлая неделя была аномально низкой/высокой, WoW% даёт шум."
+            >
+              WoW
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={effectiveMode === "avg4w"}
+              disabled={!avg4wAvailable && !avg4wQ.isLoading}
+              className={`px-2 py-0.5 border-l border-border ${
+                effectiveMode === "avg4w"
+                  ? "bg-accent-subtle text-fg"
+                  : !avg4wAvailable && !avg4wQ.isLoading
+                    ? "text-faint cursor-not-allowed"
+                    : "text-muted hover:text-fg"
+              }`}
+              onClick={() => {
+                if (avg4wAvailable || avg4wQ.isLoading) setCompareMode("avg4w");
+              }}
+              title={
+                !avg4wAvailable && !avg4wQ.isLoading
+                  ? "Нет данных за 3 предыдущие полные недели (новый кабинет?). Доступен только WoW."
+                  : "Сравнить с средней прибылью за 3 полные недели перед текущей. Сглаживает разовые всплески прошлой недели."
+              }
+            >
+              vs 4-нед среднее
+            </button>
+          </div>
         </div>
-        {wow != null && (
+        {compareValue != null && (
           <div className={`text-xs font-mono ${wowCls}`}>
-            {arrow} {wow >= 0 ? "+" : ""}{fmtPct(wow, 1)} WoW
+            {arrow} {compareValue >= 0 ? "+" : ""}
+            {fmtPct(compareValue, 1)} {compareLabel}
           </div>
         )}
       </div>
@@ -171,9 +296,10 @@ export default function WeekProfitHero() {
         <div className="text-3xl md:text-4xl font-mono font-semibold tabular-nums">
           {fmtRub(curProfit)}
         </div>
-        {prevProfit != null && (
+        {baselineForLabel != null && (
           <div className="text-sm text-muted font-mono">
-            пред. {fmtRub(prevProfit)}
+            {effectiveMode === "avg4w" ? "ср. 4 нед" : "пред."}{" "}
+            {fmtRub(baselineForLabel)}
           </div>
         )}
       </div>

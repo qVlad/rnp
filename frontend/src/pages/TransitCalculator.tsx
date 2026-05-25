@@ -761,20 +761,62 @@ export default function TransitCalculator() {
         }
       />
 
-      {/* Auto-fetched status banner — TASK-LEAD-078 */}
+      {/* Auto-fetched status banner — TASK-LEAD-078 + TASK-LEAD-094 stale */}
       {transitFromBackend ? (
-        <section
-          className="card text-xs"
-          style={{ background: "rgba(16,185,129,0.08)" }}
-        >
-          <p>
-            <b>📊 Тариф из ЛК WB</b> · обновлён{" "}
-            {formatRelativeTime(transitFromBackend.synced_at)}. Подставлен
-            автоматически для пары «{params.hub} → {params.final_warehouse}».
-            Можно править руками если нужно — твои значения не перезапишутся,
-            пока не сменишь пару хаб+склад.
-          </p>
-        </section>
+        (() => {
+          // TASK-LEAD-094: stale-tariff банер. WB регулярно меняет транзитные
+          // тарифы (последнее повышение +20% с 2026-04-01). Если synced_at >
+          // 30 дней назад — показываем оранжевую плашку с CTA «открой ЛК WB».
+          const syncedMs = transitFromBackend.synced_at
+            ? new Date(transitFromBackend.synced_at).getTime()
+            : NaN;
+          const ageDays = Number.isFinite(syncedMs)
+            ? Math.floor((Date.now() - syncedMs) / (24 * 3600 * 1000))
+            : 0;
+          const isStale = ageDays > 30;
+          return (
+            <>
+              <section
+                className="card text-xs"
+                style={{ background: "rgba(16,185,129,0.08)" }}
+              >
+                <p>
+                  <b>📊 Тариф из ЛК WB</b> · обновлён{" "}
+                  {formatRelativeTime(transitFromBackend.synced_at)}.
+                  Подставлен автоматически для пары «{params.hub} →{" "}
+                  {params.final_warehouse}». Можно править руками если нужно —
+                  твои значения не перезапишутся, пока не сменишь пару
+                  хаб+склад.
+                </p>
+              </section>
+              {isStale && (
+                <section
+                  className="card text-xs"
+                  style={{ background: "rgba(255,140,0,0.12)" }}
+                >
+                  <p>
+                    <b>
+                      ⚠ Тариф транзита для этой пары не обновлялся {ageDays}{" "}
+                      дней.
+                    </b>{" "}
+                    WB регулярно меняет тарифы (последнее повышение +20% с
+                    2026-04-01). Открой в ЛК WB →{" "}
+                    <a
+                      className="text-accent underline"
+                      href="https://seller.wildberries.ru/supplies-management/all-supplies"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Поставки → Транзитные направления
+                    </a>{" "}
+                    для проверки — расширение РНП автоматически подтянет новые
+                    значения.
+                  </p>
+                </section>
+              )}
+            </>
+          );
+        })()
       ) : params.hub && params.final_warehouse ? (
         <section
           className="card text-xs"
