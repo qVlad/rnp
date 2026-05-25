@@ -158,6 +158,8 @@ async def get_kpi_breakdown(
             for r in result.items
         ],
         "truncated": result.truncated,
+        "total_items": result.total_items,
+        "truncated_sum": float(result.truncated_sum),
     }
 
 

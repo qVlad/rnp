@@ -2275,10 +2275,10 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Источник:** `feedback-reviews/round-12-2026-05-22.md` — seller 055
 - **Описание:** Сейчас в `MetricBreakdownPopup` ряды — статичные. Seller видит «#12345 съел 60к на логистику» и хочет копать → нет ссылки. Сделать каждый ряд click'абельным → `/units?nm_id=X` с фокусом на эту строку. Опционально показать миниатюру фото из `Products`.
 - **Критерии готовности:**
-  - [ ] `MetricBreakdownPopup.tsx`: ряд → `<Link to={'/units?nm_id=' + item.nm_id}>` с hover-эффектом
-  - [ ] `Units.tsx` уже умеет фильтр по nm_id через URL `?nm_id=X` (если нет — добавить)
+  - [x] `MetricBreakdownPopup.tsx`: ряд → `<Link to={'/units?nm_id=' + item.nm_id}>` с hover-эффектом
+  - [ ] `Units.tsx` уже умеет фильтр по nm_id через URL `?nm_id=X` (если нет — добавить) — follow-up задача (TASK-DEV-NNN), вне scope'а P2
 - **Зависимости:** TASK-LEAD-055 ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-25 — Design Engineer (Claude Opus 4.7)
 
 ---
 

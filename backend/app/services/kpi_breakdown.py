@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, time, timezone
 from decimal import Decimal
 from typing import Literal
 
@@ -19,7 +18,12 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Product, WbReportDetail
-from app.services.period_aggregates import OP_RETURN, OP_SALE
+from app.services.period_aggregates import (
+    OP_RETURN,
+    OP_SALE,
+    REVENUE_FIELD,
+    sale_dt_filter,
+)
 from app.services.periods import Period
 
 BreakdownMetric = Literal[
@@ -49,6 +53,8 @@ class BreakdownResult:
     total: Decimal
     items: list[BreakdownRow]
     truncated: bool  # True если есть SKU за пределами top-N
+    total_items: int  # сколько всего SKU попало в выборку (top-N + остальные)
+    truncated_sum: Decimal  # сумма value у SKU за пределами top-N (residual)
 
 
 METRIC_FIELD_MAP: dict[BreakdownMetric, str] = {
@@ -79,24 +85,32 @@ async def compute_kpi_breakdown(
     """Top-N SKU breakdown за период для заданной KPI-метрики.
 
     Для большинства метрик — просто `SUM(field) GROUP BY nm_id ORDER BY sum DESC`.
-    Для `commission_wb` — `SUM(retail_price_withdisc_rub × commission_percent / 100)`
-    (комиссия в копейках обычно не хранится отдельно — считается из retail × %).
-    """
-    sale_dt_from = datetime.combine(period.start, time.min, tzinfo=timezone.utc)
-    sale_dt_to = datetime.combine(period.end, time.max, tzinfo=timezone.utc)
 
+    Для `commission_wb` используется **каноничная формула Dashboard KPI**
+    (см. `metrics.py:_final_finance_aggregate`):
+        commission = Σ(retail − ppvz_for_pay − acquiring_fee) для Продаж
+                   − Σ(retail − ppvz_for_pay − acquiring_fee) для Возвратов.
+    Не «retail × commission_percent» — `commission_percent` в WB-данных
+    пустой для Base-token (см. CLAUDE.md «Подводные камни» п.14), а формула
+    через ppvz матчит WB-кабинет 1:1 и совпадает с тем, что Dashboard
+    показывает в `commission_wb` KPI (BUG-DEV-013).
+
+    Период-фильтр — каноничный `sale_dt_filter()` (semi-open, см.
+    `period_aggregates.py`). Раньше был ручной inclusive `<= time.max`,
+    который захватывал записи в полночь следующего дня → расхождение с
+    Dashboard на границах суток (BUG-DEV-012).
+    """
     if metric == "commission_wb":
-        # Для commission считаем как retail × commission_percent / 100 для строк Продажа (минус Возврат).
-        retail = func.coalesce(
-            WbReportDetail.retail_price_withdisc_rub, WbReportDetail.retail_amount
+        # Каноничная формула Dashboard: (retail − ppvz − acquiring) для Продаж − Возвратов.
+        # Совпадает с _final_finance_aggregate (commission label) — Σ breakdown = KPI.
+        commission_expr = (
+            REVENUE_FIELD
+            - WbReportDetail.ppvz_for_pay
+            - func.coalesce(WbReportDetail.acquiring_fee, 0)
         )
-        comm_pct = func.coalesce(WbReportDetail.commission_percent, 0)
-        sale_expr = func.sum(
-            case(
-                (OP_SALE, retail * comm_pct / 100),
-                (OP_RETURN, -1 * retail * comm_pct / 100),
-                else_=0,
-            )
+        sale_expr = (
+            func.sum(case((OP_SALE, commission_expr), else_=0))
+            - func.sum(case((OP_RETURN, commission_expr), else_=0))
         ).label("value")
     else:
         field = getattr(WbReportDetail, METRIC_FIELD_MAP[metric])
@@ -113,10 +127,7 @@ async def compute_kpi_breakdown(
             Product.brand,
         )
         .outerjoin(Product, Product.nm_id == WbReportDetail.nm_id)
-        .where(
-            WbReportDetail.sale_dt >= sale_dt_from,
-            WbReportDetail.sale_dt <= sale_dt_to,
-        )
+        .where(*sale_dt_filter(period.start, period.end))
         .group_by(
             WbReportDetail.nm_id,
             Product.vendor_code,
@@ -137,6 +148,8 @@ async def compute_kpi_breakdown(
                 total=Decimal("0"),
                 items=[],
                 truncated=False,
+                total_items=0,
+                truncated_sum=Decimal("0"),
             )
         stmt = stmt.where(Product.brand.in_(brands))
 
@@ -145,6 +158,10 @@ async def compute_kpi_breakdown(
 
     total = sum((Decimal(str(r.value or 0)) for r in rows), Decimal("0"))
     truncated = len(rows) > limit
+    total_items = len(rows)
+    truncated_sum = sum(
+        (Decimal(str(r.value or 0)) for r in rows[limit:]), Decimal("0")
+    )
 
     items: list[BreakdownRow] = []
     for r in rows[:limit]:
@@ -168,4 +185,6 @@ async def compute_kpi_breakdown(
         total=total,
         items=items,
         truncated=truncated,
+        total_items=total_items,
+        truncated_sum=truncated_sum,
     )

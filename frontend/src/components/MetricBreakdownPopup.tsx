@@ -8,9 +8,10 @@
  * Использует backend endpoint `GET /api/dashboard/kpi-breakdown`.
  */
 import { useEffect } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
-import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
+import { fmtPct, fmtRub } from "@/lib/format";
 import { Icon } from "./Icon";
 
 export type BreakdownMetric =
@@ -37,6 +38,8 @@ export type BreakdownResponse = {
   total: number;
   items: BreakdownItem[];
   truncated: boolean;
+  total_items?: number;
+  truncated_sum?: number;
 };
 
 interface Props {
@@ -70,6 +73,7 @@ export default function MetricBreakdownPopup({
   range,
   onClose,
 }: Props) {
+  const navigate = useNavigate();
   // ESC закрывает
   useEffect(() => {
     if (!open) return;
@@ -140,9 +144,16 @@ export default function MetricBreakdownPopup({
             <div className="mb-3 flex items-baseline gap-3">
               <span className="text-xs text-muted uppercase">Всего за период</span>
               <span className="text-xl font-mono font-semibold">{fmtRub(d.total)}</span>
-              {d.truncated && (
+              {d.truncated && d.items.length > 0 && (
                 <span className="text-xs text-muted">
-                  (показаны топ-{d.items.length}, остальные {fmtNum(0)} в «прочее»)
+                  (топ-{d.items.length}
+                  {typeof d.total_items === "number"
+                    ? ` из ${d.total_items} SKU`
+                    : ""}
+                  {typeof d.truncated_sum === "number" && d.truncated_sum !== 0
+                    ? `; остальные суммарно ${fmtRub(d.truncated_sum)}`
+                    : ""}
+                  )
                 </span>
               )}
             </div>
@@ -158,21 +169,48 @@ export default function MetricBreakdownPopup({
                   </tr>
                 </thead>
                 <tbody>
-                  {d.items.map((row) => (
-                    <tr key={row.nm_id} className="border-t border-border">
-                      <td className="p-2">
-                        <div className="font-mono text-xs">#{row.nm_id}</div>
-                        <div className="text-xs text-muted line-clamp-1">
-                          {row.vendor_code || row.subject || "—"}
-                          {row.brand && ` · ${row.brand}`}
-                        </div>
-                      </td>
-                      <td className="p-2 text-right font-mono">{fmtRub(row.value)}</td>
-                      <td className="p-2 text-right font-mono text-muted">
-                        {fmtPct(row.pct_of_total)}
-                      </td>
-                    </tr>
-                  ))}
+                  {d.items.map((row) => {
+                    // Вся строка кликабельна → /units?nm_id=X. Внутри SKU-ячейки
+                    // ещё <Link> для accessible tab-навигации и cmd+click открыть
+                    // в новой вкладке. Closing popup при переходе — иначе он
+                    // остаётся поверх /units.
+                    const goToUnits = () => {
+                      navigate(`/units?nm_id=${row.nm_id}`);
+                      onClose();
+                    };
+                    return (
+                      <tr
+                        key={row.nm_id}
+                        className="border-t border-border hover:bg-surface-2 cursor-pointer transition-colors"
+                        onClick={goToUnits}
+                        title="Открыть в /units"
+                      >
+                        <td className="p-2">
+                          <Link
+                            to={`/units?nm_id=${row.nm_id}`}
+                            className="block hover:underline"
+                            onClick={(e: any) => {
+                              // Останавливаем bubbling — иначе вызовется и
+                              // tr.onClick (двойной navigate). Сам Link уже
+                              // делает переход — но нам нужен onClose.
+                              e.stopPropagation();
+                              onClose();
+                            }}
+                          >
+                            <div className="font-mono text-xs">#{row.nm_id}</div>
+                            <div className="text-xs text-muted line-clamp-1">
+                              {row.vendor_code || row.subject || "—"}
+                              {row.brand && ` · ${row.brand}`}
+                            </div>
+                          </Link>
+                        </td>
+                        <td className="p-2 text-right font-mono">{fmtRub(row.value)}</td>
+                        <td className="p-2 text-right font-mono text-muted">
+                          {fmtPct(row.pct_of_total)}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}
