@@ -449,11 +449,17 @@ function computeDirectSupply(
 // multi-warehouse compare, direct delivery override, двухступенчатая шкала.
 const SIMPLE_MODE_KEY = "transit.simple-mode.v1";
 
+// TASK-LEAD-112 — для first-open юзера wizard по умолчанию. Если в LS уже
+// есть user-choice (любое из "true"/"false") — уважаем. Если ключа нет —
+// возвращаем true (wizard как сейф-default для нового юзера: 4 поля
+// вместо 13). Юзер может переключить в Подробную форму, выбор запишется.
 function loadSimpleMode(): boolean {
   try {
-    return localStorage.getItem(SIMPLE_MODE_KEY) === "true";
+    const v = localStorage.getItem(SIMPLE_MODE_KEY);
+    if (v === null) return true;
+    return v === "true";
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -874,8 +880,7 @@ export default function TransitCalculator() {
                       ⚠ Тариф транзита для этой пары не обновлялся {ageDays}{" "}
                       дней.
                     </b>{" "}
-                    WB регулярно меняет тарифы (последнее повышение +20% с
-                    2026-04-01). Открой в ЛК WB →{" "}
+                    WB периодически пересматривает тарифы. Открой в ЛК WB →{" "}
                     <a
                       className="text-accent underline"
                       href="https://seller.wildberries.ru/supplies-management/all-supplies"
@@ -1236,54 +1241,61 @@ export default function TransitCalculator() {
       </section>
 
       {/* External logistics — physically deliver to hub */}
-      <section className="card">
-        <h3 className="font-medium mb-1 text-sm">
-          Внешняя логистика — довоз до хаба
-        </h3>
-        <p className="text-xs text-muted mb-3">
-          WB <b>не считает</b> доставку партии от склада/производителя до
-          транзитного хаба (Обухово, Шушары и т.д.) — это твои затраты на
-          подрядчика / собственный транспорт. Введи как одно число за всю
-          партию <i>или</i> ₽/шт — если оба заполнены, суммируются. Оставь
-          нули если довозишь бесплатно (например, хаб рядом).
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted uppercase tracking-wide">
-              Доставка до хаба, всего ₽
-            </span>
-            <input
-              type="number"
-              className="input"
-              min="0"
-              step="100"
-              value={params.delivery_to_hub_total}
-              placeholder="напр. 5000 за фуру"
-              onChange={(e: any) =>
-                update({ delivery_to_hub_total: Number(e.target.value) || 0 })
-              }
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted uppercase tracking-wide">
-              Доставка до хаба, ₽/шт
-            </span>
-            <input
-              type="number"
-              className="input"
-              min="0"
-              step="0.1"
-              value={params.delivery_to_hub_per_unit}
-              placeholder="напр. 12.5 если оплата за штуку"
-              onChange={(e: any) =>
-                update({
-                  delivery_to_hub_per_unit: Number(e.target.value) || 0,
-                })
-              }
-            />
-          </label>
-        </div>
-      </section>
+      {/* TASK-LEAD-112: в wizard'е секцию «довоз до хаба» скрываем, если оба
+          значения = 0 (большинство юзеров оставляют их пустыми; в Подробной
+          форме секция всегда видна). */}
+      {(!simpleMode ||
+        params.delivery_to_hub_total > 0 ||
+        params.delivery_to_hub_per_unit > 0) && (
+        <section className="card">
+          <h3 className="font-medium mb-1 text-sm">
+            Внешняя логистика — довоз до хаба
+          </h3>
+          <p className="text-xs text-muted mb-3">
+            WB <b>не считает</b> доставку партии от склада/производителя до
+            транзитного хаба (Обухово, Шушары и т.д.) — это твои затраты на
+            подрядчика / собственный транспорт. Введи как одно число за всю
+            партию <i>или</i> ₽/шт — если оба заполнены, суммируются. Оставь
+            нули если довозишь бесплатно (например, хаб рядом).
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-muted uppercase tracking-wide">
+                Доставка до хаба, всего ₽
+              </span>
+              <input
+                type="number"
+                className="input"
+                min="0"
+                step="100"
+                value={params.delivery_to_hub_total}
+                placeholder="напр. 5000 за фуру"
+                onChange={(e: any) =>
+                  update({ delivery_to_hub_total: Number(e.target.value) || 0 })
+                }
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-muted uppercase tracking-wide">
+                Доставка до хаба, ₽/шт
+              </span>
+              <input
+                type="number"
+                className="input"
+                min="0"
+                step="0.1"
+                value={params.delivery_to_hub_per_unit}
+                placeholder="напр. 12.5 если оплата за штуку"
+                onChange={(e: any) =>
+                  update({
+                    delivery_to_hub_per_unit: Number(e.target.value) || 0,
+                  })
+                }
+              />
+            </label>
+          </div>
+        </section>
+      )}
 
       {/* Direct delivery override — для compare-блока. TASK-LEAD-093: скрыто в wizard. */}
       {!simpleMode && (
@@ -1859,6 +1871,7 @@ export default function TransitCalculator() {
           ) : null
         }
         confirmLabel="Применить"
+        cancelIsDefault
         onConfirm={applyPendingConflicts}
         onCancel={() => setPendingConflicts(null)}
       />

@@ -226,17 +226,17 @@ export default function Dashboard() {
           type="button"
           onClick={() => setHeroMode("composite")}
           className={`btn text-xs ${heroMode === "composite" ? "border-accent text-accent" : ""}`}
-          title="Новый компактный вид: одна карточка с 4 табами вместо 6 heros"
+          title="Сводка — composite hero с 4 табами (Прибыль / Сверка с WB / Сегодня vs Вчера / Алерты)"
         >
-          🆕 Compact
+          🆕 Сводка
         </button>
         <button
           type="button"
           onClick={() => setHeroMode("legacy")}
           className={`btn text-xs ${heroMode === "legacy" ? "border-accent text-accent" : ""}`}
-          title="Старый вид: 6+ Hero-виджетов один под другим"
+          title="Подробный — все 6 виджетов один под другим как раньше"
         >
-          Legacy
+          Подробный
         </button>
       </div>
       {heroMode === "composite" ? (

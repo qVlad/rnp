@@ -271,6 +271,19 @@ export default function WeeklyReport() {
   // HYP-004: overall (brand=null) для manager'а — read-only (backend 403 на write).
   const isReadOnlyComment = isManager && selectedBrand === null;
 
+  // TASK-LEAD-118: auto-focus textarea на open ТОЛЬКО для manager'а — он
+  // пришёл сюда писать в свой бренд. РОПу focus не двигаем (его default
+  // scope «Общий» — не write target, focus был бы агрессивным).
+  const autoFocusedRef = useRef(false);
+  useEffect(() => {
+    if (autoFocusedRef.current) return;
+    if (!isManager) return;
+    if (isReadOnlyComment) return;
+    if (commentQ.isLoading) return;
+    autoFocusedRef.current = true;
+    setTimeout(() => commentRef.current?.focus(), 0);
+  }, [isManager, isReadOnlyComment, commentQ.isLoading]);
+
   // Подгружаем с сервера при смене недели/brand'а. Legacy localStorage
   // (one-shot миграция) — только для overall scope, чтобы не плодить
   // дубликаты при переключении brand'ов.

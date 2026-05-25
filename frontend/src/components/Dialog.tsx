@@ -50,6 +50,12 @@ export interface DialogProps {
    * вызывает onCancel() если нужно.
    */
   extraAction?: { label: string; onClick: () => void };
+  /**
+   * TASK-LEAD-115: для conflict-dialog'ов («Применить новые значения и перезаписать
+   * мои?») default focus на Confirm = destructive default. Включи `cancelIsDefault`
+   * — focus сместится на Cancel-кнопку, юзер по Enter получит безопасный no-op.
+   */
+  cancelIsDefault?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -62,38 +68,50 @@ export default function Dialog({
   cancelLabel = "Отмена",
   variant = "default",
   extraAction,
+  cancelIsDefault = false,
   onConfirm,
   onCancel,
 }: DialogProps) {
   const confirmRef = useRef<HTMLButtonElement | null>(null);
+  const cancelRef = useRef<HTMLButtonElement | null>(null);
+  // TASK-LEAD-115 — ref-based onCancel чтобы ESC handler не перевешивался при
+  // каждом rerender'е (inline onCancel в caller'е давал новую замыкание).
+  const onCancelRef = useRef(onCancel);
+  useEffect(() => {
+    onCancelRef.current = onCancel;
+  }, [onCancel]);
 
-  // ESC закрывает + focus на confirm при открытии.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        onCancel();
+        onCancelRef.current();
       }
     };
     window.addEventListener("keydown", onKey);
-    // Focus после mount.
     const t = setTimeout(() => {
-      confirmRef.current?.focus();
+      if (cancelIsDefault) {
+        cancelRef.current?.focus();
+      } else {
+        confirmRef.current?.focus();
+      }
     }, 0);
     return () => {
       window.removeEventListener("keydown", onKey);
       clearTimeout(t);
     };
-  }, [open, onCancel]);
+  }, [open, cancelIsDefault]);
 
   if (!open) return null;
 
   // Danger variant: красная primary-кнопка. Используем `bg-danger` (CSS var)
   // + override hover через inline opacity (как у `.btn-primary`).
+  // TASK-LEAD-115: explicit `text-white` для danger чтобы контраст не зависел
+  // от темы (на light theme btn-primary мог отрисовать тёмный текст).
   const confirmClass =
     variant === "danger"
-      ? "btn-primary text-xs"
+      ? "btn-primary text-xs text-white"
       : "btn-primary text-xs";
   const confirmStyle =
     variant === "danger"
@@ -130,7 +148,12 @@ export default function Dialog({
               {extraAction.label}
             </button>
           )}
-          <button type="button" className="btn text-xs" onClick={onCancel}>
+          <button
+            ref={cancelRef}
+            type="button"
+            className="btn text-xs"
+            onClick={onCancel}
+          >
             {cancelLabel}
           </button>
           <button

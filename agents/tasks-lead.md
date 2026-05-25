@@ -3197,11 +3197,11 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Источник:** Z2 round 14 — РОП не видит per-brand комментарии менеджеров без scroll
 - **Описание:** РОП открывает /weekly-report → textarea пустая (overall) → ниже мелким «Другие комментарии за эту неделю: 3» (нужен scroll). + brand-selector сбрасывается между сессиями + нет quick-reply.
 - **Критерии готовности:**
-  - [ ] Счётчик в заголовке секции «Комментарий за неделю (3 от команды)» — кликабельно, разворачивает other-comments
-  - [ ] Brand-selector persist в localStorage (`weekly-report.comment-scope.v1`)
-  - [ ] «↩ Ответить» под чужим комментарием → auto-switch scope + focus textarea
-  - [ ] Auto-focus textarea на open для manager'а (см. также TASK-LEAD-118)
-- **Статус:** Открыта
+  - [x] Счётчик в заголовке секции «Комментарий за неделю (N от команды)» — кликабельно, toggle expand/collapse
+  - [x] Brand-selector persist в localStorage (`weekly-report.comment-scope.v1`)
+  - [x] «↩ Ответить» под чужим комментарием → auto-switch scope + focus textarea + prefix `@author, `
+  - [x] Auto-focus textarea на open для manager'а (см. также TASK-LEAD-118)
+- **Статус:** Выполнено — 2026-05-26 (v0.39.0+; cherry-pick из sub-agent + main session для auto-focus)
 
 ### TASK-LEAD-109: Per-SKU localization recommendation polish
 - **Приоритет:** P2
@@ -3209,10 +3209,10 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Источник:** Z2 round 14 — noise для маленьких SKU + слабая визуализация fallback
 - **Описание:** `recommended_warehouse` для SKU с 5 заказами в 5 разных кластерах = noise. Pictogram `*` не очевиден.
 - **Критерии готовности:**
-  - [ ] Backend `services/localization.py` — min-confidence: top-кластер ≥ 60% доли заказов SKU → отдать recommendation, иначе NULL → frontend fallback на tenant-wide
-  - [ ] Frontend: явный значок per-SKU «★» (filled) vs tenant-wide fallback «☆» (outlined), `text-[12px]` вместо `[10px]`
-  - [ ] Empty case (`useWh === null`) — tooltip «недостаточно данных для рекомендации»
-- **Статус:** Открыта
+  - [ ] Backend `services/localization.py` — min-confidence (top-кластер ≥ 60% доли) — отложено отдельной задачей TASK-LEAD-124
+  - [x] Frontend: явный значок per-SKU «★» (filled) vs tenant-wide fallback «☆» (outlined), `text-[12px]`
+  - [x] Empty case (`useWh === null`) — tooltip «недостаточно данных для рекомендации»
+- **Статус:** Frontend выполнено — 2026-05-26 (v0.39.0+). Backend min-confidence → TASK-LEAD-124.
 
 ### TASK-LEAD-110: Redistribution expanders polish
 - **Приоритет:** P2
@@ -3220,10 +3220,10 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Источник:** Z2 round 14 — все 3 expander'а свёрнуты, нет CTA на standalone
 - **Описание:** Workflow «Локализация → Поставка → Транзит» предполагает движение сверху вниз. Первый expander (Локализация = entry point) логично открыть по default'у. Mini-версии без CTA «полная версия →» путают «куда лучше идти».
 - **Критерии готовности:**
-  - [ ] `defaultOpen=true` для Локализация expander'а на /redistribution (только Локализация, не Поставка/Транзит)
-  - [ ] «↗ Полная версия на /localization» / `/supply-calculator` / `/transit-calculator` CTA в подвале каждого mini
-  - [ ] Hint в шапке `/redistribution`: «Quick-view виджеты ниже. Для глубокого анализа — полные страницы в меню»
-- **Статус:** Открыта
+  - [x] `defaultOpen=true` для Локализация expander'а на /redistribution
+  - [x] «↗ Полная версия на /localization» / `/supply-calculator` / `/transit-calculator` CTA в подвале каждого mini
+  - [x] Hint-card в шапке `/redistribution`
+- **Статус:** Выполнено — 2026-05-26 (v0.39.0+)
 
 ### TASK-LEAD-111: TG-share + ManagerSummary actions polish
 - **Приоритет:** P2
@@ -3231,9 +3231,10 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Источник:** Z2 round 14 (TG-share) + Z2 (ManagerSummary actions)
 - **Описание:** Inline PDF-кнопка в share-self Dialog (юзер не помнит что PDF где-то рядом) + «← weekly-report с brand-фильтром» в ManagerSummary actions row (РОП хочет вернуться к brand-scoped отчёту).
 - **Критерии готовности:**
-  - [ ] В share-self Dialog: inline «↓ Скачать PDF вместо» рядом с «Отмена / Подтвердить» (`Dialog.tsx` поддерживает 3-button slot)
-  - [ ] В `ManagerSummary.tsx` actions row: ссылка «← /weekly-report с фильтром брендов: A, B» (manager.brands comma-separated)
-- **Статус:** Открыта
+  - [x] `<Dialog>` расширен опциональным `extraAction?: {label, onClick}` (без поломки existing callsites)
+  - [x] В share-self Dialog menager'а: inline «↓ Скачать PDF вместо» → закрывает dialog + триггерит `doExport`
+  - [x] В `ManagerSummary.tsx` actions row: ссылка «← /weekly-report?brand=…» если у менеджера есть бренды
+- **Статус:** Выполнено — 2026-05-26 (v0.39.0+)
 
 ### P3 — polish
 
@@ -3243,10 +3244,10 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Источник:** Z1 round 14 (wizard default + delivery_to_hub) + Z1 (stale-banner hardcoded date)
 - **Описание:** Wizard упростил, но не radically — для нового юзера 13 полей всё ещё видны (default = full form). Delivery_to_hub в wizard остаются. Stale-banner текст «+20% с 2026-04-01» — через 3 месяца устареет.
 - **Критерии готовности:**
-  - [ ] `default = wizard=true` для first-open юзера (определяется по отсутствию ключа `transit.simple-mode.v1` в localStorage)
-  - [ ] В wizard-режиме скрыть `delivery_to_hub_*` если значение = 0
-  - [ ] Stale-banner текст вычислять из БД (`max(synced_at) of wb_transit_tariff` + generic «WB периодически повышает») или вынести в backend-config endpoint
-- **Статус:** Открыта
+  - [x] `default = wizard=true` для first-open юзера (`loadSimpleMode()` возвращает true когда LS-ключа нет)
+  - [x] В wizard-режиме секция «довоз до хаба» скрывается если оба значения = 0
+  - [x] Stale-banner — убран хардкод «+20% с 2026-04-01», текст generic «WB периодически пересматривает тарифы»
+- **Статус:** Выполнено — 2026-05-26
 
 ### TASK-LEAD-113: USER_GUIDE.md update — round 14 фичи
 - **Приоритет:** P3
@@ -3254,16 +3255,16 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Источник:** Z1 + Z2 round 14 — coverage gaps
 - **Описание:** USER_GUIDE.md не обновлён для HYP-004/005, LEAD-087/088/091, wizard-mode, vs 4w avg, stale-banner. 3 новых методички (TRANSIT/SUPPLY/RECONCILIATION) — нет cross-link'ов из USER_GUIDE.md.
 - **Критерии готовности:**
-  - [ ] Секция «ManagerSummary» (HYP-005)
-  - [ ] Секция «Per-brand комментарии» (HYP-004 расширение LEAD-062)
-  - [ ] Упоминание scoreboard pre-aggregation в FAQ (LEAD-087)
-  - [ ] Объяснение `*` (tenant-wide fallback) для localization rec (LEAD-088)
-  - [ ] /notifications в РОП profile (LEAD-091)
-  - [ ] Wizard-mode для TransitCalculator (LEAD-093)
-  - [ ] WeekProfit «vs 4w avg» (LEAD-097) с пояснением что считается 3 предыдущие недели (см. BUG-UI-008)
-  - [ ] Stale-banner для transit (LEAD-094)
-  - [ ] Cross-link'и на `/docs/transit-calculator`, `/docs/supply-calculator`, `/docs/reconciliation`
-- **Статус:** Открыта
+  - [x] Drill-down в карточку менеджера (HYP-005) — в разделе scoreboard
+  - [x] Per-brand комментарии (HYP-004) — новая подсекция
+  - [x] Scoreboard pre-aggregation + live-fallback (LEAD-087/105) — в разделе scoreboard
+  - [x] Wizard-mode + stale-banner для TransitCalculator (LEAD-093/094/112)
+  - [x] Cross-link на «📖 Методика» / `/docs/transit-calculator` (TASK-LEAD-104)
+  - [x] Smart default tab + AlertsTab «Прочитанные» (TASK-LEAD-102/103)
+  - [x] Compact/Legacy → Сводка/Подробный rename (TASK-LEAD-114)
+  - [ ] WeekProfit «vs 4w avg» — отложено пока не закроется BUG-UI-008 (label «3 предыдущие недели»)
+  - [ ] Localization rec ★/☆ — секция localization уже есть, не критично уточнять иконки (могут поменяться при backend min-confidence в TASK-LEAD-124)
+- **Статус:** Выполнено — 2026-05-26 (основные фичи добавлены; WeekProfit и localization icon — несрочно)
 
 ### TASK-LEAD-114: A/B toggle composite/legacy — русский текст
 - **Приоритет:** P3
@@ -3271,9 +3272,9 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Источник:** Z1 round 14 — mix RU/EN
 - **Описание:** Кнопки «🆕 Compact» / «Legacy» — мешанина EN/RU. Заменить на «🆕 Сводка / Подробный» (или «🆕 Краткий / Подробный»). «Legacy» = technical jargon, убрать.
 - **Критерии готовности:**
-  - [ ] `Dashboard.tsx:223-241` — replace label text
-  - [ ] Tooltip explanation: «Сводка — composite hero с 4 табами; Подробный — все 6 виджетов как раньше»
-- **Статус:** Открыта
+  - [x] `Dashboard.tsx` — «🆕 Сводка» + «Подробный»
+  - [x] Tooltip explanation в title-атрибутах
+- **Статус:** Выполнено — 2026-05-26
 
 ### TASK-LEAD-115: Dialog polish (focus + useCallback + danger text-color)
 - **Приоритет:** P3
@@ -3281,11 +3282,11 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Источник:** Z1 round 14
 - **Описание:** Для conflict-dialog (Transit) default focus на «Применить» = destructive default. Лучше «Отмена». ESC handler перевешивается при каждом rerender'е (closure). Danger variant text-color не задан — на light theme может потеряться контраст.
 - **Критерии готовности:**
-  - [ ] `Dialog.tsx` — prop `cancelIsDefault?: boolean` → focus на cancel-кнопке
-  - [ ] `TransitCalculator.tsx:1854` — передать `cancelIsDefault={true}` для conflict-dialog
-  - [ ] `Dialog.tsx:63-80` — `useCallback` для ESC handler или `useEffect([])` с ref-based onCancel
-  - [ ] `Dialog.tsx:86-93` — для variant=`danger` добавить explicit `color: white` в `confirmStyle` (или класс `text-white`)
-- **Статус:** Открыта
+  - [x] `Dialog.tsx` — prop `cancelIsDefault?: boolean` → focus на cancel-кнопке
+  - [x] `TransitCalculator.tsx` conflict-dialog — `cancelIsDefault` передан
+  - [x] `Dialog.tsx` — `onCancelRef` для ESC handler (не перевешивается при rerender)
+  - [x] `Dialog.tsx` — `text-white` для danger variant
+- **Статус:** Выполнено — 2026-05-26
 
 ### TASK-LEAD-116: ManagerSummary alerts — дисклеймер «system-wide»
 - **Приоритет:** P3
@@ -3303,8 +3304,8 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Источник:** Z2 round 14
 - **Описание:** Manager попадает на `/manager-summary?manager_id=SELF` → видит «доступ запрещён». Лучше — редирект на `/weekly-report` (свой отчёт), прозрачно.
 - **Критерии готовности:**
-  - [ ] `ManagerSummary.tsx` — если `manager_id === user.id` → `<Navigate to="/weekly-report" replace />`
-- **Статус:** Открыта
+  - [x] `ManagerSummary.tsx` — если `manager_id === user.id` → `<Navigate to="/weekly-report" replace />`
+- **Статус:** Выполнено — 2026-05-26
 
 ### TASK-LEAD-118: Auto-focus textarea в comment section для manager'а
 - **Приоритет:** P3 (XS)
@@ -3312,20 +3313,17 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Источник:** Z2 round 14 — менеджер открывает страницу, курсор не выделен
 - **Описание:** Менеджер открывает /weekly-report — textarea per-brand comment по дефолту НЕ focused. Можно auto-focus (он пришёл писать).
 - **Критерии готовности:**
-  - [ ] Только для manager'а (не для РОПа — у того default scope = «Общий», не write-target)
-  - [ ] `useEffect([])` + `ref.current?.focus()` если `selectedBrand !== null && user.role === "manager"`
-- **Статус:** Открыта
+  - [x] Только для manager'а (`!isReadOnlyComment` + `isManager`)
+  - [x] `useEffect` + `setTimeout(() => commentRef.current?.focus(), 0)` после первой загрузки commentQ, `autoFocusedRef` чтобы не повторять
+- **Статус:** Выполнено — 2026-05-26
 
 ### TASK-LEAD-119: `source_url` whitelist regex для transit-tariffs
 - **Приоритет:** P3
 - **Оценка:** XS (30 мин)
 - **Источник:** Z1 round 14 — fragile при смене WB-домена
 - **Описание:** `_SOURCE_URL_WHITELIST_RE` в `backend/app/api/transit_tariffs.py:186` проверяет только `*.wildberries.ru`. Если WB сменит домен (cdn.wildberries.ru → seller-portal.wb.ru) — extension зальёт, backend отклонит на 400 без явной ошибки. Audit-trail сломается.
-- **Критерии готовности:**
-  - [ ] Либо снять whitelist (поле audit-only, не используется в логике)
-  - [ ] Либо расширить regex на `*.wildberries.ru`, `*.wb.ru`, `seller*.wildberries.ru`
-  - [ ] Logging вместо 400 при mismatch (`logger.warning(f"unexpected source_url domain: {url}")` + сохранять)
-- **Статус:** Открыта
+- **Анализ:** Reviewer ошибся. Regex `^https?://([a-z0-9-]+\.)*(wildberries\.ru|wb\.ru)\b` УЖЕ покрывает любые поддомены (cdn.wildberries.ru, seller-portal.wb.ru и т.д.). Action при mismatch — `logger.warning` + `suspicious_source=true` в `audit_log.meta`, не 400. Upload сохраняется как обычно.
+- **Статус:** Отброшено — 2026-05-26 (regex permissive, behavior soft, требований нет; добавлен пояснительный комментарий в коде не требуется)
 
 ### CHORE / process-fix
 

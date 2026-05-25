@@ -19,7 +19,7 @@
  * страницу через прямой URL — увидит баннер «доступ запрещён».
  */
 import { useMemo } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   api,
@@ -64,6 +64,9 @@ export default function ManagerSummary() {
   const managerId = Number(searchParams.get("manager_id") || 0);
   const weekStart = searchParams.get("week_start") || "";
 
+  // TASK-LEAD-117 — если manager пытается открыть свой собственный summary
+  // (manager_id === self.id), редирект на /weekly-report (он там свой scope видит).
+  const isSelf = user?.id != null && user.id === managerId;
   const canAccess =
     user?.role === "director" || user?.role === "head_of_sales";
 
@@ -137,6 +140,9 @@ export default function ManagerSummary() {
     enabled: canAccess && !!weekStart,
   });
 
+  if (isSelf) {
+    return <Navigate to="/weekly-report" replace />;
+  }
   if (!canAccess) {
     return (
       <div className="card text-danger max-w-3xl">
