@@ -2794,33 +2794,33 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Приоритет:** P3 (perf)
 - **Оценка:** M (1д) — миграция + Celery beat task + чтение из кэша
 - **Описание:** Сейчас `/api/weekly-report/by-manager` делает N×`compute_dashboard` (по числу менеджеров). На 10+ менеджерах потенциально медленно. Pre-aggregation в таблицу `manager_weekly_scoreboard(tenant_id, manager_id, week_start, revenue, margin, orders, wow_*)`, обновляется ежедневно ночью.
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (миграция 0061 + `sync.tasks_scoreboard` 04:30 МСК + `_WEEKS_TO_AGGREGATE=4` + fallback на live-compute с `source` field в API; v0.38.0). Round-14 уточнения → TASK-LEAD-105.
 
 ### TASK-LEAD-088: Localization worst-SKU per-SKU recommendation
 - **Приоритет:** P3
 - **Оценка:** M (1д)
 - **Описание:** Backend заменить tenant-wide эвристику (модальный buyer-cluster × top-склад) на per-SKU breakdown. Расширить `WorstSkuLocalization` DTO полем `recommended_warehouse: str | null` на основе per-nm_id buyer-cluster агрегата.
 - **Зависимости:** TASK-LEAD-070 ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (`services/localization.py:516-543` per-nm_id buyer-cluster агрегат + frontend `Localization.tsx:374-431` гибрид per-SKU + tenant-wide fallback с `*` пометкой; v0.38.0). Round-14 polish → TASK-LEAD-109.
 
 ### TASK-LEAD-089: TG-share manager scenarios
 - **Приоритет:** P3
 - **Оценка:** S (вариант: подпись) или L (вариант: User.boss_id)
 - **Описание:** Манагер кликает «отправить в TG», получает у себя в личке. Концептуально странно. Варианты: (a) явная подпись «Отправит тебе в личку — добавь РОПа в чат для broadcast», (b) `User.boss_id` для «отправить моему РОПу».
 - **Зависимости:** HYP-002 ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено (вариант a — подпись) — 2026-05-26. Warn в share-self Dialog для manager. Вариант b (User.boss_id) вынесен в HYP-007 (стратегический backlog). v0.38.0.
 
 ### TASK-LEAD-090: Кастомный `<Dialog>` вместо native confirm()
 - **Приоритет:** P3
 - **Оценка:** S (1-2ч)
 - **Описание:** TG-share использует native `confirm()` — UX-debt, mobile неудобно, brand inconsistency. Заменить на React-компонент Dialog (можно радикс / собственный).
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (`components/Dialog.tsx` + replace в WeeklyReport TG-share 4-state + TransitCalculator conflict; v0.38.0). Round-14 polish → TASK-LEAD-115.
 
 ### TASK-LEAD-091: Layout — `/notifications` в РОП whitelist
 - **Приоритет:** P3
 - **Оценка:** XS
 - **Описание:** Alert rules — часть РОП workflow. Сейчас при переключении в РОП-режим `/notifications` не виден.
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (`Layout.tsx:176` `PROFILE_WHITELIST.rop` дополнен `/notifications`; v0.38.0).
 
 ### TASK-LEAD-092: PromoCalculator auto-suggest boostPct из истории
 - **Приоритет:** P3
@@ -2834,35 +2834,35 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Оценка:** M (1-2д)
 - **Описание:** 13 полей — overload для разовой задачи. Альтернативный wizard-flow «Шаг 1: SKU (опц.). Шаг 2: партия. Шаг 3: тариф. Шаг 4: результат». Сейчас все секции видны сразу.
 - **Зависимости:** TASK-LEAD-053 ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено (частично — toggle simple-mode, скрывает 4 секции из 6+) — 2026-05-26. Default = full form. v0.38.0. Round-14 polish (default=wizard для нового юзера + delivery_to_hub_*) → TASK-LEAD-112.
 
 ### TASK-LEAD-094: TransitCalculator stale-tariff banner
 - **Приоритет:** P3
 - **Оценка:** XS
 - **Описание:** Если `synced_at > 30 дней назад` — оранжевая плашка «⚠ Тариф давно не обновлялся, проверь в ЛК». WB поднимает тарифы регулярно.
 - **Зависимости:** TASK-LEAD-078 ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (порог 30 дней, оранжевая плашка с CTA на ЛК WB; v0.38.0). Round-14: хардкод «+20% с 2026-04-01» → TASK-LEAD-112.
 
 ### TASK-LEAD-095: DocPage расширить whitelist
 - **Приоритет:** P3
 - **Оценка:** XS на slug + M на наполнение
 - **Описание:** Добавить методички для `/transit-calculator`, `/supply-calculator`, `/pnl-reconciliation`. Сейчас в `doc_pages.py` whitelist — 2 slug'а (`promo-calculator`, `unit-plan`).
 - **Зависимости:** TASK-LEAD-075 ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (backend whitelist 5 slug'ов + docker-compose 5 mounts + TRANSIT/SUPPLY/RECONCILIATION .md в корне; v0.38.0). Round-14: UI-ссылки на эти доки нет → TASK-LEAD-104 (без ссылок доки мертвы).
 
 ### TASK-LEAD-096: ReconciliationHero — split «сходимость» vs «доля выплаты»
 - **Приоритет:** P3
 - **Оценка:** S (1-2ч)
 - **Описание:** Сейчас 3 цифры (Δ%, Δ₽, payout share) в одной карточке — 30vh на laptop, overload. Раздельные карточки или collapsible.
 - **Зависимости:** TASK-LEAD-069 ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (split на 2 мини-карточки `md:grid-cols-2`, каждая со своим deep-link; v0.38.0). Round-14: threshold-рассинхрон с StateOfBusinessCard → BUG-DEV-017.
 
 ### TASK-LEAD-097: WeekProfitHero «vs 4-week avg» tab
 - **Приоритет:** P3
 - **Оценка:** S (1-2ч)
 - **Описание:** Был обещан в TASK-LEAD-073 описании, не реализован. Альтернативное сравнение для устойчивого baseline (если предыдущая неделя — статистический шум).
 - **Зависимости:** TASK-LEAD-073 ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (toggle «WoW / vs 4-нед среднее», lazy avg4wQ, disabled+fallback при недостатке данных; v0.38.0). Round-14: метка «4-нед» vs фактические 3 предыдущие недели + деление на константу 3 без null-check → BUG-UI-008.
 
 ---
 
@@ -3106,6 +3106,263 @@ Round 12 пометил: «standalone-страницы /localization и /transit
   - [ ] Точность ±20% от факт-boost на backtest за последние 6 мес — задокументировать в `PROMO_CALCULATOR.md`
 - **Зависимости:** TASK-LEAD-100 (historical boost как baseline)
 - **Статус:** Открыта
+
+---
+
+---
+
+## Round-14 backlog (2026-05-26) — TASK-LEAD-102..121
+
+Источник: `agents/references/feedback-reviews/round-14-2026-05-26.md`.
+Покрывает v0.36-0.38 фичи (LEAD-080..097 + HYP-001/003/004/005/006).
+
+### P1 — UX critical / regression
+
+### TASK-LEAD-102: StateOfBusinessCard smart default tab
+- **Приоритет:** P1
+- **Оценка:** S (2-3ч)
+- **Источник:** Z1 QA-seller round 14 — Critical UX
+- **Описание:** Default tab «Прибыль» (`ProfitTab`) использует данные за прошлую закрытую неделю — лаг 14 дн. Для new tenant'а или утром понедельника собственник видит «Нет финальных данных» первым делом. Нужен smart default + auto-redirect на first non-empty tab.
+- **Критерии готовности:**
+  - [ ] Если `curProfit == null` (нет final-данных за прошлую неделю) → auto-switch на «Сегодня vs Вчера» (preliminary)
+  - [ ] Fallback chain: Today → Alerts → Reconciliation → Profit (всегда последний fallback)
+  - [ ] Опционально: разный default по роли (director = Прибыль, head_of_sales/manager = Today)
+  - [ ] Persist последнего выбранного tab'а в localStorage (если юзер сам переключил — уважать)
+  - [ ] Smoke на new tenant без report_detail
+- **Статус:** Открыта
+
+### TASK-LEAD-103: AlertsTab — вернуть expander «Прочитанные» (регрессия)
+- **Приоритет:** P1
+- **Оценка:** S (2-3ч)
+- **Источник:** Z1 round 14 — регрессия от legacy AlertsBar
+- **Описание:** В composite-mode `AlertsTab` показывает только active alerts (`acknowledged_at == null`). В legacy `AlertsBar` был expander «Прочитанные» с метаданными ack-ер'а + кнопка undo. В composite — потерян. Команда не видит «Маша сняла этот алерт 2 часа назад».
+- **Критерии готовности:**
+  - [ ] Collapsible «N прочитанных» под active alerts в `StateOfBusinessCard.AlertsTab`
+  - [ ] Для каждого ack-нутого алерта: ФИО + время + кнопка «↶ отменить ack»
+  - [ ] `DELETE /api/dashboard/alerts/ack/{signature}` уже есть (миграция 0049) — переиспользовать
+- **Статус:** Открыта
+
+### TASK-LEAD-104: DocPage UI-ссылки на 3 новых методички
+- **Приоритет:** P1 (фича LEAD-095 фактически недоступна юзеру без этого)
+- **Оценка:** XS (30 мин)
+- **Источник:** Z1 round 14 — без ссылок 3 новых .md мертвы
+- **Описание:** TRANSIT_CALCULATOR.md / SUPPLY_CALCULATOR.md / RECONCILIATION.md mount'ятся в backend и отдаются через `/api/doc/{slug}`, но юзер не найдёт их без прямого URL. Добавить «📖 методика» link-кнопку в page-header каждого калькулятора + `/pnl-reconciliation`.
+- **Критерии готовности:**
+  - [ ] `TransitCalculator.tsx` — «📖 Методика» → `/docs/transit-calculator`
+  - [ ] `SupplyCalculator.tsx` — «📖 Методика» → `/docs/supply-calculator`
+  - [ ] `PnLReconciliation.tsx` — «📖 Методика» → `/docs/reconciliation`
+  - [ ] `TransitCalculator.tsx:1879-1881` — заменить internal-path в footer на link на `/docs/transit-calculator` (либо убрать research-ссылку)
+- **Статус:** Открыта
+
+### P2 — visible improvements
+
+### TASK-LEAD-105: Scoreboard pre-aggregation polish (`source`/`updated_at` + stale-check)
+- **Приоритет:** P2
+- **Оценка:** S (3-4ч)
+- **Источник:** Z2 round 14 — РОП debug-trail отсутствует, нет защиты от Celery downtime
+- **Описание:** `/api/weekly-report/by-manager` возвращает `source: "scoreboard"|"live"`, но frontend это игнорирует. Если Celery beat упал — endpoint молча отдаёт старые цифры.
+- **Критерии готовности:**
+  - [ ] Расширить DTO: `updated_at: datetime | None` из `manager_weekly_scoreboard`
+  - [ ] Frontend badge «🟢 кеш / 🟡 live-compute» в шапке секции «По менеджерам»
+  - [ ] Tooltip «обновлено: {scoreboard.updated_at}»
+  - [ ] Backend: если `updated_at < NOW() - 26h` → fallback на live + поле `stale: true` в response
+- **Статус:** Открыта
+
+### TASK-LEAD-106: Dedicated `/manager-summary` aggregate endpoint
+- **Приоритет:** P2
+- **Оценка:** M (1д)
+- **Источник:** Z2 round 14 — ManagerSummary делает N+1 запросов
+- **Описание:** Сейчас `/manager-summary` композирует данные из 5+ endpoint'ов (scoreboard, top-skus, recs, alerts, comments) — N+1 + over-fetch (recs приходят по полному scope'у, фильтруются на клиенте). Сделать один endpoint `GET /api/manager-summary?manager_user_id=X&week_start=Y`.
+- **Критерии готовности:**
+  - [ ] Backend `services/manager_summary.py:build_manager_summary(...)`
+  - [ ] `?brands=...` для recs / top-skus (избежать over-fetch'а)
+  - [ ] RBAC: director_or_head + target_user.tenant == caller.tenant
+  - [ ] Frontend `ManagerSummary.tsx` — один `useQuery` вместо 5+
+- **Статус:** Открыта
+
+### TASK-LEAD-107: Backend RBAC guard на `?manager_id=X`
+- **Приоритет:** P2 (defence-in-depth)
+- **Оценка:** S (1-2ч)
+- **Источник:** Z2 round 14 — frontend guard есть, formal backend guard нет
+- **Описание:** Endpoints, принимающие `manager_id` (`/weekly-report/by-manager`, `/manager-summary`), не валидируют что caller имеет право смотреть target user'а. Защита сейчас через RBAC отдельных endpoint'ов + frontend — двухслойно. Лучше явный guard.
+- **Критерии готовности:**
+  - [ ] Helper `services/auth.require_manager_access(target_user_id, caller)` — проверка target.tenant_id == caller.tenant_id и caller.role in (director, head_of_sales)
+  - [ ] Применить на всех `?manager_id` endpoint'ах
+  - [ ] Audit-log event `access.cross_manager_view` для analytics
+- **Статус:** Открыта
+
+### TASK-LEAD-108: Per-brand comment workflow polish
+- **Приоритет:** P2
+- **Оценка:** M (4-6ч)
+- **Источник:** Z2 round 14 — РОП не видит per-brand комментарии менеджеров без scroll
+- **Описание:** РОП открывает /weekly-report → textarea пустая (overall) → ниже мелким «Другие комментарии за эту неделю: 3» (нужен scroll). + brand-selector сбрасывается между сессиями + нет quick-reply.
+- **Критерии готовности:**
+  - [ ] Счётчик в заголовке секции «Комментарий за неделю (3 от команды)» — кликабельно, разворачивает other-comments
+  - [ ] Brand-selector persist в localStorage (`weekly-report.comment-scope.v1`)
+  - [ ] «↩ Ответить» под чужим комментарием → auto-switch scope + focus textarea
+  - [ ] Auto-focus textarea на open для manager'а (см. также TASK-LEAD-118)
+- **Статус:** Открыта
+
+### TASK-LEAD-109: Per-SKU localization recommendation polish
+- **Приоритет:** P2
+- **Оценка:** S (3-4ч)
+- **Источник:** Z2 round 14 — noise для маленьких SKU + слабая визуализация fallback
+- **Описание:** `recommended_warehouse` для SKU с 5 заказами в 5 разных кластерах = noise. Pictogram `*` не очевиден.
+- **Критерии готовности:**
+  - [ ] Backend `services/localization.py` — min-confidence: top-кластер ≥ 60% доли заказов SKU → отдать recommendation, иначе NULL → frontend fallback на tenant-wide
+  - [ ] Frontend: явный значок per-SKU «★» (filled) vs tenant-wide fallback «☆» (outlined), `text-[12px]` вместо `[10px]`
+  - [ ] Empty case (`useWh === null`) — tooltip «недостаточно данных для рекомендации»
+- **Статус:** Открыта
+
+### TASK-LEAD-110: Redistribution expanders polish
+- **Приоритет:** P2
+- **Оценка:** S (2-3ч)
+- **Источник:** Z2 round 14 — все 3 expander'а свёрнуты, нет CTA на standalone
+- **Описание:** Workflow «Локализация → Поставка → Транзит» предполагает движение сверху вниз. Первый expander (Локализация = entry point) логично открыть по default'у. Mini-версии без CTA «полная версия →» путают «куда лучше идти».
+- **Критерии готовности:**
+  - [ ] `defaultOpen=true` для Локализация expander'а на /redistribution (только Локализация, не Поставка/Транзит)
+  - [ ] «↗ Полная версия на /localization» / `/supply-calculator` / `/transit-calculator` CTA в подвале каждого mini
+  - [ ] Hint в шапке `/redistribution`: «Quick-view виджеты ниже. Для глубокого анализа — полные страницы в меню»
+- **Статус:** Открыта
+
+### TASK-LEAD-111: TG-share + ManagerSummary actions polish
+- **Приоритет:** P2
+- **Оценка:** S (2-3ч)
+- **Источник:** Z2 round 14 (TG-share) + Z2 (ManagerSummary actions)
+- **Описание:** Inline PDF-кнопка в share-self Dialog (юзер не помнит что PDF где-то рядом) + «← weekly-report с brand-фильтром» в ManagerSummary actions row (РОП хочет вернуться к brand-scoped отчёту).
+- **Критерии готовности:**
+  - [ ] В share-self Dialog: inline «↓ Скачать PDF вместо» рядом с «Отмена / Подтвердить» (`Dialog.tsx` поддерживает 3-button slot)
+  - [ ] В `ManagerSummary.tsx` actions row: ссылка «← /weekly-report с фильтром брендов: A, B» (manager.brands comma-separated)
+- **Статус:** Открыта
+
+### P3 — polish
+
+### TASK-LEAD-112: TransitCalculator wizard polish (default + delivery_to_hub + stale-banner config)
+- **Приоритет:** P3
+- **Оценка:** S (2-3ч)
+- **Источник:** Z1 round 14 (wizard default + delivery_to_hub) + Z1 (stale-banner hardcoded date)
+- **Описание:** Wizard упростил, но не radically — для нового юзера 13 полей всё ещё видны (default = full form). Delivery_to_hub в wizard остаются. Stale-banner текст «+20% с 2026-04-01» — через 3 месяца устареет.
+- **Критерии готовности:**
+  - [ ] `default = wizard=true` для first-open юзера (определяется по отсутствию ключа `transit.simple-mode.v1` в localStorage)
+  - [ ] В wizard-режиме скрыть `delivery_to_hub_*` если значение = 0
+  - [ ] Stale-banner текст вычислять из БД (`max(synced_at) of wb_transit_tariff` + generic «WB периодически повышает») или вынести в backend-config endpoint
+- **Статус:** Открыта
+
+### TASK-LEAD-113: USER_GUIDE.md update — round 14 фичи
+- **Приоритет:** P3
+- **Оценка:** S (1-2ч)
+- **Источник:** Z1 + Z2 round 14 — coverage gaps
+- **Описание:** USER_GUIDE.md не обновлён для HYP-004/005, LEAD-087/088/091, wizard-mode, vs 4w avg, stale-banner. 3 новых методички (TRANSIT/SUPPLY/RECONCILIATION) — нет cross-link'ов из USER_GUIDE.md.
+- **Критерии готовности:**
+  - [ ] Секция «ManagerSummary» (HYP-005)
+  - [ ] Секция «Per-brand комментарии» (HYP-004 расширение LEAD-062)
+  - [ ] Упоминание scoreboard pre-aggregation в FAQ (LEAD-087)
+  - [ ] Объяснение `*` (tenant-wide fallback) для localization rec (LEAD-088)
+  - [ ] /notifications в РОП profile (LEAD-091)
+  - [ ] Wizard-mode для TransitCalculator (LEAD-093)
+  - [ ] WeekProfit «vs 4w avg» (LEAD-097) с пояснением что считается 3 предыдущие недели (см. BUG-UI-008)
+  - [ ] Stale-banner для transit (LEAD-094)
+  - [ ] Cross-link'и на `/docs/transit-calculator`, `/docs/supply-calculator`, `/docs/reconciliation`
+- **Статус:** Открыта
+
+### TASK-LEAD-114: A/B toggle composite/legacy — русский текст
+- **Приоритет:** P3
+- **Оценка:** XS (15 мин)
+- **Источник:** Z1 round 14 — mix RU/EN
+- **Описание:** Кнопки «🆕 Compact» / «Legacy» — мешанина EN/RU. Заменить на «🆕 Сводка / Подробный» (или «🆕 Краткий / Подробный»). «Legacy» = technical jargon, убрать.
+- **Критерии готовности:**
+  - [ ] `Dashboard.tsx:223-241` — replace label text
+  - [ ] Tooltip explanation: «Сводка — composite hero с 4 табами; Подробный — все 6 виджетов как раньше»
+- **Статус:** Открыта
+
+### TASK-LEAD-115: Dialog polish (focus + useCallback + danger text-color)
+- **Приоритет:** P3
+- **Оценка:** S (2-3ч)
+- **Источник:** Z1 round 14
+- **Описание:** Для conflict-dialog (Transit) default focus на «Применить» = destructive default. Лучше «Отмена». ESC handler перевешивается при каждом rerender'е (closure). Danger variant text-color не задан — на light theme может потеряться контраст.
+- **Критерии готовности:**
+  - [ ] `Dialog.tsx` — prop `cancelIsDefault?: boolean` → focus на cancel-кнопке
+  - [ ] `TransitCalculator.tsx:1854` — передать `cancelIsDefault={true}` для conflict-dialog
+  - [ ] `Dialog.tsx:63-80` — `useCallback` для ESC handler или `useEffect([])` с ref-based onCancel
+  - [ ] `Dialog.tsx:86-93` — для variant=`danger` добавить explicit `color: white` в `confirmStyle` (или класс `text-white`)
+- **Статус:** Открыта
+
+### TASK-LEAD-116: ManagerSummary alerts — дисклеймер «system-wide»
+- **Приоритет:** P3
+- **Оценка:** XS (15 мин)
+- **Источник:** Z2 round 14 — alerts не brand-filtered, РОП может спутать
+- **Описание:** «Активные алерты» в ManagerSummary — system-wide (alert-движок не brand-aware). РОП видит все 5 алертов tenant'а и думает «Петров провалил». Документировано в коде, но не в UI.
+- **Критерии готовности:**
+  - [ ] В шапке секции «Активные алерты»: «ℹ️ Алерты — на весь tenant (не фильтруются по брендам менеджера)»
+  - [ ] Опционально: small badge «system-wide» рядом с counter'ом
+- **Статус:** Открыта
+
+### TASK-LEAD-117: ManagerSummary — `manager_id == self` → редирект
+- **Приоритет:** P3 (XS)
+- **Оценка:** XS (10 мин)
+- **Источник:** Z2 round 14
+- **Описание:** Manager попадает на `/manager-summary?manager_id=SELF` → видит «доступ запрещён». Лучше — редирект на `/weekly-report` (свой отчёт), прозрачно.
+- **Критерии готовности:**
+  - [ ] `ManagerSummary.tsx` — если `manager_id === user.id` → `<Navigate to="/weekly-report" replace />`
+- **Статус:** Открыта
+
+### TASK-LEAD-118: Auto-focus textarea в comment section для manager'а
+- **Приоритет:** P3 (XS)
+- **Оценка:** XS (10 мин)
+- **Источник:** Z2 round 14 — менеджер открывает страницу, курсор не выделен
+- **Описание:** Менеджер открывает /weekly-report — textarea per-brand comment по дефолту НЕ focused. Можно auto-focus (он пришёл писать).
+- **Критерии готовности:**
+  - [ ] Только для manager'а (не для РОПа — у того default scope = «Общий», не write-target)
+  - [ ] `useEffect([])` + `ref.current?.focus()` если `selectedBrand !== null && user.role === "manager"`
+- **Статус:** Открыта
+
+### TASK-LEAD-119: `source_url` whitelist regex для transit-tariffs
+- **Приоритет:** P3
+- **Оценка:** XS (30 мин)
+- **Источник:** Z1 round 14 — fragile при смене WB-домена
+- **Описание:** `_SOURCE_URL_WHITELIST_RE` в `backend/app/api/transit_tariffs.py:186` проверяет только `*.wildberries.ru`. Если WB сменит домен (cdn.wildberries.ru → seller-portal.wb.ru) — extension зальёт, backend отклонит на 400 без явной ошибки. Audit-trail сломается.
+- **Критерии готовности:**
+  - [ ] Либо снять whitelist (поле audit-only, не используется в логике)
+  - [ ] Либо расширить regex на `*.wildberries.ru`, `*.wb.ru`, `seller*.wildberries.ru`
+  - [ ] Logging вместо 400 при mismatch (`logger.warning(f"unexpected source_url domain: {url}")` + сохранять)
+- **Статус:** Открыта
+
+### CHORE / process-fix
+
+### TASK-LEAD-120: Stale-cleanup batch — LEAD-087..097
+- **Приоритет:** admin
+- **Оценка:** done при создании
+- **Описание:** Закрыть статусы LEAD-087/088/089/090/091/093/094/095/096/097 на «Выполнено — 2026-05-26» с пометкой v0.38.0 + round-14 follow-up'ами. Третий раунд stale-сценария.
+- **Статус:** Выполнено — 2026-05-26 (этим коммитом)
+
+### TASK-LEAD-121: Process-fix — auto-close в release-скрипте
+- **Приоритет:** P3 (process-debt)
+- **Оценка:** S (2-3ч)
+- **Описание:** Третий раунд подряд (12 → 13 → 14) обнаруживает «Открыта» статусы на задачах, которые уже закоммичены и в проде. Нужна автоматизация в `scripts/remote.sh deploy` или `scripts/bump.sh`: grep commit-сообщений между prev VERSION и current на pattern `TASK-LEAD-\d+`, для каждого совпадения предложить обновить статус (interactive) или сделать sed-замену с pre-flight check.
+- **Критерии готовности:**
+  - [ ] Скрипт `scripts/close-tasks-from-commits.sh` (or python)
+  - [ ] Запускается из `bump.sh` (рекомендация) — после успешного bump
+  - [ ] Interactive prompt: «TASK-LEAD-NNN найден в commit X. Закрыть как Выполнено — YYYY-MM-DD? [y/n]»
+  - [ ] Non-interactive `--auto` режим для CI/cron
+  - [ ] Документировать в `agents/RULES.md` § Правило 2.7
+- **Статус:** Открыта
+
+---
+
+## Round-14 HYP (стратегический backlog)
+
+### HYP-007: User.boss_id для «manager → his ROP delivery»
+- **Источник:** Round 14 Z2 — фундаментальное решение TG-share confusion
+- **Текущая ситуация:** Manager кликает «📨 в Telegram» → отчёт в его личку. Warn-плашка объясняет «попроси РОПа в чат / используй PDF» — workaround, не fix.
+- **Гипотеза:** Добавить `users.boss_id` (FK → users.id, nullable). При TG-share manager'ом — broadcast в chat_id РОПа (boss). Перекроет 80% случаев.
+- **Risk / costs:** Затрагивает все broadcast'ы (notifications, alerts, sales-summary). Нужен product-call: какой default'ный сценарий, что если у manager'а нет boss, что если boss = director (он уже в audience).
+- **Зависимости:** TASK-LEAD-089 ✅ (warn-полу-фикс уже сделан)
+
+### HYP-008: ManagerSummary → «карточка менеджера на 1-on-1 prep»
+- **Источник:** Round 14 Z2 — расширить существующий drill-down
+- **Гипотеза:** Текущая ManagerSummary показывает текущую неделю. Расширить до месячного/квартального view с историей: тренды KPI, history of comments, активные plan-edit-requests, выполнение целей. РОП открывает за день до 1-on-1 — готовая повестка.
+- **Risk:** Scope creep. Нужно решить — отдельная страница `/manager/{id}/review?period=Q` или extension существующей.
+- **Зависимости:** HYP-005 ✅ (базовая ManagerSummary)
 
 ---
 

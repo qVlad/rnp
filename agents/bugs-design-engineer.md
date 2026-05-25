@@ -256,3 +256,26 @@ _Пока пусто. Audit-задачи TASK-UI-001..003 в Sprint 1 превр
   ```
 - **Связанные задачи:** TASK-LEAD-066
 - **Статус:** Исправлено — 2026-05-25 (onClick детектит `button===1 || metaKey || ctrlKey || shiftKey` — на tr и на вложенном Link; popup НЕ закрывается при middle/cmd/ctrl/shift-click)
+
+---
+
+## BUG-UI-008: WeekProfit «vs 4-нед среднее» — неверная метка + деление на константу 3
+
+- **Приоритет:** P2
+- **Обнаружено:** 2026-05-26 (round 14 Z1)
+- **Среда:** production v0.38.0
+- **Источник:** `feedback-reviews/round-14-2026-05-26.md`
+- **Причина:** Реализация TASK-LEAD-097.
+  - (a) `priorThreeWeeks(week)` в `WeekProfitHero.tsx:70-76` начинает с `sun-1` и идёт назад на 21 день. Это **3 полные предыдущие недели**. Label таба «vs 4-нед среднее» (`:284`) не соответствует — собственник ожидает 4-week window (или хотя бы 4 недели данных), получает среднее за 3.
+  - (b) `avgWeeklyProfit = avg3wProfitTotal / 3` (`:176-178`) — делит на константу 3 без проверки. Если за 1 из 3 недель `wb_report_detail` пустой (например, выходные с нулевым ППЦ) → average занижен на ~33%.
+- **Затронутые файлы:**
+  - `frontend/src/components/WeekProfitHero.tsx:70-76` (priorThreeWeeks)
+  - `frontend/src/components/WeekProfitHero.tsx:176-178` (deletter)
+  - `frontend/src/components/WeekProfitHero.tsx:284` (label)
+- **Критерии исправления:**
+  - [ ] Переименовать tab label: «vs ср. за 3 пред. нед.» (точная семантика) или расширить до фактических 4 недель (сложнее — нужен ещё один API-вызов)
+  - [ ] Запрашивать per-week (а не aggregated за 21 день) → считать avg только по non-null weeks (`avgWeeklyProfit = sumNonNullProfits / countNonNullWeeks`)
+  - [ ] Tooltip синхронизировать с меткой
+  - [ ] При `countNonNullWeeks < 2` — disable tab (нет статистической значимости)
+- **Связанные задачи:** TASK-LEAD-097 ✅
+- **Статус:** Открыт

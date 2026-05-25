@@ -279,6 +279,24 @@
 
 ---
 
+## BUG-DEV-017: Рассинхрон threshold «Доля выплаты» между ReconciliationHero и StateOfBusinessCard
+
+- **Приоритет:** P1
+- **Обнаружено:** 2026-05-26 (round 14 Z1)
+- **Среда:** production v0.38.0
+- **Источник:** `feedback-reviews/round-14-2026-05-26.md`
+- **Причина:** `ReconciliationHeroWidget.tsx:85` использует `payoutShare >= 95 && payoutShare <= 100` для «зелёного» (норма). `StateOfBusinessCard.tsx:248-249` (composite Reconciliation tab) использует `>= 95 && <= 105`. Один и тот же payout=102% получит разный цвет: legacy mode → `text-warn` (вне нормы → паника), composite mode → `text-good`. У собственника с положительной разовой компенсацией от WB payout может быть >100%.
+- **Затронутые файлы:**
+  - `frontend/src/components/ReconciliationHeroWidget.tsx:85`
+  - `frontend/src/components/StateOfBusinessCard.tsx:248-249`
+- **Критерии исправления:**
+  - [ ] Унифицировать threshold — `>= 95 && <= 105` (capture положительную WB-компенсацию)
+  - [ ] Вынести константу в один общий модуль (например `services/reconciliation_thresholds.ts`) чтобы не дрейфовало в будущем
+  - [ ] Обновить tooltip-объяснение в обоих компонентах
+- **Статус:** Открыт
+
+---
+
 > На момент 2026-05-17 — открытых багов нет. Недавние P0 уже закрыты (см. git history):
 >
 > - `fix(auth): don't redirect to /login from /signup on initial 401` (commit `049ebb3`)
