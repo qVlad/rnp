@@ -181,52 +181,102 @@ export default function WeeklyReport() {
     queryFn: () => api.alerts(),
   });
 
-  // TASK-LEAD-062: серверное хранение. brand=null = overall (РОП/собственник
-  // scope). Per-brand комментарии менеджера — отдельная задача в будущем
-  // (нужен brand-selector в UI; пока используем overall для всех ролей).
+  // TASK-LEAD-062 + HYP-004: серверное хранение + per-brand selector.
+  // brand=null = overall (РОП/собственник scope). manager — пишет только
+  // в свой brand, overall ему read-only (backend 403). director/head —
+  // пишут в любой brand + overall.
   const qc = useQueryClient();
+  const isManager = user?.role === "manager";
+  // HYP-004: список brands для dropdown'а. Manager — только свои.
+  // Director/head — overall + назначённые (user.brands если есть, иначе
+  // показываем только overall — список всех brand'ов компании пришлось бы
+  // тащить через /api/brands, что не входит в minimal-diff scope; РОП
+  // обычно знает с какого brand'а свой менеджер пишет).
+  const allBrandsQ = useQuery({
+    queryKey: ["weekly-report-brands-list"],
+    queryFn: () => api.listBrands(),
+    enabled: user?.role === "director" || user?.role === "head_of_sales",
+    retry: false,
+  });
+  const availableBrands = useMemo<string[]>(() => {
+    if (isManager) return (user?.brands ?? []) as string[];
+    const fromList = (allBrandsQ.data?.items ?? []).map((x) => x.brand);
+    // Подмешиваем user.brands если они есть и не покрыты (на всякий случай).
+    const extra = (user?.brands ?? []) as string[];
+    return Array.from(new Set([...fromList, ...extra])).sort();
+  }, [isManager, user?.brands, allBrandsQ.data]);
+  // Default: manager → его первый бренд (он пишет в свой scope), director/head → overall.
+  const defaultBrand: string | null = useMemo(() => {
+    if (isManager) return availableBrands[0] ?? null;
+    return null;
+  }, [isManager, availableBrands]);
+  const [selectedBrand, setSelectedBrand] = useState<string | null>(defaultBrand);
+  // Когда AvailableBrands подтянутся (для manager'а), обновим default.
+  useEffect(() => {
+    if (isManager && selectedBrand === null && availableBrands.length > 0) {
+      setSelectedBrand(availableBrands[0]);
+    }
+  }, [isManager, availableBrands, selectedBrand]);
+
   const commentQ = useQuery({
-    queryKey: ["weekly-report-comment", current.from],
-    queryFn: () => api.weeklyReportCommentGet(current.from, null),
+    queryKey: ["weekly-report-comment", current.from, selectedBrand],
+    queryFn: () => api.weeklyReportCommentGet(current.from, selectedBrand),
+    retry: false,
+  });
+  const commentsAllQ = useQuery({
+    queryKey: ["weekly-report-comments-all", current.from],
+    queryFn: () => api.weeklyReportCommentList(current.from),
     retry: false,
   });
   const [comment, setComment] = useState<string>("");
   const [dirty, setDirty] = useState(false);
 
-  // Подгружаем с сервера при смене недели. Если на сервере пусто И есть
-  // legacy localStorage запись — показываем её (one-shot миграция: user
-  // увидит свою старую заметку и сможет сохранить «Сохранить» → попадёт
-  // на сервер).
+  // HYP-004: overall (brand=null) для manager'а — read-only (backend 403 на write).
+  const isReadOnlyComment = isManager && selectedBrand === null;
+
+  // Подгружаем с сервера при смене недели/brand'а. Legacy localStorage
+  // (one-shot миграция) — только для overall scope, чтобы не плодить
+  // дубликаты при переключении brand'ов.
   useEffect(() => {
     if (commentQ.data === undefined) return;
     const serverText = commentQ.data?.comment ?? "";
     if (serverText) {
       setComment(serverText);
-    } else {
+    } else if (selectedBrand === null) {
       try {
         const legacy = localStorage.getItem(COMMENT_KEY_PREFIX + current.from) ?? "";
         setComment(legacy);
       } catch {
         setComment("");
       }
+    } else {
+      setComment("");
     }
     setDirty(false);
-  }, [commentQ.data, current.from]);
+  }, [commentQ.data, current.from, selectedBrand]);
 
   const saveMut = useMutation({
     mutationFn: (text: string) =>
       api.weeklyReportCommentUpsert({
         week_start: current.from,
-        brand: null,
+        brand: selectedBrand,
         comment: text,
       }),
     onSuccess: (data) => {
-      qc.setQueryData(["weekly-report-comment", current.from], data);
+      qc.setQueryData(
+        ["weekly-report-comment", current.from, selectedBrand],
+        data,
+      );
+      qc.invalidateQueries({
+        queryKey: ["weekly-report-comments-all", current.from],
+      });
       setDirty(false);
-      // Подчищаем legacy localStorage — сохранение на сервер успешно.
-      try {
-        localStorage.removeItem(COMMENT_KEY_PREFIX + current.from);
-      } catch {}
+      // Подчищаем legacy localStorage только при сохранении overall.
+      if (selectedBrand === null) {
+        try {
+          localStorage.removeItem(COMMENT_KEY_PREFIX + current.from);
+        } catch {}
+      }
     },
   });
 
@@ -614,16 +664,16 @@ export default function WeeklyReport() {
                             }`}
                           >
                             <td className="p-1">
-                              {/* TASK-LEAD-086 — клик на имя менеджера → /weekly-report?brand=A,B
-                                  (бренды этого менеджера, comma-separated). При no_brands —
-                                  не делаем Link, фильтровать нечего. */}
+                              {/* HYP-005 — клик на имя менеджера → /manager-summary
+                                  (page-level summary about менеджера). При no_brands —
+                                  не делаем Link, summary без brand'ов бессмысленна. */}
                               {m.no_brands || m.brands.length === 0 ? (
                                 m.manager_name
                               ) : (
                                 <Link
-                                  to={`/weekly-report?brand=${encodeURIComponent(m.brands.join(","))}`}
+                                  to={`/manager-summary?manager_id=${m.manager_user_id}&week_start=${current.from}`}
                                   className="text-accent hover:underline"
-                                  title={`Открыть отчёт по брендам ${m.manager_name}`}
+                                  title={`Открыть сводку по менеджеру ${m.manager_name}`}
                                 >
                                   {m.manager_name}
                                 </Link>
@@ -670,8 +720,8 @@ export default function WeeklyReport() {
             <div className="text-xs text-muted mt-2">
               Группировка через назначения брендов (`brand_assignments`). WoW —
               относительно предыдущей закрытой недели. Источник: WB final
-              report (`wb_report_detail`). Клик на имя менеджера → drill в его
-              бренды (Top-5 SKU + рекомендации фильтруются).
+              report (`wb_report_detail`). Клик на имя менеджера → сводка
+              по менеджеру (HYP-005).
             </div>
           </section>
         )}
@@ -872,41 +922,113 @@ export default function WeeklyReport() {
               )}
             </section>
 
-            {/* Comment — TASK-LEAD-062: серверное хранение */}
+            {/* Comment — TASK-LEAD-062 + HYP-004: серверное хранение + per-brand */}
             <section className="card">
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
                 <h2 className="font-medium">Комментарий за неделю</h2>
-                {commentQ.data?.author_name && commentQ.data?.updated_at && (
-                  <div className="text-xs text-muted">
-                    {commentQ.data.author_name} · {formatAgo(commentQ.data.updated_at)}
-                  </div>
-                )}
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-muted">Scope:</label>
+                  <select
+                    className="input text-xs"
+                    value={selectedBrand ?? "__overall__"}
+                    onChange={(e: any) => {
+                      const v = e.target.value;
+                      setSelectedBrand(v === "__overall__" ? null : v);
+                    }}
+                  >
+                    {/* Overall option всегда видим: для director/head — writable;
+                        для manager без brand'ов — единственный (read-only);
+                        для manager с brand'ами — read-only fallback view. */}
+                    <option value="__overall__">Общий (РОП / собственник)</option>
+                    {availableBrands.map((b) => (
+                      <option key={b} value={b}>
+                        Бренд · {b}
+                      </option>
+                    ))}
+                  </select>
+                  {commentQ.data?.author_name && commentQ.data?.updated_at && (
+                    <div className="text-xs text-muted">
+                      {commentQ.data.author_name} ·{" "}
+                      {formatAgo(commentQ.data.updated_at)}
+                    </div>
+                  )}
+                </div>
               </div>
               <textarea
                 className="input w-full text-sm"
                 rows={5}
-                placeholder="Что произошло за неделю? Что нужно изменить? Какие планы на следующую неделю?"
+                placeholder={
+                  isReadOnlyComment
+                    ? "Общий комментарий пишет РОП / собственник. У тебя — read-only."
+                    : selectedBrand
+                      ? `Что произошло на бренде «${selectedBrand}» за неделю?`
+                      : "Что произошло за неделю? Что нужно изменить? Какие планы на следующую неделю?"
+                }
                 value={comment}
                 onChange={(e: any) => onCommentChange(e.target.value)}
+                disabled={isReadOnlyComment}
               />
               <div className="flex items-center justify-between mt-2">
                 <div className="text-xs text-muted">
-                  Виден всем в команде. Попадёт в PDF-экспорт отчёта.
+                  {selectedBrand
+                    ? `Per-brand комментарий. Виден РОПу и другим менеджерам бренда «${selectedBrand}».`
+                    : "Общий комментарий за неделю — виден всей команде. Попадёт в PDF-экспорт."}
                 </div>
                 <button
                   type="button"
                   className="btn btn-primary text-xs"
                   onClick={onSaveComment}
-                  disabled={!dirty || saveMut.isPending}
+                  disabled={!dirty || saveMut.isPending || isReadOnlyComment}
                   title={
-                    dirty
-                      ? "Сохранить комментарий на сервер"
-                      : "Нет изменений"
+                    isReadOnlyComment
+                      ? "Только РОП / собственник может писать общий комментарий"
+                      : dirty
+                        ? "Сохранить комментарий на сервер"
+                        : "Нет изменений"
                   }
                 >
                   {saveMut.isPending ? "Сохранение…" : dirty ? "Сохранить" : "Сохранено"}
                 </button>
               </div>
+              {/* HYP-004: список других комментариев за эту же неделю */}
+              {(() => {
+                const others = (commentsAllQ.data?.items ?? []).filter((c) => {
+                  // Отфильтровать текущий scope (не дублировать textarea)
+                  if (selectedBrand === null) return c.brand !== null;
+                  return c.brand !== selectedBrand;
+                });
+                if (others.length === 0) return null;
+                return (
+                  <div className="mt-3 pt-3 border-t border-border">
+                    <div className="text-xs text-muted uppercase mb-2">
+                      Другие комментарии за эту неделю
+                    </div>
+                    <ul className="flex flex-col gap-2 text-sm">
+                      {others.map((c) => (
+                        <li
+                          key={`${c.brand ?? "__overall__"}`}
+                          className="flex flex-col"
+                        >
+                          <div className="flex items-baseline gap-2 text-xs text-muted">
+                            <span className="font-medium text-fg">
+                              {c.author_name || "—"}
+                            </span>
+                            <span>
+                              {c.brand
+                                ? `· бренд ${c.brand}`
+                                : "· общий"}
+                            </span>
+                            <span>· {formatAgo(c.updated_at)}</span>
+                          </div>
+                          <div className="whitespace-pre-wrap text-fg">
+                            {c.comment}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })()}
             </section>
           </>
         )}

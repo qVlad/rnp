@@ -50,6 +50,7 @@ import NewProducts from "./pages/NewProducts";
 import TransitCalculator from "./pages/TransitCalculator";
 import SupplyCalculator from "./pages/SupplyCalculator";
 import WeeklyReport from "./pages/WeeklyReport";
+import ManagerSummary from "./pages/ManagerSummary";
 import AbTestList from "./pages/AbTestList";
 import AbTestNew from "./pages/AbTestNew";
 import AbTestDetail from "./pages/AbTestDetail";
@@ -306,6 +307,7 @@ export default function App() {
           <Route path="supply-calculator" element={<SupplyCalculator />} />
           <Route path="transit-calculator" element={<TransitCalculator />} />
           <Route path="weekly-report" element={<WeeklyReport />} />
+          <Route path="manager-summary" element={<ManagerSummary />} />
           <Route
             path="settings"
             element={

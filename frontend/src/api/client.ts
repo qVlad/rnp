@@ -2544,6 +2544,11 @@ paymentOrderDelete: (payment_order_id: string) =>
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  /** HYP-004: список всех комментариев за неделю (overall + per-brand). */
+  weeklyReportCommentList: (week_start: string) =>
+    request<{ week_start: string; items: WeeklyReportComment[] }>(
+      `/api/weekly-report/comment/all?week_start=${week_start}`,
+    ),
 
   // ── Promo calculator (TASK-LEAD-050) ──
   promoCalculatorSimulate: (body: {
