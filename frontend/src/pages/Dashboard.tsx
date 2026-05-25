@@ -36,6 +36,7 @@ import TodayVsYesterdayStrip from "@/components/TodayVsYesterdayStrip";
 import WeekProfitHero from "@/components/WeekProfitHero";
 import WeeklyChangesFeed from "@/components/WeeklyChangesFeed";
 import ReconciliationHeroWidget from "@/components/ReconciliationHeroWidget";
+import StateOfBusinessCard from "@/components/StateOfBusinessCard";
 import ReportingModeBadge from "@/components/ReportingModeBadge";
 import { usePeriod } from "@/contexts/PeriodContext";
 import { useReportingMode } from "@/contexts/ReportingModeContext";
@@ -48,6 +49,9 @@ import { fmtNum, fmtRub } from "@/lib/format";
 type Period = "day" | "week" | "month";
 type Mode = { kind: "preset"; period: Period } | { kind: "custom"; start: string; end: string };
 type DataMode = "preliminary" | "final" | "hybrid";
+// HYP-001 — A/B toggle для composite «State of Business» карточки.
+// composite (default) — новая single-card с табами; legacy — старые 6 heros.
+type HeroMode = "composite" | "legacy";
 
 const periodLabels: Record<Period, string> = {
   day: "Сегодня",
@@ -74,6 +78,18 @@ export default function Dashboard() {
     setOwnerView(next);
     try { localStorage.setItem("dashboard.owner-view.v1", next ? "1" : "0"); } catch {}
   };
+  // HYP-001 — A/B toggle composite vs legacy. Persist в localStorage.
+  // Default = composite (новый UX). Toggle в шапке Dashboard.
+  const [heroMode, setHeroMode] = useState<HeroMode>(() => {
+    try {
+      const v = localStorage.getItem("dashboard.hero.mode.v1");
+      if (v === "composite" || v === "legacy") return v;
+    } catch {}
+    return "composite";
+  });
+  useEffect(() => {
+    try { localStorage.setItem("dashboard.hero.mode.v1", heroMode); } catch {}
+  }, [heroMode]);
   // TASK-UI-005 continuation: two-way sync с PeriodContext.
   // Dashboard preset (day/week/month) совпадает с PeriodContext preset.
   // При init читаем из context, при changes пишем обратно.
@@ -200,29 +216,77 @@ export default function Dashboard() {
 
   return (
     <div className="flex flex-col gap-4" ref={dashboardRef}>
-      <AlertsBar alerts={alertsQ.data?.alerts ?? []} />
-      <WeekProfitHero />
-      {/* TASK-LEAD-043 — Cross-source widget виден всем кто может видеть сверку */}
-      {(user?.role === "director" || user?.role === "head_of_sales") && (
-        <ReconciliationHeroWidget />
+      {/* HYP-001 — A/B toggle composite (default) | legacy.
+          В composite mode рендерим одну State-of-Business карточку с табами,
+          существенно сокращая viewport-overhead. В legacy — старые 6 heros
+          как раньше (back-compat для адаптации). */}
+      <div className="flex items-center justify-end gap-1 -mb-1">
+        <span className="text-xs text-muted mr-1">Вид:</span>
+        <button
+          type="button"
+          onClick={() => setHeroMode("composite")}
+          className={`btn text-xs ${heroMode === "composite" ? "border-accent text-accent" : ""}`}
+          title="Новый компактный вид: одна карточка с 4 табами вместо 6 heros"
+        >
+          🆕 Compact
+        </button>
+        <button
+          type="button"
+          onClick={() => setHeroMode("legacy")}
+          className={`btn text-xs ${heroMode === "legacy" ? "border-accent text-accent" : ""}`}
+          title="Старый вид: 6+ Hero-виджетов один под другим"
+        >
+          Legacy
+        </button>
+      </div>
+      {heroMode === "composite" ? (
+        <>
+          <StateOfBusinessCard alerts={alertsQ.data?.alerts ?? []} />
+          {/* Manager-specific виджеты остаются — composite-карточка
+              универсальная, но план-факт менеджера слишком специфичен,
+              чтобы прятать его за tab'ом. */}
+          {user?.role === "manager" && <ManagerPlanProgressCard />}
+          {user?.role === "director" && (
+            <div className="flex items-center gap-2 -mb-1">
+              <button
+                type="button"
+                onClick={toggleOwnerView}
+                className={`btn text-xs ${ownerView ? "border-accent text-accent" : ""}`}
+                title="Owner cockpit — 4 виджета на одном экране"
+              >
+                <Icon name="star" size={12} /> {ownerView ? "Скрыть Owner cockpit" : "Owner cockpit"}
+              </button>
+            </div>
+          )}
+          {user?.role === "director" && ownerView && <OwnerCockpitView />}
+        </>
+      ) : (
+        <>
+          <AlertsBar alerts={alertsQ.data?.alerts ?? []} />
+          <WeekProfitHero />
+          {/* TASK-LEAD-043 — Cross-source widget виден всем кто может видеть сверку */}
+          {(user?.role === "director" || user?.role === "head_of_sales") && (
+            <ReconciliationHeroWidget />
+          )}
+          {user?.role === "manager" && <ManagerPlanProgressCard />}
+          {user?.role === "director" && (
+            <div className="flex items-center gap-2 -mb-1">
+              <button
+                type="button"
+                onClick={toggleOwnerView}
+                className={`btn text-xs ${ownerView ? "border-accent text-accent" : ""}`}
+                title="Owner cockpit — 4 виджета на одном экране: сверка, план месяца, топ/bottom бренды и менеджеры"
+              >
+                <Icon name="star" size={12} /> {ownerView ? "Скрыть Owner cockpit" : "Owner cockpit"}
+              </button>
+            </div>
+          )}
+          {user?.role === "director" && ownerView && <OwnerCockpitView />}
+          <CustomMetricsCard period="week" />
+          <TodayVsYesterdayStrip />
+          <WeeklyChangesFeed />
+        </>
       )}
-      {user?.role === "manager" && <ManagerPlanProgressCard />}
-      {user?.role === "director" && (
-        <div className="flex items-center gap-2 -mb-1">
-          <button
-            type="button"
-            onClick={toggleOwnerView}
-            className={`btn text-xs ${ownerView ? "border-accent text-accent" : ""}`}
-            title="Owner cockpit — 4 виджета на одном экране: сверка, план месяца, топ/bottom бренды и менеджеры"
-          >
-            <Icon name="star" size={12} /> {ownerView ? "Скрыть Owner cockpit" : "Owner cockpit"}
-          </button>
-        </div>
-      )}
-      {user?.role === "director" && ownerView && <OwnerCockpitView />}
-      <CustomMetricsCard period="week" />
-      <TodayVsYesterdayStrip />
-      <WeeklyChangesFeed />
 
       <div className="flex items-center justify-between">
         <div className="flex items-baseline gap-3 flex-wrap">

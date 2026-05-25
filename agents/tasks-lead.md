@@ -3011,7 +3011,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 ### Статус
 
 **Этап 1 (research):** Открыта — заведена 2026-05-25 как initiative. Owner Product Strategist.
-**Этап 2 (implementation):** Не начат — ждёт research-spec'а.
+**Этап 2 (implementation): Выполнено — 2026-05-25.** Реализовано без формального research-этапа на базе round 12+13 feedback'а. Spec: `agents/references/spec-state-of-business.md`. Компонент `frontend/src/components/StateOfBusinessCard.tsx` (4 таба: Прибыль / Сверка с WB / Сегодня vs Вчера / Алерты). A/B toggle `localStorage["dashboard.hero.mode.v1"]` = `composite` (default) | `legacy`. Старые компоненты не удалены (back-compat). Метрики успеха: <5% юзеров на legacy через 2 недели + кликабельность tab'ов через GA/амплитуду (пока не подключено).
 
 ---
 
