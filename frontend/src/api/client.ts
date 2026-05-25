@@ -1177,6 +1177,8 @@ paymentOrderDelete: (payment_order_id: string) =>
         orders: number;
         localized_orders: number;
         localization_pct: number;
+        // TASK-LEAD-085: Δ к предыдущей неделе (п.п.). null = нет данных за prev period.
+        wow_pct: number | null;
       }>;
       by_warehouse: Array<{
         warehouse: string;

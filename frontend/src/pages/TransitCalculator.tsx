@@ -314,24 +314,56 @@ type TransitResult = {
   grandTotal: number;
 };
 
+// TASK-LEAD-084: override тарифа для расчёта конкретного candidate-склада
+// в multi-warehouse compare-таблице. Если задан — заменяет соответствующие
+// поля из `params`. Используется когда для пары `(hub, candidate)` в
+// backend есть запись `wb_transit_tariff`, отличающаяся от общего manual
+// тарифа в форме.
+type TransitTariffOverride = {
+  rate_small: number | null;
+  rate_large: number | null;
+  threshold: number | null;
+  rate_direct: number | null;
+};
+
 function computeTransit(
   finalTariff: TariffTimelineRow | null,
   p: SavedParams,
+  tariffOverride?: TransitTariffOverride,
 ): TransitResult | null {
   const totalVolume = p.units * p.liters_per_unit;
   if (!Number.isFinite(totalVolume) || totalVolume <= 0) return null;
 
-  // Если задан прямой тариф (rate_direct > 0) — используем его, игнорируем
+  // Effective тариф: override.rate_X имеет приоритет над params.rate_X,
+  // если значение задано (не null/undefined). null → fallback на params.
+  const effDirect =
+    tariffOverride?.rate_direct != null
+      ? tariffOverride.rate_direct
+      : p.rate_direct;
+  const effSmall =
+    tariffOverride?.rate_small != null
+      ? tariffOverride.rate_small
+      : p.rate_small;
+  const effLarge =
+    tariffOverride?.rate_large != null
+      ? tariffOverride.rate_large
+      : p.rate_large;
+  const effThreshold =
+    tariffOverride?.threshold != null
+      ? tariffOverride.threshold
+      : p.volume_threshold_l;
+
+  // Если задан прямой тариф (effDirect > 0) — используем его, игнорируем
   // двухступенчатую шкалу. Это удобный шорткат когда юзер точно знает тариф
   // для своей пары хаб→склад из ЛК WB.
-  const useDirect = Number.isFinite(p.rate_direct) && p.rate_direct > 0;
+  const useDirect = Number.isFinite(effDirect) && effDirect > 0;
   const rateTier: "small" | "large" =
-    useDirect || totalVolume < p.volume_threshold_l ? "small" : "large";
+    useDirect || totalVolume < effThreshold ? "small" : "large";
   const appliedRate = useDirect
-    ? p.rate_direct
+    ? effDirect
     : rateTier === "small"
-      ? p.rate_small
-      : p.rate_large;
+      ? effSmall
+      : effLarge;
   const transitCost = totalVolume * appliedRate;
 
   // External-логистика: довоз до хаба (manual user input).
@@ -1378,11 +1410,34 @@ export default function TransitCalculator() {
             ) : (
               (() => {
                 const tariffItems = tariffsQ.data?.items ?? [];
-                // Минимальный grand_total для подсветки «дешевле всего».
+                const transitItems = transitListQ.data?.items ?? [];
+                const hubLower = params.hub.trim().toLowerCase();
+                // TASK-LEAD-084: для каждого candidate-склада ищем
+                // per-pair `wb_transit_tariff(hub, candidate)`. Если есть —
+                // его тариф (rate_small/large/threshold) идёт в override
+                // computeTransit. Если нет — fallback на общий manual
+                // (params.rate_*).
                 const rows = params.compare_warehouses.map((wh) => {
                   const t = tariffItems.find((x) => x.warehouse_name === wh) ?? null;
-                  const r = computeTransit(t, params);
-                  return { wh, result: r };
+                  const whLower = wh.trim().toLowerCase();
+                  const perPair: TransitTariffRow | undefined = transitItems.find(
+                    (it) =>
+                      it.hub_name.toLowerCase() === hubLower &&
+                      it.destination_warehouse.toLowerCase() === whLower,
+                  );
+                  const override: TransitTariffOverride | undefined = perPair
+                    ? {
+                        rate_small: perPair.rate_small,
+                        rate_large: perPair.rate_large,
+                        threshold: perPair.threshold_l,
+                        // backend пока не отдаёт «прямой тариф» отдельно —
+                        // оставляем null чтобы computeTransit fallback'нулся
+                        // на двухступенчатую шкалу (rate_small/large).
+                        rate_direct: null,
+                      }
+                    : undefined;
+                  const r = computeTransit(t, params, override);
+                  return { wh, result: r, hasPerPair: !!perPair };
                 });
                 const allTotals = [
                   transit?.grandTotal ?? null,
@@ -1456,7 +1511,30 @@ export default function TransitCalculator() {
                             key={row.wh}
                             className="border-t border-border"
                           >
-                            <td className="p-2">{row.wh}</td>
+                            <td className="p-2">
+                              {row.wh}{" "}
+                              {row.hasPerPair ? (
+                                <span
+                                  className="text-tiny text-faint"
+                                  title={
+                                    `Тариф из ЛК WB для пары «${params.hub} → ${row.wh}». ` +
+                                    "Подставлен автоматически (см. таблицу wb_transit_tariff)."
+                                  }
+                                >
+                                  (per-pair)
+                                </span>
+                              ) : (
+                                <span
+                                  className="text-tiny text-faint"
+                                  title={
+                                    "Для этой пары нет записи в wb_transit_tariff. " +
+                                    "Использован общий manual-тариф из формы выше."
+                                  }
+                                >
+                                  (общий тариф)
+                                </span>
+                              )}
+                            </td>
                             <td className="p-2 text-right font-mono">
                               {fmtRub(row.result.deliveryToHubTotal)}
                             </td>

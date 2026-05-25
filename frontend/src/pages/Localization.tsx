@@ -16,7 +16,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { fmtNum, fmtPct } from "@/lib/format";
+import { arrowForDelta, fmtNum, fmtPct } from "@/lib/format";
 import { usePeriod } from "@/contexts/PeriodContext";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import PageHeader from "@/components/PageHeader";
@@ -25,6 +25,32 @@ function pctColor(pct: number): string {
   if (pct >= 70) return "text-success";
   if (pct >= 30) return "text-warning";
   return "text-danger";
+}
+
+// TASK-LEAD-085: WoW п.п. cell — good_direction-aware (рост = зелёный).
+// В отличие от DeltaCell, эта показывает Δ напрямую как «п.п.» (это
+// уже разница процентных пунктов, не относительный %).
+function WoWPpCell({ value }: { value: number | null }) {
+  if (value == null || !Number.isFinite(value)) {
+    return <span className="text-muted font-mono">—</span>;
+  }
+  const isUp = value > 0;
+  const isZero = value === 0;
+  // Для локализации рост = хорошо (больше заказов из ближнего склада).
+  const cls = isZero
+    ? "text-muted"
+    : isUp
+      ? "text-success"
+      : "text-danger";
+  const arrow = arrowForDelta(value);
+  const sign = value > 0 ? "+" : "";
+  return (
+    <span className={`font-mono ${cls}`}>
+      {arrow && <span className="mr-0.5">{arrow}</span>}
+      {sign}
+      {value.toFixed(1)} п.п.
+    </span>
+  );
 }
 
 function cellBg(pct: number): string {
@@ -410,6 +436,12 @@ export default function Localization() {
                   <th className="py-2 text-right">Заказы</th>
                   <th className="py-2 text-right">Локализ.</th>
                   <th className="py-2 text-right">% локализ.</th>
+                  <th
+                    className="py-2 text-right"
+                    title="Изменение % локализации к предыдущей неделе. Положительное (зелёное) = улучшилось. Бренды с <10 заказами в любом периоде показывают «—»."
+                  >
+                    WoW п.п.
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -426,6 +458,9 @@ export default function Localization() {
                       className={`py-2 text-right font-semibold ${pctColor(b.localization_pct)}`}
                     >
                       {fmtPct(b.localization_pct)}
+                    </td>
+                    <td className="py-2 text-right">
+                      <WoWPpCell value={b.wow_pct} />
                     </td>
                   </tr>
                 ))}

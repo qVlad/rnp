@@ -33,7 +33,7 @@ API:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Iterable
 
@@ -71,6 +71,11 @@ class BrandLocalization:
     orders: int
     localized_orders: int
     localization_pct: float
+    # TASK-LEAD-085: WoW в процентных пунктах.
+    # localization_pct (current) − localization_pct (prev week).
+    # None если за prev period нет данных или объём ниже порога
+    # (бренд не был «представительным» в прошлой неделе).
+    wow_pct: float | None = None
 
 
 @dataclass(frozen=True)
@@ -155,6 +160,69 @@ def is_localized(warehouse_name: str | None, oblast: str | None,
 # --------------------------------------------------------------------------- #
 
 
+async def _compute_brand_pct_map(
+    session: AsyncSession,
+    tenant_id: int,
+    period_from: date,
+    period_to: date,
+    brands: list[str] | None,
+    min_orders: int,
+) -> dict[str, float]:
+    """Posчитать map `brand → localization_pct` за прошлый период (для WoW).
+
+    Используется отдельно от `compute_localization` чтобы не платить
+    overhead полного breakdown'а (heatmap / worst_skus / by_warehouse) для
+    окна-сравнения. Возвращает только бренды с `orders >= min_orders`
+    (репрезентативные).
+    """
+    dt_from = _to_dt_utc(period_from)
+    dt_to = _to_dt_utc(period_to, end_of_day=True)
+
+    stmt = (
+        select(
+            WbOrder.warehouse_name,
+            WbOrder.oblast,
+            WbOrder.region_name,
+            WbOrder.brand,
+            Product.brand.label("p_brand"),
+        )
+        .join(Product, Product.nm_id == WbOrder.nm_id, isouter=True)
+        .where(
+            WbOrder.tenant_id == tenant_id,
+            WbOrder.order_dt >= dt_from,
+            WbOrder.order_dt <= dt_to,
+            WbOrder.is_cancel.is_(False),
+        )
+    )
+    if brands is not None:
+        if not brands:
+            return {}
+        stmt = stmt.where(Product.brand.in_(brands))
+
+    rows = (await session.execute(stmt)).all()
+
+    buckets: dict[str, dict[str, int]] = {}
+    for r in rows:
+        wh_cluster = cluster_for_warehouse(r.warehouse_name)
+        buyer_cluster = cluster_for_oblast(r.oblast, r.region_name)
+        loc = (
+            wh_cluster != "OTHER"
+            and buyer_cluster != "OTHER"
+            and wh_cluster == buyer_cluster
+        )
+        brand_key = (r.p_brand or r.brand or "").strip()
+        b = buckets.setdefault(brand_key, {"orders": 0, "localized": 0})
+        b["orders"] += 1
+        if loc:
+            b["localized"] += 1
+
+    return {
+        name: _safe_pct(b["localized"], b["orders"])
+        for name, b in buckets.items()
+        if b["orders"] >= min_orders
+    }
+
+
 async def compute_localization(
     session: AsyncSession,
     tenant_id: int,
@@ -162,6 +230,7 @@ async def compute_localization(
     period_to: date,
     brands: Iterable[str] | None = None,
     worst_sku_limit: int = 10,
+    brand_min_orders: int = 10,
 ) -> LocalizationStats:
     """Посчитать KPI локализации за период.
 
@@ -173,6 +242,10 @@ async def compute_localization(
         brands: whitelist; None ⇒ все бренды.
         worst_sku_limit: топ-N SKU с самой низкой локализацией (только nm
             с >= 5 заказами, чтобы исключить статистический шум).
+        brand_min_orders: TASK-LEAD-085, минимальный объём заказов чтобы
+            бренд попал в `by_brand` (default 10). Отсекает статистический
+            шум: бренды с 1-2 заказами дают «100% локализация» или «0%»
+            что не несёт сигнала.
 
     Returns:
         LocalizationStats — KPI + breakdown'ы.
@@ -325,15 +398,43 @@ async def compute_localization(
 
     by_cluster.sort(key=_cluster_sort_key)
 
-    by_brand = [
-        BrandLocalization(
-            brand=name,
-            orders=int(b["orders"]),
-            localized_orders=int(b["localized"]),
-            localization_pct=_safe_pct(int(b["localized"]), int(b["orders"])),
+    # TASK-LEAD-085: фильтр по минимальному объёму + WoW п.п. за prev week.
+    # Previous-period окно — тот же размер сдвинутый назад (immediately
+    # adjacent, не overlap). Для периода 2026-05-15..2026-05-21 prev =
+    # 2026-05-08..2026-05-14.
+    period_days = (period_to - period_from).days + 1
+    prev_to = period_from - timedelta(days=1)
+    prev_from = prev_to - timedelta(days=period_days - 1)
+    prev_brand_pct = await _compute_brand_pct_map(
+        session=session,
+        tenant_id=tenant_id,
+        period_from=prev_from,
+        period_to=prev_to,
+        brands=brand_list,
+        min_orders=brand_min_orders,
+    )
+
+    by_brand: list[BrandLocalization] = []
+    for name, b in brand_buckets.items():
+        orders_n = int(b["orders"])
+        # min_orders threshold — отсекаем статистический шум.
+        if orders_n < brand_min_orders:
+            continue
+        loc_n = int(b["localized"])
+        curr_pct = _safe_pct(loc_n, orders_n)
+        prev_pct = prev_brand_pct.get(name)
+        wow_pct = (
+            round(curr_pct - prev_pct, 2) if prev_pct is not None else None
         )
-        for name, b in brand_buckets.items()
-    ]
+        by_brand.append(
+            BrandLocalization(
+                brand=name,
+                orders=orders_n,
+                localized_orders=loc_n,
+                localization_pct=curr_pct,
+                wow_pct=wow_pct,
+            )
+        )
     by_brand.sort(key=lambda x: x.orders, reverse=True)
 
     by_warehouse = [

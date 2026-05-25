@@ -54,6 +54,15 @@ async def localization_summary(
     to: str | None = Query(default=None),
     brand: str | None = Query(default=None, description="опц. фильтр по бренду"),
     worst_sku_limit: int = Query(default=10, ge=1, le=100),
+    brand_min_orders: int = Query(
+        default=10,
+        ge=0,
+        le=10000,
+        description=(
+            "TASK-LEAD-085: минимальный объём заказов для попадания в "
+            "by_brand. Default 10 — отсекает статистический шум."
+        ),
+    ),
     session: AsyncSession = Depends(get_db_tenant_scoped),
     tenant_id: int = Depends(current_tenant_id),
     brands: set[str] | None = Depends(current_brands_filter),
@@ -88,6 +97,7 @@ async def localization_summary(
         period_to=period_to,
         brands=effective_brands,
         worst_sku_limit=worst_sku_limit,
+        brand_min_orders=brand_min_orders,
     )
 
     return {
