@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
@@ -24,6 +24,32 @@ export default function PnLReconciliation() {
   const totals = q.data?.totals;
   const loadedWeeks = periods.length;
   const hasPartialHistory = !q.isLoading && loadedWeeks > 0 && loadedWeeks < weeks;
+
+  // TASK-LEAD-063 — deep-link: `#period=YYYY-MM-DD_YYYY-MM-DD` от
+  // ReconciliationHeroWidget. На load автоматически раскрываем wizard
+  // соответствующей строки + скроллим к ней. Если hash пустой / не парсится
+  // / неделя не в текущем окне — silent skip (обычное поведение).
+  useEffect(() => {
+    if (!periods.length) return;
+    const hash = window.location.hash || "";
+    const m = hash.match(/period=(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})/);
+    if (!m) return;
+    const [, from, to] = m;
+    const match = periods.find(
+      (p: any) => p.period_from === from && p.period_to === to,
+    );
+    if (!match) return;
+    const key = `${match.period_from}-${match.period_to}`;
+    setExpanded(key);
+    // отложим scroll до того момента когда DOM перерисуется с раскрытой строкой
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`recon-row-${key}`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q.data]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -168,6 +194,7 @@ export default function PnLReconciliation() {
                 return (
                   <React.Fragment key={key}>
                   <tr
+                    id={`recon-row-${key}`}
                     className={`border-t border-border cursor-pointer hover:bg-surface-2/50 ${
                       p.diff.alert ? "bg-danger/10" : ""
                     }`}

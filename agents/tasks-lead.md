@@ -2228,10 +2228,10 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Источник:** `feedback-reviews/round-12-2026-05-22.md` — seller 043
 - **Описание:** Сейчас seller кликает «Подробнее →» в Hero виджете → попадает на `/pnl-reconciliation`, ищет глазами проблемную неделю → кликает строку → разворачивается wizard. 3 клика. Сделать deep-link через URL hash `#period=YYYY-MM-DD_YYYY-MM-DD` который на `/pnl-reconciliation` авто-разворачивает соответствующую строку.
 - **Критерии готовности:**
-  - [ ] `ReconciliationHeroWidget.tsx`: ссылка `Объяснить →` с `to={'/pnl-reconciliation#period=' + period.start + '_' + period.end}`
-  - [ ] `PnLReconciliation.tsx`: `useEffect` читает `window.location.hash`, скроллит к нужной строке + раскрывает wizard
+  - [x] `ReconciliationHeroWidget.tsx`: ссылка `Подробнее/Объяснить →` с `to={'/pnl-reconciliation#period=' + period_from + '_' + period_to}`
+  - [x] `PnLReconciliation.tsx`: `useEffect` читает `window.location.hash`, скроллит к нужной строке + раскрывает wizard (через `id="recon-row-…"` + `scrollIntoView`). Hash пустой / не парсится / неделя не в текущем окне — silent skip.
 - **Зависимости:** TASK-LEAD-043 ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-25 — Design Engineer (Claude Opus 4.7)
 
 ---
 

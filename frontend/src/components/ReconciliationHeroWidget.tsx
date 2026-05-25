@@ -76,7 +76,7 @@ export default function ReconciliationHeroWidget() {
           </div>
         </div>
         <Link
-          to="/pnl-reconciliation"
+          to={`/pnl-reconciliation#period=${latest.period_from}_${latest.period_to}`}
           className="btn text-xs"
           title="Подробная сверка по всем неделям — где Δ, почему"
         >

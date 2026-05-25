@@ -146,10 +146,10 @@
 - **Причина:** `services/unit_plan_loader.py:_latest_price` (строки 522-567) выбирает самую свежую `wb_sales` строку по `nm_id` без фильтра `is_return`. У возвратов `price_with_disc` отрицательный → `base_price = price_with_disc / (1 − discount_share)` тоже отрицательный, и весь price-ladder вниз по цепочке (after_discount, after_spp, final). Сходится: `−14591 × (1 − 0.67) = −4815`, `−9100 × (1 − 0.40) = −5460`.
 - **Затронутые файлы:** `backend/app/services/unit_plan_loader.py`
 - **Критерии исправления:**
-  - [ ] `is_return.is_(False)` добавлен в `subq.where(...)` (поиск max(sale_dt))
-  - [ ] `is_return.is_(False)` добавлен в outer `where(...)` (выбор price_with_disc/discount_percent по найденной дате — на случай если в этот же `sale_dt` существует и продажа, и возврат)
-  - [ ] Smoke на prod: ни одна строка `/unit-plan` не содержит отрицательной «Базовой цены» / «Цены без СПП»
-- **Статус:** Открыт
+  - [x] `is_return.is_(False)` добавлен в `subq.where(...)` (поиск max(sale_dt))
+  - [x] `is_return.is_(False)` добавлен в outer `where(...)` (выбор price_with_disc/discount_percent по найденной дате — на случай если в этот же `sale_dt` существует и продажа, и возврат)
+  - [x] Smoke на prod: ни одна строка `/unit-plan` не содержит отрицательной «Базовой цены» / «Цены без СПП»
+- **Статус:** Исправлено — 2026-05-25 — Developer (Claude Opus 4.7)
 
 ---
 
@@ -161,10 +161,10 @@
 - **Причина:** Backend `api/unit_plan.py:get_global_config` возвращает `{"config": {...} | null}`, а frontend `client.ts:unitPlanGlobalConfig` типизирует ответ как сам `UnitPlanGlobalConfig` без обёртки. На фронте `config = {config: {...}}` truthy → `TopConstants` падает в ветку рендера чипов и читает несуществующие поля верхнего уровня → `${config.wb_club_pct}%` рендерится как `undefined%`. Заглушка-плейсхолдер `if (!config)` (для пустой БД) тоже никогда не срабатывает по той же причине.
 - **Затронутые файлы:** `frontend/src/api/client.ts` (методы `unitPlanGlobalConfig`, `unitPlanSetGlobalConfig`)
 - **Критерии исправления:**
-  - [ ] `unitPlanGlobalConfig` разворачивает `.config` (возвращает `UnitPlanGlobalConfig | null`)
-  - [ ] `unitPlanSetGlobalConfig` разворачивает `.config`
-  - [ ] Smoke: на prod в шапке `/unit-plan` чипы показывают реальные числа из `unit_plan_global_config` (после ручного сохранения версии в `/settings#unit-plan`); если БД пуста — отрендерилась заглушка «Глобальные константы не загружены»
-- **Статус:** Открыт
+  - [x] `unitPlanGlobalConfig` разворачивает `.config` (возвращает `UnitPlanGlobalConfig | null`)
+  - [x] `unitPlanSetGlobalConfig` разворачивает `.config`
+  - [x] Smoke: на prod в шапке `/unit-plan` чипы показывают реальные числа из `unit_plan_global_config` (после ручного сохранения версии в `/settings#unit-plan`); если БД пуста — отрендерилась заглушка «Глобальные константы не загружены»
+- **Статус:** Исправлено — 2026-05-25 — Developer (Claude Opus 4.7)
 
 ---
 
