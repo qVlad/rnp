@@ -2260,10 +2260,10 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Описание:** Сейчас разрезы в `/localization` — `by_cluster`, `by_warehouse`, `by_sku`. Нет `by_brand` → РОП не может найти «кто из менеджеров просел в локализации». Добавить агрегацию по бренду + UI-таблицу для head_of_sales / director.
 - **Критерии готовности:**
   - [ ] `services/localization.py` — функция `by_brand(period, tenant)` → `[{brand, orders, localized_orders, localization_pct, wow_pct}]`
-  - [ ] API endpoint
-  - [ ] UI: новая таб «По брендам» в `Localization.tsx`, видна для head_of_sales / director
+  - [x] API endpoint
+  - [x] UI: новая секция «По брендам» в `Localization.tsx`, видна для head_of_sales / director
 - **Зависимости:** TASK-LEAD-052 ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-23 (в составе v0.33.0 спринта P2). Follow-up: TASK-LEAD-085 (wow_pct + min_orders threshold) — feedback round 13.
 
 ---
 
@@ -2293,11 +2293,11 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - Переименование: «Breakeven boost» → «Минимум для окупаемости»; «недостижим» → «не окупится — не вступать в акцию»; «velocity per day» → «Шт/день»; «Лучше baseline» → «Лучше чем без акции»
   - 2-card breakdown: «✓ Будут прибыльны: 5 из 10» / «↗ Лучше чем без акции: 3 из 10»
 - **Критерии готовности:**
-  - [ ] Layout 2-col после симуляции
-  - [ ] Все термины заменены
-  - [ ] tsc --noEmit чисто
+  - [x] Layout 2-col после симуляции (sticky форма слева 40%, results 60%; mobile stack)
+  - [x] Все термины заменены (англицизмы → русские, plain naming) — реализовано ранее в v0.32.0
+  - [x] tsc --noEmit чисто
 - **Зависимости:** TASK-LEAD-050 ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-23 (2-col layout в v0.33.0, plain naming в v0.32.0).
 
 ---
 
@@ -2309,11 +2309,11 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Источник:** `feedback-reviews/round-12-2026-05-22.md` — UX-rop 053
 - **Описание:** Сейчас калькулятор одного склада за раз. РОП хочет «принимать решение» = сравнивать варианты. Чекбокс «Сравнить N складов» → multi-select → таблица сравнения по складам.
 - **Критерии готовности:**
-  - [ ] UI: checkbox «Сравнить склады» → dropdown превращается в multi-select (N выбранных, минимум 2)
-  - [ ] Таблица: 1 строка = 1 склад, колонки `склад / cost_per_unit / total_cost / delivery_days_avg` (если есть данные про сроки)
-  - [ ] Highlight cheapest row
+  - [x] UI: dropdown «+ добавить склад» (до 5), chip-list выбранных
+  - [x] Таблица: 1 строка = 1 склад, колонки `склад / довоз / транзит WB / хранение / ИТОГО + Δ к текущему`
+  - [x] Highlight cheapest row (text-success на min total)
 - **Зависимости:** TASK-LEAD-053 ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-23 (в составе v0.33.0). Follow-up: TASK-LEAD-084 (per-pair тариф вместо общего manual) — feedback round 13.
 
 ---
 
@@ -2325,12 +2325,12 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Источник:** `feedback-reviews/round-12-2026-05-22.md` — seller 043
 - **Описание:** Hero виджет сейчас показывает только «Δ revenue +0.4% ✓». Для seller'а важнее «сколько реально пришло на счёт» (payout/gross share). Добавить третью цифру + абсолютное Δ в ₽ (0.4% от 8М/нед = 32к — не копейки). Из wizard explainer убрать dev-термины (`sync_report_detail`, `supplier_oper_name`).
 - **Критерии готовности:**
-  - [ ] Hero показывает 3 цифры: Δ%, Δ₽ (абс), payout-share (выплата как % от gross)
-  - [ ] Указать threshold явно: «Δ ≤ 1% = в пределах ₽X тыс»
-  - [ ] Wizard explainer: replace dev-терминов на user-language (`sync_report_detail` → «синхронизация финотчёта от WB», etc.)
-  - [ ] Опционально: `weeks=4` → `weeks=1` (используется [0])
+  - [x] Hero показывает 3 цифры: Δ%, Δ₽ (абс), payout-share (выплата как % от gross)
+  - [x] Указать threshold явно: «Δ ≤ 1% = в пределах ₽X тыс»
+  - [x] Wizard explainer: replace dev-терминов на user-language (`sync_report_detail` → «синхронизация финотчёта от WB», etc.)
+  - [ ] Опционально: `weeks=4` → `weeks=1` — не сделано, минор.
 - **Зависимости:** TASK-LEAD-043 ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-23 (в составе v0.33.0). Follow-up: TASK-LEAD-096 (split «сходимость» vs «доля выплаты» на отдельные карточки) — feedback round 13.
 
 ---
 
@@ -2703,6 +2703,161 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] Smoke на проде: после deploy выполнить `docker compose restart redis` и убедиться что Celery beat продолжает шедулить tasks (можно через `/api/sync/status`)
 - **Зависимости:** нет
 - **Статус:** Выполнено — 2026-05-23
+
+---
+
+## Раунд 13 feedback follow-up (TASK-LEAD-080..098)
+
+Заведено по результату `agents/references/feedback-reviews/round-13-2026-05-25.md`. Краткие записи (детали в feedback-review).
+
+### P1 (блокирующие)
+
+### TASK-LEAD-080: исправить BUG-DEV-014 (kpi_breakdown reporting_mode)
+- **Приоритет:** P1
+- **Оценка:** S (1-2ч)
+- **Источник:** round 13 — Σ breakdown ≠ KPI в financial
+- **Описание:** Endpoint `/api/dashboard/kpi-breakdown` принимает `reporting_mode`, `compute_kpi_breakdown` использует `get_period_filter()` вместо `sale_dt_filter()`. Unit-test «Σ breakdown ≈ KPI» в обоих режимах.
+- **Зависимости:** BUG-DEV-014
+- **Статус:** Открыта
+
+### TASK-LEAD-081: Units.tsx `?nm_id` filter + scroll
+- **Приоритет:** P1
+- **Оценка:** S (1ч)
+- **Источник:** round 13 — half-feature 066
+- **Описание:** `useSearchParams("nm_id")` → авто-применить фильтр + scrollIntoView. Без этого breakdown drill (LEAD-066) бессмыслен — popup ведёт на /units, но фильтра нет.
+- **Зависимости:** TASK-LEAD-066 ✅
+- **Статус:** Открыта
+
+---
+
+### P2 (следующий спринт)
+
+### TASK-LEAD-082: ReportingModeBadge на /units, /weekly-report, /pnl-reconciliation
+- **Приоритет:** P2
+- **Оценка:** XS (30 мин)
+- **Источник:** round 13 — extension LEAD-060
+- **Описание:** Расширить `<ReportingModeBadge />` на все страницы где `useReportingMode()` влияет на цифры. Сейчас только Dashboard + PnL.
+- **Статус:** Открыта
+
+### TASK-LEAD-083: WeekProfitHero role-guard для manager'а (закрыть BUG-UI-006)
+- **Приоритет:** P2
+- **Оценка:** XS (15 мин)
+- **Источник:** round 13 — coverage gap from round 12
+- **Описание:** Либо скрыть от manager'а полностью, либо явная подпись «по твоим брендам» в header при `user.role === 'manager'`. Сейчас тихое смешение терминов.
+- **Зависимости:** BUG-UI-006
+- **Статус:** Открыта
+
+### TASK-LEAD-084: TransitCalculator multi-warehouse per-pair tariff
+- **Приоритет:** P2
+- **Оценка:** S (1-2ч)
+- **Источник:** round 13 — U2 feedback
+- **Описание:** Compare-таблица использует `wb_transit_tariff(hub, candidate_warehouse)` lookup для каждого candidate (не общий manual). Если для пары нет — оставить fallback на общий manual.
+- **Зависимости:** TASK-LEAD-068 ✅, TASK-LEAD-078 ✅
+- **Статус:** Открыта
+
+### TASK-LEAD-085: Localization by_brand — wow_pct + min_orders threshold
+- **Приоритет:** P2
+- **Оценка:** S (1-2ч)
+- **Источник:** round 13 — U2 feedback
+- **Описание:** `wow_pct` колонка (за прошлую неделю с offset −7d) + `min_orders ≥ 10` threshold для фильтрации статистического шума. Сейчас бренд с 5 заказами может попасть в TOP с искажением.
+- **Зависимости:** TASK-LEAD-065 ✅
+- **Статус:** Открыта
+
+### TASK-LEAD-086: WeeklyReport scoreboard manager_name → drill
+- **Приоритет:** P2
+- **Оценка:** S (1-2ч)
+- **Источник:** round 13 — U2 feedback
+- **Описание:** Клик на manager_name в scoreboard → переход на /weekly-report с brand-фильтром этого менеджера. Требует brand-selector на WeeklyReport (сейчас attached к user-scope).
+- **Зависимости:** TASK-LEAD-061 ✅
+- **Статус:** Открыта
+
+---
+
+### P3 (долгий backlog)
+
+### TASK-LEAD-087: WeeklyReport scoreboard pre-aggregation (Celery)
+- **Приоритет:** P3 (perf)
+- **Оценка:** M (1д) — миграция + Celery beat task + чтение из кэша
+- **Описание:** Сейчас `/api/weekly-report/by-manager` делает N×`compute_dashboard` (по числу менеджеров). На 10+ менеджерах потенциально медленно. Pre-aggregation в таблицу `manager_weekly_scoreboard(tenant_id, manager_id, week_start, revenue, margin, orders, wow_*)`, обновляется ежедневно ночью.
+- **Статус:** Открыта
+
+### TASK-LEAD-088: Localization worst-SKU per-SKU recommendation
+- **Приоритет:** P3
+- **Оценка:** M (1д)
+- **Описание:** Backend заменить tenant-wide эвристику (модальный buyer-cluster × top-склад) на per-SKU breakdown. Расширить `WorstSkuLocalization` DTO полем `recommended_warehouse: str | null` на основе per-nm_id buyer-cluster агрегата.
+- **Зависимости:** TASK-LEAD-070 ✅
+- **Статус:** Открыта
+
+### TASK-LEAD-089: TG-share manager scenarios
+- **Приоритет:** P3
+- **Оценка:** S (вариант: подпись) или L (вариант: User.boss_id)
+- **Описание:** Манагер кликает «отправить в TG», получает у себя в личке. Концептуально странно. Варианты: (a) явная подпись «Отправит тебе в личку — добавь РОПа в чат для broadcast», (b) `User.boss_id` для «отправить моему РОПу».
+- **Зависимости:** HYP-002 ✅
+- **Статус:** Открыта
+
+### TASK-LEAD-090: Кастомный `<Dialog>` вместо native confirm()
+- **Приоритет:** P3
+- **Оценка:** S (1-2ч)
+- **Описание:** TG-share использует native `confirm()` — UX-debt, mobile неудобно, brand inconsistency. Заменить на React-компонент Dialog (можно радикс / собственный).
+- **Статус:** Открыта
+
+### TASK-LEAD-091: Layout — `/notifications` в РОП whitelist
+- **Приоритет:** P3
+- **Оценка:** XS
+- **Описание:** Alert rules — часть РОП workflow. Сейчас при переключении в РОП-режим `/notifications` не виден.
+- **Статус:** Открыта
+
+### TASK-LEAD-092: PromoCalculator auto-suggest boostPct из истории
+- **Приоритет:** P3
+- **Оценка:** M (нужен backend + ML-light)
+- **Описание:** Если у тенанта есть данные прошлых акций — взять avg velocity_boost, подставить как default в picker. Fallback на manual ввод.
+- **Зависимости:** TASK-LEAD-050 ✅
+- **Статус:** Открыта
+
+### TASK-LEAD-093: TransitCalculator wizard-mode (упрощённый)
+- **Приоритет:** P3
+- **Оценка:** M (1-2д)
+- **Описание:** 13 полей — overload для разовой задачи. Альтернативный wizard-flow «Шаг 1: SKU (опц.). Шаг 2: партия. Шаг 3: тариф. Шаг 4: результат». Сейчас все секции видны сразу.
+- **Зависимости:** TASK-LEAD-053 ✅
+- **Статус:** Открыта
+
+### TASK-LEAD-094: TransitCalculator stale-tariff banner
+- **Приоритет:** P3
+- **Оценка:** XS
+- **Описание:** Если `synced_at > 30 дней назад` — оранжевая плашка «⚠ Тариф давно не обновлялся, проверь в ЛК». WB поднимает тарифы регулярно.
+- **Зависимости:** TASK-LEAD-078 ✅
+- **Статус:** Открыта
+
+### TASK-LEAD-095: DocPage расширить whitelist
+- **Приоритет:** P3
+- **Оценка:** XS на slug + M на наполнение
+- **Описание:** Добавить методички для `/transit-calculator`, `/supply-calculator`, `/pnl-reconciliation`. Сейчас в `doc_pages.py` whitelist — 2 slug'а (`promo-calculator`, `unit-plan`).
+- **Зависимости:** TASK-LEAD-075 ✅
+- **Статус:** Открыта
+
+### TASK-LEAD-096: ReconciliationHero — split «сходимость» vs «доля выплаты»
+- **Приоритет:** P3
+- **Оценка:** S (1-2ч)
+- **Описание:** Сейчас 3 цифры (Δ%, Δ₽, payout share) в одной карточке — 30vh на laptop, overload. Раздельные карточки или collapsible.
+- **Зависимости:** TASK-LEAD-069 ✅
+- **Статус:** Открыта
+
+### TASK-LEAD-097: WeekProfitHero «vs 4-week avg» tab
+- **Приоритет:** P3
+- **Оценка:** S (1-2ч)
+- **Описание:** Был обещан в TASK-LEAD-073 описании, не реализован. Альтернативное сравнение для устойчивого baseline (если предыдущая неделя — статистический шум).
+- **Зависимости:** TASK-LEAD-073 ✅
+- **Статус:** Открыта
+
+---
+
+### Admin / cleanup
+
+### TASK-LEAD-098: Stale-cleanup tasks-lead.md
+- **Приоритет:** admin
+- **Оценка:** done сразу при создании этой задачи
+- **Описание:** TASK-LEAD-065/067/068/069 в backlog числились «Открыта», хотя реализованы в v0.32-0.33. Обновлены на «Выполнено» в составе round-13 synthesis.
+- **Статус:** Выполнено — 2026-05-25
 
 ---
 

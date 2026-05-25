@@ -234,3 +234,25 @@ _Пока пусто. Audit-задачи TASK-UI-001..003 в Sprint 1 превр
 - **Минимальный фикс:** Вариант A — `{user.role === 'manager' ? 'Прибыль ваших брендов' : 'Прибыль'}` за прошлую закрытую неделю.
 - **Связанные задачи:** TASK-LEAD-042
 - **Статус:** Открыт
+
+---
+
+## BUG-UI-007: MetricBreakdownPopup middle-click конфликт onClose vs Link
+
+- **Приоритет:** P3
+- **Обнаружено:** 2026-05-25 (post-feature review round 13, U1)
+- **Среда:** production v0.34.0
+- **Источник:** `feedback-reviews/round-13-2026-05-25.md`
+- **Причина:** `<tr onClick={navigate; onClose()}>` имеет вложенный `<Link>`. Если юзер middle-click'нет по строке (в Chrome — открыть в новой вкладке), Link перехватит и откроет вкладку — onClose всё равно вызовется → popup закроется на текущей вкладке. Юзер хотел «открыть в фоне, оставить popup», получил «открыл и потерял контекст».
+- **Затронутые файлы:** `frontend/src/components/MetricBreakdownPopup.tsx:179-209`
+- **Ожидаемое:** `onClick` детектит middle-click (event.button === 1) или meta/ctrl-key → не вызывать onClose.
+- **Минимальный фикс:**
+  ```tsx
+  onClick={(e) => {
+    if (e.button === 1 || e.metaKey || e.ctrlKey) return;
+    navigate(...);
+    onClose();
+  }}
+  ```
+- **Связанные задачи:** TASK-LEAD-066
+- **Статус:** Открыт

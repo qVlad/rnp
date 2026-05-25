@@ -231,13 +231,51 @@
 
 ---
 
-> На момент 2026-05-17 — открытых багов нет. Недавние P0 уже закрыты (см. git history):
->
-> - `fix(auth): don't redirect to /login from /signup on initial 401` (commit `049ebb3`)
-> - `fix(charts): correct Y-axis scaling — drill-down modal + dashboard` (commit `e7543c4`)
-> - `fix(dashboard): hide composition bars in Preliminary mode` (commit `09992ae`)
-> - `fix(cash-flow): align ДДС with P&L final logic` (commit `6954533`)
-> - `fix(units): sticky table header` (commit `219fe25`)
+## BUG-DEV-014: `/api/dashboard/kpi-breakdown` не принимает reporting_mode
+
+- **Приоритет:** **P1** (критический drift Σ breakdown ≠ Dashboard KPI в financial-режиме)
+- **Обнаружено:** 2026-05-25 (post-feature review round 13, sub-agent U1 QA)
+- **Среда:** production v0.34.0
+- **Источник:** `feedback-reviews/round-13-2026-05-25.md`
+- **Причина:** Все `/api/dashboard/*` endpoints (kpis, today-vs-yesterday, top-skus, compare) принимают `reporting_mode` query-param. Кроме `/kpi-breakdown` — он его игнорирует и хардкодит `sale_dt_filter()` (operational) в `compute_kpi_breakdown`. Когда seller переключил toggle в financial — Dashboard KPI идут по `rr_dt`, breakdown popup по тем же KPI — по `sale_dt`. На возвратах (где `rr_dt` отстаёт от `sale_dt` на 1-2 недели) Σ breakdown ≠ KPI. Юзер видит «один из них врёт».
+- **Затронутые файлы:** `backend/app/api/dashboard.py:122-142`, `backend/app/services/kpi_breakdown.py:130`
+- **Критерии исправления:**
+  - [ ] Endpoint `/api/dashboard/kpi-breakdown` принимает `reporting_mode: ReportingMode = Query("operational")`
+  - [ ] `compute_kpi_breakdown` принимает `reporting_mode` параметр и использует `get_period_filter(period.start, period.end, reporting_mode)` вместо `sale_dt_filter`
+  - [ ] Unit-test: `sum(breakdown.items[*].value) ≈ dashboard.kpi.value` (Δ ≤ 1 ₽) в обоих режимах
+  - [ ] Smoke на проде: переключить financial → клик «Логистика WB» → Σ popup рядов = KPI карточка
+- **Статус:** Открыт
+
+---
+
+## BUG-DEV-015: extension transit upload без schema validation + audit URL
+
+- **Приоритет:** P3
+- **Обнаружено:** 2026-05-25 (round 13 U1)
+- **Среда:** production
+- **Источник:** `feedback-reviews/round-13-2026-05-25.md`
+- **Причина:** Extension MAIN-world interceptor парсит произвольные WB-ответы по shape (`looksLikeTransitTariffs` требует ≥2 строки с числовым полем + warehouseFrom/To). Если WB изменит формат и shape-парсер случайно подхватит non-tariff данные с похожими полями — backend примет без алерта. Backend `POST /api/transit-tariffs/upload` валидирует только `rate ≥ 0` + min_length. Нет аудит-поля «откуда взяли» (URL который перехватили) — невозможно тренировать парсер по реальным данным.
+- **Затронутые файлы:** `extension/src/content/wb-transit-tariffs-interceptor-main.ts:146-159`, `backend/app/api/transit_tariffs.py:134-242`
+- **Критерии исправления:**
+  - [ ] Backend сохраняет source-URL в `wb_transit_tariff.source_url` (новая колонка миграцией) или в audit_log
+  - [ ] Backend strict-validation на shape (Pydantic strict mode для TariffRowUpload)
+  - [ ] Alert если upload пришёл с URL не из whitelist (`seller.wildberries.ru/...`)
+- **Статус:** Открыт
+
+---
+
+## BUG-DEV-016: TransitCalculator auto-fill overwrites manual edits
+
+- **Приоритет:** P3
+- **Обнаружено:** 2026-05-25 (round 13 U1)
+- **Среда:** production
+- **Источник:** `feedback-reviews/round-13-2026-05-25.md`
+- **Причина:** `useEffect` в TransitCalculator зависит от `transitFromBackend?.synced_at`. Когда extension синкает новый тариф — useEffect триггерится → fields `rate_small/large/threshold` обновляются. Условие `autoFilled === key` защищает только в рамках одной сессии. Если юзер открыл страницу, тариф ещё не синканулся, ввёл свой `rate_small=10`, extension через 5 минут синканул тариф 8 — поле молча обновится на 8. Юзер не увидит что его правка ушла, кроме banner «обновлён только что».
+- **Затронутые файлы:** `frontend/src/pages/TransitCalculator.tsx:496-513`
+- **Критерии исправления:**
+  - [ ] При наличии manual-edit (юзер изменил значение после загрузки) — не overwrite автоматически
+  - [ ] Если auto-fill хочет overwrite — показать toast «Тариф обновлён в ЛК WB. Применить? [да / отмена]» с дефолтом отмена
+- **Статус:** Открыт
 
 ---
 
