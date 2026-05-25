@@ -2769,7 +2769,8 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Источник:** round 13 — U2 feedback
 - **Описание:** Клик на manager_name в scoreboard → переход на /weekly-report с brand-фильтром этого менеджера. Требует brand-selector на WeeklyReport (сейчас attached к user-scope).
 - **Зависимости:** TASK-LEAD-061 ✅
-- **Статус:** Открыта
+- **Реализация:** В scoreboard «По менеджерам» (`WeeklyReport.tsx`) `manager_name` обёрнут в `<Link to="/weekly-report?brand=A,B" />` (comma-separated бренды менеджера). При активном `?brand=...`: (1) баннер «📂 Фильтр: бренды X, Y — [сбросить]» сверху отчёта; (2) Top-5 SKU (revenue + margin) и Top-3 recommendations post-фильтруются на клиенте через `filterByBrand(items)` (используем `item.brand` из API); (3) scoreboard скрывается — overview по менеджерам не нужен в scoped view. Активно только для `director`/`head_of_sales` (manager имеет brand-scope через `brand_assignments` на backend, URL override не нужен и backend RBAC не меняли). KPI не фильтруется на клиенте — это known-limitation, документировано в баннере. Менеджеры без брендов (`no_brands`) — имя не кликабельно. См. также TASK-LEAD-087 (pre-aggregation scoreboard'а).
+- **Статус:** Выполнено — 2026-05-25
 
 ---
 

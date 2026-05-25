@@ -10,6 +10,7 @@
  * `WeekProfitHero` — единообразно.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
@@ -100,6 +101,31 @@ export default function WeeklyReport() {
   const reportRef = useRef<HTMLDivElement>(null);
   const [exporting, setExporting] = useState(false);
   const [shiftWeek, setShiftWeek] = useState(0); // 0 = last closed, -1 = prev, +1 = next
+
+  // TASK-LEAD-086 — drill из scoreboard "По менеджерам".
+  // URL ?brand=A,B активирует post-filter на клиенте для Top-5 SKU и Top-3 recs.
+  // Применяется только для director/head_of_sales (manager имеет brand-scope
+  // из brand_assignments на backend → URL override не нужен). KPI с backend
+  // не фильтруется — это сложнее, требует RBAC override. Frontend-only filter
+  // покрывает основной UX-кейс «РОП кликает на менеджера → видит его Top-SKU
+  // и рекомендации».
+  const [searchParams, setSearchParams] = useSearchParams();
+  const brandFilterRaw = searchParams.get("brand") ?? "";
+  const canFilterByBrand =
+    user?.role === "director" || user?.role === "head_of_sales";
+  const brandFilter = useMemo(() => {
+    if (!canFilterByBrand) return [] as string[];
+    return brandFilterRaw
+      .split(",")
+      .map((b) => b.trim())
+      .filter(Boolean);
+  }, [brandFilterRaw, canFilterByBrand]);
+  const isBrandFiltered = brandFilter.length > 0;
+  const clearBrandFilter = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete("brand");
+    setSearchParams(next, { replace: true });
+  };
 
   // TASK-LEAD-061 — сортировка scoreboard'а
   type SortKey =
@@ -216,6 +242,16 @@ export default function WeeklyReport() {
   const curKpis = curQ.data?.kpis ?? [];
   const prevKpis = prevQ.data?.kpis ?? [];
 
+  // TASK-LEAD-086 — post-filter Top-SKU и recommendations по URL ?brand=A,B.
+  // KPI с backend не фильтруется (нужен RBAC override) — это известное
+  // ограничение, баннер ниже его документирует.
+  const brandSet = useMemo(() => new Set(brandFilter), [brandFilter]);
+  const filterByBrand = <T extends { brand?: string | null }>(items: T[] | undefined): T[] => {
+    if (!items) return [];
+    if (!isBrandFiltered) return items;
+    return items.filter((it) => it.brand && brandSet.has(it.brand));
+  };
+
   // TASK-LEAD-064 — Top-3 рекомендации (доступно всем кроме bookkeeper).
   const canSeeRecs = user?.role !== "bookkeeper";
   const recsQ = useQuery<{
@@ -324,8 +360,11 @@ export default function WeeklyReport() {
   };
 
   // TASK-LEAD-061 — Multi-manager scoreboard (только для head/director).
+  // TASK-LEAD-086 — при активном brand-фильтре scoreboard скрывается:
+  // это уже scoped view одного менеджера, "обзор по менеджерам" не нужен.
   const canSeeScoreboard =
-    user?.role === "director" || user?.role === "head_of_sales";
+    (user?.role === "director" || user?.role === "head_of_sales") &&
+    !isBrandFiltered;
   const scoreboardQ = useQuery<{
     week_start: string;
     items: WeeklyReportByManager[];
@@ -421,6 +460,29 @@ export default function WeeklyReport() {
       )}
 
       <div ref={reportRef} className="flex flex-col gap-4">
+        {/* TASK-LEAD-086 — баннер активного brand-фильтра (drill из scoreboard). */}
+        {isBrandFiltered && (
+          <section className="card flex items-center justify-between gap-3 border-l-4 border-l-accent">
+            <div className="flex flex-col text-sm">
+              <span>
+                📂 Фильтр: бренды{" "}
+                <span className="font-medium">{brandFilter.join(", ")}</span>
+                <span className="text-muted text-xs ml-2">
+                  (применён к Top-5 SKU и рекомендациям; KPI остаются по полному скоупу)
+                </span>
+              </span>
+            </div>
+            <button
+              type="button"
+              className="btn text-xs"
+              onClick={clearBrandFilter}
+              title="Снять фильтр"
+            >
+              ✕ сбросить
+            </button>
+          </section>
+        )}
+
         {/* Header card — для PDF */}
         <section className="card">
           <div className="flex items-baseline justify-between flex-wrap gap-2">
@@ -446,14 +508,18 @@ export default function WeeklyReport() {
         </section>
 
         {/* TASK-LEAD-064 — Top-3 actionable рекомендации.
-            Скрыта если recs пуст (не показываем пустой блок). */}
-        {canSeeRecs && recsQ.data?.items && recsQ.data.items.length > 0 && (
+            Скрыта если recs пуст (не показываем пустой блок).
+            TASK-LEAD-086 — post-filter по ?brand=. */}
+        {canSeeRecs && (() => {
+          const recs = filterByBrand(recsQ.data?.items);
+          if (recs.length === 0) return null;
+          return (
           <section className="card border-l-4 border-l-warn">
             <h2 className="font-medium mb-3">
-              Top-{recsQ.data.items.length} действий на эту неделю
+              Top-{recs.length} действий на эту неделю
             </h2>
             <ul className="flex flex-col gap-2 text-sm">
-              {recsQ.data.items.map((r) => (
+              {recs.map((r) => (
                 <li key={`${r.rule}-${r.nm_id}`} className="flex gap-2 items-start">
                   <span className="text-base leading-tight">
                     {r.severity === "high" ? "🚨" : "⚠️"}
@@ -472,7 +538,8 @@ export default function WeeklyReport() {
               Клик → карточка в `/units`.
             </div>
           </section>
-        )}
+          );
+        })()}
 
         {/* TASK-LEAD-061 — По менеджерам (только для head/director, видна над KPI grid'ом) */}
         {canSeeScoreboard && (
@@ -546,7 +613,22 @@ export default function WeeklyReport() {
                               m.no_brands ? "text-muted" : ""
                             }`}
                           >
-                            <td className="p-1">{m.manager_name}</td>
+                            <td className="p-1">
+                              {/* TASK-LEAD-086 — клик на имя менеджера → /weekly-report?brand=A,B
+                                  (бренды этого менеджера, comma-separated). При no_brands —
+                                  не делаем Link, фильтровать нечего. */}
+                              {m.no_brands || m.brands.length === 0 ? (
+                                m.manager_name
+                              ) : (
+                                <Link
+                                  to={`/weekly-report?brand=${encodeURIComponent(m.brands.join(","))}`}
+                                  className="text-accent hover:underline"
+                                  title={`Открыть отчёт по брендам ${m.manager_name}`}
+                                >
+                                  {m.manager_name}
+                                </Link>
+                              )}
+                            </td>
                             <td className="p-1 text-xs">
                               {m.no_brands ? (
                                 <span className="text-muted italic">не назначены</span>
@@ -588,7 +670,8 @@ export default function WeeklyReport() {
             <div className="text-xs text-muted mt-2">
               Группировка через назначения брендов (`brand_assignments`). WoW —
               относительно предыдущей закрытой недели. Источник: WB final
-              report (`wb_report_detail`).
+              report (`wb_report_detail`). Клик на имя менеджера → drill в его
+              бренды (Top-5 SKU + рекомендации фильтруются).
             </div>
           </section>
         )}
@@ -634,10 +717,13 @@ export default function WeeklyReport() {
               </div>
             </section>
 
-            {/* Top SKUs by revenue */}
+            {/* Top SKUs by revenue (TASK-LEAD-086 — post-filter по ?brand=). */}
+            {(() => {
+              const topRevItems = filterByBrand(topByRevenue.data?.items as any[]);
+              return (
             <section className="card">
               <h2 className="font-medium mb-3">Топ-5 артикулов по выручке</h2>
-              {topByRevenue.data?.items && topByRevenue.data.items.length > 0 ? (
+              {topRevItems.length > 0 ? (
                 <table className="w-full text-sm">
                   <thead className="text-muted text-xs uppercase">
                     <tr>
@@ -648,7 +734,7 @@ export default function WeeklyReport() {
                     </tr>
                   </thead>
                   <tbody>
-                    {topByRevenue.data.items.map((sku: any) => (
+                    {topRevItems.map((sku: any) => (
                       <tr key={sku.nm_id} className="border-t border-border">
                         <td className="p-1">
                           <a
@@ -685,15 +771,22 @@ export default function WeeklyReport() {
                 </table>
               ) : (
                 <div className="text-muted text-sm">
-                  Нет данных за период · измените фильтр или дождитесь синхронизации
+                  {isBrandFiltered
+                    ? "Нет данных по выбранным брендам за период"
+                    : "Нет данных за период · измените фильтр или дождитесь синхронизации"}
                 </div>
               )}
             </section>
+              );
+            })()}
 
-            {/* Top SKUs by margin */}
+            {/* Top SKUs by margin (TASK-LEAD-086 — post-filter по ?brand=). */}
+            {(() => {
+              const topMarginItems = filterByBrand(topByMargin.data?.items as any[]);
+              return (
             <section className="card">
               <h2 className="font-medium mb-3">Топ-5 артикулов по марже</h2>
-              {topByMargin.data?.items && topByMargin.data.items.length > 0 ? (
+              {topMarginItems.length > 0 ? (
                 <table className="w-full text-sm">
                   <thead className="text-muted text-xs uppercase">
                     <tr>
@@ -704,7 +797,7 @@ export default function WeeklyReport() {
                     </tr>
                   </thead>
                   <tbody>
-                    {topByMargin.data.items.map((sku: any) => (
+                    {topMarginItems.map((sku: any) => (
                       <tr key={sku.nm_id} className="border-t border-border">
                         <td className="p-1">
                           <a
@@ -741,10 +834,14 @@ export default function WeeklyReport() {
                 </table>
               ) : (
                 <div className="text-muted text-sm">
-                  Нет данных за период · измените фильтр или дождитесь синхронизации
+                  {isBrandFiltered
+                    ? "Нет данных по выбранным брендам за период"
+                    : "Нет данных за период · измените фильтр или дождитесь синхронизации"}
                 </div>
               )}
             </section>
+              );
+            })()}
 
             {/* Active alerts */}
             <section className="card">
