@@ -13,6 +13,10 @@ import PageHeader from "@/components/PageHeader";
 const TITLES: Record<string, string> = {
   "promo-calculator": "Методика калькулятора WB-акций",
   "unit-plan": "Методика плановой юнит-экономики (UNIT-план)",
+  // TASK-LEAD-095
+  "transit-calculator": "Методика калькулятора транзитной поставки",
+  "supply-calculator": "Методика калькулятора прямой поставки",
+  "reconciliation": "Методика сверки P&L с WB-кабинетом",
 };
 
 async function fetchDoc(slug: string): Promise<string> {

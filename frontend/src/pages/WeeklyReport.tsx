@@ -24,6 +24,7 @@ import { Icon } from "@/components/Icon";
 import PageHeader from "@/components/PageHeader";
 import ReportingModeBadge from "@/components/ReportingModeBadge";
 import DeltaCell from "@/components/DeltaCell";
+import Dialog from "@/components/Dialog";
 
 type Week = { from: string; to: string };
 
@@ -324,59 +325,63 @@ export default function WeeklyReport() {
     return () => clearTimeout(t);
   }, [toast]);
 
+  // TASK-LEAD-090: native confirm() → <Dialog>.
+  // TASK-LEAD-089: для manager — явная подпись «отправится тебе в личку».
+  //
+  // Confirm-state машина (вместо 3 sequential confirm'ов):
+  //   - kind="share-self" — manager: «отправить себе в личку?»
+  //   - kind="share-directors" — head/director: «отправить директорам?»
+  //   - kind="pdf-fallback-no-tg" — manager: TG не привязан, скачать PDF?
+  //   - kind="pdf-fallback-no-directors" — нет директоров с TG, скачать PDF?
+  type ShareDialogState =
+    | { kind: "share-self"; recipientName: string }
+    | { kind: "share-directors"; names: string; count: number }
+    | { kind: "pdf-fallback-no-tg" }
+    | { kind: "pdf-fallback-no-directors" }
+    | null;
+  const [shareDialog, setShareDialog] = useState<ShareDialogState>(null);
+
   const doShareToTelegram = async () => {
     if (sharing) return;
     setSharing(true);
     try {
-      // Resolve recipients first для confirm-диалога.
+      // Resolve recipients first для подбора правильного confirm-диалога.
       const preview = await api.weeklyReportShareToTelegramPreview();
       const isManager = user?.role === "manager";
-      const filter: "self" | "all_directors" = isManager
-        ? "self"
-        : "all_directors";
 
-      let confirmMsg: string;
-      if (filter === "self") {
+      if (isManager) {
         if (!preview.self_has_tg) {
-          // Сразу fallback на PDF — TG не привязан.
-          if (
-            !confirm(
-              "У тебя не привязан Telegram-чат. Скачать PDF для ручной отправки?",
-            )
-          ) {
-            setSharing(false);
-            return;
-          }
-          await doExport();
-          setToast({
-            text: "PDF скачан · отправь вручную через @username",
-            type: "ok",
-          });
-          setSharing(false);
-          return;
+          setShareDialog({ kind: "pdf-fallback-no-tg" });
+          return; // sharing=true остаётся, снимется в onConfirm/onCancel диалога
         }
-        confirmMsg = `Отправить отчёт себе в Telegram (${preview.self_name ?? "личный чат"})?`;
-      } else {
-        const names = preview.directors.map((d) => d.name).join(", ");
-        const n = preview.directors.length;
-        confirmMsg = n
-          ? `Отправить отчёт в Telegram директорам (${n}: ${names})?`
-          : "Ни один директор не привязал Telegram-чат. Скачать PDF?";
-        if (!n) {
-          if (confirm(confirmMsg)) {
-            await doExport();
-            setToast({ text: "PDF скачан", type: "ok" });
-          }
-          setSharing(false);
-          return;
-        }
-      }
-
-      if (!confirm(confirmMsg)) {
-        setSharing(false);
+        setShareDialog({
+          kind: "share-self",
+          recipientName: preview.self_name ?? "личный чат",
+        });
         return;
       }
 
+      // Director / head: share to all directors with TG.
+      const names = preview.directors.map((d) => d.name).join(", ");
+      const n = preview.directors.length;
+      if (!n) {
+        setShareDialog({ kind: "pdf-fallback-no-directors" });
+        return;
+      }
+      setShareDialog({ kind: "share-directors", names, count: n });
+    } catch (e: any) {
+      setToast({
+        text: `Ошибка: ${e?.message || e}`,
+        type: "err",
+      });
+      setSharing(false);
+    }
+  };
+
+  // Запуск share после confirm в Dialog'е.
+  const performShare = async (filter: "self" | "all_directors") => {
+    setShareDialog(null);
+    try {
       const result = await api.weeklyReportShareToTelegram({
         week_start: current.from,
         recipient_filter: filter,
@@ -407,6 +412,31 @@ export default function WeeklyReport() {
     } finally {
       setSharing(false);
     }
+  };
+
+  // PDF-fallback ветка: когда TG не привязан или нет директоров с TG.
+  const performPdfFallback = async (reason: "no-tg" | "no-directors") => {
+    setShareDialog(null);
+    try {
+      await doExport();
+      setToast({
+        text:
+          reason === "no-tg"
+            ? "PDF скачан · отправь вручную через @username"
+            : "PDF скачан",
+        type: "ok",
+      });
+    } catch (e: any) {
+      setToast({ text: `Ошибка: ${e?.message || e}`, type: "err" });
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  // Cancel share-dialog — отменяем sharing.
+  const cancelShareDialog = () => {
+    setShareDialog(null);
+    setSharing(false);
   };
 
   // TASK-LEAD-061 — Multi-manager scoreboard (только для head/director).
@@ -1033,6 +1063,73 @@ export default function WeeklyReport() {
           </>
         )}
       </div>
+
+      {/* TASK-LEAD-090 — Dialog'и вместо native confirm() для TG-share.
+          TASK-LEAD-089 — для manager добавлена подпись «отправится в личку». */}
+      <Dialog
+        open={shareDialog?.kind === "share-self"}
+        title="Отправить отчёт в Telegram?"
+        description={
+          <div className="space-y-2">
+            <p>
+              Отправить отчёт себе в Telegram
+              {shareDialog?.kind === "share-self"
+                ? ` (${shareDialog.recipientName})`
+                : ""}
+              ?
+            </p>
+            <div className="bg-warn-subtle text-fg rounded-md p-2 text-xs">
+              ⚠ Сейчас отчёт отправится <b>в твою личку</b> (твой{" "}
+              <code>users.tg_chat_id</code>). Чтобы передать РОПу — попроси
+              добавить вашего РОПа в общий чат с ботом, или используй
+              PDF-кнопку рядом.
+            </div>
+          </div>
+        }
+        confirmLabel="Отправить"
+        onConfirm={() => performShare("self")}
+        onCancel={cancelShareDialog}
+      />
+
+      <Dialog
+        open={shareDialog?.kind === "share-directors"}
+        title="Отправить отчёт в Telegram?"
+        description={
+          shareDialog?.kind === "share-directors"
+            ? `Отправить отчёт в Telegram директорам (${shareDialog.count}: ${shareDialog.names})?`
+            : ""
+        }
+        confirmLabel="Отправить"
+        onConfirm={() => performShare("all_directors")}
+        onCancel={cancelShareDialog}
+      />
+
+      <Dialog
+        open={shareDialog?.kind === "pdf-fallback-no-tg"}
+        title="Telegram-чат не привязан"
+        description={
+          <div className="space-y-2">
+            <p>
+              У тебя не привязан Telegram-чат. Скачать PDF для ручной отправки?
+            </p>
+            <p className="text-xs text-muted">
+              Привязать чат: /settings → «Мой Telegram-чат».
+            </p>
+          </div>
+        }
+        confirmLabel="Скачать PDF"
+        onConfirm={() => performPdfFallback("no-tg")}
+        onCancel={cancelShareDialog}
+      />
+
+      <Dialog
+        open={shareDialog?.kind === "pdf-fallback-no-directors"}
+        title="Нет директоров с Telegram"
+        description="Ни один директор не привязал Telegram-чат. Скачать PDF для ручной отправки?"
+        confirmLabel="Скачать PDF"
+        onConfirm={() => performPdfFallback("no-directors")}
+        onCancel={cancelShareDialog}
+      />
     </div>
   );
 }

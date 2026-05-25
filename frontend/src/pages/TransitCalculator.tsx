@@ -22,6 +22,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, type TariffTimelineRow, type TransitTariffRow } from "@/api/client";
 import { fmtRub, fmtNum, fmtPct } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
+import Dialog from "@/components/Dialog";
 
 const STORAGE_KEY = "transit-calculator.v2";
 
@@ -444,8 +445,25 @@ function computeDirectSupply(
   };
 }
 
+// TASK-LEAD-093 — simple-mode (wizard) toggle. Скрывает advanced секции:
+// multi-warehouse compare, direct delivery override, двухступенчатая шкала.
+const SIMPLE_MODE_KEY = "transit.simple-mode.v1";
+
+function loadSimpleMode(): boolean {
+  try {
+    return localStorage.getItem(SIMPLE_MODE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
 export default function TransitCalculator() {
   const [params, setParams] = useState<SavedParams>(loadParams);
+  // TASK-LEAD-093 — simple/wizard mode (только основные поля).
+  const [simpleMode, setSimpleMode] = useState<boolean>(loadSimpleMode);
+  useEffect(() => {
+    try { localStorage.setItem(SIMPLE_MODE_KEY, String(simpleMode)); } catch {}
+  }, [simpleMode]);
   // TASK-LEAD-071: текущий выбранный SKU (не персистится в localStorage —
   // это вспомогательный picker для подстановки литров/units, сами поля
   // params уже сохранены).
@@ -547,6 +565,18 @@ export default function TransitCalculator() {
     volume_threshold_l?: boolean;
   }>({});
 
+  // TASK-LEAD-090 — conflicts диалог. Раньше использовался window.confirm,
+  // теперь — <Dialog>. State хранит список конфликтующих полей.
+  type ConflictItem = {
+    field: "rate_small" | "rate_large" | "volume_threshold_l";
+    newValue: number;
+    currentValue: number;
+    label: string;
+  };
+  const [pendingConflicts, setPendingConflicts] = useState<ConflictItem[] | null>(
+    null,
+  );
+
   // Помечаем поле как manually-edited при изменении через onChange. Сброс
   // флага происходит при смене пары хаб+склад (новая пара — чистый старт).
   const markManual = (
@@ -617,34 +647,39 @@ export default function TransitCalculator() {
       update(patch);
     }
 
-    // Для конфликтов — спрашиваем юзера. Минимальный фикс: один confirm
-    // на все конфликтующие поля сразу. Default = оставить мой (cancel).
+    // Для конфликтов — показываем <Dialog> (TASK-LEAD-090). Раньше был
+    // window.confirm. Default = оставить мой (cancel).
     if (conflicts.length > 0) {
-      const summary = conflicts
-        .map((c) => `  • ${c.label}: ${c.currentValue} → ${c.newValue}`)
-        .join("\n");
-      const apply = window.confirm(
-        `📊 Тариф обновлён в ЛК WB. Применить новые значения?\n\n` +
-          summary +
-          `\n\nOK — применить, Отмена — оставить ваши значения.`,
+      setPendingConflicts(
+        conflicts.map((c) => ({
+          field: c.field,
+          newValue: c.newValue as number,
+          currentValue: c.currentValue,
+          label: c.label,
+        })),
       );
-      if (apply) {
-        const patch: Partial<SavedParams> = {};
-        for (const c of conflicts) {
-          (patch as any)[c.field] = c.newValue;
-        }
-        update(patch);
-        // После применения — сбрасываем manual-флаги для этих полей,
-        // считаем что юзер согласился с auto-fill для них.
-        setManuallyEdited((m) => {
-          const next = { ...m };
-          for (const c of conflicts) delete next[c.field];
-          return next;
-        });
-      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transitFromBackend?.synced_at, params.hub, params.final_warehouse]);
+
+  // Применить новые значения тарифа из ЛК WB (после confirm в Dialog'е).
+  const applyPendingConflicts = () => {
+    if (!pendingConflicts) {
+      setPendingConflicts(null);
+      return;
+    }
+    const patch: Partial<SavedParams> = {};
+    for (const c of pendingConflicts) {
+      (patch as any)[c.field] = c.newValue;
+    }
+    update(patch);
+    setManuallyEdited((m) => {
+      const next = { ...m };
+      for (const c of pendingConflicts) delete next[c.field];
+      return next;
+    });
+    setPendingConflicts(null);
+  };
 
   function formatRelativeTime(iso: string | null): string {
     if (!iso) return "только что";
@@ -744,6 +779,37 @@ export default function TransitCalculator() {
 
   return (
     <div className="flex flex-col gap-4 max-w-5xl">
+      {/* TASK-LEAD-093 — Wizard / Detailed mode toggle. */}
+      <div className="flex justify-end -mb-2">
+        <div className="inline-flex rounded-md border border-border text-xs overflow-hidden">
+          <button
+            type="button"
+            className={
+              "px-3 py-1 " +
+              (!simpleMode
+                ? "bg-accent text-white"
+                : "bg-surface text-muted hover:bg-surface-2")
+            }
+            onClick={() => setSimpleMode(false)}
+            title="Полный режим: все секции (multi-warehouse compare, двухступенчатая шкала, override прямой поставки)."
+          >
+            Подробная форма
+          </button>
+          <button
+            type="button"
+            className={
+              "px-3 py-1 " +
+              (simpleMode
+                ? "bg-accent text-white"
+                : "bg-surface text-muted hover:bg-surface-2")
+            }
+            onClick={() => setSimpleMode(true)}
+            title="Упрощённый wizard: только основные поля (SKU/хаб/склад/units/литры/дней)."
+          >
+            Упрощённая (wizard)
+          </button>
+        </div>
+      </div>
       <PageHeader
         title="Калькулятор стоимости транзитной поставки"
         subtitle={
@@ -1084,12 +1150,16 @@ export default function TransitCalculator() {
           </label>
         </div>
 
+        {/* TASK-LEAD-093: двухступенчатая шкала скрыта в wizard-режиме. */}
+        {!simpleMode && (
         <details className="mb-2">
           <summary className="text-xs text-muted cursor-pointer hover:text-fg">
             ⚙ Двухступенчатый тариф (если точного значения нет — fallback по
             порогу объёма)
           </summary>
         </details>
+        )}
+        {!simpleMode && (
         <div
           className={`grid grid-cols-1 md:grid-cols-3 gap-3 ${
             params.rate_direct > 0 ? "opacity-50" : ""
@@ -1153,6 +1223,7 @@ export default function TransitCalculator() {
             />
           </label>
         </div>
+        )}
       </section>
 
       {/* External logistics — physically deliver to hub */}
@@ -1205,7 +1276,8 @@ export default function TransitCalculator() {
         </div>
       </section>
 
-      {/* Direct delivery override — для compare-блока */}
+      {/* Direct delivery override — для compare-блока. TASK-LEAD-093: скрыто в wizard. */}
+      {!simpleMode && (
       <section className="card">
         <h3 className="font-medium mb-1 text-sm">
           Прямая поставка — переопределение (опционально)
@@ -1238,6 +1310,7 @@ export default function TransitCalculator() {
           />
         </label>
       </section>
+      )}
 
       {/* Tariff info for final warehouse */}
       {finalTariff && (
@@ -1384,8 +1457,8 @@ export default function TransitCalculator() {
             </div>
           </section>
 
-          {/* Compare with direct supply */}
-          {direct && (
+          {/* Compare with direct supply. TASK-LEAD-093: скрыто в wizard. */}
+          {!simpleMode && direct && (
             <section className="card">
               <h3 className="font-medium mb-3 text-sm">
                 Сравнение с прямой поставкой на «{params.final_warehouse}»
@@ -1506,7 +1579,9 @@ export default function TransitCalculator() {
 
           {/* TASK-LEAD-068: Multi-warehouse compare. Сравниваем cost'ы
               транзита на N разных конечных складов с теми же параметрами
-              партии и тарифом — для решения «куда грузить». */}
+              партии и тарифом — для решения «куда грузить».
+              TASK-LEAD-093: скрыто в wizard. */}
+          {!simpleMode && (
           <section className="card">
             <h3 className="font-medium mb-2 text-sm">
               Сравнить транзит на другие склады
@@ -1746,8 +1821,38 @@ export default function TransitCalculator() {
               })()
             )}
           </section>
+          )}
         </>
       )}
+
+      {/* TASK-LEAD-090 — Dialog для конфликта тарифа из ЛК WB. */}
+      <Dialog
+        open={!!pendingConflicts && pendingConflicts.length > 0}
+        title="📊 Тариф обновлён в ЛК WB"
+        description={
+          pendingConflicts ? (
+            <div className="space-y-2">
+              <p>Применить новые значения?</p>
+              <ul className="text-xs space-y-1 pl-2">
+                {pendingConflicts.map((c) => (
+                  <li key={c.field}>
+                    <b>{c.label}:</b>{" "}
+                    <span className="font-mono">{c.currentValue}</span>
+                    {" → "}
+                    <span className="font-mono">{c.newValue}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-muted">
+                Отмена — оставить ваши значения. OK — применить новые.
+              </p>
+            </div>
+          ) : null
+        }
+        confirmLabel="Применить"
+        onConfirm={applyPendingConflicts}
+        onCancel={() => setPendingConflicts(null)}
+      />
 
       <section className="card text-xs text-muted">
         <p className="mb-1">

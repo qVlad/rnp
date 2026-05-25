@@ -78,6 +78,10 @@ services:
       # Markdown-доки рендерящиеся на /docs/:slug страницах.
       - ./PROMO_CALCULATOR.md:/app/PROMO_CALCULATOR.md:ro
       - ./UNIT_PLAN.md:/app/UNIT_PLAN.md:ro
+      # TASK-LEAD-095 — методички для калькуляторов и сверки.
+      - ./TRANSIT_CALCULATOR.md:/app/TRANSIT_CALCULATOR.md:ro
+      - ./SUPPLY_CALCULATOR.md:/app/SUPPLY_CALCULATOR.md:ro
+      - ./RECONCILIATION.md:/app/RECONCILIATION.md:ro
 
   worker-stats:
     image: rnp-app:latest
