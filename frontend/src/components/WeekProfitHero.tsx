@@ -15,7 +15,7 @@
  * Если final-данных нет (новый кабинет) — показываем no-data state.
  */
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub, fmtPct } from "@/lib/format";
 import { useReportingMode } from "@/contexts/ReportingModeContext";
@@ -64,15 +64,19 @@ function previousWeek(week: Week): Week {
   return { from: isoDate(mon), to: isoDate(sun) };
 }
 
-// TASK-LEAD-097: окно «3 предыдущие полные недели до current» (week-1, week-2,
-// week-3 относительно current). Конец = воскресенье ровно за неделю до from
-// current, начало = понедельник за 3 недели до этого (21 день).
-function priorThreeWeeks(week: Week): Week {
-  const sun = new Date(week.from);
-  sun.setDate(sun.getDate() - 1); // воскресенье перед current
-  const mon = new Date(sun);
-  mon.setDate(mon.getDate() - 20); // 21 день включая sun → mon на 20 дней раньше
-  return { from: isoDate(mon), to: isoDate(sun) };
+// BUG-UI-008 (2026-05-26): окно «3 предыдущие полные недели до current»
+// теперь возвращает массив из 3 per-week ranges (week-1, week-2, week-3).
+// Раньше был single 21-day range — backend возвращал aggregated net_profit,
+// мы делили на 3 без проверки сколько недель реально содержали данные →
+// average занижался если у 1 из 3 недель wb_report_detail был пуст.
+function priorThreeWeeks(week: Week): Week[] {
+  const result: Week[] = [];
+  let w = previousWeek(week);
+  for (let i = 0; i < 3; i++) {
+    result.push(w);
+    w = previousWeek(w);
+  }
+  return result; // [week-1, week-2, week-3]
 }
 
 function getKpi(kpis: any[], key: string): number | null {
@@ -128,25 +132,24 @@ export default function WeekProfitHero() {
     queryFn: () =>
       api.dashboard({ start: previous.from, end: previous.to }, "final", reportingMode),
   });
-  // TASK-LEAD-097: 21-day window до current — для расчёта среднего за 3
-  // полные предыдущие недели. Загружаем только если выбран режим avg4w
-  // (lazy) — но кеш TanStack Query сохранит ответ при переключении назад.
-  const avg4wQ = useQuery<any>({
-    queryKey: [
-      "week-profit-hero",
-      "prior3w",
-      prior3w.from,
-      prior3w.to,
-      reportingMode,
-    ],
-    queryFn: () =>
-      api.dashboard(
-        { start: prior3w.from, end: prior3w.to },
-        "final",
+  // BUG-UI-008: per-week queries (week-1, week-2, week-3) вместо single
+  // 21-day aggregated — чтобы average считался по фактически непустым неделям,
+  // а не делился на константу 3. Lazy: только при выборе avg4w-таба.
+  const prior3wQs = useQueries({
+    queries: prior3w.map((w) => ({
+      queryKey: [
+        "week-profit-hero",
+        "prior-week",
+        w.from,
+        w.to,
         reportingMode,
-      ),
-    enabled: compareMode === "avg4w",
+      ],
+      queryFn: () =>
+        api.dashboard({ start: w.from, end: w.to }, "final", reportingMode),
+      enabled: compareMode === "avg4w",
+    })),
   });
+  const avg4wLoading = prior3wQs.some((q) => q.isLoading);
 
   if (curQ.isLoading || prevQ.isLoading) {
     return (
@@ -171,15 +174,22 @@ export default function WeekProfitHero() {
       ? ((curProfit - prevProfit) / Math.abs(prevProfit)) * 100
       : null;
 
-  // TASK-LEAD-097: средняя прибыль за 3 предыдущие полные недели.
-  // dashboard за окно 21 день возвращает суммарный net_profit за весь период.
-  const avg3wProfitTotal = getKpi(avg4wQ.data?.kpis ?? [], "net_profit");
+  // BUG-UI-008: средняя прибыль за 3 предыдущие недели по фактически
+  // непустым неделям. Если у недели нет net_profit (новый кабинет / нет
+  // продаж) — она не учитывается в делителе. Disable tab при countNonNull
+  // < 2 (одна неделя — не «среднее», статистически бесполезно).
+  const perWeekProfits = prior3wQs.map((q) =>
+    getKpi((q.data as any)?.kpis ?? [], "net_profit"),
+  );
+  const nonNullProfits = perWeekProfits.filter(
+    (v): v is number => v != null,
+  );
   const avgWeeklyProfit =
-    avg3wProfitTotal != null ? avg3wProfitTotal / 3 : null;
-  // Disable tab если данных за prior3w нет вообще (новый кабинет / нет
-  // продаж в окне). curQ загрузка отдельно — её состояние не блокирует
-  // toggle, только наличие предыдущих недель.
-  const avg4wAvailable = avgWeeklyProfit != null && avgWeeklyProfit !== 0;
+    nonNullProfits.length > 0
+      ? nonNullProfits.reduce((s, v) => s + v, 0) / nonNullProfits.length
+      : null;
+  const avg4wAvailable =
+    nonNullProfits.length >= 2 && avgWeeklyProfit != null && avgWeeklyProfit !== 0;
   const vsAvg =
     avgWeeklyProfit != null && avgWeeklyProfit !== 0
       ? ((curProfit - avgWeeklyProfit) / Math.abs(avgWeeklyProfit)) * 100
@@ -187,13 +197,13 @@ export default function WeekProfitHero() {
 
   // Если выбран avg4w но данных нет — fallback на WoW (показывать что-то).
   const effectiveMode: CompareMode =
-    compareMode === "avg4w" && !avg4wAvailable && !avg4wQ.isLoading
+    compareMode === "avg4w" && !avg4wAvailable && !avg4wLoading
       ? "wow"
       : compareMode;
 
   const compareValue = effectiveMode === "avg4w" ? vsAvg : wow;
   const compareLabel =
-    effectiveMode === "avg4w" ? "vs ср. за 4 нед" : "WoW";
+    effectiveMode === "avg4w" ? "vs ср. за 3 пред. нед" : "WoW";
   const baselineForLabel =
     effectiveMode === "avg4w" ? avgWeeklyProfit : prevProfit;
 
@@ -264,24 +274,24 @@ export default function WeekProfitHero() {
               type="button"
               role="tab"
               aria-selected={effectiveMode === "avg4w"}
-              disabled={!avg4wAvailable && !avg4wQ.isLoading}
+              disabled={!avg4wAvailable && !avg4wLoading}
               className={`px-2 py-0.5 border-l border-border ${
                 effectiveMode === "avg4w"
                   ? "bg-accent-subtle text-fg"
-                  : !avg4wAvailable && !avg4wQ.isLoading
+                  : !avg4wAvailable && !avg4wLoading
                     ? "text-faint cursor-not-allowed"
                     : "text-muted hover:text-fg"
               }`}
               onClick={() => {
-                if (avg4wAvailable || avg4wQ.isLoading) setCompareMode("avg4w");
+                if (avg4wAvailable || avg4wLoading) setCompareMode("avg4w");
               }}
               title={
-                !avg4wAvailable && !avg4wQ.isLoading
-                  ? "Нет данных за 3 предыдущие полные недели (новый кабинет?). Доступен только WoW."
-                  : "Сравнить с средней прибылью за 3 полные недели перед текущей. Сглаживает разовые всплески прошлой недели."
+                !avg4wAvailable && !avg4wLoading
+                  ? "Нет данных хотя бы за 2 из 3 предыдущих недель (новый кабинет?). Доступен только WoW."
+                  : `Сравнить со средней прибылью за ${nonNullProfits.length} из 3 предыдущих недель. Сглаживает разовые всплески прошлой недели.`
               }
             >
-              vs 4-нед среднее
+              vs ср. за 3 пред. нед.
             </button>
           </div>
         </div>

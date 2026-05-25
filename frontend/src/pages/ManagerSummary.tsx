@@ -404,12 +404,17 @@ export default function ManagerSummary() {
 
       {/* Алерты (system-wide; без brand-фильтра — алерт-движок не brand-scoped). */}
       <section className="card">
-        <h2 className="font-medium mb-3">
+        <h2 className="font-medium mb-1">
           Активные алерты{" "}
           {alertsQ.data?.alerts?.length
             ? `(${alertsQ.data.alerts.length})`
             : ""}
         </h2>
+        {/* TASK-LEAD-116: алерт-движок не brand-scoped. Дисклеймер чтобы РОП
+            не путал «алерты по этому менеджеру» с tenant-wide картиной. */}
+        <p className="text-xs text-muted mb-3">
+          ℹ Алерты — на весь tenant (не фильтруются по брендам менеджера).
+        </p>
         {alertsQ.data?.alerts && alertsQ.data.alerts.length > 0 ? (
           <ul className="space-y-1 text-sm">
             {alertsQ.data.alerts.map((a: any, i: number) => (

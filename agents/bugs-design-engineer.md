@@ -273,9 +273,9 @@ _Пока пусто. Audit-задачи TASK-UI-001..003 в Sprint 1 превр
   - `frontend/src/components/WeekProfitHero.tsx:176-178` (deletter)
   - `frontend/src/components/WeekProfitHero.tsx:284` (label)
 - **Критерии исправления:**
-  - [ ] Переименовать tab label: «vs ср. за 3 пред. нед.» (точная семантика) или расширить до фактических 4 недель (сложнее — нужен ещё один API-вызов)
-  - [ ] Запрашивать per-week (а не aggregated за 21 день) → считать avg только по non-null weeks (`avgWeeklyProfit = sumNonNullProfits / countNonNullWeeks`)
-  - [ ] Tooltip синхронизировать с меткой
-  - [ ] При `countNonNullWeeks < 2` — disable tab (нет статистической значимости)
+  - [x] Tab label переименован «vs ср. за 3 пред. нед.» (точная семантика); compareLabel тоже
+  - [x] Per-week queries (useQueries) вместо single aggregated → avg по non-null weeks
+  - [x] Tooltip синхронизирован — «средняя за N из 3 предыдущих недель»
+  - [x] `nonNullProfits.length < 2` → disable tab + tooltip «Нет данных хотя бы за 2 из 3 предыдущих недель»
 - **Связанные задачи:** TASK-LEAD-097 ✅
-- **Статус:** Открыт
+- **Статус:** Исправлено — 2026-05-26 (v0.39.2)
