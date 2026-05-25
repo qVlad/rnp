@@ -1271,6 +1271,17 @@ paymentOrderDelete: (payment_order_id: string) =>
       counts: { total: number; archived: number; active: number };
     }>(`/api/products?${qs.toString()}`);
   },
+  /** TASK-LEAD-071: подсказки для TransitCalculator по выбранному SKU.
+   *  Возвращает `volume_l` + 4-week avg orders (units suggestion). */
+  productTransitSuggest: (nm_id: number, weeks = 4) =>
+    request<{
+      nm_id: number;
+      volume_l: number | null;
+      avg_weekly_orders: number | null;
+      suggested_units: number | null;
+      weeks_window: number;
+      total_orders_window: number;
+    }>(`/api/products/${nm_id}/transit-suggest?weeks=${weeks}`),
   archiveProduct: (nm_id: number) =>
     request(`/api/products/${nm_id}/archive`, { method: "POST" }),
   unarchiveProduct: (nm_id: number) =>

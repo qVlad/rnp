@@ -230,6 +230,64 @@ async def traffic_estimate(
     }
 
 
+@router.get("/{nm_id}/transit-suggest")
+async def transit_suggest(
+    nm_id: int,
+    weeks: Annotated[int, Query(ge=1, le=12)] = 4,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
+) -> dict[str, Any]:
+    """TASK-LEAD-071: подсказки для TransitCalculator при выборе SKU.
+
+    Возвращает:
+    - volume_l: float | null — `products.volume_l` (из миграции 0041).
+    - avg_weekly_orders: float | null — среднее количество заказов в неделю
+      за последние N недель (по умолчанию 4) из `wb_orders` (без отменённых).
+    - suggested_units: int | null — `round(avg_weekly_orders * weeks)`, чтобы
+      покрыть период `weeks` недель.
+    - weeks_window: int — фактическое окно (echo от параметра).
+    """
+    from datetime import timedelta
+    from app.db.models import WbOrder
+
+    prod = await session.get(Product, nm_id)
+    if prod is None:
+        raise HTTPException(404, "product not found")
+    if brands is not None and (prod.brand or "") not in brands:
+        raise HTTPException(403, "not in your brands")
+
+    volume_l: float | None = None
+    if prod.volume_l is not None:
+        try:
+            volume_l = float(prod.volume_l)
+        except (TypeError, ValueError):
+            volume_l = None
+
+    window_days = weeks * 7
+    since = datetime.now(timezone.utc) - timedelta(days=window_days)
+    cnt_stmt = (
+        select(func.count(WbOrder.srid))
+        .where(
+            WbOrder.nm_id == nm_id,
+            WbOrder.order_dt >= since,
+            WbOrder.is_cancel.is_(False),
+        )
+    )
+    total = (await session.execute(cnt_stmt)).scalar_one() or 0
+    avg_weekly = float(total) / float(weeks) if weeks > 0 else None
+    suggested_units = int(round(avg_weekly * weeks)) if avg_weekly else None
+    # avg_weekly = total / weeks; suggested_units = total (по сути). Возвращаем
+    # отдельно avg_weekly для UI-подсказки «в среднем X в неделю».
+    return {
+        "nm_id": nm_id,
+        "volume_l": volume_l,
+        "avg_weekly_orders": avg_weekly,
+        "suggested_units": suggested_units,
+        "weeks_window": weeks,
+        "total_orders_window": int(total),
+    }
+
+
 @router.post("/{nm_id}/archive")
 async def archive_product(
     nm_id: int,

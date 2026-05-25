@@ -2358,10 +2358,16 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Источник:** `feedback-reviews/round-12-2026-05-22.md` — UX-manager 053
 - **Описание:** Сейчас menedzher вводит «volume_l» вручную. Если в `Product` уже есть `volume_l` — можно подтянуть. Также: «suggest units» из `avg(weekly_orders) × 4 недели` через `wb_orders`.
 - **Критерии готовности:**
-  - [ ] UI: dropdown «Выбрать товар» (search by vendor_code / nm_id)
-  - [ ] При выборе — автоматом fill `volume_l` (если есть в products) + `units` (suggest по 4-week avg)
+  - [x] UI: dropdown «Выбрать товар» (search by vendor_code / nm_id)
+  - [x] При выборе — автоматом fill `volume_l` (если есть в products) + `units` (suggest по 4-week avg)
 - **Зависимости:** TASK-LEAD-053 ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-25 — Design Engineer. Добавлен endpoint
+  `GET /api/products/{nm_id}/transit-suggest?weeks=4` → `{volume_l,
+  avg_weekly_orders, suggested_units, weeks_window, total_orders_window}`.
+  В `TransitCalculator.tsx` новый компонент `SkuPicker` (single-select на
+  базе `api.listProducts({search})`, brand-scope guard). При выборе SKU
+  подтягиваются литры из `products.volume_l` и units = `round(avg_weekly *
+  4)`. Manual ввод сохраняется — picker лишь подставляет значения.
 
 ---
 
@@ -2373,10 +2379,16 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
 - **Источник:** `feedback-reviews/round-12-2026-05-22.md` — UX-manager 053
 - **Описание:** Данные есть в `wb_tariff_*` SCD2. Показать «было 12 ₽/шт месяц назад, стало 14 ₽/шт (+12%)» прямо в калькуляторе.
 - **Критерии готовности:**
-  - [ ] Backend `/api/tariffs/wow?warehouse_id=&days_back=30` → `{current_rate, previous_rate, change_pct}`
-  - [ ] UI: badge рядом с total: «(тариф +12% к прошлому месяцу)»
+  - [x] Backend endpoint — переиспользован существующий `GET /api/tariffs/timeline/box?warehouse&from&to` (SCD2 + baseline-запись «строго до from»). Отдельный `/wow` не нужен — фронт считает delta из 2 точек.
+  - [x] UI: badge рядом с тарифом конечного склада: «↑ +12% к месяцу» / «↓ −5%» / «тариф без изменений за месяц», цвет warn/success/muted, tooltip с конкретными цифрами и датами effective_from.
 - **Зависимости:** TASK-LEAD-053 ✅, миграция 0040 (tariffs SCD2) ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-25 — Design Engineer. В
+  `TransitCalculator.tsx` `useQuery(tariffBoxTimeline, from=today-30d,
+  to=today)` → берётся baseline (or самая ранняя в окне) vs current
+  (самая поздняя), per-unit тариф считается как `delivery_base +
+  delivery_liter × (ceil(liters_per_unit) − 1)` — той же формулой, что
+  используется в `computeDirectSupply`. Badge рендерится в шапке
+  существующей секции «Конечный склад … — обычные WB-тарифы».
 
 ---
 

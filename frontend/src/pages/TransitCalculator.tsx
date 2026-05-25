@@ -17,10 +17,10 @@
  *
  * Frontend-only, persist в localStorage["transit-calculator.v2"].
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type TariffTimelineRow, type TransitTariffRow } from "@/api/client";
-import { fmtRub, fmtNum } from "@/lib/format";
+import { fmtRub, fmtNum, fmtPct } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 
 const STORAGE_KEY = "transit-calculator.v2";
@@ -88,6 +88,165 @@ const KNOWN_HUBS = [
   "Новосибирск",
   "Тула",
 ];
+
+type ProductOption = {
+  nm_id: number;
+  vendor_code: string | null;
+  subject: string | null;
+  brand: string | null;
+  photo_url: string | null;
+};
+
+/**
+ * TASK-LEAD-071: single-select SKU picker для TransitCalculator.
+ * Search by nm_id / vendor_code / brand → при выборе автоматически подтягивает
+ * `volume_l` (если есть в products) и suggest `units` из 4-week avg `wb_orders`.
+ * Manual ввод остаётся — picker ДОПОЛНЯЕТ, не заменяет ручной режим.
+ */
+function SkuPicker({
+  value,
+  onPick,
+  onClear,
+}: {
+  value: number | null;
+  onPick: (p: ProductOption) => void;
+  onClear: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [debounced, setDebounced] = useState("");
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(query), 200);
+    return () => clearTimeout(id);
+  }, [query]);
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  const searchQ = useQuery({
+    queryKey: ["transit-sku-search", debounced],
+    queryFn: async (): Promise<ProductOption[]> => {
+      const data = await api.listProducts({ search: debounced || undefined });
+      return ((data.items as ProductOption[]) || []).slice(0, 30);
+    },
+    enabled: open,
+  });
+
+  // Когда уже что-то выбрано — отрисовываем «чип» вместо поиска. Чтобы найти
+  // детали уже выбранного nm_id (фото/бренд) — отдельный точечный запрос.
+  const selectedQ = useQuery({
+    queryKey: ["transit-sku-selected", value],
+    queryFn: async (): Promise<ProductOption | null> => {
+      if (value == null) return null;
+      const data = await api.listProducts({ search: String(value) });
+      const items = (data.items as ProductOption[]) || [];
+      return items.find((p) => p.nm_id === value) ?? null;
+    },
+    enabled: value != null,
+  });
+
+  const items = searchQ.data || [];
+
+  if (value != null) {
+    const p = selectedQ.data;
+    return (
+      <div className="flex items-center gap-2 input min-h-[44px]">
+        <img
+          src={`/api/products/${value}/photo`}
+          alt=""
+          className="w-8 h-8 object-cover rounded"
+          onError={(e) =>
+            ((e.target as HTMLImageElement).style.display = "none")
+          }
+        />
+        <div className="flex-1 min-w-0">
+          <div className="font-mono text-sm">{value}</div>
+          {p ? (
+            <div className="text-xs text-muted truncate">
+              {[p.vendor_code, p.subject, p.brand]
+                .filter(Boolean)
+                .join(" · ") || "—"}
+            </div>
+          ) : (
+            <div className="text-xs text-muted truncate">…</div>
+          )}
+        </div>
+        <button
+          type="button"
+          className="text-muted hover:text-fg text-xs px-2"
+          onClick={onClear}
+          aria-label="Сбросить SKU"
+        >
+          ✕ сбросить
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative" ref={wrapRef}>
+      <input
+        className="input w-full"
+        placeholder="Найти артикул: nm_id, vendor_code, бренд…"
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onMouseDown={() => setOpen(true)}
+      />
+      {open && (
+        <div className="absolute top-full left-0 right-0 mt-1 bg-surface border border-border rounded shadow-xl max-h-80 overflow-y-auto z-50">
+          {searchQ.isLoading && (
+            <div className="p-3 text-muted text-sm">Загрузка…</div>
+          )}
+          {!searchQ.isLoading && items.length === 0 && (
+            <div className="p-3 text-muted text-sm">Ничего не найдено</div>
+          )}
+          {items.map((p) => (
+            <button
+              key={p.nm_id}
+              type="button"
+              className="w-full flex items-center gap-2 p-2 text-left hover:bg-surface-2"
+              onClick={() => {
+                onPick(p);
+                setOpen(false);
+                setQuery("");
+              }}
+            >
+              <img
+                src={`/api/products/${p.nm_id}/photo`}
+                alt=""
+                className="w-10 h-10 object-cover rounded"
+                onError={(e) =>
+                  ((e.target as HTMLImageElement).style.display = "none")
+                }
+              />
+              <div className="flex-1 min-w-0">
+                <div className="font-mono text-sm">{p.nm_id}</div>
+                <div className="text-xs text-muted truncate">
+                  {[p.vendor_code, p.subject, p.brand]
+                    .filter(Boolean)
+                    .join(" · ") || "—"}
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function loadParams(): SavedParams {
   try {
@@ -255,6 +414,17 @@ function computeDirectSupply(
 
 export default function TransitCalculator() {
   const [params, setParams] = useState<SavedParams>(loadParams);
+  // TASK-LEAD-071: текущий выбранный SKU (не персистится в localStorage —
+  // это вспомогательный picker для подстановки литров/units, сами поля
+  // params уже сохранены).
+  const [selectedNmId, setSelectedNmId] = useState<number | null>(null);
+  // Для feedback'а после auto-fill (показать «литры подставлены из products,
+  // units = 4-week avg»). Очищается при следующем выборе/сбросе.
+  const [suggestInfo, setSuggestInfo] = useState<{
+    volume_l: number | null;
+    avg_weekly_orders: number | null;
+    suggested_units: number | null;
+  } | null>(null);
 
   const update = (patch: Partial<SavedParams>) => {
     setParams((p) => {
@@ -263,6 +433,31 @@ export default function TransitCalculator() {
       return next;
     });
   };
+
+  // TASK-LEAD-071: загрузка suggestion при выборе SKU.
+  const suggestQ = useQuery({
+    queryKey: ["transit-sku-suggest", selectedNmId],
+    queryFn: () => api.productTransitSuggest(selectedNmId as number, 4),
+    enabled: selectedNmId != null,
+  });
+  useEffect(() => {
+    if (!suggestQ.data || suggestQ.data.nm_id !== selectedNmId) return;
+    const s = suggestQ.data;
+    const patch: Partial<SavedParams> = {};
+    if (s.volume_l != null && s.volume_l > 0) {
+      patch.liters_per_unit = s.volume_l;
+    }
+    if (s.suggested_units != null && s.suggested_units > 0) {
+      patch.units = s.suggested_units;
+    }
+    if (Object.keys(patch).length > 0) update(patch);
+    setSuggestInfo({
+      volume_l: s.volume_l,
+      avg_weekly_orders: s.avg_weekly_orders,
+      suggested_units: s.suggested_units,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggestQ.data, selectedNmId]);
 
   const whQ = useQuery({
     queryKey: ["transit-warehouses"],
@@ -347,6 +542,62 @@ export default function TransitCalculator() {
     const items = tariffsQ.data?.items ?? [];
     return items.find((t) => t.warehouse_name === params.final_warehouse) ?? null;
   }, [params.final_warehouse, tariffsQ.data]);
+
+  // TASK-LEAD-072: WoW δ для тарифа конечного склада (за ~месяц назад).
+  // Используем существующий /tariffs/timeline/box — он отдаёт SCD2-историю
+  // с baseline-записью «строго до from». Берём from = today-30d, baseline =
+  // тариф который действовал 30 дней назад, current = последняя запись.
+  const wowFromIso = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return d.toISOString().slice(0, 10);
+  }, []);
+  const wowToIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const wowQ = useQuery({
+    queryKey: ["transit-tariff-wow", params.final_warehouse, wowFromIso, wowToIso],
+    queryFn: () =>
+      api.tariffBoxTimeline(params.final_warehouse, wowFromIso, wowToIso),
+    enabled: !!params.final_warehouse,
+  });
+  const wowDelta = useMemo(() => {
+    if (!wowQ.data) return null;
+    const items = wowQ.data.items ?? [];
+    if (items.length === 0) return null;
+    // Baseline (was 30d ago) = первая запись с is_baseline=true, иначе самая
+    // ранняя в окне. Current = последняя запись по effective_from.
+    const baseline = items.find((x) => x.is_baseline) ?? items[0];
+    const sorted = [...items].sort((a, b) =>
+      a.effective_from < b.effective_from ? -1 : 1,
+    );
+    const current = sorted[sorted.length - 1];
+    if (!baseline || !current) return null;
+    // Тариф per-unit одного товара по литровой шкале. Для отрисовки берём
+    // delivery_base + delivery_liter × extraLiters per unit — ту же формулу,
+    // которой считаем «прямую поставку» (см. computeDirectSupply).
+    const ceilL = Math.max(1, Math.ceil(params.liters_per_unit || 1));
+    const extra = Math.max(0, ceilL - 1);
+    const prev =
+      (baseline.delivery_base ?? 0) + extra * (baseline.delivery_liter ?? 0);
+    const curr =
+      (current.delivery_base ?? 0) + extra * (current.delivery_liter ?? 0);
+    if (prev <= 0 && curr <= 0) return null;
+    // Если оба эффективных тарифа совпадают — пары baseline=current, изменений
+    // не было за 30 дней. Возвращаем delta = 0 чтобы показать «без изменений».
+    const same =
+      baseline.effective_from === current.effective_from &&
+      prev === curr;
+    const deltaAbs = curr - prev;
+    const deltaPct = prev > 0 ? (deltaAbs / prev) * 100 : null;
+    return {
+      prev,
+      curr,
+      deltaAbs,
+      deltaPct,
+      baselineFrom: baseline.effective_from,
+      currentFrom: current.effective_from,
+      same,
+    };
+  }, [wowQ.data, params.liters_per_unit]);
 
   const transit = useMemo(() => computeTransit(finalTariff, params), [
     finalTariff,
@@ -461,6 +712,51 @@ export default function TransitCalculator() {
       {/* Form */}
       <section className="card">
         <h3 className="font-medium mb-3 text-sm">Параметры партии</h3>
+        {/* TASK-LEAD-071: SKU-picker. При выборе подтянет volume_l из products
+            + suggest units из 4-week avg wb_orders. Manual ввод полей ниже
+            остаётся — picker лишь подставляет значения. */}
+        <div className="mb-3">
+          <label className="flex flex-col gap-1">
+            <span
+              className="text-xs text-muted uppercase tracking-wide"
+              title="Выбор существующего SKU подставит литры из карточки товара (products.volume_l) и units = 4-недельная средняя продаж (wb_orders). Можно ничего не выбирать — все поля ниже доступны и в ручном режиме."
+            >
+              Выбрать товар (опционально)
+            </span>
+            <SkuPicker
+              value={selectedNmId}
+              onPick={(p) => {
+                setSelectedNmId(p.nm_id);
+              }}
+              onClear={() => {
+                setSelectedNmId(null);
+                setSuggestInfo(null);
+              }}
+            />
+            {selectedNmId != null && suggestQ.isLoading && (
+              <span className="text-tiny text-muted">
+                Подгружаем литры и среднюю продажу…
+              </span>
+            )}
+            {selectedNmId != null && suggestInfo && (
+              <span className="text-tiny text-muted">
+                {suggestInfo.volume_l != null && suggestInfo.volume_l > 0
+                  ? `Литры подставлены из карточки (${fmtNum(
+                      suggestInfo.volume_l,
+                    )} л). `
+                  : "В карточке нет volume_l — литры оставлены прежними. "}
+                {suggestInfo.avg_weekly_orders != null &&
+                suggestInfo.avg_weekly_orders > 0
+                  ? `Средняя продажа ${fmtNum(
+                      suggestInfo.avg_weekly_orders,
+                    )} шт/нед за 4 недели → suggest ${fmtNum(
+                      suggestInfo.suggested_units ?? 0,
+                    )} шт на 4 недели.`
+                  : "Заказов за последние 4 недели нет — units оставлены прежними."}
+              </span>
+            )}
+          </label>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <label className="flex flex-col gap-1">
             <span className="text-xs text-muted uppercase tracking-wide">
@@ -742,9 +1038,40 @@ export default function TransitCalculator() {
       {/* Tariff info for final warehouse */}
       {finalTariff && (
         <section className="card text-xs text-muted">
-          <div className="font-medium text-fg mb-1">
-            Конечный склад «{finalTariff.warehouse_name}» — обычные WB-тарифы
-            (для хранения)
+          <div className="font-medium text-fg mb-1 flex flex-wrap items-center gap-2">
+            <span>
+              Конечный склад «{finalTariff.warehouse_name}» — обычные WB-тарифы
+              (для хранения)
+            </span>
+            {/* TASK-LEAD-072: WoW δ — тариф месяц назад → сейчас. */}
+            {wowDelta && (
+              <span
+                className={
+                  "text-xs font-normal px-2 py-0.5 rounded " +
+                  (wowDelta.same || wowDelta.deltaAbs === 0
+                    ? "bg-surface-2 text-muted"
+                    : wowDelta.deltaAbs > 0
+                      ? "bg-warn/15 text-warn"
+                      : "bg-success/15 text-success")
+                }
+                title={
+                  `Базовая логистика конечного склада «${finalTariff.warehouse_name}» ` +
+                  `на ${wowDelta.baselineFrom} = ${fmtRub(wowDelta.prev)}/шт, ` +
+                  `на ${wowDelta.currentFrom} = ${fmtRub(wowDelta.curr)}/шт. ` +
+                  `Считается из delivery_base + delivery_liter × (литры на шт − 1).`
+                }
+              >
+                {wowDelta.same || wowDelta.deltaAbs === 0
+                  ? "тариф без изменений за месяц"
+                  : (wowDelta.deltaAbs > 0 ? "↑ " : "↓ ") +
+                    (wowDelta.deltaPct != null
+                      ? (wowDelta.deltaAbs > 0 ? "+" : "") +
+                        fmtPct(wowDelta.deltaPct)
+                      : (wowDelta.deltaAbs > 0 ? "+" : "") +
+                        fmtRub(wowDelta.deltaAbs)) +
+                    " к месяцу"}
+              </span>
+            )}
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
             <div>
