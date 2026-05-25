@@ -1,5 +1,6 @@
 """CRUD над WbLkSession: загрузить, обновить refresh-токен, пометить как
-needs_relogin при 401, расшифровать токены для использования в WbLkClient.
+needs_relogin при 401. Токены передаются в extension через jobs queue
+(см. `services/redistribution/extension_jobs.py`).
 
 Один tenant = одна WbLkSession (UNIQUE constraint в миграции 0037).
 """
@@ -36,7 +37,8 @@ async def load_session(
 async def load_tokens(
     session: AsyncSession, tenant_id: int
 ) -> LkTokens | None:
-    """Расшифровать токены и собрать LkTokens для использования в WbLkClient.
+    """Расшифровать токены и собрать LkTokens для передачи в extension через
+    jobs queue (op='stocks' / 'shifts_quota' / 'create_order').
 
     Возвращает None если сессии нет / needs_relogin / нет authorize_v3.
     """

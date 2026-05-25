@@ -1186,7 +1186,7 @@ def publish_redistribution_windows() -> int:
 
 async def _execute_window_async(tenant_id: int) -> dict[str, Any]:
     """Per-tenant: читает queued redistribution_tasks, группирует и шлёт
-    в WB через WbLkClient.create_order. См. execute_window.py.
+    в WB через extension jobs queue (op='create_order'). См. execute_window.py.
     """
     from datetime import datetime, timezone
 

@@ -550,7 +550,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] E2E: юзер нажимает «↻ Пересчитать рекомендации» → backend генерит jobs → extension выгребает → recommendations появляются
   - [ ] Smoke в окно 09:00 МСК с реальной заявкой (минимум 1 шт qty=1)
 - **Зависимости:** LEAD-019 ✅
-- **Статус:** Открыта.
+- **Статус:** Выполнено — 2026-05-25. По факту recommender (`services/redistribution/recommender.py:198+`) и executor (`execute_window.py`) уже используют `create_job + wait_for_job` через jobs queue (не WbLkClient). UI кнопка «↻ Пересчитать рекомендации» работает (`Redistribution.tsx:139`). Beat-task `daily_recommendations` не существует в `celery_app.py` — на самом деле использование on-demand через UI. Сегодня в рамках спринта: удалён мёртвый `backend/app/integrations/wb_lk/client.py` (WbLkClient class — нигде не импортировался кроме docstring'ов), обновлены docstring'ы в `session_store.py` и `sync/tasks.py:_execute_window_async`. Smoke (TASK-LEAD-021) — отдельно.
 
 ---
 
