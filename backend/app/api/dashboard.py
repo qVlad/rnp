@@ -128,6 +128,7 @@ async def get_kpi_breakdown(
     start_date: Annotated[date | None, Query()] = None,
     end_date: Annotated[date | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=50)] = 10,
+    reporting_mode: Literal["operational", "financial"] = "operational",
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
@@ -135,10 +136,14 @@ async def get_kpi_breakdown(
 
     При клике на KPI (commission_wb / logistics_wb / storage_wb / deduction /
     penalty) в Dashboard — открывается popup с расшифровкой «куда уходят деньги».
+
+    BUG-DEV-014 (TASK-LEAD-080): принимает `reporting_mode` (operational |
+    financial) — без этого Σ breakdown ≠ Dashboard KPI в financial-режиме.
     """
     p = _resolve_period(period, start_date, end_date)
     result = await compute_kpi_breakdown(
-        session, p, metric=metric, brands=brands, limit=limit
+        session, p, metric=metric, brands=brands, limit=limit,
+        reporting_mode=reporting_mode,
     )
     return {
         "metric": result.metric,

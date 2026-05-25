@@ -22,6 +22,8 @@ from app.services.period_aggregates import (
     OP_RETURN,
     OP_SALE,
     REVENUE_FIELD,
+    ReportingMode,
+    get_period_filter,
     sale_dt_filter,
 )
 from app.services.periods import Period
@@ -81,6 +83,7 @@ async def compute_kpi_breakdown(
     metric: BreakdownMetric,
     brands: set[str] | None,
     limit: int = 10,
+    reporting_mode: ReportingMode = "operational",
 ) -> BreakdownResult:
     """Top-N SKU breakdown за период для заданной KPI-метрики.
 
@@ -95,10 +98,12 @@ async def compute_kpi_breakdown(
     через ppvz матчит WB-кабинет 1:1 и совпадает с тем, что Dashboard
     показывает в `commission_wb` KPI (BUG-DEV-013).
 
-    Период-фильтр — каноничный `sale_dt_filter()` (semi-open, см.
-    `period_aggregates.py`). Раньше был ручной inclusive `<= time.max`,
-    который захватывал записи в полночь следующего дня → расхождение с
-    Dashboard на границах суток (BUG-DEV-012).
+    Период-фильтр — `get_period_filter(start, end, reporting_mode)`
+    (semi-open). До BUG-DEV-014 был хардкод `sale_dt_filter()`
+    (operational only) — при переключении глобального toggle
+    operational/financial Σ breakdown оставался по sale_dt, а Dashboard
+    KPI шёл по rr_dt → расхождение на возвратах. Теперь breakdown
+    синхронен с KPI в обоих режимах.
     """
     if metric == "commission_wb":
         # Каноничная формула Dashboard: (retail − ppvz − acquiring) для Продаж − Возвратов.
@@ -127,7 +132,7 @@ async def compute_kpi_breakdown(
             Product.brand,
         )
         .outerjoin(Product, Product.nm_id == WbReportDetail.nm_id)
-        .where(*sale_dt_filter(period.start, period.end))
+        .where(*get_period_filter(period.start, period.end, reporting_mode))
         .group_by(
             WbReportDetail.nm_id,
             Product.vendor_code,

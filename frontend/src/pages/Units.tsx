@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import {
   type ColumnDef,
   flexRender,
@@ -167,7 +168,28 @@ export default function Units() {
   );
   const [includeArchived, setIncludeArchived] = useState(false);
   const [sorting, setSorting] = useState<SortingState>([{ id: "rev_sale", desc: true }]);
-  const [filter, setFilter] = useState("");
+  // TASK-LEAD-081: при заходе с deep-link `/units?nm_id=X` (например из
+  // MetricBreakdownPopup, Top-5 SKU в WeeklyReport, или Top-3 рекомендаций) —
+  // сразу применить фильтр по этому nm_id и заскроллить к ряду.
+  const [searchParams] = useSearchParams();
+  const initialNmId = searchParams.get("nm_id");
+  const [filter, setFilter] = useState(initialNmId ?? "");
+  // Scroll к ряду после первой загрузки данных. requestAnimationFrame
+  // обязателен — без него ряд может ещё не отрендериться.
+  const scrolledForNmIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!initialNmId || scrolledForNmIdRef.current === initialNmId) return;
+    const id = requestAnimationFrame(() => {
+      const el = document.getElementById(`unit-row-${initialNmId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.classList.add("ring-2", "ring-accent");
+        setTimeout(() => el.classList.remove("ring-2", "ring-accent"), 2000);
+        scrolledForNmIdRef.current = initialNmId;
+      }
+    });
+    return () => cancelAnimationFrame(id);
+  });
   const [brandFilter, setBrandFilter] = useState<string>(() => {
     try { return localStorage.getItem(UNITS_BRAND_FILTER_KEY) ?? ""; } catch { return ""; }
   });
@@ -1079,7 +1101,11 @@ export default function Units() {
               </thead>
             <tbody>
               {table.getRowModel().rows.map((r) => (
-                <tr key={r.id} className="border-t border-border hover:bg-surface-2/50">
+                <tr
+                  key={r.id}
+                  id={`unit-row-${r.original.nm_id}`}
+                  className="border-t border-border hover:bg-surface-2/50"
+                >
                   {r.getVisibleCells().map((c, cIdx) => (
                     <td key={c.id} className={`${cellPad} whitespace-nowrap text-right font-mono text-xs ${cIdx === 0 ? "sticky-table-col" : ""}`}>
                       {flexRender(c.column.columnDef.cell, c.getContext())}
