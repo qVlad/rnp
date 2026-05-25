@@ -49,6 +49,11 @@ type SavedParams = {
   // платная приёмка, или собственный довоз на конечный склад без WB) —
   // впиши сюда сумму за всю партию. > 0 → используется вместо auto-расчёта.
   direct_delivery_override: number;
+  // TASK-LEAD-068: список доп. конечных складов для multi-warehouse compare.
+  // Тариф (rate_direct / rate_small / rate_large / threshold) применяется
+  // одинаковый — это сравнение «куда довезти партию с тем же тарифом».
+  // Storage берётся per-warehouse из wb_tariff_box.
+  compare_warehouses: string[];
 };
 
 const DEFAULTS: SavedParams = {
@@ -64,6 +69,7 @@ const DEFAULTS: SavedParams = {
   delivery_to_hub_total: 0,
   delivery_to_hub_per_unit: 0,
   direct_delivery_override: 0,
+  compare_warehouses: [],
 };
 
 // Известные хабы WB (на 2026-05, из research). Список свободно редактируется
@@ -122,6 +128,9 @@ function loadParams(): SavedParams {
         direct_delivery_override: Number.isFinite(v.direct_delivery_override)
           ? Number(v.direct_delivery_override)
           : DEFAULTS.direct_delivery_override,
+        compare_warehouses: Array.isArray(v.compare_warehouses)
+          ? v.compare_warehouses.filter((x: unknown) => typeof x === "string")
+          : DEFAULTS.compare_warehouses,
       };
     }
   } catch {}
@@ -963,6 +972,203 @@ export default function TransitCalculator() {
               </p>
             </section>
           )}
+
+          {/* TASK-LEAD-068: Multi-warehouse compare. Сравниваем cost'ы
+              транзита на N разных конечных складов с теми же параметрами
+              партии и тарифом — для решения «куда грузить». */}
+          <section className="card">
+            <h3 className="font-medium mb-2 text-sm">
+              Сравнить транзит на другие склады
+            </h3>
+            <p className="text-xs text-muted mb-3">
+              Выбери дополнительные конечные склады — таблица ниже покажет
+              суммарную стоимость партии (довоз до хаба + транзит WB +
+              хранение) для каждого. Тариф и параметры партии те же.
+            </p>
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              {params.compare_warehouses.map((w) => (
+                <span
+                  key={w}
+                  className="inline-flex items-center gap-1 bg-surface-2 px-2 py-1 rounded text-xs"
+                >
+                  {w}
+                  <button
+                    type="button"
+                    className="text-muted hover:text-fg"
+                    onClick={() =>
+                      update({
+                        compare_warehouses: params.compare_warehouses.filter(
+                          (x) => x !== w,
+                        ),
+                      })
+                    }
+                    aria-label={`Убрать ${w}`}
+                  >
+                    ✕
+                  </button>
+                </span>
+              ))}
+              <select
+                className="input text-xs"
+                value=""
+                onChange={(e: any) => {
+                  const v = e.target.value;
+                  if (
+                    v &&
+                    v !== params.final_warehouse &&
+                    !params.compare_warehouses.includes(v) &&
+                    params.compare_warehouses.length < 5
+                  ) {
+                    update({
+                      compare_warehouses: [...params.compare_warehouses, v],
+                    });
+                  }
+                }}
+                disabled={params.compare_warehouses.length >= 5}
+              >
+                <option value="">
+                  {params.compare_warehouses.length >= 5
+                    ? "Максимум 5 складов"
+                    : "+ добавить склад"}
+                </option>
+                {warehouses
+                  .filter(
+                    (w) =>
+                      w !== params.final_warehouse &&
+                      !params.compare_warehouses.includes(w),
+                  )
+                  .map((w) => (
+                    <option key={w} value={w}>
+                      {w}
+                    </option>
+                  ))}
+              </select>
+            </div>
+            {params.compare_warehouses.length === 0 ? (
+              <div className="text-tiny text-muted">
+                Не выбрано. Можно добавить до 5 складов для сравнения.
+              </div>
+            ) : (
+              (() => {
+                const tariffItems = tariffsQ.data?.items ?? [];
+                // Минимальный grand_total для подсветки «дешевле всего».
+                const rows = params.compare_warehouses.map((wh) => {
+                  const t = tariffItems.find((x) => x.warehouse_name === wh) ?? null;
+                  const r = computeTransit(t, params);
+                  return { wh, result: r };
+                });
+                const allTotals = [
+                  transit?.grandTotal ?? null,
+                  ...rows.map((r) => r.result?.grandTotal ?? null),
+                ].filter((x): x is number => x != null);
+                const minTotal = allTotals.length > 0 ? Math.min(...allTotals) : null;
+                return (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-xs text-muted uppercase">
+                        <th className="text-left p-2">Склад</th>
+                        <th className="text-right p-2">Довоз до хаба</th>
+                        <th className="text-right p-2">Транзит WB</th>
+                        <th className="text-right p-2">
+                          Хранение ({params.storage_days} дн)
+                        </th>
+                        <th className="text-right p-2">ИТОГО</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {/* Текущий склад первой строкой для baseline */}
+                      <tr className="border-t border-border bg-surface-2/30">
+                        <td className="p-2 font-medium">
+                          {params.final_warehouse || "(не выбран)"}{" "}
+                          <span className="text-tiny text-muted">
+                            (текущий)
+                          </span>
+                        </td>
+                        <td className="p-2 text-right font-mono">
+                          {fmtRub(transit.deliveryToHubTotal)}
+                        </td>
+                        <td className="p-2 text-right font-mono">
+                          {fmtRub(transit.transitCost)}
+                        </td>
+                        <td className="p-2 text-right font-mono">
+                          {fmtRub(transit.storageTotal)}
+                        </td>
+                        <td
+                          className={
+                            "p-2 text-right font-mono font-semibold " +
+                            (minTotal != null &&
+                            transit.grandTotal === minTotal
+                              ? "text-success"
+                              : "")
+                          }
+                        >
+                          {fmtRub(transit.grandTotal)}
+                        </td>
+                      </tr>
+                      {rows.map((row) => {
+                        if (!row.result) {
+                          return (
+                            <tr key={row.wh} className="border-t border-border">
+                              <td className="p-2">{row.wh}</td>
+                              <td
+                                colSpan={4}
+                                className="p-2 text-right text-tiny text-warn"
+                              >
+                                нет тарифа для склада
+                              </td>
+                            </tr>
+                          );
+                        }
+                        const isMin =
+                          minTotal != null &&
+                          row.result.grandTotal === minTotal;
+                        const deltaVsCurrent =
+                          row.result.grandTotal - transit.grandTotal;
+                        return (
+                          <tr
+                            key={row.wh}
+                            className="border-t border-border"
+                          >
+                            <td className="p-2">{row.wh}</td>
+                            <td className="p-2 text-right font-mono">
+                              {fmtRub(row.result.deliveryToHubTotal)}
+                            </td>
+                            <td className="p-2 text-right font-mono">
+                              {fmtRub(row.result.transitCost)}
+                            </td>
+                            <td className="p-2 text-right font-mono">
+                              {fmtRub(row.result.storageTotal)}
+                            </td>
+                            <td
+                              className={
+                                "p-2 text-right font-mono font-semibold " +
+                                (isMin ? "text-success" : "")
+                              }
+                            >
+                              {fmtRub(row.result.grandTotal)}
+                              <div
+                                className={
+                                  "text-tiny font-normal " +
+                                  (deltaVsCurrent < 0
+                                    ? "text-success"
+                                    : deltaVsCurrent > 0
+                                      ? "text-warn"
+                                      : "text-muted")
+                                }
+                              >
+                                {deltaVsCurrent > 0 ? "+" : ""}
+                                {fmtRub(deltaVsCurrent)} к текущему
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                );
+              })()
+            )}
+          </section>
         </>
       )}
 

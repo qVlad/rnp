@@ -14,6 +14,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { useAuth } from "@/contexts/AuthContext";
 import { fmtNum, fmtPct } from "@/lib/format";
 import { usePeriod } from "@/contexts/PeriodContext";
 import { DateRangePicker } from "@/components/DateRangePicker";
@@ -33,8 +34,11 @@ function cellBg(pct: number): string {
 }
 
 export default function Localization() {
+  const { user } = useAuth();
   const { range, setPeriod } = usePeriod();
   const [worstLimit, setWorstLimit] = useState(10);
+  const showsByBrand =
+    user?.role === "director" || user?.role === "head_of_sales";
 
   const q = useQuery({
     queryKey: ["localization", range.from, range.to, worstLimit],
@@ -316,6 +320,54 @@ export default function Localization() {
           </table>
         )}
       </div>
+
+      {/* By brand breakdown (TASK-LEAD-065) — для head_of_sales/director.
+         Помогает РОПу найти «у какого менеджера / бренда самая плохая
+         локализация» — это директ-сигнал куда направить ребаланс поставок. */}
+      {showsByBrand && (
+        <div className="card overflow-x-auto">
+          <h2
+            className="text-lg font-semibold mb-3"
+            title="Разрез только для head_of_sales / director. Manager видит свой brand-scope в Hero KPI выше."
+          >
+            По брендам
+          </h2>
+          {d.by_brand.length === 0 ? (
+            <div className="text-muted text-sm">
+              Нет данных за период · бренды не назначены или нет заказов
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-muted border-b border-subtle">
+                  <th className="py-2">Бренд</th>
+                  <th className="py-2 text-right">Заказы</th>
+                  <th className="py-2 text-right">Локализ.</th>
+                  <th className="py-2 text-right">% локализ.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {d.by_brand.map((b) => (
+                  <tr key={b.brand} className="border-b border-subtle/30">
+                    <td className="py-2 font-medium">{b.brand}</td>
+                    <td className="py-2 text-right font-mono">
+                      {fmtNum(b.orders)}
+                    </td>
+                    <td className="py-2 text-right font-mono">
+                      {fmtNum(b.localized_orders)}
+                    </td>
+                    <td
+                      className={`py-2 text-right font-semibold ${pctColor(b.localization_pct)}`}
+                    >
+                      {fmtPct(b.localization_pct)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
 
       {/* By warehouse breakdown */}
       <div className="card overflow-x-auto">
