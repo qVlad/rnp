@@ -3499,8 +3499,12 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Критерии готовности:**
   - [x] `fetch_report_detail_v2` ранний return на под-полной странице
   - [x] cooldown floor убран, safety +30 сек
-  - [x] bump patch → 0.41.3
+  - [x] `_sync_report_detail_async` per-chunk commit (раньше rollback на стр N+1 убивал все ранее сохранённые chunks — latent для backfill 5лет)
+  - [x] bump patch → 0.41.4
   - [x] Commit + push + deploy
+  - [x] **Verified on prod:** manual trigger sync_report_detail_for_tenant(1, 14)
+    — 38 sec, no 429, 6428 строк для realization_id=726993615 (xlsx 18-24)
+    долетели до wb_report_detail. MAX(rr_dt)=2026-05-24.
 - **Зависимости:** —
 - **Статус:** Выполнено — 2026-05-26
 
