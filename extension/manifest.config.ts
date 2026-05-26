@@ -139,20 +139,25 @@ export default defineManifest({
       run_at: "document_start",
     },
     {
-      // TASK-LEAD-138: финотчёт WB из ЛК — ISOLATED receiver.
-      // Слушает postMessage от MAIN-interceptor'а на странице
-      // «Финансы → Отчёт реализации» (точный URL ЛК неизвестен,
-      // детектим по shape данных).
-      matches: ["https://seller.wildberries.ru/*"],
+      // TASK-LEAD-138/141: финотчёт + реклама/воронка из ЛК — ISOLATED receiver.
+      // TASK-LEAD-141: добавлен cmp.wildberries.ru — страница «Продвижение →
+      // Финансы» живёт на отдельном хосте (рекламный кабинет), fetch на
+      // /api/v6/upd делается оттуда. Воронка дёргается со seller.wildberries.ru.
+      matches: [
+        "https://seller.wildberries.ru/*",
+        "https://cmp.wildberries.ru/*",
+      ],
       js: ["src/content/wb-realization-report-content.ts"],
       run_at: "document_start",
     },
     {
-      // TASK-LEAD-138: MAIN-world interceptor финотчёта WB.
-      // Перехватывает fetch+XHR на *.wildberries.ru, ищет массив строк
-      // финотчёта по shape (rrdId, supplierOperName, ≥50 rows), шлёт
-      // через postMessage в ISOLATED.
-      matches: ["https://seller.wildberries.ru/*"],
+      // TASK-LEAD-138/141: MAIN-world interceptor финотчёта + рекламы/воронки.
+      // Перехватывает fetch+XHR на *.wildberries.ru. cmp.wildberries.ru — для
+      // страницы рекламного кабинета (Продвижение → Финансы).
+      matches: [
+        "https://seller.wildberries.ru/*",
+        "https://cmp.wildberries.ru/*",
+      ],
       js: ["src/content/wb-realization-report-interceptor-main.ts"],
       run_at: "document_start",
       world: "MAIN",
@@ -180,6 +185,8 @@ export default defineManifest({
     // куки пользователя автоматически прикреплялись (proxy для backend
     // РНП, который не может авторизоваться сам — WB пинит сессию к IP).
     "https://seller-weekly-report.wildberries.ru/*",
+    // TASK-LEAD-141: рекламный кабинет (Продвижение → Финансы, /api/v6/upd).
+    "https://cmp.wildberries.ru/*",
     "https://www.wildberries.ru/*",
     // Продакшен-инстансы РНП (добавлять домены по мере деплоев).
     "https://rnp.sellerfriends.ru/*",

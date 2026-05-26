@@ -251,12 +251,14 @@ async def compute_truestats_metrics(
     )).one()
     ad_cost = float(ads_row.ad_cost or 0)
 
-    # 10-11. Заказы — wb_orders, фильтр по order_dt, исключая отменённые
+    # 10-11. Заказы — wb_orders по order_dt. WB Воронка «Заказали товаров»
+    # считает GROSS (все заказы, включая позже отменённые) — поэтому НЕ
+    # фильтруем is_cancel, чтобы определение совпадало с воронкой WB
+    # (TASK-LEAD-141). Net-вариант (без отмен) давал заниженную цифру.
     orders_where = [
         WbOrder.tenant_id == tenant_id,
         WbOrder.order_dt >= datetime.combine(week_start, datetime.min.time(), tzinfo=timezone.utc),
         WbOrder.order_dt < datetime.combine(week_end, datetime.min.time(), tzinfo=timezone.utc),
-        WbOrder.is_cancel.is_(False),
     ]
     if brands is not None:
         orders_where.append(WbOrder.brand.in_(list(brands)))
@@ -335,11 +337,11 @@ async def compute_truestats_metrics(
                 ad_cost, status="ok",
                 meta={"wb_source": "ЛК WB → Продвижение → Финансы (фактические списания за период)"}),
         _metric(10, "ads_orders", "Кол-во заказов",
-                "COUNT wb_orders WHERE order_dt in [week, week+7) AND NOT is_cancel",
+                "COUNT wb_orders по order_dt (gross, как Воронка «Заказали»)",
                 orders_count, status="ok", is_count=True,
                 meta={"wb_source": "ЛК WB → Аналитика → Воронка продаж (столбец «Заказали товаров в шт»)"}),
         _metric(11, "ads_orders", "Сумма заказов",
-                "Σ price_with_disc по wb_orders",
+                "Σ price_with_disc по wb_orders (gross)",
                 orders_sum, status="ok",
                 meta={"wb_source": "ЛК WB → Аналитика → Воронка продаж (столбец «Заказали на сумму»)"}),
         # group "advanced" (метрика 6 — qty)
