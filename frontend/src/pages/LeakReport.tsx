@@ -109,8 +109,8 @@ function DetailTable({ item }: { item: LeakBreakdownItem }) {
           {rows.map((r, i) => (
             <tr key={i} className="border-t border-border/50">
               <td className="py-1">{String(r.label)}</td>
-              <td className="py-1 text-right text-muted">{fmtNum(r.count)} шт</td>
-              <td className="py-1 text-right tabular-nums">{fmtRub(r.amount)}</td>
+              <td className="py-1 text-right text-muted">{fmtNum(Number(r.count))} шт</td>
+              <td className="py-1 text-right tabular-nums">{fmtRub(Number(r.amount))}</td>
             </tr>
           ))}
         </tbody>
