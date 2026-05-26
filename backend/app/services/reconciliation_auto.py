@@ -327,16 +327,21 @@ async def compute_truestats_metrics(
                     "stage2_sale": float(comp_stage2),
                     "stage3_return": float(comp_stage3),
                 }),
-        # group "ads_orders"
+        # group "ads_orders" — НЕ из отчёта реализации! Источник WB — другие
+        # разделы ЛК (Продвижение / Воронка). xlsx и summary их не содержат,
+        # поэтому WB-колонка автозаполнению не подлежит → ручной ввод.
         _metric(9, "ads_orders", "Реклама ВБ.Продвижение",
                 "Σ sum по wb_ad_stats_daily (фактические списания)",
-                ad_cost, status="ok"),
+                ad_cost, status="ok",
+                meta={"wb_source": "ЛК WB → Продвижение → Финансы (фактические списания за период)"}),
         _metric(10, "ads_orders", "Кол-во заказов",
                 "COUNT wb_orders WHERE order_dt in [week, week+7) AND NOT is_cancel",
-                orders_count, status="ok", is_count=True),
+                orders_count, status="ok", is_count=True,
+                meta={"wb_source": "ЛК WB → Аналитика → Воронка продаж (столбец «Заказали товаров в шт»)"}),
         _metric(11, "ads_orders", "Сумма заказов",
                 "Σ price_with_disc по wb_orders",
-                orders_sum, status="ok"),
+                orders_sum, status="ok",
+                meta={"wb_source": "ЛК WB → Аналитика → Воронка продаж (столбец «Заказали на сумму»)"}),
         # group "advanced" (метрика 6 — qty)
         _metric(6, "advanced", "Кол-во проданных шт.",
                 "Σ quantity (Продажа − Возврат)",

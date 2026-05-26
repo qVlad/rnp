@@ -234,6 +234,27 @@ async def upload_xlsx(
     sales_qty = sum(int(D(r.get(QTY))) for r in sales)
     returns_qty = sum(int(D(r.get(QTY))) for r in returns)
 
+    # Правило 17 — Компенсации (3-этапный TS-процесс), данные есть в xlsx.
+    from app.services.reconciliation_auto import (
+        COMPENSATIONS_STAGE1_OPERS,
+        COMPENSATIONS_STAGE23_OPERS,
+    )
+    comp_stage1 = sum(
+        (D(r.get(PPVZ)) for r in rows if r.get(OPER) in COMPENSATIONS_STAGE1_OPERS),
+        Decimal(0),
+    )
+    comp_stage2 = sum(
+        (D(r.get(PPVZ)) for r in rows
+         if r.get(OPER) in COMPENSATIONS_STAGE23_OPERS and r.get(DOC) == "Продажа"),
+        Decimal(0),
+    )
+    comp_stage3 = sum(
+        (D(r.get(PPVZ)) for r in rows
+         if r.get(OPER) in COMPENSATIONS_STAGE23_OPERS and r.get(DOC) == "Возврат"),
+        Decimal(0),
+    )
+    compensations = comp_stage1 + comp_stage2 - comp_stage3
+
     metrics_by_rule = {
         "1": float(total_sale),
         "2": float(to_seller),
@@ -248,6 +269,7 @@ async def upload_xlsx(
         "14": float(nominal_commission),
         "15": float(spp_total),
         "16": float(acq_total),
+        "17": float(compensations),
     }
 
     # report_id из имени файла «...№726993615_...». Проверяем имя загруженного

@@ -424,6 +424,12 @@ export default function ReconciliationAuto() {
                           </ul>
                         </details>
                       )}
+                      {meta?.wb_source && (
+                        <div className="text-xs text-warn mt-1">
+                          ✋ Не из отчёта реализации. Источник:{" "}
+                          {meta.wb_source}. Введи вручную →
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-right font-mono">
                       {fmtMoney(m.our_value, m.is_count)}
