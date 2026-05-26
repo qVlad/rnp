@@ -128,7 +128,14 @@ export default function ReconciliationAuto() {
       }
       return changed ? next : prev;
     });
-  }, [q.data?.extension_upload?.uploaded_at]);
+    // Дозаполняем при любом изменении агрегата (uploaded_at + состав отчётов
+    // + сами метрики), а не только uploaded_at — иначе после setWbValues({})
+    // колонка могла остаться пустой если uploaded_at не сменился.
+  }, [
+    q.data?.extension_upload?.uploaded_at,
+    q.data?.extension_upload?.report_ids?.join(","),
+    JSON.stringify(q.data?.extension_upload?.metrics_by_rule ?? {}),
+  ]);
 
   const xlsxMut = useMutation({
     mutationFn: (file: File) => api.reconciliationAutoUploadXlsx(file),

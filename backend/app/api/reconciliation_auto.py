@@ -20,7 +20,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ExtensionReconUpload
+from app.db.models import ExtensionReconUpload, WbReportDetail
 from app.integrations.wb.statistics import _normalize_v2_row
 from app.services.auth import (
     CurrentUser,
@@ -260,24 +260,40 @@ async def upload_xlsx(
             report_id = int(m.group(1))
             break
 
-    # Период недели — из min/max sale_dt (col M) или rr-дат. У xlsx нет
-    # явной dateFrom; берём из данных через «Дата продажи».
-    SALE_DT = "Дата продажи"
-    sale_dates = []
-    for r in rows:
-        v = r.get(SALE_DT)
-        if isinstance(v, str) and len(v) >= 10:
-            try:
-                sale_dates.append(date.fromisoformat(v[:10]))
-            except Exception:
-                pass
-        elif isinstance(v, (datetime, date)):
-            sale_dates.append(v if isinstance(v, date) and not isinstance(v, datetime) else v.date())
+    # Неделя отчёта. ВАЖНО: бакетим по rr_dt (как GET-агрегация), НЕ по
+    # sale_dt — товары могли продаваться раньше отчётной недели (sale_dt
+    # уезжает назад, ломает бакет). Самый надёжный источник rr_dt — наша
+    # же `wb_report_detail` по realization_id (она синкается отдельно).
+    # Fallback на sale_dt только если отчёта в БД ещё нет.
+    week_basis: date | None = None
+    if report_id is not None:
+        rr_min = (await session.execute(
+            select(func.min(WbReportDetail.rr_dt)).where(
+                WbReportDetail.tenant_id == user.tenant_id,
+                WbReportDetail.realization_id == report_id,
+            )
+        )).scalar()
+        if rr_min:
+            week_basis = rr_min if isinstance(rr_min, date) and not isinstance(rr_min, datetime) else rr_min.date()
+    if week_basis is None:
+        SALE_DT = "Дата продажи"
+        sale_dates = []
+        for r in rows:
+            v = r.get(SALE_DT)
+            if isinstance(v, str) and len(v) >= 10:
+                try:
+                    sale_dates.append(date.fromisoformat(v[:10]))
+                except Exception:
+                    pass
+            elif isinstance(v, (datetime, date)):
+                sale_dates.append(v if isinstance(v, date) and not isinstance(v, datetime) else v.date())
+        if sale_dates:
+            week_basis = min(sale_dates)
+
     stored = False
     week_start_iso = None
-    if report_id is not None and sale_dates:
-        wmin = min(sale_dates)
-        ws_snap = wmin - timedelta(days=wmin.weekday())
+    if report_id is not None and week_basis is not None:
+        ws_snap = week_basis - timedelta(days=week_basis.weekday())
         we_excl = ws_snap + timedelta(days=7)
         week_start_iso = ws_snap.isoformat()
         ins = pg_insert(ExtensionReconUpload).values(
