@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-LEAD-141",
-  "agent": "Claude Opus 4.7 — ads-funnel session",
-  "started_at": "2026-05-26T20:19:32Z",
-  "expected_minutes": 60,
-  "notes": "extension ads/funnel interceptors — endpoint в reconciliation_auto"
-}
