@@ -3739,6 +3739,11 @@ Round 12 пометил: «standalone-страницы /localization и /transit
   - **Frozen capital:** dead-stock отдаёт `frozen_capital = Σ(stock×COGS)`.
   - **UI:** hero = только `found`; два вторичных итога (заморожено / потеряно)
     с пометкой «НЕ входят в найдено»; breakdown сгруппирован по `group`.
+  - **Регрессия (фикс v0.44.11):** при разбиении чарджбэков переименовал
+    `leak_type` (`recoverable_chargebacks` → `disputable_chargebacks` +
+    `review_deductions`), но в `DetailTable` осталась проверка на старый тип →
+    детали обоих блоков штрафов рендерились как SKU-таблица («undefined · 0 ₽»).
+    Починено через `CHARGEBACK_LEAK_TYPES` set.
   - **Тех-долг (закрыт v0.44.9):** тип консолидирован в `client.ts`
     (`LeakReport`/`LeakBreakdownItem`/`LeakGroup`), локальный `LeakReportV2` +
     каст из `LeakReport.tsx` убраны. (Откладывалось пока client.ts держал чужой
