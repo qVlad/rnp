@@ -23,7 +23,7 @@ import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 import { DateRangePicker } from "@/components/DateRangePicker";
 
-type LeakGroup = "found" | "frozen" | "lost";
+type LeakGroup = "found" | "review" | "frozen" | "lost";
 
 interface LeakItem {
   leak_type: string;
@@ -42,6 +42,7 @@ interface LeakReportV2 {
   period: { from: string; to: string };
   totals: {
     found_rub: number;
+    review_rub: number;
     frozen_rub: number;
     frozen_capital_rub: number;
     lost_rub: number;
@@ -79,6 +80,7 @@ const PRINT_CSS = `
 const KIND_CHIP: Record<string, { label: string; cls: string }> = {
   recover: { label: "вернуть", cls: "bg-emerald-100 text-emerald-700" },
   stop: { label: "остановить", cls: "bg-amber-100 text-amber-700" },
+  review: { label: "разобрать", cls: "bg-violet-100 text-violet-700" },
   frozen: { label: "заморожено", cls: "bg-sky-100 text-sky-700" },
   lost: { label: "потеряно", cls: "bg-rose-100 text-rose-700" },
 };
@@ -200,7 +202,7 @@ export default function LeakReport() {
   const data = q.data;
   const badge = data?.trust_badge;
   const byGroup = useMemo(() => {
-    const g: Record<LeakGroup, LeakItem[]> = { found: [], frozen: [], lost: [] };
+    const g: Record<LeakGroup, LeakItem[]> = { found: [], review: [], frozen: [], lost: [] };
     if (data) for (const it of data.breakdown) g[it.group]?.push(it);
     for (const k of Object.keys(g) as LeakGroup[]) g[k].sort((a, b) => b.amount - a.amount);
     return g;
@@ -248,8 +250,21 @@ export default function LeakReport() {
             )}
           </div>
 
-          {/* Два вторичных итога — НЕ входят в «найдено» */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+          {/* Вторичные итоги — НЕ входят в «найдено» */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+            <div className="card p-4">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">🔍</span>
+                <span className="font-medium">Разобрать</span>
+              </div>
+              <div className="text-h3 font-semibold tabular-nums mt-1">
+                {fmtRub(data.totals.review_rub)}
+              </div>
+              <div className="text-tiny text-muted">
+                удержания WB (приёмка, хранение с низким ИЛ) — в массе легитимны,
+                проверить спорные. Не возвратные.
+              </div>
+            </div>
             <div className="card p-4">
               <div className="flex items-center gap-2">
                 <span className="text-lg">📦</span>
@@ -281,6 +296,7 @@ export default function LeakReport() {
           {(
             [
               ["found", "💰 Найдено — вернуть и остановить"],
+              ["review", "🔍 Разобрать — удержания WB"],
               ["frozen", "📦 Заморожено / под риском"],
               ["lost", "📉 Уже потеряно"],
             ] as [LeakGroup, string][]
@@ -299,8 +315,9 @@ export default function LeakReport() {
 
           <p className="text-tiny text-muted mt-4">
             Отчёт сформирован {new Date(data.generated_at).toLocaleString("ru-RU")}. «Найдено» =
-            возврат + дёшево остановить. «Заморожено» и «потеряно» в эту сумму НЕ входят: первое
-            требует затрат на вывоз/распродажу, второе уже потрачено.
+            возврат (оспоримые штрафы/коррекции) + дёшево остановить. «Разобрать», «заморожено»
+            и «потеряно» в эту сумму НЕ входят: удержания в массе легитимны, дохлый сток требует
+            затрат на вывоз/распродажу, акции уже потрачены.
           </p>
         </>
       )}

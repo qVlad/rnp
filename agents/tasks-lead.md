@@ -3742,6 +3742,12 @@ Round 12 пометил: «standalone-страницы /localization и /transit
   - **Тех-долг:** тип `LeakReportV2` описан локально в `LeakReport.tsx`, не в
     `client.ts` — на момент правки client.ts держал чужой uncommitted WIP
     (recon-auto, TASK-LEAD-141). Консолидировать в client.ts позже.
+  - **Доработка (v0.44.7):** generic «Удержание» вынесено из «найдено» в 4-ю
+    группу `review` («разобрать», не суммируется в found). Категории чарджбэков
+    разбиты на `DISPUTABLE_CATEGORIES` (штраф + коррекции → found) vs
+    `REVIEW_CATEGORIES` (deduction/платная приёмка/хранение-низкий-ИЛ → review).
+    Итог `totals.review_rub`. UI: 3 вторичные карточки (разобрать/заморожено/
+    потеряно) + 4-я секция breakdown.
 - **Затронуто:** `services/leak_report.py`, `pages/LeakReport.tsx`
   (`api/client.ts` НЕ тронут — чужой WIP).
 - **Статус:** Выполнено — 2026-05-27 (deploy + smoke за пользователем)

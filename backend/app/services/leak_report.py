@@ -48,6 +48,20 @@ from app.services.pnl_reconciliation import build_reconciliation
 #   - voluntary_compensation — «Добровольная компенсация при возврате»: селлер
 #     согласился сам → оспорить нельзя (и это его расход, не возвратный).
 NON_RECOVERABLE_CATEGORIES = set(INCOME_CATEGORIES) | {"voluntary_compensation"}
+
+# Реально ОСПОРИМЫЕ категории → идут в «найдено» (group=found). Штраф + явные
+# коррекции, где у претензии есть шанс.
+DISPUTABLE_CATEGORIES = {
+    "penalty",
+    "delivery_correction",
+    "sale_correction",
+    "acquiring_correction",
+    "loyalty_correction",
+}
+# Прочие удержания → блок «разобрать» (group=review), НЕ суммируются в «найдено»:
+# generic «Удержание» в массе легитимно, платная приёмка / хранение с низким ИЛ —
+# это реальные сборы, а не возвратные деньги. Показываем, но не обещаем возврат.
+REVIEW_CATEGORIES = {"deduction", "low_il_storage_fee", "paid_acceptance"}
 from app.services.period_aggregates import OP_SALE
 from app.services.unit_economics import build_unit_economics
 
@@ -80,15 +94,20 @@ def _brand_nm_subq(brands: set[str] | None):
 # ──────────────────────────────────────────────────────────────────────
 # 1. Оспоримые штрафы / чарджбэки (recover)
 # ──────────────────────────────────────────────────────────────────────
-async def _recoverable_chargebacks(
+async def _chargebacks_split(
     session: AsyncSession,
     *,
     date_from: date,
     date_to: date,
     brands: set[str] | None,
 ) -> dict[str, Any]:
-    """Сумма ещё-не-закрытых оспоримых штрафов (status new/disputing),
-    кроме income-категорий (компенсации в нашу пользу).
+    """Не-закрытые удержания/штрафы (status new/disputing), кроме income и
+    добровольной компенсации, разбитые на два блока (TASK-LEAD-142):
+
+    - `disputable` (→ «найдено»): штраф + явные коррекции, где претензия имеет
+      шанс. Это `DISPUTABLE_CATEGORIES`.
+    - `review` (→ «разобрать», НЕ суммируется в найдено): generic «Удержание»,
+      платная приёмка, хранение с низким ИЛ — в массе легитимны, не возвратные.
 
     Сумма = amount_rub − recovered_amount (что ещё не вернули).
     """
@@ -114,22 +133,27 @@ async def _recoverable_chargebacks(
         stmt = stmt.where(Chargeback.nm_id.in_(nm_subq))
     rows = (await session.execute(stmt)).all()
 
-    by_category = [
-        {
-            "category": r.category,
-            "label": CATEGORY_LABELS.get(r.category, r.category),
-            "amount": round(_f(r.amount), 2),
-            "count": int(r.cnt),
+    def _bucket(categories: set[str]) -> dict[str, Any]:
+        by_cat = [
+            {
+                "category": r.category,
+                "label": CATEGORY_LABELS.get(r.category, r.category),
+                "amount": round(_f(r.amount), 2),
+                "count": int(r.cnt),
+            }
+            for r in rows
+            if r.category in categories and _f(r.amount) > 0
+        ]
+        by_cat.sort(key=lambda x: x["amount"], reverse=True)
+        return {
+            "amount": round(sum(c["amount"] for c in by_cat), 2),
+            "count": sum(c["count"] for c in by_cat),
+            "by_category": by_cat,
         }
-        for r in rows
-        if _f(r.amount) > 0
-    ]
-    by_category.sort(key=lambda x: x["amount"], reverse=True)
-    total = round(sum(c["amount"] for c in by_category), 2)
+
     return {
-        "amount": total,
-        "count": sum(c["count"] for c in by_category),
-        "by_category": by_category,
+        "disputable": _bucket(DISPUTABLE_CATEGORIES),
+        "review": _bucket(REVIEW_CATEGORIES),
     }
 
 
@@ -486,7 +510,7 @@ async def build_leak_report(
     }
     cogs = await _latest_cogs_per_unit(session)
 
-    chargebacks = await _recoverable_chargebacks(
+    chargebacks = await _chargebacks_split(
         session, date_from=date_from, date_to=date_to, brands=brands
     )
     negative = _negative_margin(items)
@@ -499,27 +523,42 @@ async def build_leak_report(
     )
     badge = await _trust_badge(session, brands=brands)
 
-    # ── 3 честных итога (TASK-LEAD-142) ──────────────────────────────────
+    # ── 4 честных группы (TASK-LEAD-142) ─────────────────────────────────
     #   found  — деньги, которые реально вернуть / дёшево остановить
+    #   review — удержания WB к разбору (в массе легитимны) — НЕ суммируем в found
     #   frozen — дохлый сток: хранение капает + капитал заморожен, действие
     #            (вывоз/распродажа/утилизация) тоже стоит денег → НЕ чистая экономия
     #   lost   — уже потеряно (убыточные акции постфактум), вернуть нельзя — урок
     breakdown = [
         {
-            "leak_type": "recoverable_chargebacks",
-            "label": "Удержания и штрафы WB — разобрать",
+            "leak_type": "disputable_chargebacks",
+            "label": "Штрафы и коррекции WB — оспорить",
             "group": "found",
             "kind": "recover",
             "icon": "💰",
-            "amount": chargebacks["amount"],
-            "count": chargebacks["count"],
+            "amount": chargebacks["disputable"]["amount"],
+            "count": chargebacks["disputable"]["count"],
             "hint": (
-                "WB удержал/оштрафовал — разобрать и оспорить спорные. "
-                "Выигрыш не гарантирован, часть удержаний легитимна (логистика/"
-                "коррекции). «Компенсация ущерба» и «добровольная компенсация» "
-                "сюда НЕ входят (первое — доход селлера, второе — не оспаривается)."
+                "Штраф + явные коррекции (логистика/продажи/эквайринг/лояльность) — "
+                "по ним у претензии в WB есть шанс. Выигрыш не гарантирован."
             ),
-            "details": chargebacks["by_category"],
+            "details": chargebacks["disputable"]["by_category"],
+        },
+        {
+            "leak_type": "review_deductions",
+            "label": "Удержания WB — разобрать",
+            "group": "review",
+            "kind": "review",
+            "icon": "🔍",
+            "amount": chargebacks["review"]["amount"],
+            "count": chargebacks["review"]["count"],
+            "hint": (
+                "Generic «Удержание», платная приёмка, хранение с низким ИЛ — "
+                "в массе легитимны, не возвратные. Проверить спорные, но в «найдено» "
+                "НЕ входит. «Компенсация ущерба» (доход) и «добровольная компенсация» "
+                "(не оспаривается) сюда тоже не входят."
+            ),
+            "details": chargebacks["review"]["by_category"],
         },
         {
             "leak_type": "negative_margin_skus",
@@ -579,6 +618,7 @@ async def build_leak_report(
         "period": {"from": date_from.isoformat(), "to": date_to.isoformat()},
         "totals": {
             "found_rub": _sum("found"),
+            "review_rub": _sum("review"),
             "frozen_rub": _sum("frozen"),
             "frozen_capital_rub": dead_stock["frozen_capital"],
             "lost_rub": _sum("lost"),
