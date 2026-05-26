@@ -42,6 +42,7 @@ from app.api import (
     plan_edit_requests,
     plans,
     pnl,
+    product_dimensions,
     product_groups,
     product_tags,
     products,
@@ -230,6 +231,7 @@ app.include_router(plan_edit_requests.router)
 app.include_router(cash_flow.router)
 app.include_router(calc.router)
 app.include_router(products.router)
+app.include_router(product_dimensions.router)
 app.include_router(wb_token.router)
 app.include_router(excel.router)
 app.include_router(off_platform.router)

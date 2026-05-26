@@ -84,6 +84,12 @@ class Product(Base, TenantScopedMixin):
     # UNIT-PLAN fields (миграция 0041) — плановая юнит-экономика.
     # См. `UNIT_PLAN.md` §3 (DDL), §4 (формулы Z/AC/AI/AS).
     volume_l: Mapped[Decimal | None] = mapped_column(Numeric(8, 3))
+    # Габариты последнего замера WB (миграция 0063, TASK-LEAD-129) — нужны
+    # чтобы детектить перемерку: sync сравнивает WB dimensions с этими
+    # значениями, при diff пишет history-row + TG-нотификацию.
+    length_cm: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
+    width_cm: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
+    height_cm: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
     warehouse_default: Mapped[str | None] = mapped_column(String(255))
     is_monopallet: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     items_per_monopallet: Mapped[int | None] = mapped_column(Integer)
@@ -2592,6 +2598,54 @@ class WbTransitTariff(Base, TenantScopedMixin):
             "hub_name",
             "destination_warehouse",
             name="uq_wb_transit_tariff_tenant_hub_dest",
+        ),
+    )
+
+
+class WbProductDimensionsHistory(Base, TenantScopedMixin):
+    """История замеров габаритов карточек WB (TASK-LEAD-129, миграция 0063).
+
+    Append-only лог: каждое изменение `dimensions: {length, width, height}`
+    в WB Content API → новая строка. Первый замер для SKU пишется с
+    `change_kind='initial'` без TG-нотификации. Последующие диффы — с
+    `change_kind='changed'` + broadcast директорам.
+
+    `prev_*` копии хранятся ради удобного UI-diff'а без window-функции по
+    предыдущей строке (всё в одной row).
+    """
+
+    __tablename__ = "wb_product_dimensions_history"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    nm_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    length_cm: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
+    width_cm: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
+    height_cm: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
+    volume_l: Mapped[Decimal | None] = mapped_column(Numeric(8, 3))
+    prev_length_cm: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
+    prev_width_cm: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
+    prev_height_cm: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
+    prev_volume_l: Mapped[Decimal | None] = mapped_column(Numeric(8, 3))
+    change_kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'changed'")
+    )
+    detected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    source: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default=text("'wb_content_api'")
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_wb_product_dims_hist_tenant_nm_detected",
+            "tenant_id",
+            "nm_id",
+            text("detected_at DESC"),
+        ),
+        Index(
+            "ix_wb_product_dims_hist_detected",
+            text("detected_at DESC"),
         ),
     )
 

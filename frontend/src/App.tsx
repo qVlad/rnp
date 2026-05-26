@@ -16,6 +16,7 @@ import Units from "./pages/Units";
 import Funnel from "./pages/Funnel";
 import UnitPlan from "./pages/UnitPlan";
 import Tariffs from "./pages/Tariffs";
+import DimensionsHistory from "./pages/DimensionsHistory";
 import Settings from "./pages/Settings";
 import RevenueCorrections from "./pages/RevenueCorrections";
 import AdsHeatmap from "./pages/AdsHeatmap";
@@ -184,6 +185,7 @@ export default function App() {
           <Route path="funnel" element={<Funnel />} />
           <Route path="unit-plan" element={<UnitPlan />} />
           <Route path="tariffs" element={<Tariffs />} />
+          <Route path="dimensions-history" element={<DimensionsHistory />} />
           <Route
             path="revenue-corrections"
             element={

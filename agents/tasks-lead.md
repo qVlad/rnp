@@ -3422,6 +3422,54 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Зависимости:** HYP-008 ✅
 - **Статус:** Выполнено — 2026-05-26
 
+### TASK-LEAD-129: tracking перемерок WB + Telegram-нотификация
+- **Приоритет:** P2
+- **Оценка:** M (1д)
+- **Источник:** Запрос пользователя 2026-05-26. WB периодически делает перемерку
+  товаров на складе и пересчитывает габариты в карточке (`dimensions: {length,
+  width, height}`). Перемерка → новый объём → новый тариф логистики → маржа
+  падает. Сейчас селлер узнаёт об этом только когда `/unit-plan` показывает
+  странные цифры или через сторонние сервисы. Прямая боль — отсутствие
+  alert'а «WB перемерил, логистика выросла».
+- **Что есть сейчас:**
+  - `services/anomaly.py:423` алертит SKU **без** habarit'ов (volume_l NULL),
+    но не tracking **изменений** на уже-известных габаритах.
+  - `sync/tasks_product_volume.py` обновляет только `volume_l IS NULL` или 0
+    (идемпотентно) — пропустит case когда WB прислал новые dimensions.
+  - Нет таблицы истории, нет diff-detection, нет TG-нотификации.
+- **Что делаем:**
+  - **Миграция 0063** — `wb_product_dimensions_history (id, tenant_id, nm_id,
+    length_cm, width_cm, height_cm, volume_l, detected_at, source)` +
+    индекс `(tenant_id, nm_id, detected_at DESC)`. Append-only лог замеров.
+  - **products.length_cm / width_cm / height_cm** колонки — храним последние
+    значения чтобы diff'ить (без них пришлось бы JOIN'ить history каждый sync).
+  - `sync/tasks_product_volume.py` рефакторится:
+    - Тянет dimensions для **всех** активных SKU, не только volume_l IS NULL
+      (раз в день, не накладно — Content API rate-limit 100 SKU/запрос ok).
+    - Diff против `products.{length,width,height}_cm`. Если изменилось →
+      INSERT в history + UPDATE products + emit event.
+    - Первый замер записывается без алерта (initial snapshot).
+  - **TG-broadcast**: при detected diff → `services/tg_broadcast.
+    broadcast_to_directors` с шаблоном «🔧 WB перемерил **{name}** ({nm_id}):
+    {OLD_L×W×H см, V=X.X л} → {NEW_L×W×H см, V=Y.Y л}. Объём {±N%}».
+    Без preview impact на логистику в v1 (нужны тарифы) — отложено.
+  - **API** `/api/product-dimensions/*` — GET history (последние 100 per-tenant,
+    brands-filter) + GET /{nm_id} per-SKU history.
+  - **UI** `/dimensions-history` — таблица последних перемерок с diff'ами и
+    sparkline-trend volume_l. Menu для director / head / manager (brand-scope).
+- **Критерии готовности:**
+  - [x] Миграция 0063 применяется + откатывается
+  - [x] `Product.length_cm/width_cm/height_cm` колонки + `WbProductDimensionsHistory` модель
+  - [x] `sync_product_volume` детектит изменения, пишет history, делает TG-broadcast
+  - [x] API: `GET /api/product-dimensions/history` + `/{nm_id}` (brands-filter) + `POST /sync` (director_or_head)
+  - [x] Страница `/dimensions-history` (React) с таблицей + diff'ами
+  - [x] Menu-link в Layout (раздел «Налоги и деньги», рядом с «Тарифы WB»)
+  - [x] FEATURES.md + CLAUDE.md обновлены (миграция 0063, API-группа)
+  - [x] bump.sh minor → 0.41.0
+  - [x] Commit + push + remote deploy
+- **Зависимости:** —
+- **Статус:** Выполнено — 2026-05-26
+
 ---
 
 ## Формат / Жизненный цикл

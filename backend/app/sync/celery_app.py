@@ -245,6 +245,13 @@ celery_app.conf.update(
             "task": "app.sync.tasks.sync_product_photos",
             "schedule": crontab(hour=5, minute=0),
         },
+        # WB dimensions tracking (TASK-LEAD-129) — раз в день. Тянет
+        # dimensions всех карточек, сравнивает с products.{length,width,
+        # height}_cm. При diff → wb_product_dimensions_history + TG.
+        "sync-product-volume-daily": {
+            "task": "sync.product_volume",
+            "schedule": crontab(hour=5, minute=45),
+        },
         # WB Jam — поисковые запросы по карточкам (платная подписка).
         # Раз в сутки достаточно: запросы и их статистика обновляются с
         # задержкой 1-2 дня. Расход на analytics: ~30 SKU × 1 запрос ≈ 10 мин

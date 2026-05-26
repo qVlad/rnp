@@ -2418,6 +2418,30 @@ paymentOrderDelete: (payment_order_id: string) =>
     return request<TransitTariffRow>(`/api/transit-tariffs/lookup?${qs}`);
   },
 
+  // ── TASK-LEAD-129: перемерки WB ──
+  dimensionsHistory: (params?: {
+    limit?: number;
+    only_changes?: boolean;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    if (params?.only_changes === false) qs.set("only_changes", "false");
+    const s = qs.toString();
+    return request<DimensionsHistoryResponse>(
+      `/api/product-dimensions/history${s ? `?${s}` : ""}`,
+    );
+  },
+  dimensionsHistoryByNm: (nm_id: number, limit?: number) => {
+    const qs = limit != null ? `?limit=${limit}` : "";
+    return request<DimensionsHistoryDetail>(
+      `/api/product-dimensions/${nm_id}${qs}`,
+    );
+  },
+  dimensionsSyncNow: () =>
+    request<{ status: string; task_id: string }>(`/api/product-dimensions/sync`, {
+      method: "POST",
+    }),
+
   // ── Long-lived API tokens для Chrome-расширения (миграция 0048) ──
   extensionApiTokenList: () =>
     request<
@@ -2655,6 +2679,44 @@ export interface TransitTariffRow {
   threshold_l: number | null;
   currency: string;
   synced_at: string | null;
+}
+
+// ── TASK-LEAD-129: tracking перемерок WB ──
+export interface DimensionsHistoryRow {
+  id: number;
+  nm_id: number;
+  name: string | null;
+  brand: string | null;
+  photo_url: string | null;
+  length_cm: number | null;
+  width_cm: number | null;
+  height_cm: number | null;
+  volume_l: number | null;
+  prev_length_cm: number | null;
+  prev_width_cm: number | null;
+  prev_height_cm: number | null;
+  prev_volume_l: number | null;
+  change_kind: "initial" | "changed";
+  detected_at: string | null;
+  source: string;
+}
+
+export interface DimensionsHistoryResponse {
+  items: DimensionsHistoryRow[];
+}
+
+export interface DimensionsHistoryDetail {
+  product: {
+    nm_id: number;
+    name: string | null;
+    brand: string | null;
+    photo_url: string | null;
+    length_cm: number | null;
+    width_cm: number | null;
+    height_cm: number | null;
+    volume_l: number | null;
+  };
+  items: DimensionsHistoryRow[];
 }
 
 export interface TariffTimelineResponse {

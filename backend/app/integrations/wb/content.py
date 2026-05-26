@@ -72,6 +72,35 @@ def extract_photo_url(card: dict[str, Any]) -> str | None:
     return url if isinstance(url, str) and url else None
 
 
+def extract_dimensions(card: dict[str, Any]) -> "tuple[Decimal, Decimal, Decimal, Decimal] | None":
+    """Возвращает `(length_cm, width_cm, height_cm, volume_l)` из WB-карточки.
+
+    Used by TASK-LEAD-129 (tracking перемерок) — нужны и отдельные габариты,
+    и объём, чтобы diff'ить с `products.length_cm/width_cm/height_cm/volume_l`.
+    `None` если хоть одно измерение отсутствует или <= 0.
+    """
+    from decimal import Decimal as _D
+
+    dims = card.get("dimensions") or {}
+    if not isinstance(dims, dict):
+        return None
+    try:
+        l = float(dims.get("length") or 0)
+        w = float(dims.get("width") or 0)
+        h = float(dims.get("height") or 0)
+    except (TypeError, ValueError):
+        return None
+    if l <= 0 or w <= 0 or h <= 0:
+        return None
+    vol_l = (l * w * h) / 1000.0
+    return (
+        _D(f"{l:.2f}"),
+        _D(f"{w:.2f}"),
+        _D(f"{h:.2f}"),
+        _D(f"{vol_l:.3f}"),
+    )
+
+
 def extract_dimensions_volume_l(card: dict[str, Any]) -> "Decimal | None":
     """Возвращает объём карточки в литрах из `dimensions` WB Content API.
 
