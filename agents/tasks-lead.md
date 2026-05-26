@@ -3625,12 +3625,17 @@ Round 12 пометил: «standalone-страницы /localization и /transit
   - В UI `/reconciliation-auto` колонка «Из ЛК WB (через ext)» автозаполняется без действий
 - **Альтернатива:** если WB-фронт endpoint неустойчив (часто меняется) — extension скачивает xlsx через WB UI (программный click), парсит на клиенте, отправляет нормализованный JSON. Работает дольше но устойчивее.
 - **Критерии готовности:**
-  - [ ] Content script `wb-realization-report-{interceptor-main,content}.ts` в extension
-  - [ ] Backend endpoint `POST /api/reconciliation-auto/upload-extension` (director_or_head)
-  - [ ] SW handler с дедупом
-  - [ ] Smoke-test: пользователь открывает финотчёт в ЛК → через 5 сек данные в /reconciliation-auto
-- **Зависимости:** TASK-LEAD-137 (UI для отображения)
-- **Статус:** Запланировано — 2026-05-26
+  - [x] `wb-realization-report-interceptor-main.ts` MAIN-world — fetch+XHR sniff, shape-detect ≥50 строк с rrdId/supplierOperName
+  - [x] `wb-realization-report-content.ts` ISOLATED — postMessage receiver + sendMessage в SW
+  - [x] Backend endpoint `POST /api/reconciliation-auto/upload-extension` (director_or_head, нормализует через `_normalize_v2_row`, UPSERT в `extension_recon_uploads` per-week)
+  - [x] Миграция 0064 — `extension_recon_uploads(tenant_id, week_start, metrics_by_rule jsonb, ...)` UNIQUE на (tenant, week_start)
+  - [x] SW handler `maybeUploadRealizationReport` с дедупом hash + notification (один раз на token)
+  - [x] Frontend autofill: `GET /api/reconciliation-auto` возвращает поле `extension_upload`, UI useEffect пре-заполняет колонку «WB ЛК» из этих значений (если пусто)
+  - [x] UI badge «📡 Загружено через расширение: N строк (HH:MM)» в шапке таблицы
+  - [ ] Smoke-test на проде: открыть финотчёт в ЛК WB → проверить что данные появились в /reconciliation-auto
+- **Зависимости:** TASK-LEAD-137 ✅
+- **Решение:** Shape-based detection (≥50 строк + rrdId/supplierOperName/realizationreportId в первых 5 строках), не привязано к точному URL endpoint'а — если WB поменяет URL, парсер выживет. Сам endpoint неизвестен документально на 2026-05.
+- **Статус:** Выполнено — 2026-05-26 (smoke-test остаётся за пользователем)
 
 ### TASK-LEAD-139: Документация `RECON_GUIDE.md` — ручная сверка
 - **Приоритет:** P2 (S, 2-4ч)

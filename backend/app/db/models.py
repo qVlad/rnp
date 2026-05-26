@@ -2602,6 +2602,42 @@ class WbTransitTariff(Base, TenantScopedMixin):
     )
 
 
+class ExtensionReconUpload(Base, TenantScopedMixin):
+    """Авто-загрузка финотчёта WB из ЛК через Chrome-extension (TASK-LEAD-138).
+
+    Хранит **агрегированные 17 метрик TS** за неделю — для подстановки в
+    UI `/reconciliation-auto` колонку «WB ЛК» без ручного ввода. Сами raw-
+    строки финотчёта в `wb_report_detail` (приходят через основной sync).
+
+    UNIQUE на `(tenant_id, week_start)` — каждая неделя одна запись;
+    новая загрузка делает UPSERT.
+    """
+
+    __tablename__ = "extension_recon_uploads"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    week_start: Mapped[date] = mapped_column(Date, nullable=False)
+    week_end: Mapped[date] = mapped_column(Date, nullable=False)
+    metrics_by_rule: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    rows_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    uploaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    uploaded_by_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "week_start", name="uq_extension_recon_tenant_week"
+        ),
+        Index(
+            "ix_extension_recon_tenant_week",
+            "tenant_id",
+            text("week_start DESC"),
+        ),
+    )
+
+
 class WbProductDimensionsHistory(Base, TenantScopedMixin):
     """История замеров габаритов карточек WB (TASK-LEAD-129, миграция 0063).
 

@@ -139,6 +139,25 @@ export default defineManifest({
       run_at: "document_start",
     },
     {
+      // TASK-LEAD-138: финотчёт WB из ЛК — ISOLATED receiver.
+      // Слушает postMessage от MAIN-interceptor'а на странице
+      // «Финансы → Отчёт реализации» (точный URL ЛК неизвестен,
+      // детектим по shape данных).
+      matches: ["https://seller.wildberries.ru/*"],
+      js: ["src/content/wb-realization-report-content.ts"],
+      run_at: "document_start",
+    },
+    {
+      // TASK-LEAD-138: MAIN-world interceptor финотчёта WB.
+      // Перехватывает fetch+XHR на *.wildberries.ru, ищет массив строк
+      // финотчёта по shape (rrdId, supplierOperName, ≥50 rows), шлёт
+      // через postMessage в ISOLATED.
+      matches: ["https://seller.wildberries.ru/*"],
+      js: ["src/content/wb-realization-report-interceptor-main.ts"],
+      run_at: "document_start",
+      world: "MAIN",
+    },
+    {
       // TASK-LEAD-078: MAIN-world interceptor для транзитных тарифов.
       // Перехватывает fetch+XHR на любых *.wildberries.ru хостах,
       // парсит response body на предмет «похоже на таблицу транзитных

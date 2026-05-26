@@ -18,7 +18,7 @@
  *
  * Методология и cross-link на RECON_GUIDE.md.
  */
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   api,
@@ -107,6 +107,27 @@ export default function ReconciliationAuto() {
     queryKey: ["reconciliation-auto", weekStart],
     queryFn: () => api.reconciliationAuto(weekStart),
   });
+
+  // TASK-LEAD-138: при смене недели — если extension загрузил данные за эту
+  // неделю, автозаполняем колонку «WB ЛК». User'ский ввод не перетираем
+  // (если он уже что-то набил вручную) — поэтому проверяем что wbValues
+  // пуст для соответствующих правил.
+  useEffect(() => {
+    const upload = q.data?.extension_upload;
+    if (!upload) return;
+    setWbValues((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const [k, v] of Object.entries(upload.metrics_by_rule)) {
+        const rn = Number(k);
+        if (!(rn in next) || next[rn] === "" || next[rn] === undefined) {
+          next[rn] = String(v);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [q.data?.extension_upload?.uploaded_at]);
 
   const xlsxMut = useMutation({
     mutationFn: (file: File) => api.reconciliationAutoUploadXlsx(file),
@@ -213,6 +234,23 @@ export default function ReconciliationAuto() {
             Строк: <b>{data.rows_count.toLocaleString("ru-RU")}</b>
             {" · "}
             Scope: <b>{data.scope}</b>
+            {data.extension_upload && (
+              <span className="ml-3 text-success">
+                📡 Загружено через расширение:{" "}
+                {data.extension_upload.rows_count.toLocaleString("ru-RU")} строк
+                {data.extension_upload.uploaded_at && (
+                  <>
+                    {" "}
+                    (
+                    {new Date(data.extension_upload.uploaded_at).toLocaleString(
+                      "ru-RU",
+                      { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" },
+                    )}
+                    )
+                  </>
+                )}
+              </span>
+            )}
           </div>
         )}
         <button

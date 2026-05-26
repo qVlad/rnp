@@ -10,13 +10,17 @@ Frontend подставляет эти числа в `wb_value` колонку.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models import ExtensionReconUpload
+from app.integrations.wb.statistics import _normalize_v2_row
 from app.services.auth import (
     CurrentUser,
     current_brands_filter,
@@ -54,13 +58,32 @@ async def reconciliation_auto(
             ws = week_start
         we = ws + timedelta(days=7)
 
-    return await compute_truestats_metrics(
+    result = await compute_truestats_metrics(
         session,
         tenant_id=user.tenant_id,
         week_start=ws,
         week_end=we,
         brands=brands,
     )
+
+    # TASK-LEAD-138: подмешиваем последнюю extension-загрузку для этой недели
+    # — UI автозаполняет «WB ЛК» колонку из этих значений (если есть).
+    ext_row = (await session.execute(
+        select(ExtensionReconUpload)
+        .where(ExtensionReconUpload.tenant_id == user.tenant_id)
+        .where(ExtensionReconUpload.week_start == ws)
+    )).scalar_one_or_none()
+    if ext_row is not None:
+        result["extension_upload"] = {
+            "uploaded_at": ext_row.uploaded_at.isoformat() if ext_row.uploaded_at else None,
+            "rows_count": ext_row.rows_count,
+            "metrics_by_rule": ext_row.metrics_by_rule,
+            "source_url": ext_row.source_url,
+        }
+    else:
+        result["extension_upload"] = None
+
+    return result
 
 
 @router.post("/upload-xlsx")
@@ -174,4 +197,154 @@ async def upload_xlsx(
             "15": float(spp_total),
             "16": float(acq_total),
         },
+    }
+
+
+@router.post("/upload-extension")
+async def upload_extension(
+    payload: dict = Body(...),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Chrome-extension шлёт raw-строки финотчёта WB из ЛК (TASK-LEAD-138).
+
+    Body: `{rows: [...wb_api_row...], source_url: str | null}` где rows — массив
+    объектов прямо как WB API возвращает (camelCase). Backend нормализует через
+    `_normalize_v2_row` и считает 17 метрик TS для определившейся недели
+    (выводится из `rrDt` / `rrDate` / `dateFrom`/`dateTo`).
+
+    UPSERT в `extension_recon_uploads (tenant_id, week_start)` — новая
+    загрузка перезаписывает старую за ту же неделю.
+
+    Auth: Bearer JWT (как остальные `/api/extension/*`). Доступно директору /
+    head_of_sales. Manager — 403 (брендовый scope не имеет смысла для общей
+    сверки).
+    """
+    if user.role not in ("director", "head_of_sales"):
+        raise HTTPException(403, "director or head required")
+
+    raw_rows = payload.get("rows") or []
+    source_url = payload.get("source_url")
+    if not isinstance(raw_rows, list) or len(raw_rows) == 0:
+        raise HTTPException(400, "rows must be a non-empty list")
+
+    # Нормализуем (camel → snake + aliases) и считаем метрики
+    normalized = [_normalize_v2_row(r) for r in raw_rows if isinstance(r, dict)]
+    if not normalized:
+        raise HTTPException(400, "no valid rows after normalize")
+
+    # Выводим week_start: берём min rr_dt из строк (а если их нет — dateFrom
+    # из payload или сегодня минус 7).
+    def parse_date(v: Any) -> date | None:
+        if not v or not isinstance(v, str):
+            return None
+        try:
+            return datetime.fromisoformat(v.replace("Z", "+00:00")).date()
+        except Exception:
+            try:
+                return date.fromisoformat(v[:10])
+            except Exception:
+                return None
+
+    rr_dates = sorted(set(
+        d for d in (parse_date(r.get("rr_dt")) for r in normalized) if d is not None
+    ))
+    if not rr_dates:
+        raise HTTPException(400, "no parseable rr_dt in rows")
+    week_min = rr_dates[0]
+    week_max = rr_dates[-1]
+    # snap week_min к понедельнику
+    week_start_snapped = week_min - timedelta(days=week_min.weekday())
+    week_end_excl = week_start_snapped + timedelta(days=7)
+
+    # Считаем 17 метрик из normalized строк по тем же формулам что в
+    # `reconciliation_auto.compute_truestats_metrics` (только источник
+    # данных — массив в памяти, не БД).
+    sales = [
+        r for r in normalized
+        if r.get("doc_type_name") == "Продажа" and r.get("supplier_oper_name") == "Продажа"
+    ]
+    returns = [
+        r for r in normalized
+        if r.get("doc_type_name") == "Возврат" and r.get("supplier_oper_name") == "Возврат"
+    ]
+
+    def fnum(v: Any) -> float:
+        if v is None:
+            return 0.0
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+
+    sales_sum = sum(fnum(r.get("ppvz_for_pay")) for r in sales)
+    returns_sum = sum(fnum(r.get("ppvz_for_pay")) for r in returns)
+    to_seller = sales_sum - returns_sum
+    logistics = sum(fnum(r.get("delivery_rub")) for r in normalized)
+    storage = sum(fnum(r.get("storage_fee")) for r in normalized)
+    paid_acceptance = sum(fnum(r.get("paid_acceptance")) for r in normalized)
+    sales_qty = sum(int(fnum(r.get("quantity"))) for r in sales)
+    returns_qty = sum(int(fnum(r.get("quantity"))) for r in returns)
+    penalties = sum(fnum(r.get("penalty")) for r in normalized)
+    deduction = sum(fnum(r.get("deduction")) for r in normalized)
+    sales_retail = sum(fnum(r.get("retail_price_withdisc_rub")) for r in sales)
+    returns_retail = sum(fnum(r.get("retail_price_withdisc_rub")) for r in returns)
+    realization = sales_retail - returns_retail
+    commission_total = realization - to_seller
+    nominal_s = sum(
+        fnum(r.get("retail_price")) * fnum(r.get("commission_percent")) / 100 for r in sales
+    )
+    nominal_r = sum(
+        fnum(r.get("retail_price")) * fnum(r.get("commission_percent")) / 100 for r in returns
+    )
+    nominal_commission = nominal_s - nominal_r
+    spp_s = sum(
+        fnum(r.get("retail_price")) - fnum(r.get("retail_amount")) for r in sales
+    )
+    spp_r = sum(
+        fnum(r.get("retail_price")) - fnum(r.get("retail_amount")) for r in returns
+    )
+    spp_total = spp_s - spp_r
+    acq_s = sum(fnum(r.get("acquiring_fee")) for r in sales)
+    acq_r = sum(fnum(r.get("acquiring_fee")) for r in returns)
+    acq_total = acq_s - acq_r
+
+    metrics_by_rule = {
+        "1": sales_sum, "2": to_seller, "3": logistics, "4": storage,
+        "5": paid_acceptance, "6": sales_qty - returns_qty, "7": penalties,
+        "8": deduction,  # raw — клиент сам решит по TS-формуле или нет
+        "12": realization, "13": commission_total, "14": nominal_commission,
+        "15": spp_total, "16": acq_total,
+    }
+
+    # UPSERT
+    ins = pg_insert(ExtensionReconUpload).values(
+        tenant_id=user.tenant_id,
+        week_start=week_start_snapped,
+        week_end=week_end_excl,
+        metrics_by_rule=metrics_by_rule,
+        rows_count=len(normalized),
+        uploaded_by_user_id=user.id,
+        source_url=source_url[:512] if isinstance(source_url, str) else None,
+    ).on_conflict_do_update(
+        index_elements=["tenant_id", "week_start"],
+        set_={
+            "metrics_by_rule": metrics_by_rule,
+            "rows_count": len(normalized),
+            "uploaded_at": func.now(),
+            "uploaded_by_user_id": user.id,
+            "source_url": source_url[:512] if isinstance(source_url, str) else None,
+            "week_end": week_end_excl,
+        },
+    )
+    await session.execute(ins)
+    await session.commit()
+
+    return {
+        "status": "ok",
+        "week_start": week_start_snapped.isoformat(),
+        "week_end": week_end_excl.isoformat(),
+        "rows_count": len(normalized),
+        "rr_dt_range": [week_min.isoformat(), week_max.isoformat()],
+        "metrics_by_rule": metrics_by_rule,
     }

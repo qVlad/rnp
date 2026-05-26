@@ -605,6 +605,103 @@ async function maybeUploadTransitTariffs(payload: {
   }
 }
 
+// =================================================================
+// TASK-LEAD-138: Финотчёт WB из ЛК → /api/reconciliation-auto/upload-extension
+// =================================================================
+
+const STORAGE_RECON_LAST_HASH = "rnp.recon.lastHash";
+const STORAGE_RECON_NOTIFIED = "rnp.recon.notified";
+
+type ReconUploadResult =
+  | { status: "no-rnp-token" }
+  | { status: "unchanged" }
+  | { status: "forbidden" }
+  | { status: "http-error"; code: number; body?: string }
+  | { status: "network-error"; error: string }
+  | {
+      status: "ok";
+      week_start: string;
+      rows_count: number;
+    };
+
+async function maybeUploadRealizationReport(payload: {
+  rows: unknown[];
+  hash: string;
+  source_url?: string | null;
+}): Promise<ReconUploadResult> {
+  const settings = await getSettings();
+  if (!settings.rnpUrl || !settings.rnpToken) return { status: "no-rnp-token" };
+
+  const stored = await chrome.storage.local.get(STORAGE_RECON_LAST_HASH);
+  if (stored[STORAGE_RECON_LAST_HASH] === payload.hash) {
+    return { status: "unchanged" };
+  }
+
+  try {
+    const r = await fetch(
+      `${settings.rnpUrl.replace(/\/$/, "")}/api/reconciliation-auto/upload-extension`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${settings.rnpToken}`,
+        },
+        body: JSON.stringify({
+          rows: payload.rows,
+          source_url: payload.source_url ?? null,
+        }),
+      },
+    );
+    if (r.status === 403) {
+      // Manager — 403 by design (нет brand-scope для сверки)
+      await chrome.storage.local.set({ [STORAGE_RECON_LAST_HASH]: payload.hash });
+      return { status: "forbidden" };
+    }
+    if (!r.ok) {
+      let body = "";
+      try {
+        body = (await r.text()).slice(0, 200);
+      } catch {
+        /* ignore */
+      }
+      console.warn(`[rnp-ext SW] recon-upload: HTTP ${r.status} ${body}`);
+      return { status: "http-error", code: r.status, body };
+    }
+    const json = (await r.json()) as {
+      status: string;
+      week_start: string;
+      rows_count: number;
+    };
+    await chrome.storage.local.set({ [STORAGE_RECON_LAST_HASH]: payload.hash });
+    console.log(
+      `[rnp-ext SW] recon-upload: week ${json.week_start}, ${json.rows_count} rows`,
+    );
+
+    // Notification — один раз на token
+    const wasNotified = await chrome.storage.local.get(STORAGE_RECON_NOTIFIED);
+    if (!wasNotified[STORAGE_RECON_NOTIFIED] && json.rows_count > 0) {
+      chrome.notifications.create("rnp.recon.uploaded", {
+        type: "basic",
+        iconUrl: chrome.runtime.getURL("icons/icon-128.png"),
+        title: "Финотчёт WB загружен в РНП",
+        message: `Подтянули отчёт реализации за неделю ${json.week_start} (${json.rows_count} строк). Открой /reconciliation-auto в РНП — колонка «WB ЛК» автозаполнена.`,
+        priority: 1,
+      });
+      await chrome.storage.local.set({ [STORAGE_RECON_NOTIFIED]: true });
+    }
+
+    return {
+      status: "ok",
+      week_start: json.week_start,
+      rows_count: json.rows_count,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn("[rnp-ext SW] recon-upload failed:", e);
+    return { status: "network-error", error: msg };
+  }
+}
+
 // ---- Message handlers from content scripts ----
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -714,6 +811,26 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           typeof msg.source_url === "string" ? msg.source_url : null,
       });
       console.log(`[rnp-ext SW] transit-tariffs →`, result);
+      sendResponse(result);
+      return;
+    }
+    // ---- TASK-LEAD-138: финотчёт WB из ЛК.
+    //      Content script `wb-realization-report-content.ts` шлёт это когда
+    //      MAIN-interceptor поймал на seller.wildberries.ru массив строк
+    //      финотчёта (rrdId/supplierOperName в shape). SW POST'ит на
+    //      `/api/reconciliation-auto/upload-extension`. ----
+    if (
+      msg?.type === "rnp:realization-report" &&
+      Array.isArray(msg.rows) &&
+      typeof msg.hash === "string"
+    ) {
+      const result = await maybeUploadRealizationReport({
+        rows: msg.rows as unknown[],
+        hash: msg.hash,
+        source_url:
+          typeof msg.source_url === "string" ? msg.source_url : null,
+      });
+      console.log(`[rnp-ext SW] realization-report →`, result);
       sendResponse(result);
       return;
     }

@@ -2722,6 +2722,12 @@ export interface ReconciliationAutoResponse {
   scope: "company" | "brands";
   metrics: ReconciliationAutoMetric[];
   groups: Record<string, string>;
+  extension_upload: {
+    uploaded_at: string | null;
+    rows_count: number;
+    metrics_by_rule: Record<string, number>;
+    source_url: string | null;
+  } | null;
 }
 
 // ── TASK-LEAD-129: tracking перемерок WB ──
