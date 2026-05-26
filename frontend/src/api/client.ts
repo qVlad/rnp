@@ -2431,6 +2431,9 @@ paymentOrderDelete: (payment_order_id: string) =>
       rows_count: number;
       sales_count: number;
       returns_count: number;
+      report_id: number | null;
+      stored: boolean;
+      week_start: string | null;
       metrics_by_rule: Record<string, number>;
     }>;
   },

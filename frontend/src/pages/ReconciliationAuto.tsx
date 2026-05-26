@@ -19,7 +19,7 @@
  * Методология и cross-link на RECON_GUIDE.md.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
   type ReconciliationAutoMetric,
@@ -99,6 +99,7 @@ const STATUS_BADGE: Record<string, { icon: string; tone: string; tooltip: string
 };
 
 export default function ReconciliationAuto() {
+  const qc = useQueryClient();
   const [weekStart, setWeekStart] = useState(lastClosedWeekStart);
   const [wbValues, setWbValues] = useState<Record<number, string>>({}); // user input by rule_number
   const fileRef = useRef<HTMLInputElement>(null);
@@ -132,11 +133,20 @@ export default function ReconciliationAuto() {
   const xlsxMut = useMutation({
     mutationFn: (file: File) => api.reconciliationAutoUploadXlsx(file),
     onSuccess: (data) => {
-      const next: Record<number, string> = {};
-      for (const [k, v] of Object.entries(data.metrics_by_rule)) {
-        next[Number(k)] = String(v);
+      if (data.stored) {
+        // Сохранено per-report → агрегат обновится через рефетч GET.
+        // wbValues очищаем чтобы useEffect пере-заполнил из агрегата.
+        setWbValues({});
+        qc.invalidateQueries({ queryKey: ["reconciliation-auto"] });
+      } else {
+        // Не удалось определить report_id (нестандартное имя файла) —
+        // fallback: пишем напрямую в колонку.
+        const next: Record<number, string> = {};
+        for (const [k, v] of Object.entries(data.metrics_by_rule)) {
+          next[Number(k)] = String(v);
+        }
+        setWbValues(next);
       }
-      setWbValues(next);
     },
     onError: (e: any) => {
       alert(`Не удалось распарсить xlsx: ${e?.message ?? e}`);

@@ -10,6 +10,7 @@ Frontend подставляет эти числа в `wb_value` колонку.
 """
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Annotated, Any
@@ -109,12 +110,16 @@ async def reconciliation_auto(
 @router.post("/upload-xlsx")
 async def upload_xlsx(
     file: UploadFile = File(...),
-    _user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Парсим WB-xlsx ("Еженедельный детализированный отчет"), возвращаем 17 метрик.
+    """Парсим WB-xlsx ("Еженедельный детализированный отчет"), возвращаем 13 метрик.
 
-    Файл не сохраняется — только считаем на лету. Frontend подставляет
-    результат в колонку `wb_value` для сравнения с `our_value` из GET.
+    Если в имени файла есть №<id> отчёта — UPSERT в `extension_recon_uploads`
+    per-report (как summary), чтобы GET агрегировал по неделе. Иначе просто
+    возвращаем метрики (frontend подставит в колонку напрямую).
+    xlsx богаче summary: даёт правила 12-16 (Реализация / Комиссия /
+    Номинальная / СПП / Эквайринг), которых нет в сводке.
 
     Поля xlsx подтверждены на прецедент-сверке vipryn 2026-05-26:
     - col O = Цена розничная
@@ -204,25 +209,82 @@ async def upload_xlsx(
     sales_qty = sum(int(D(r.get(QTY))) for r in sales)
     returns_qty = sum(int(D(r.get(QTY))) for r in returns)
 
+    metrics_by_rule = {
+        "1": float(total_sale),
+        "2": float(to_seller),
+        "3": float(logistics),
+        "4": float(storage),
+        "5": float(paid_acceptance),
+        "6": sales_qty - returns_qty,
+        "7": float(penalties),
+        "8": float(deduction),
+        "12": float(realization),
+        "13": float(commission_total),
+        "14": float(nominal_commission),
+        "15": float(spp_total),
+        "16": float(acq_total),
+    }
+
+    # report_id из имени файла «...№726993615_...»
+    report_id = None
+    fname = file.filename or ""
+    m = re.search(r"№\s*(\d{6,})", fname) or re.search(r"(\d{9,})", fname)
+    if m:
+        report_id = int(m.group(1))
+
+    # Период недели — из min/max sale_dt (col M) или rr-дат. У xlsx нет
+    # явной dateFrom; берём из данных через «Дата продажи».
+    SALE_DT = "Дата продажи"
+    sale_dates = []
+    for r in rows:
+        v = r.get(SALE_DT)
+        if isinstance(v, str) and len(v) >= 10:
+            try:
+                sale_dates.append(date.fromisoformat(v[:10]))
+            except Exception:
+                pass
+        elif isinstance(v, (datetime, date)):
+            sale_dates.append(v if isinstance(v, date) and not isinstance(v, datetime) else v.date())
+    stored = False
+    week_start_iso = None
+    if report_id is not None and sale_dates:
+        wmin = min(sale_dates)
+        ws_snap = wmin - timedelta(days=wmin.weekday())
+        we_excl = ws_snap + timedelta(days=7)
+        week_start_iso = ws_snap.isoformat()
+        ins = pg_insert(ExtensionReconUpload).values(
+            tenant_id=user.tenant_id,
+            realization_id=report_id,
+            week_start=ws_snap,
+            week_end=we_excl,
+            metrics_by_rule=metrics_by_rule,
+            rows_count=len(rows),
+            uploaded_by_user_id=user.id,
+            source_url=f"xlsx:{fname}"[:512],
+        ).on_conflict_do_update(
+            index_elements=["tenant_id", "realization_id"],
+            set_={
+                "metrics_by_rule": metrics_by_rule,
+                "rows_count": len(rows),
+                "uploaded_at": func.now(),
+                "uploaded_by_user_id": user.id,
+                "source_url": f"xlsx:{fname}"[:512],
+                "week_start": ws_snap,
+                "week_end": we_excl,
+            },
+        )
+        await session.execute(ins)
+        await session.commit()
+        stored = True
+
     return {
         "rows_count": len(rows),
         "sales_count": len(sales),
         "returns_count": len(returns),
-        "metrics_by_rule": {
-            "1": float(total_sale),
-            "2": float(to_seller),
-            "3": float(logistics),
-            "4": float(storage),
-            "5": float(paid_acceptance),
-            "6": sales_qty - returns_qty,
-            "7": float(penalties),
-            "8": float(deduction),
-            "12": float(realization),
-            "13": float(commission_total),
-            "14": float(nominal_commission),
-            "15": float(spp_total),
-            "16": float(acq_total),
-        },
+        "report_id": report_id,
+        "stored": stored,
+        "week_start": week_start_iso,
+        "metrics_by_rule": metrics_by_rule,
     }
 
 
