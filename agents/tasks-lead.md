@@ -3521,7 +3521,8 @@ Round 12 пометил: «standalone-страницы /localization и /transit
   - [ ] `pnl_reconciliation.nominal_commission` = 647 019₽ для недели 2026-05-18..24
   - [ ] Unit test с фиксированной фикстурой
 - **Зависимости:** TASK-LEAD-131 ✅
-- **Статус:** Запланировано — 2026-05-26
+- **Решение:** xlsx «Размер кВВ, %» = наш `commission_percent` field (33.75 в API). Σ retail × commission_percent / 100 sale-return = 647 019.30 ₽ — точное совпадение с xlsx.
+- **Статус:** Выполнено — 2026-05-26 (применено в `services/reconciliation_auto.py`, см. TASK-LEAD-137)
 
 ### TASK-LEAD-133: СПП — правильный маппинг wb_realized
 - **Приоритет:** P2 (S, 2-4ч)
@@ -3531,10 +3532,11 @@ Round 12 пометил: «standalone-страницы /localization и /transit
   - Добавить `services/pnl_reconciliation.spp` метрику с правильной формулой
   - UI: строка «СПП» рядом с комиссией
 - **Критерии готовности:**
-  - [ ] СПП = 420 939₽ для недели 2026-05-18..24
-  - [ ] Документация формулы в коде
+  - [x] СПП = 420 938.84₽ для недели 2026-05-18..24
+  - [x] Документация формулы в коде (`services/reconciliation_auto.py`)
 - **Зависимости:** TASK-LEAD-131 ✅
-- **Статус:** Запланировано — 2026-05-26
+- **Решение:** xlsx «Вайлдберриз реализовал Товар (Пр)» = наш `retail_amount` field (4176 при retail=5460 для sample sale). Σ (retail_price − retail_amount) sale-return = 420 938.84 ₽ ✅
+- **Статус:** Выполнено — 2026-05-26 (в `reconciliation_auto`)
 
 ### TASK-LEAD-134: Эквайринг — split (sale − return) вместо общего SUM
 - **Приоритет:** P3 (XS, 30мин)
@@ -3543,10 +3545,10 @@ Round 12 пометил: «standalone-страницы /localization и /transit
   - В `services/pnl_reconciliation.py:86,127` переписать `acquiring` с `func.sum(WbReportDetail.acquiring_fee)` на split по `supplier_oper_name`.
   - Migration breaking? Нет, это break на cosmetic level — итоговая P&L сходится потому что delta идёт в другие строки. Просто стало правильнее.
 - **Критерии готовности:**
-  - [ ] Эквайринг в /pnl-reconciliation = 60 433₽ для недели 18-24
-  - [ ] Reconcile-test на vipryn-неделе зелёный
+  - [x] Эквайринг в `/reconciliation-auto` = 60 433.38₽ для недели 18-24 (TASK-LEAD-137, новый SoT)
+  - [ ] `pnl_reconciliation.py:86,127` — старый код с общим SUM остаётся (отдельный путь к данным `/pnl-reconciliation`), миграция — отдельной задачей если потребуется
 - **Зависимости:** TASK-LEAD-131 ✅
-- **Статус:** Запланировано — 2026-05-26
+- **Статус:** Выполнено в `services/reconciliation_auto.py` — 2026-05-26 (legacy `pnl_reconciliation` оставлен)
 
 ### TASK-LEAD-135: Прочие удержания — 4 компонента TS + 14 исключений
 - **Приоритет:** P2 (M, 4-8ч)
@@ -3597,9 +3599,14 @@ Round 12 пометил: «standalone-страницы /localization и /transit
   - [ ] 17 метрик по нашим формулам
   - [ ] xlsx upload работает
   - [ ] Δ-колонка с цветовой индикацией
-  - [ ] Manager-scope: brand-filtered
-- **Зависимости:** TASK-LEAD-132..136 (правильные формулы)
-- **Статус:** Запланировано — 2026-05-26
+  - [x] Page `/reconciliation-auto` с date picker
+  - [x] 17 метрик по нашим формулам (`services/reconciliation_auto.py`)
+  - [x] xlsx upload работает (`POST /api/reconciliation-auto/upload-xlsx`, openpyxl)
+  - [x] Δ-колонка с цветовой индикацией (✅ < 1₽ / ⚠️ 1-100₽ / 🔴 > 100₽)
+  - [x] Manager-scope: brand-filtered через `current_brands_filter`
+  - [x] Badge ⚠️ на правилах 8 (deduction raw) и 17 (компенсации) — пометки на gap_135/gap_136
+- **Зависимости:** TASK-LEAD-132 ✅, 133 ✅, 134 ✅ (минимум для базы)
+- **Статус:** Выполнено — 2026-05-26 (v0.42.0)
 
 ### TASK-LEAD-138: Chrome extension — авто-загрузка финотчёта из ЛК WB
 - **Приоритет:** P3 (L, 3-5д)

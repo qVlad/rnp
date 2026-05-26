@@ -2408,6 +2408,30 @@ paymentOrderDelete: (payment_order_id: string) =>
     return request<TransitTariffRow>(`/api/transit-tariffs/lookup?${qs}`);
   },
 
+  // ── TASK-LEAD-137: автосверка с WB ЛК ──
+  reconciliationAuto: (week_start?: string) => {
+    const qs = week_start ? `?week_start=${week_start}` : "";
+    return request<ReconciliationAutoResponse>(
+      `/api/reconciliation-auto${qs}`,
+    );
+  },
+  reconciliationAutoUploadXlsx: async (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const resp = await fetch("/api/reconciliation-auto/upload-xlsx", {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    return resp.json() as Promise<{
+      rows_count: number;
+      sales_count: number;
+      returns_count: number;
+      metrics_by_rule: Record<string, number>;
+    }>;
+  },
+
   // ── TASK-LEAD-129: перемерки WB ──
   dimensionsHistory: (params?: {
     limit?: number;
@@ -2669,6 +2693,27 @@ export interface TransitTariffRow {
   threshold_l: number | null;
   currency: string;
   synced_at: string | null;
+}
+
+// ── TASK-LEAD-137: автосверка ──
+export interface ReconciliationAutoMetric {
+  rule_number: number;
+  group: string;
+  name: string;
+  formula: string;
+  our_value: number;
+  status: "ok" | "gap_135" | "gap_136" | string;
+  is_count?: boolean;
+}
+
+export interface ReconciliationAutoResponse {
+  week_start: string;
+  week_end: string;
+  realization_ids: number[];
+  rows_count: number;
+  scope: "company" | "brands";
+  metrics: ReconciliationAutoMetric[];
+  groups: Record<string, string>;
 }
 
 // ── TASK-LEAD-129: tracking перемерок WB ──

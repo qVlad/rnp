@@ -10,6 +10,7 @@ import PnL from "./pages/PnL";
 import Redistribution from "./pages/Redistribution";
 import PnLReconciliation from "./pages/PnLReconciliation";
 import Reconciliation4Way from "./pages/Reconciliation4Way";
+import ReconciliationAuto from "./pages/ReconciliationAuto";
 import Taxes from "./pages/Taxes";
 import Supplies from "./pages/Supplies";
 import Units from "./pages/Units";
@@ -132,6 +133,7 @@ export default function App() {
               </DirectorOrHead>
             }
           />
+          <Route path="reconciliation-auto" element={<ReconciliationAuto />} />
           <Route
             path="audit"
             element={

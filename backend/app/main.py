@@ -48,6 +48,7 @@ from app.api import (
     products,
     promo_calculator,
     reconciliation_4way,
+    reconciliation_auto,
     redistribution,
     season_plan,
     settings,
@@ -271,3 +272,4 @@ app.include_router(weekly_report.router)
 app.include_router(metric_templates.router)
 app.include_router(promo_calculator.router)
 app.include_router(reconciliation_4way.router)
+app.include_router(reconciliation_auto.router)
