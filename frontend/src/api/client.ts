@@ -2704,6 +2704,14 @@ export interface ReconciliationAutoMetric {
   our_value: number;
   status: "ok" | "gap_135" | "gap_136" | string;
   is_count?: boolean;
+  meta?: {
+    raw_total?: number;
+    excluded_total?: number;
+    excluded_by_keyword?: Record<string, number>;
+    stage1?: number;
+    stage2_sale?: number;
+    stage3_return?: number;
+  };
 }
 
 export interface ReconciliationAutoResponse {

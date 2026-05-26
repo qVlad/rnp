@@ -1,0 +1,10 @@
+uid=6_0 RootWebArea "TrueStats" url="https://app.truestats.ru/"
+  uid=6_21 main
+    uid=6_34 combobox autocomplete="list" disableable disabled expandable expanded haspopup="listbox"
+    uid=6_36 button expandable expanded haspopup="listbox"
+  uid=7_0 listbox multiselectable orientation="vertical"
+    uid=7_1 textbox "Поиск по магазинам"
+    uid=7_2 button "Выбрать все"
+      uid=7_3 checkbox
+    uid=7_4 option "LD" selectable value="LD"
+    uid=7_5 option "ONYX" selectable value="ONYX"

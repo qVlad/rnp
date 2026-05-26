@@ -11,8 +11,11 @@ Source of truth для каждой метрики — формула из `RECO
 Метрики 9-11 (реклама, кол-во заказов, сумма заказов) — **из других таблиц**
 (`wb_ad_stats_daily` / `wb_orders`), считаются отдельно ниже.
 
-Метрики 8 и 17 (Прочие удержания, Компенсации) пока показываются raw — fix
-ожидается в TASK-LEAD-135 / TASK-LEAD-136.
+Метрика 8 (Прочие удержания) — TASK-LEAD-135: TS-методология «4 компонента
+минус 14 исключений» через blacklist по `bonus_type_name` (рекламные/займовые
+сервисы исключаются).
+Метрика 17 (Компенсации) — TASK-LEAD-136: 3-этапный TS-процесс через
+match по `supplier_oper_name`.
 """
 from __future__ import annotations
 
@@ -23,6 +26,51 @@ from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Product, WbAdStatsDaily, WbOrder, WbReportDetail
+
+
+# TASK-LEAD-135: keyword-based blacklist на `bonus_type_name`. Если в имени
+# bonus-типа содержится любое из ключевых слов — строка ИСКЛЮЧАЕТСЯ из
+# «Прочих удержаний» (по методологии TS art.74754 правило 8).
+# Подтверждено на vipryn-неделе 2026-05-18..24: 22 990₽ Джем-подписка + 6 902₽
+# WB Продвижение — оба должны быть исключены, итого Прочие = 0₽.
+DEDUCTION_EXCLUSION_KEYWORDS: tuple[str, ...] = (
+    # реклама WB
+    "Продвижение",
+    "Реклама",
+    "Медиа",
+    # сторонние сервисы / подписки
+    "Джем",
+    "Подписк",
+    "WB-Тариф",
+    # займы
+    "Заём",
+    "Займ",
+    "Погашен",
+    # учитывается в других строках
+    "Хранение",
+    "Эквайринг",
+    "Платежные услуги",
+    # удержания доставки / возвратные операции (входят в логистику)
+    "Возврат брака",
+    "Возврат от клиента",
+)
+
+
+# TASK-LEAD-136: 3-этапный TS-процесс для «Компенсаций» (правило 17).
+# Stage 1: суммируем `ppvz_for_pay` для строк где supplier_oper_name в этом списке.
+COMPENSATIONS_STAGE1_OPERS: tuple[str, ...] = (
+    "Компенсация подмененного товара",
+    "Возмещение издержек по перевозке/по складским операциям с товаром",
+    "Оплата/частичная компенсация брака",
+    "Оплата ошибочно удержанной суммы (кладовщик)",
+)
+
+# Stage 2: + sale, Stage 3: − return для этих категорий.
+COMPENSATIONS_STAGE23_OPERS: tuple[str, ...] = (
+    "Оплата потерянного товара",
+    "Компенсация ущерба",
+    "Добровольная компенсация при возврате",
+)
 
 
 METRIC_GROUPS: dict[str, str] = {
@@ -88,8 +136,8 @@ async def compute_truestats_metrics(
         sale_minus_return(WbReportDetail.quantity).label("qty"),
         # 7. Штрафы
         func.sum(WbReportDetail.penalty).label("penalty"),
-        # 8. Прочие удержания — raw `deduction` (TASK-LEAD-135 разложит на 4 компонента)
-        func.sum(WbReportDetail.deduction).label("deduction"),
+        # 8. Прочие удержания (RAW) — для совместимости / отображения «было до 135»
+        func.sum(WbReportDetail.deduction).label("deduction_raw"),
         # 12. Реализация = retail_with_disc sale - return
         sale_minus_return(WbReportDetail.retail_price_withdisc_rub).label("realization"),
         # 14. Номинальная комиссия = Σ retail × commission_percent / 100 (TASK-LEAD-132)
@@ -108,6 +156,60 @@ async def compute_truestats_metrics(
     ).where(and_(*base_where))
 
     row = (await session.execute(stmt)).one()
+
+    # TASK-LEAD-135: «Прочие удержания» по методологии TS — фильтрация по
+    # `bonus_type_name` через blacklist. Pure SQL: запрос ниже + summing python-side
+    # с проверкой keyword'ов (не делаем 14 LIKE-условий, проще итерировать).
+    deduction_breakdown_stmt = (
+        select(
+            WbReportDetail.bonus_type_name,
+            WbReportDetail.supplier_oper_name,
+            func.sum(WbReportDetail.deduction).label("amount"),
+        )
+        .where(and_(*base_where))
+        .where(WbReportDetail.deduction != 0)
+        .group_by(WbReportDetail.bonus_type_name, WbReportDetail.supplier_oper_name)
+    )
+    deduction_other_ts = 0.0
+    deduction_excluded = 0.0
+    deduction_excluded_by_keyword: dict[str, float] = {}
+    for ded_row in (await session.execute(deduction_breakdown_stmt)).all():
+        amt = float(ded_row.amount or 0)
+        bonus = (ded_row.bonus_type_name or "")
+        oper = (ded_row.supplier_oper_name or "")
+        # Если supplier_oper_name = «Удержание» И bonus_type_name НЕ содержит
+        # ни одного исключающего keyword'а — это «прочее удержание» по TS.
+        matched_kw = next(
+            (kw for kw in DEDUCTION_EXCLUSION_KEYWORDS if kw.lower() in bonus.lower()),
+            None,
+        )
+        if oper == "Удержание" and matched_kw is None:
+            deduction_other_ts += amt
+        elif matched_kw is not None:
+            deduction_excluded += amt
+            deduction_excluded_by_keyword[matched_kw] = (
+                deduction_excluded_by_keyword.get(matched_kw, 0.0) + amt
+            )
+
+    # TASK-LEAD-136: «Компенсации» — 3-этапный TS-процесс.
+    comp_stage1 = (await session.execute(
+        select(func.coalesce(func.sum(WbReportDetail.ppvz_for_pay), 0))
+        .where(and_(*base_where))
+        .where(WbReportDetail.supplier_oper_name.in_(list(COMPENSATIONS_STAGE1_OPERS)))
+    )).scalar() or 0
+    comp_stage2 = (await session.execute(
+        select(func.coalesce(func.sum(WbReportDetail.ppvz_for_pay), 0))
+        .where(and_(*base_where))
+        .where(WbReportDetail.supplier_oper_name.in_(list(COMPENSATIONS_STAGE23_OPERS)))
+        .where(WbReportDetail.doc_type_name == "Продажа")
+    )).scalar() or 0
+    comp_stage3 = (await session.execute(
+        select(func.coalesce(func.sum(WbReportDetail.ppvz_for_pay), 0))
+        .where(and_(*base_where))
+        .where(WbReportDetail.supplier_oper_name.in_(list(COMPENSATIONS_STAGE23_OPERS)))
+        .where(WbReportDetail.doc_type_name == "Возврат")
+    )).scalar() or 0
+    compensations_total = float(comp_stage1) + float(comp_stage2) - float(comp_stage3)
 
     sales_sum = float(row.sales_sum or 0)
     to_seller = float(row.to_seller or 0)
@@ -189,13 +291,24 @@ async def compute_truestats_metrics(
         _metric(7, "logistics", "Штрафы",
                 "Σ penalty",
                 float(row.penalty or 0), status="ok"),
-        # group "deductions"
-        _metric(8, "deductions", "Прочие удержания",
-                "Σ deduction (raw — TASK-LEAD-135 разложит на 4 компонента − 14 исключений)",
-                float(row.deduction or 0), status="gap_135"),
-        _metric(17, "deductions", "Компенсации",
-                "3-этапный TS-процесс (TASK-LEAD-136)",
-                0.0, status="gap_136"),
+        # group "deductions" — TASK-LEAD-135: TS-формула. Raw сохраняется в meta.
+        _metric(8, "deductions", "Прочие удержания (по TS)",
+                "Σ deduction WHERE oper=Удержание AND bonus_type NOT IN [реклама/займы/хранение/...]",
+                deduction_other_ts, status="ok",
+                meta={
+                    "raw_total": float(row.deduction_raw or 0),
+                    "excluded_total": deduction_excluded,
+                    "excluded_by_keyword": deduction_excluded_by_keyword,
+                }),
+        # TASK-LEAD-136: 3-этапный TS-процесс
+        _metric(17, "deductions", "Компенсации (3 этапа TS)",
+                f"Σ stage1 ({len(COMPENSATIONS_STAGE1_OPERS)} oper) + sale stage2 − return stage3",
+                compensations_total, status="ok",
+                meta={
+                    "stage1": float(comp_stage1),
+                    "stage2_sale": float(comp_stage2),
+                    "stage3_return": float(comp_stage3),
+                }),
         # group "ads_orders"
         _metric(9, "ads_orders", "Реклама ВБ.Продвижение",
                 "Σ sum по wb_ad_stats_daily (фактические списания)",
@@ -239,9 +352,10 @@ def _metric(
     *,
     status: str,
     is_count: bool = False,
+    meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Возвращает структуру одной метрики для UI."""
-    return {
+    out = {
         "rule_number": rule_number,
         "group": group,
         "name": name,
@@ -250,6 +364,9 @@ def _metric(
         "status": status,  # ok | gap_NNN
         "is_count": is_count,
     }
+    if meta is not None:
+        out["meta"] = meta
+    return out
 
 
 def _empty_response(week_start: date, week_end: date) -> dict[str, Any]:

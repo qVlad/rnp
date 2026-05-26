@@ -258,6 +258,7 @@ export default function ReconciliationAuto() {
             </thead>
             <tbody>
               {metrics.map((m) => {
+                const meta = m.meta;
                 const wbInput = wbValues[m.rule_number];
                 const wbNum =
                   wbInput !== undefined && wbInput !== ""
@@ -283,6 +284,43 @@ export default function ReconciliationAuto() {
                       <div className="text-xs text-muted font-mono mt-0.5">
                         {m.formula}
                       </div>
+                      {meta?.excluded_by_keyword &&
+                        Object.keys(meta.excluded_by_keyword).length > 0 && (
+                          <details className="text-xs mt-1 text-muted">
+                            <summary className="cursor-pointer">
+                              📋 Исключено по TS:{" "}
+                              {fmtMoney(meta.excluded_total ?? 0)} ₽ из{" "}
+                              {fmtMoney(meta.raw_total ?? 0)} ₽ raw
+                            </summary>
+                            <ul className="pl-4 list-disc">
+                              {Object.entries(meta.excluded_by_keyword)
+                                .sort((a, b) => b[1] - a[1])
+                                .map(([kw, sum]) => (
+                                  <li key={kw}>
+                                    «{kw}»: {fmtMoney(sum)} ₽
+                                  </li>
+                                ))}
+                            </ul>
+                          </details>
+                        )}
+                      {meta?.stage1 !== undefined && (
+                        <details className="text-xs mt-1 text-muted">
+                          <summary className="cursor-pointer">
+                            📋 3 этапа TS
+                          </summary>
+                          <ul className="pl-4 list-disc">
+                            <li>Stage 1 (база): {fmtMoney(meta.stage1)} ₽</li>
+                            <li>
+                              Stage 2 (sale):{" "}
+                              {fmtMoney(meta.stage2_sale ?? 0)} ₽
+                            </li>
+                            <li>
+                              Stage 3 (return, −):{" "}
+                              {fmtMoney(meta.stage3_return ?? 0)} ₽
+                            </li>
+                          </ul>
+                        </details>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-right font-mono">
                       {fmtMoney(m.our_value, m.is_count)}
