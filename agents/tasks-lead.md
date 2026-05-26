@@ -3386,8 +3386,13 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 ### TASK-LEAD-128: backend boss_name в share-to-telegram response (LEAD-127 follow-up)
 - **Приоритет:** P3 (XS, 15 мин)
 - **Описание:** В `share-to-telegram` response добавить поле `boss_name?: str | null` (`boss.full_name or boss.username`) когда `recipient="boss"`. Frontend сможет показать «✓ Отправлено руководителю Петров Иванович в Telegram». Manager не имеет access к `/api/users`, поэтому lookup на клиенте невозможен — нужно отдать имя в response.
+- **Критерии готовности:**
+  - [x] `notify_user_or_boss` extends query — забирает `User.full_name` + `User.username` boss'а; result содержит `boss_name = full_name or username`
+  - [x] `api/weekly_report.py` self-flow возвращает `boss_name` в response
+  - [x] `ShareToTelegramResult` TS-type расширен полем `boss_name?: string | null`
+  - [x] Frontend toast — conditional: при `result.boss_name` → «Отправлено руководителю Иванов И.», fallback без имени
 - **Зависимости:** HYP-007 ✅ + TASK-LEAD-127 ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26
 
 ### HYP-008: ManagerSummary → «карточка менеджера на 1-on-1 prep»
 - **Источник:** Round 14 Z2 — расширить существующий drill-down

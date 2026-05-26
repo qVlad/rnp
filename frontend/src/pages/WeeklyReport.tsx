@@ -443,7 +443,10 @@ export default function WeeklyReport() {
         // mode === "all_directors" — broadcast (count = result.sent).
         let toastText: string;
         if (result.recipient === "boss") {
-          toastText = "✓ Отправлено руководителю в Telegram";
+          // TASK-LEAD-128: показать имя руководителя из backend response.
+          toastText = result.boss_name
+            ? `✓ Отправлено руководителю ${result.boss_name} в Telegram`
+            : "✓ Отправлено руководителю в Telegram";
         } else if (result.mode === "self") {
           toastText = "✓ Отправлено в твою личку";
         } else {

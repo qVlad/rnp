@@ -483,6 +483,9 @@ async def share_to_telegram(
             "recipients": [delivery["recipient"]],
             "recipient": delivery["recipient"],
             "boss_id": delivery["boss_id"],
+            # TASK-LEAD-128: full_name boss'а для UI («Отправлено руководителю
+            # Иванов И.»). Только при recipient="boss" заполнено.
+            "boss_name": delivery.get("boss_name"),
             "mode": "self",
         }
 

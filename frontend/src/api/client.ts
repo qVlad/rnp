@@ -119,9 +119,11 @@ export interface ShareToTelegramResult {
   // HYP-007 / TASK-LEAD-127: куда фактически ушло сообщение (для UI-feedback'а
   // «📨 Отправлено РОПу Петров» вместо generic «отправлено»).
   recipient?: "self" | "boss" | "none";
-  // Если recipient="boss" — id того user'а, кому redirect'нули. Frontend
-  // делает lookup через `usersQ.data.items` чтобы показать full_name.
+  // Если recipient="boss" — id того user'а, кому redirect'нули.
   boss_id?: number | null;
+  // TASK-LEAD-128: full_name (или username) boss'а — для UI без отдельного
+  // /api/users запроса (manager не имеет к нему доступа).
+  boss_name?: string | null;
 }
 
 export interface Chargeback {

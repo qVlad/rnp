@@ -75,14 +75,17 @@ async def notify_user_or_boss(
     назначен или у boss'а нет tg_chat_id → fallback на свой tg_chat_id.
 
     Returns `{sent: bool, recipient: "boss" | "self" | "none",
-              boss_id: int | None, redirected: bool}`.
+              boss_id: int | None, boss_name: str | None, redirected: bool}`.
     `redirected=True` означает «отправили не туда где ожидал отправитель»
-    (т.е. boss'у). Used для audit-логирования вызывающей стороной.
+    (т.е. boss'у). `boss_name` (TASK-LEAD-128) — full_name boss'а либо
+    username, для UI feedback'а («Отправлено руководителю Иванов И.»).
+    Used для audit-логирования вызывающей стороной.
     """
     result: dict[str, Any] = {
         "sent": False,
         "recipient": "none",
         "boss_id": None,
+        "boss_name": None,
         "redirected": False,
     }
     try:
@@ -97,22 +100,24 @@ async def notify_user_or_boss(
 
         # 1. Try boss first
         if boss_id is not None:
-            boss_chat = (
+            boss_row = (
                 await session.execute(
-                    select(User.tg_chat_id).where(
+                    select(User.tg_chat_id, User.full_name, User.username).where(
                         User.id == boss_id,
                         User.is_active.is_(True),
                         User.tg_chat_id.isnot(None),
                     )
                 )
-            ).scalar_one_or_none()
-            if boss_chat:
+            ).first()
+            if boss_row:
+                boss_chat, boss_full_name, boss_username = boss_row
                 ok = await send_message(str(boss_chat), text, parse_mode=parse_mode)
                 if ok:
                     result.update(
                         sent=True,
                         recipient="boss",
                         boss_id=boss_id,
+                        boss_name=boss_full_name or boss_username,
                         redirected=True,
                     )
                     return result
