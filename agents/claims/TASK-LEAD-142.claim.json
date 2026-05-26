@@ -1,0 +1,7 @@
+{
+  "task_id": "TASK-LEAD-142",
+  "agent": "Claude Opus 4.7 — main session",
+  "started_at": "2026-05-26T21:02:08Z",
+  "expected_minutes": 20,
+  "notes": "leak-report: 3 honest totals (found/frozen/lost) + frozen capital + withdrawal caveat"
+}
