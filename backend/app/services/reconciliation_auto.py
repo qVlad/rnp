@@ -339,17 +339,17 @@ async def compute_truestats_metrics(
                 meta={"wb_source": "ЛК WB → Продвижение → Финансы (фактические списания за период)"}),
         _metric(10, "ads_orders", "Кол-во заказов",
                 "COUNT wb_orders по order_dt (gross, МСК)",
-                orders_count, status="indicative", is_count=True,
+                orders_count, status="ok", is_count=True,
                 meta={
-                    "wb_source": "ЛК WB → Аналитика → Воронка продаж (столбец «Заказали товаров в шт»)",
-                    "indicative_note": "Воронка WB — отдельная аналитическая система, не сырой фид заказов. Δ с supplier/orders API нормальна (WB это отмечает). Индикативно.",
+                    "wb_source": "ЛК WB → Аналитика → Лента заказов (прокрути до конца недели)",
+                    "indicative_note": "Лента заказов WB = тот же сырой фид, что наш wb_orders. Должно сойтись. WB-цифра копится по мере прокрутки Ленты в расширении — проскролль весь список за неделю.",
                 }),
         _metric(11, "ads_orders", "Сумма заказов",
                 "Σ price_with_disc по wb_orders (gross, МСК)",
-                orders_sum, status="indicative",
+                orders_sum, status="ok",
                 meta={
-                    "wb_source": "ЛК WB → Аналитика → Воронка продаж (столбец «Заказали на сумму»)",
-                    "indicative_note": "Воронка WB ≠ supplier/orders API. Δ нормальна — индикативно.",
+                    "wb_source": "ЛК WB → Аналитика → Лента заказов (Σ price.seller, прокрути до конца)",
+                    "indicative_note": "Лента = наш wb_orders. WB-сумма копится при прокрутке Ленты.",
                 }),
         # group "advanced" (метрика 6 — qty)
         _metric(6, "advanced", "Кол-во проданных шт.",

@@ -34,7 +34,7 @@ window.addEventListener("message", (e: MessageEvent) => {
       });
     return;
   }
-  if (kind === "wb-adv-finance" || kind === "wb-funnel") {
+  if (kind === "wb-adv-finance" || kind === "wb-orders-feed") {
     const payload = { ...e.data };
     delete payload.__rnp;
     const h = JSON.stringify(payload);

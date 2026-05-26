@@ -118,8 +118,12 @@
   // TASK-LEAD-141: реклама (Продвижение → Финансы) и воронка.
   // TASK-LEAD-142: Jam — поисковые запросы по карточке.
   let lastAdvHash = "";
-  let lastFunnelHash = "";
   let lastJamHash = "";
+  // TASK-LEAD-147: аккумулятор Ленты заказов (постраничный, дедуп по order.id).
+  let lastOrdersHash = "";
+  let _ordersAccumKey = "";
+  let _ordersIds = new Set<string>();
+  let _ordersSum = 0;
 
   function maybePostExtra(url: string, raw: unknown, reqBody?: string): boolean {
     if (raw === null || typeof raw !== "object") return false;
@@ -145,28 +149,50 @@
       return true;
     }
 
-    // 2. Воронка: .../sales-funnel/report → data.chart.byWeek[0].
-    const byWeek = obj?.data?.chart?.byWeek;
-    if (Array.isArray(byWeek) && byWeek.length > 0 && byWeek[0] &&
-        typeof byWeek[0] === "object" && "orderCount" in byWeek[0]) {
-      const w = byWeek[0] as Record<string, any>;
-      const weekStart = typeof w.date === "string" ? w.date.slice(0, 10) : null;
-      const orderCount = Number(w.orderCount);
-      const orderSum = Number(w.orderSum);
-      if (!weekStart) return true;
-      const hash = `funnel-${weekStart}-${orderCount}-${orderSum}`;
-      if (hash === lastFunnelHash) return true;
-      lastFunnelHash = hash;
+    // 2. Лента заказов (TASK-LEAD-147): order-feed/orders → data.orders[].
+    //    Постранично (50/стр, cursor) — аккумулируем по order.id по мере
+    //    прокрутки. Gross (все статусы, как наш wb_orders). Период — из
+    //    тела запроса currentPeriod.start. Заменяет Воронку (была by-design
+    //    разрыв: аналитика vs сырой фид).
+    const feed = obj?.data?.orders;
+    if (Array.isArray(feed) && feed.length > 0 && feed[0] &&
+        typeof feed[0] === "object" && feed[0].order &&
+        typeof feed[0].order === "object" && "id" in feed[0].order) {
+      let ws: string | null = null;
+      try {
+        const b = reqBody ? JSON.parse(reqBody) : null;
+        ws = b?.currentPeriod?.start ? String(b.currentPeriod.start).slice(0, 10) : null;
+      } catch {
+        /* ignore */
+      }
+      if (!ws) return true;
+      // Новый период — сбрасываем аккумулятор.
+      if (_ordersAccumKey !== ws) {
+        _ordersAccumKey = ws;
+        _ordersIds = new Set<string>();
+        _ordersSum = 0;
+      }
+      for (const it of feed) {
+        const o = (it as any)?.order;
+        const id = o?.id;
+        if (typeof id !== "string" || _ordersIds.has(id)) continue;
+        _ordersIds.add(id);
+        _ordersSum += Number(o?.price?.seller) || 0;
+      }
+      const count = _ordersIds.size;
+      const sum = Math.round(_ordersSum * 100) / 100;
+      const hash = `feed-${ws}-${count}`;
+      if (hash === lastOrdersHash) return true;
+      lastOrdersHash = hash;
       console.log(
-        `${TAG} matched FUNNEL: ${orderCount} заказов / ${orderSum}₽ week ${weekStart}`,
-        url,
+        `${TAG} matched ORDERS-FEED (Лента): накоплено ${count} заказов / ${sum}₽ week ${ws} (прокрути до конца для полной цифры)`,
       );
       window.postMessage(
         {
-          __rnp: "wb-funnel",
-          week_start: weekStart,
-          orders_count: Number.isFinite(orderCount) ? orderCount : null,
-          orders_sum: Number.isFinite(orderSum) ? orderSum : null,
+          __rnp: "wb-orders-feed",
+          week_start: ws,
+          orders_count: count,
+          orders_sum: sum,
         },
         "*",
       );
