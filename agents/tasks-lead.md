@@ -3508,6 +3508,140 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Зависимости:** —
 - **Статус:** Выполнено — 2026-05-26
 
+### TASK-LEAD-132: Номинальная комиссия МП — правильный маппинг kvw
+- **Приоритет:** P2 (S, 2-4ч)
+- **Источник:** Сверка с vipryn@gmail.com на неделе 2026-05-18..24 (см. `agents/references/feedback-reviews/recon-truestats-74754-vs-vipryn-2026-05-26.md`). xlsx «Размер кВВ, %» (column X) даёт нормальную комиссию **647 019**₽ (Σ retail × kvw% sale − return). Наш `Product.kvw` поле даёт **121 207**₽ (8× меньше) — значит наш `kvw` хранит другое значение (вероятно «Итоговый кВВ без НДС, %» из xlsx col Z, либо доля 0..1, либо комиссия с другой базы).
+- **Что делаем:**
+  - Проверить какое поле WB API соответствует xlsx col X (`Размер кВВ, %`). Кандидаты: `kvw`, `kvwBase`, `commissionPercent`, `commissionPercentBase`
+  - Замапить правильное в `WbReportDetail` (возможно нужна новая колонка)
+  - Добавить метрику `nominal_commission` в `services/pnl_reconciliation.build_reconciliation`
+  - UI на `/pnl-reconciliation` — отдельная строка «Номинальная комиссия» с формулой `Σ retail × kvw% (sale − return)`
+- **Критерии готовности:**
+  - [ ] Точное поле API идентифицировано (через dump 1 sale-row на проде после деплоя)
+  - [ ] `pnl_reconciliation.nominal_commission` = 647 019₽ для недели 2026-05-18..24
+  - [ ] Unit test с фиксированной фикстурой
+- **Зависимости:** TASK-LEAD-131 ✅
+- **Статус:** Запланировано — 2026-05-26
+
+### TASK-LEAD-133: СПП — правильный маппинг wb_realized
+- **Приоритет:** P2 (S, 2-4ч)
+- **Источник:** Та же сверка. xlsx формула `Σ (Цена розничная − Вайлдберриз реализовал Товар(Пр)) sale − return` = **420 939**₽. Наша попытка `retail_price − ppvz_vw` = **1 761 961**₽ (4× больше). `ppvz_vw` это «Вознаграждение Вайлдберриз без НДС» — другая величина.
+- **Что делаем:**
+  - Найти API поле для «Вайлдберриз реализовал Товар (Пр)». Скорее всего это `forPay` после нормализации (наша колонка `ppvz_for_pay`) — но это надо проверить на 1 продаже из xlsx
+  - Добавить `services/pnl_reconciliation.spp` метрику с правильной формулой
+  - UI: строка «СПП» рядом с комиссией
+- **Критерии готовности:**
+  - [ ] СПП = 420 939₽ для недели 2026-05-18..24
+  - [ ] Документация формулы в коде
+- **Зависимости:** TASK-LEAD-131 ✅
+- **Статус:** Запланировано — 2026-05-26
+
+### TASK-LEAD-134: Эквайринг — split (sale − return) вместо общего SUM
+- **Приоритет:** P3 (XS, 30мин)
+- **Источник:** Та же сверка. xlsx: 60 433₽ (только sale − return). Наша `pnl_reconciliation.acquiring`: 74 580₽ (SUM по всем строкам). Δ +14 146₽ — наш sum захватывает acquiring_fee из служебных строк (логистика, компенсации).
+- **Что делаем:**
+  - В `services/pnl_reconciliation.py:86,127` переписать `acquiring` с `func.sum(WbReportDetail.acquiring_fee)` на split по `supplier_oper_name`.
+  - Migration breaking? Нет, это break на cosmetic level — итоговая P&L сходится потому что delta идёт в другие строки. Просто стало правильнее.
+- **Критерии готовности:**
+  - [ ] Эквайринг в /pnl-reconciliation = 60 433₽ для недели 18-24
+  - [ ] Reconcile-test на vipryn-неделе зелёный
+- **Зависимости:** TASK-LEAD-131 ✅
+- **Статус:** Запланировано — 2026-05-26
+
+### TASK-LEAD-135: Прочие удержания — 4 компонента TS + 14 исключений
+- **Приоритет:** P2 (M, 4-8ч)
+- **Источник:** TS rule 8. xlsx значение в `Удержания` (col BI) совпало случайно, потому что в этой неделе у клиента не было ни рекламы, ни займов в `deduction`. **Для других недель/клиентов будет искажение**, если в `deduction` сидят:
+  - реклама ВБ.Продвижение / ВБ.Медиа
+  - погашения займов
+  - стоимость хранения (учитывается отдельно)
+  - 11 других категорий (см. TS rule 8)
+- **Что делаем:**
+  - Завести `services/deduction_breakdown.py` — разложение `deduction` на 4 компонента TS + 14 исключений по `bonus_type_name` / служебным метаполям
+  - В `pnl_reconciliation` строка «Прочие удержания» теперь = 4 компонента − 14 исключений
+  - При отображении в UI — toggle «по TS методологии» / «raw deduction»
+- **Критерии готовности:**
+  - [ ] Mapping всех 14 категорий исключений на наши поля
+  - [ ] Test: для недели где в deduction есть реклама — наша новая формула не считает её
+- **Зависимости:** TASK-LEAD-131 ✅
+- **Статус:** Запланировано — 2026-05-26
+
+### TASK-LEAD-136: Компенсации — 3-этапный TS-процесс
+- **Приоритет:** P3 (низкий — в проверенной неделе 0₽)
+- **Источник:** TS rule 17. У TrueStats компенсации = 3 этапа суммирования с разными `supplier_oper_name` фильтрами.
+- **Что делаем:**
+  - `services/compensations.py` — реализация 3-этапной формулы
+  - Метрика `compensations` в reconciliation
+- **Критерии готовности:**
+  - [ ] Воспроизводится на неделе с ненулевыми компенсациями (например бракованные товары)
+- **Зависимости:** TASK-LEAD-131 ✅
+- **Статус:** Запланировано — 2026-05-26
+
+### TASK-LEAD-137: «Автосверка» — страница `/reconciliation-auto` + кнопка
+- **Приоритет:** P2 (M, 1-2д)
+- **Источник:** Запрос пользователя 2026-05-26 после ручной сверки vipryn — «чтобы не пришлось в будущем делать сверку вручную».
+- **Описание:**
+  - Новая страница `/reconciliation-auto` (router в Layout раздел «Обзор»)
+  - Date-range picker (week granularity, default — последняя закрытая неделя)
+  - Backend `GET /api/reconciliation-auto?week_start=YYYY-MM-DD` вычисляет 17 метрик TrueStats по методологии **из нашей `wb_report_detail`** (uses TASK-LEAD-132..136 формулы)
+  - UI: таблица 17 строк × 2 колонки (наша БД + manual input «Что в WB ЛК»)
+    - Колонки автозаполняются по выгрузке xlsx (drag-drop) ИЛИ ручным вводом из ЛК
+    - Δ-колонка: ✅ зелёный (Δ < 1₽) / ⚠️ жёлтый (1₽ < Δ < 100₽) / 🔴 красный (Δ > 100₽)
+  - Кнопка **«📂 Загрузить xlsx WB»** — парсит файл клиентский (xlsx-js или openpyxl backend), извлекает 17 метрик, автозаполняет manual колонку
+  - Кнопка **«🔄 Получить из расширения»** (если ext подключен) — pulls scraped data
+- **Backend:**
+  - `services/reconciliation_auto.py:compute_truestats_metrics(week_start, end)` — 17 формул
+  - `api/reconciliation_auto.py` — GET + POST /upload-xlsx
+  - Парсер xlsx (openpyxl) reuses `tmp/recon_xlsx3.py` логику
+- **Критерии готовности:**
+  - [ ] Page `/reconciliation-auto` с date picker
+  - [ ] 17 метрик по нашим формулам
+  - [ ] xlsx upload работает
+  - [ ] Δ-колонка с цветовой индикацией
+  - [ ] Manager-scope: brand-filtered
+- **Зависимости:** TASK-LEAD-132..136 (правильные формулы)
+- **Статус:** Запланировано — 2026-05-26
+
+### TASK-LEAD-138: Chrome extension — авто-загрузка финотчёта из ЛК WB
+- **Приоритет:** P3 (L, 3-5д)
+- **Источник:** Тот же запрос пользователя. Авто-recon без ручной выгрузки xlsx.
+- **Описание:**
+  - Extension перехватывает internal-fetch'и WB-фронта на `seller.wildberries.ru` → `/finances/realization-report` (или эквивалент)
+  - Парсит JSON ответ → POST на `/api/reconciliation-auto/upload-extension` backend
+  - SW handler `maybeUploadRealizationReport` (рядом с `maybeUploadTransitTariffs`)
+  - Дедуп: `chrome.storage.local["rnp.recon.lastWeekHash"]`
+  - Notification «📊 Отчёт WB загружен в РНП» один раз на неделю
+  - В UI `/reconciliation-auto` колонка «Из ЛК WB (через ext)» автозаполняется без действий
+- **Альтернатива:** если WB-фронт endpoint неустойчив (часто меняется) — extension скачивает xlsx через WB UI (программный click), парсит на клиенте, отправляет нормализованный JSON. Работает дольше но устойчивее.
+- **Критерии готовности:**
+  - [ ] Content script `wb-realization-report-{interceptor-main,content}.ts` в extension
+  - [ ] Backend endpoint `POST /api/reconciliation-auto/upload-extension` (director_or_head)
+  - [ ] SW handler с дедупом
+  - [ ] Smoke-test: пользователь открывает финотчёт в ЛК → через 5 сек данные в /reconciliation-auto
+- **Зависимости:** TASK-LEAD-137 (UI для отображения)
+- **Статус:** Запланировано — 2026-05-26
+
+### TASK-LEAD-139: Документация `RECON_GUIDE.md` — ручная сверка
+- **Приоритет:** P2 (S, 2-4ч)
+- **Источник:** Тот же запрос пользователя — «в документацию добавить инструкцию по ручной сверке как сделано в truestats».
+- **Описание:**
+  - Новый файл `RECON_GUIDE.md` в корне репо (как `TAX_AUSN_BANK.md`, `TAX_USN_BANK.md`)
+  - Структура — повторяет TrueStats art 74754, но **на наших данных**:
+    - 17 правил с формулами
+    - Где в РНП UI взять каждую цифру (что и куда смотреть)
+    - Где в WB ЛК эта же цифра
+    - Edge cases (текущая неделя, платная приёмка, реклама)
+  - Cross-link с `agents/references/truestats-article-74754-diff-2026-05-26.md` (наш diff)
+  - Cross-link с `agents/references/feedback-reviews/recon-truestats-74754-vs-vipryn-2026-05-26.md` (прецедент)
+  - В UI на `/reconciliation-auto` (TASK-LEAD-137) — link «📖 Как сверять с WB» → этот документ через `doc_pages` proxy
+  - В CLAUDE.md «Где искать что» — строка «Сверка цифр с WB ЛК (17 правил)» → RECON_GUIDE.md
+- **Критерии готовности:**
+  - [ ] `RECON_GUIDE.md` написан
+  - [ ] CLAUDE.md обновлён (новая строка в таблице)
+  - [ ] FEATURES.md секция «Сверка»
+  - [ ] doc_pages.py отдаёт его через `/docs/RECON_GUIDE`
+- **Зависимости:** TASK-LEAD-132..136 (правильные формулы у нас)
+- **Статус:** Запланировано — 2026-05-26
+
 ---
 
 ## Формат / Жизненный цикл
