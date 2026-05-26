@@ -130,8 +130,20 @@ async def _recoverable_chargebacks(
 # 2-3. Минусовые SKU + дохлый сток в хранении (prevent) — из unit-экономики
 # ──────────────────────────────────────────────────────────────────────
 def _negative_margin(items: list[dict[str, Any]]) -> dict[str, Any]:
-    """SKU, проданные за период в убыток (net_profit < 0)."""
-    losers = [it for it in items if _f(it.get("net_profit")) < 0]
+    """SKU, реально проданные за период в убыток (net_profit < 0 И продажи > 0).
+
+    BUG-DEV-018: требуем `units_sold_gross > 0`. Без этого SKU с 0 продаж,
+    но платным хранением/рекламой, уходили в минус по net_profit и ложно
+    попадали в «проданные в убыток» (0 шт) + их хранение дублировалось с
+    блоком dead-stock. Теперь блоки disjoint: negative-margin = продано>0,
+    dead-stock = продано=0 → нет двойного счёта.
+    """
+    losers = [
+        it
+        for it in items
+        if _f(it.get("net_profit")) < 0
+        and int(it.get("units_sold_gross", 0) or 0) > 0
+    ]
     losers.sort(key=lambda it: _f(it.get("net_profit")))  # самый минусовой первым
     total = round(sum(-_f(it.get("net_profit")) for it in losers), 2)
     return {
