@@ -122,8 +122,9 @@ async def compute_truestats_metrics(
         )
 
     stmt = select(
-        # 1. Сумма продаж = Σ ppvz_for_pay для Продажа
-        func.sum(case((sale_filter, WbReportDetail.ppvz_for_pay), else_=0)).label("sales_sum"),
+        # 1. Сумма продаж = Σ retail_amount «Вайлдберриз реализовал» (Продажа − Возврат).
+        # Подтверждено на vipryn 2026-05-18..24: совпадает с WB ЛК totalSale=1 496 155.38.
+        sale_minus_return(WbReportDetail.retail_amount).label("sales_sum"),
         # 2. К перечислению = sale − return
         sale_minus_return(WbReportDetail.ppvz_for_pay).label("to_seller"),
         # 3. Логистика
@@ -258,7 +259,7 @@ async def compute_truestats_metrics(
     metrics = [
         # group "sales"
         _metric(1, "sales", "Сумма продаж",
-                "Σ К перечислению Продавцу (doc=Продажа, oper=Продажа)",
+                "Σ retail_amount «Вайлдберриз реализовал» (Продажа − Возврат) = WB totalSale",
                 sales_sum, status="ok"),
         _metric(2, "sales", "К перечислению",
                 "Σ К перечислению (Продажа − Возврат)",
@@ -291,12 +292,15 @@ async def compute_truestats_metrics(
         _metric(7, "logistics", "Штрафы",
                 "Σ penalty",
                 float(row.penalty or 0), status="ok"),
-        # group "deductions" — TASK-LEAD-135: TS-формула. Raw сохраняется в meta.
-        _metric(8, "deductions", "Прочие удержания (по TS)",
-                "Σ deduction WHERE oper=Удержание AND bonus_type NOT IN [реклама/займы/хранение/...]",
-                deduction_other_ts, status="ok",
+        # group "deductions" — для СВЕРКИ с WB our_value = raw deduction (так
+        # WB показывает «Удержания» в paidWithholdingSum). TS-разбивка
+        # (чистые прочие без рекламы/Джем) — в meta, видна в expandable detail.
+        _metric(8, "deductions", "Прочие удержания (raw = WB)",
+                "Σ deduction (как WB paidWithholdingSum; TS-фильтр в детализации)",
+                float(row.deduction_raw or 0), status="ok",
                 meta={
                     "raw_total": float(row.deduction_raw or 0),
+                    "ts_clean": deduction_other_ts,
                     "excluded_total": deduction_excluded,
                     "excluded_by_keyword": deduction_excluded_by_keyword,
                 }),

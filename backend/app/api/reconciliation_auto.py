@@ -157,6 +157,12 @@ async def upload_xlsx(
     sales_sum = sum((D(r.get(PPVZ)) for r in sales), Decimal(0))
     returns_sum = sum((D(r.get(PPVZ)) for r in returns), Decimal(0))
     to_seller = sales_sum - returns_sum
+    # Правило 1 «Сумма продаж» = Σ retail_amount «Вайлдберриз реализовал»
+    # (Продажа − Возврат) = WB totalSale. Не путать с ppvz (это правило 2).
+    total_sale = (
+        sum((D(r.get(RETAIL_AMT)) for r in sales), Decimal(0))
+        - sum((D(r.get(RETAIL_AMT)) for r in returns), Decimal(0))
+    )
     sales_retail = sum((D(r.get(RETAIL_DISC)) for r in sales), Decimal(0))
     returns_retail = sum((D(r.get(RETAIL_DISC)) for r in returns), Decimal(0))
     realization = sales_retail - returns_retail
@@ -183,7 +189,7 @@ async def upload_xlsx(
         "sales_count": len(sales),
         "returns_count": len(returns),
         "metrics_by_rule": {
-            "1": float(sales_sum),
+            "1": float(total_sale),
             "2": float(to_seller),
             "3": float(logistics),
             "4": float(storage),

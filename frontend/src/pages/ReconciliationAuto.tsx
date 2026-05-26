@@ -152,6 +152,23 @@ export default function ReconciliationAuto() {
 
   const data: ReconciliationAutoResponse | undefined = q.data;
 
+  // TASK-LEAD-138: предупреждение о несовпадении кабинета. Extension source_url
+  // содержит /report/{realization_id}. Если этот id НЕ среди realization_ids
+  // нашей БД за эту неделю — значит в ЛК WB открыт отчёт ДРУГОГО юрлица.
+  const cabinetMismatch = useMemo(() => {
+    const upload = data?.extension_upload;
+    if (!upload?.source_url || !data) return null;
+    const m = upload.source_url.match(/\/report\/(\d+)/);
+    if (!m) return null;
+    const extReportId = Number(m[1]);
+    if (data.realization_ids.length === 0) return null;
+    if (data.realization_ids.includes(extReportId)) return null;
+    return {
+      extReportId,
+      ourIds: data.realization_ids,
+    };
+  }, [data?.extension_upload?.source_url, data?.realization_ids]);
+
   const grouped = useMemo(() => {
     if (!data) return [] as Array<[string, ReconciliationAutoMetric[]]>;
     const map = new Map<string, ReconciliationAutoMetric[]>();
@@ -263,6 +280,26 @@ export default function ReconciliationAuto() {
         </button>
       </div>
 
+      {cabinetMismatch && (
+        <div className="card p-4 border border-danger/40 bg-danger/10">
+          <div className="flex items-start gap-2">
+            <span className="text-danger text-lg">⚠️</span>
+            <div className="text-sm">
+              <b className="text-danger">Несовпадение кабинета.</b> Расширение
+              загрузило отчёт <b>№{cabinetMismatch.extReportId}</b> из ЛК WB, но
+              в данных РНП за эту неделю —{" "}
+              <b>№{cabinetMismatch.ourIds.join(", ")}</b>. Это разные
+              WB-кабинеты/юрлица — сверка будет некорректной.
+              <div className="text-muted mt-1">
+                Открой в ЛК WB отчёт того кабинета, чей токен подключён к РНП
+                (№{cabinetMismatch.ourIds[0]}), либо переключи активный кабинет
+                в РНП.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {q.isLoading && (
         <div className="card p-8 text-center text-muted">Загружаю…</div>
       )}
@@ -326,9 +363,10 @@ export default function ReconciliationAuto() {
                         Object.keys(meta.excluded_by_keyword).length > 0 && (
                           <details className="text-xs mt-1 text-muted">
                             <summary className="cursor-pointer">
-                              📋 Исключено по TS:{" "}
+                              📋 По TS чистые прочие:{" "}
+                              {fmtMoney(meta.ts_clean ?? 0)} ₽ (исключено{" "}
                               {fmtMoney(meta.excluded_total ?? 0)} ₽ из{" "}
-                              {fmtMoney(meta.raw_total ?? 0)} ₽ raw
+                              {fmtMoney(meta.raw_total ?? 0)} ₽)
                             </summary>
                             <ul className="pl-4 list-disc">
                               {Object.entries(meta.excluded_by_keyword)

@@ -2706,6 +2706,7 @@ export interface ReconciliationAutoMetric {
   is_count?: boolean;
   meta?: {
     raw_total?: number;
+    ts_clean?: number;
     excluded_total?: number;
     excluded_by_keyword?: Record<string, number>;
     stage1?: number;
