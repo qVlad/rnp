@@ -358,6 +358,11 @@ async def fetch_report_detail_v2(
             return
         normalized = [_normalize_v2_row(r) for r in rows]
         yield normalized
+        # TASK-LEAD-131: финанс-API лимит 1 запрос/мин. Не лезем за следующей
+        # страницей если первая вернула меньше `page_limit` — это значит,
+        # данные кончились, лишний запрос гарантированно ловит 429.
+        if len(rows) < page_limit:
+            return
         max_rrd_id = max(int(r.get("rrd_id") or 0) for r in normalized)
         if max_rrd_id <= rrd_id:
             return

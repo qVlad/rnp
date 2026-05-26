@@ -280,10 +280,16 @@ class WbApiClient:
                         # Might be an HTTP-date string — skip for now
                         pass
 
-                # Use the max hint (WB sets the longest meaningful penalty).
-                # Floor at 600s (10 min) since WB penalty window is at least that.
-                # Cap at 6 hours.
-                cool_for = min(max([*hints, 600]), 6 * 3600)
+                # TASK-LEAD-131: trust WB's reset/retry-after hint + small safety
+                # buffer. Previous code had floor=600s which turned WB's actual
+                # 5-30sec finance-API penalties into 10-min paralysis. Cap at 6h
+                # for cases where WB returns absurd values (8000+ sec observed).
+                # Fallback to 60s if WB gave no usable hint (finance API is
+                # 1 req/min, so 60s is a safe re-attempt window).
+                if hints:
+                    cool_for = min(max(hints) + 30, 6 * 3600)
+                else:
+                    cool_for = 60
                 log.warning(
                     "WB 429 on %s body=%r limit=%s reset=%s retry-after=%s "
                     "→ %s cooldown for %ds",

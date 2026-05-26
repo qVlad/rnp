@@ -3487,6 +3487,23 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Зависимости:** —
 - **Статус:** Выполнено — 2026-05-26
 
+### TASK-LEAD-131: fix report_detail self-DoS (extra page-fetch + cooldown floor)
+- **Приоритет:** P1 (S, 30мин)
+- **Источник:** Запрос пользователя 2026-05-26 — данные за неделю 18-24 мая не подтянулись, manual trigger ловит cooldown. Диагностика на проде показала: WB endpoint `/api/finance/v1/sales-reports/detailed` возвращает данные (6440 строк за неделю), но наш sync **сам себе ставит cooldown 600 сек на каждом запуске**.
+- **Root causes:**
+  - `integrations/wb/statistics.py:fetch_report_detail_v2:343-364` — после первой успешной страницы (где данные влезли все) цикл идёт за «следующей» страницей через ~1 сек. WB-финанс это `1 запрос/минуту` → 429 → cooldown. Происходит **каждый раз** beat+manual.
+  - `integrations/wb/client.py:286` — `cool_for = min(max([*hints, 600]), 6*3600)` ставит **floor 600 сек**, хотя WB говорит `reset=5..30 сек`. 5-сек штраф WB превращается в 10-минутный паралич.
+- **Что делаем:**
+  - `fetch_report_detail_v2`: `if not rows or len(rows) < page_limit: return` — не делаем избыточный 2-й запрос когда первая страница вернула меньше limit (=значит это была последняя).
+  - `client.py:_handle_429`: убрать floor 600. Использовать `max(hints) + 30 сек safety` если WB подсказал, fallback 60 сек если нет. Кэп оставить 6ч.
+- **Критерии готовности:**
+  - [x] `fetch_report_detail_v2` ранний return на под-полной странице
+  - [x] cooldown floor убран, safety +30 сек
+  - [x] bump patch → 0.41.3
+  - [x] Commit + push + deploy
+- **Зависимости:** —
+- **Статус:** Выполнено — 2026-05-26
+
 ---
 
 ## Формат / Жизненный цикл
