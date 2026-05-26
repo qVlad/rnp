@@ -8,19 +8,23 @@
  * URL: `/manager-summary?manager_id=X&week_start=YYYY-MM-DD`
  *
  * Компоненты:
- *  - Header: ФИО, бренды, период
+ *  - Header: ФИО, бренды, период (с переключателем — HYP-008)
+ *  - Period selector «Неделя / Месяц / Квартал» (HYP-008) — расширяет
+ *    history-секции, KPI остаются week-based
  *  - Top KPI: 4 числа (revenue / margin / orders / WoW)
  *  - Top-3 рекомендации для его брендов
  *  - Top-5 SKU by revenue + by margin (post-filter по brands)
  *  - Активные алерты (без brand-filter, system-wide)
  *  - Per-brand комментарии менеджера за неделю
+ *  - История комментариев за период (HYP-008, только при period > week)
+ *  - Активные plan-edit-requests менеджера (HYP-008)
  *
  * RBAC: только director / head_of_sales. Если manager попадёт на эту
  * страницу через прямой URL — увидит баннер «доступ запрещён».
  */
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import {
   api,
   type WeeklyReportByManager,
@@ -56,6 +60,31 @@ function formatAgo(iso: string | null | undefined): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h} ч назад`;
   return `${Math.floor(h / 24)} д назад`;
+}
+
+// HYP-008: period selector.
+type Period = "week" | "month" | "quarter";
+const PERIOD_KEY = "manager-summary.period.v1";
+const PERIOD_WEEKS: Record<Period, number> = { week: 1, month: 4, quarter: 13 };
+
+function loadPeriod(): Period {
+  try {
+    const v = localStorage.getItem(PERIOD_KEY);
+    if (v === "week" || v === "month" || v === "quarter") return v;
+  } catch {}
+  return "week";
+}
+
+/** Список week_start'ов от current weekStart назад (включительно) на N недель. */
+function priorWeekStarts(currentWeekStart: string, nWeeks: number): string[] {
+  if (!currentWeekStart) return [];
+  const result: string[] = [];
+  const d = new Date(currentWeekStart);
+  for (let i = 0; i < nWeeks; i++) {
+    result.push(isoDate(d));
+    d.setDate(d.getDate() - 7);
+  }
+  return result;
 }
 
 export default function ManagerSummary() {
@@ -140,6 +169,34 @@ export default function ManagerSummary() {
     enabled: canAccess && !!weekStart,
   });
 
+  // HYP-008: period selector + history (комментарии + plan-edit-requests
+  // за период длиннее одной недели). Persist в localStorage.
+  const [period, setPeriod] = useState<Period>(loadPeriod);
+  useEffect(() => {
+    try { localStorage.setItem(PERIOD_KEY, period); } catch {}
+  }, [period]);
+
+  const historyWeeks = useMemo(
+    () => (period === "week" ? [] : priorWeekStarts(weekStart, PERIOD_WEEKS[period])),
+    [period, weekStart],
+  );
+  // Lazy: только при period > week грузим N запросов комментариев.
+  const historyCommentQs = useQueries({
+    queries: historyWeeks.map((ws) => ({
+      queryKey: ["manager-summary", "history-comments", ws],
+      queryFn: () => api.weeklyReportCommentList(ws),
+      enabled: canAccess && period !== "week",
+    })),
+  });
+
+  // Активные plan-edit-requests этого менеджера (HYP-008).
+  // Lazy: только при period !== "week", иначе одну неделю PER уже видно в общем UI.
+  const planEditsQ = useQuery({
+    queryKey: ["manager-summary", "plan-edits", managerId],
+    queryFn: () => api.planEditRequestList("pending"),
+    enabled: canAccess && period !== "week",
+  });
+
   if (isSelf) {
     return <Navigate to="/weekly-report" replace />;
   }
@@ -213,7 +270,37 @@ export default function ManagerSummary() {
           </>
         }
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* HYP-008: period selector для 1-on-1 prep mode. */}
+            <div
+              className="inline-flex rounded-md border border-border text-xs overflow-hidden"
+              role="tablist"
+              aria-label="Период для истории"
+            >
+              {(["week", "month", "quarter"] as Period[]).map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  role="tab"
+                  aria-selected={period === p}
+                  className={`px-3 py-1 ${
+                    period === p
+                      ? "bg-accent text-white"
+                      : "bg-surface text-muted hover:bg-surface-2"
+                  }`}
+                  onClick={() => setPeriod(p)}
+                  title={
+                    p === "week"
+                      ? "Только эта неделя (минимум контекста)"
+                      : p === "month"
+                        ? "История комментариев + заявки за 4 недели (для 1-on-1)"
+                        : "История за 13 недель (~квартал, для performance review)"
+                  }
+                >
+                  {p === "week" ? "Неделя" : p === "month" ? "Месяц" : "Квартал"}
+                </button>
+              ))}
+            </div>
             <Link
               to={`/weekly-report`}
               className="btn text-xs"
@@ -477,6 +564,117 @@ export default function ManagerSummary() {
           </ul>
         )}
       </section>
+
+      {/* HYP-008: история комментариев за месяц/квартал — для 1-on-1 prep'а. */}
+      {period !== "week" && historyWeeks.length > 0 && (() => {
+        const historyComments: Array<{ week: string; c: WeeklyReportComment }> = [];
+        historyCommentQs.forEach((q, idx) => {
+          const ws = historyWeeks[idx];
+          if (idx === 0) return; // первая неделя = текущая, она уже в основной секции
+          const items = (q.data as any)?.items ?? [];
+          items.forEach((c: WeeklyReportComment) => {
+            if (!c.comment || !c.comment.trim()) return;
+            // Берём только комментарии менеджера (его per-brand) — overall и
+            // комментарии других менеджеров не релевантны.
+            if (c.brand === null || !brandSet.has(c.brand)) return;
+            historyComments.push({ week: ws, c });
+          });
+        });
+        const isLoading = historyCommentQs.some((q) => q.isLoading);
+        return (
+          <section className="card">
+            <h2 className="font-medium mb-1">
+              История комментариев менеджера{" "}
+              <span className="text-muted text-xs font-normal">
+                ({period === "month" ? "за 4 нед" : "за квартал, 13 нед"})
+              </span>
+            </h2>
+            <p className="text-xs text-muted mb-3">
+              Per-brand комментарии менеджера за период (overall и комментарии
+              других — скрыты). Для 1-on-1 ревью: что менеджер обсуждал
+              последние недели.
+            </p>
+            {isLoading ? (
+              <div className="text-muted text-sm">Загружаю историю…</div>
+            ) : historyComments.length === 0 ? (
+              <div className="text-muted text-sm">
+                Комментариев менеджера за {period === "month" ? "месяц" : "квартал"}{" "}
+                не найдено.
+              </div>
+            ) : (
+              <ul className="flex flex-col gap-3 text-sm">
+                {historyComments.map(({ week, c }) => (
+                  <li key={`${week}-${c.brand}`} className="flex flex-col">
+                    <div className="flex items-baseline gap-2 text-xs text-muted">
+                      <span className="font-mono">{week}</span>
+                      <span>· бренд {c.brand}</span>
+                      <span>· {c.author_name || "—"}</span>
+                    </div>
+                    <div className="whitespace-pre-wrap text-fg">{c.comment}</div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        );
+      })()}
+
+      {/* HYP-008: активные plan-edit-requests этого менеджера. */}
+      {period !== "week" && (() => {
+        const myEdits =
+          (planEditsQ.data?.items ?? []).filter(
+            (e) =>
+              e.requested_by &&
+              (e.requested_by === manager.manager_name ||
+                e.requested_by === String(manager.manager_user_id)),
+          );
+        return (
+          <section className="card">
+            <h2 className="font-medium mb-1">
+              Активные заявки на правку плана{" "}
+              {myEdits.length > 0 ? (
+                <span className="text-muted text-xs font-normal">({myEdits.length})</span>
+              ) : null}
+            </h2>
+            <p className="text-xs text-muted mb-3">
+              Заявки в статусе pending от этого менеджера. Решение принимается
+              в <Link to="/plan-edit-requests" className="text-accent hover:underline">/plan-edit-requests</Link>.
+            </p>
+            {planEditsQ.isLoading ? (
+              <div className="text-muted text-sm">Загружаю заявки…</div>
+            ) : myEdits.length === 0 ? (
+              <div className="text-muted text-sm">
+                Активных заявок от этого менеджера нет.
+              </div>
+            ) : (
+              <ul className="flex flex-col gap-2 text-sm">
+                {myEdits.map((e) => (
+                  <li
+                    key={e.id}
+                    className="flex flex-col gap-1 border-l-2 border-warn pl-2"
+                  >
+                    <div className="flex items-baseline gap-2 text-xs text-muted">
+                      <span className="font-mono">plan_id={e.plan_id}</span>
+                      <span>·</span>
+                      <span>{e.field_name}</span>
+                      <span>·</span>
+                      <span className="font-mono">
+                        {e.current_value ?? "—"} → {e.requested_value}
+                      </span>
+                      {e.created_at && (
+                        <span className="ml-auto">{formatAgo(e.created_at)}</span>
+                      )}
+                    </div>
+                    {e.comment && (
+                      <div className="text-fg whitespace-pre-wrap">{e.comment}</div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        );
+      })()}
     </div>
   );
 }

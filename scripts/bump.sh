@@ -132,4 +132,13 @@ if [[ "${actual_version}" != "${new}" ]] || \
 fi
 
 echo "✓ Все 4 файла на версии ${new}"
+
+# TASK-LEAD-121 — auto-close: предлагаем закрыть «Открыта» статусы для
+# TASK-LEAD/BUG-DEV/BUG-UI ID'шек, упомянутых в commits текущего релиза.
+# Не вызывается автоматически (interactive prompts могут блокировать CI/cron);
+# print только подсказку. Запуск: `./scripts/close-tasks-from-commits.py`.
+if [[ -t 0 && -t 1 ]]; then
+  echo "→ Подсказка: ./scripts/close-tasks-from-commits.py --dry-run чтобы посмотреть открытые статусы для коммитов текущего релиза"
+fi
+
 echo "${new}"

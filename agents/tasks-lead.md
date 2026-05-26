@@ -3337,12 +3337,14 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Оценка:** S (2-3ч)
 - **Описание:** Третий раунд подряд (12 → 13 → 14) обнаруживает «Открыта» статусы на задачах, которые уже закоммичены и в проде. Нужна автоматизация в `scripts/remote.sh deploy` или `scripts/bump.sh`: grep commit-сообщений между prev VERSION и current на pattern `TASK-LEAD-\d+`, для каждого совпадения предложить обновить статус (interactive) или сделать sed-замену с pre-flight check.
 - **Критерии готовности:**
-  - [ ] Скрипт `scripts/close-tasks-from-commits.sh` (or python)
-  - [ ] Запускается из `bump.sh` (рекомендация) — после успешного bump
-  - [ ] Interactive prompt: «TASK-LEAD-NNN найден в commit X. Закрыть как Выполнено — YYYY-MM-DD? [y/n]»
-  - [ ] Non-interactive `--auto` режим для CI/cron
-  - [ ] Документировать в `agents/RULES.md` § Правило 2.7
-- **Статус:** Открыта
+  - [x] Скрипт `scripts/close-tasks-from-commits.py` (Python — стабильнее sed для multi-line)
+  - [x] Поддержка `TASK-LEAD-NNN` / `BUG-DEV-NNN` / `BUG-UI-NNN` → `tasks-lead.md` / `bugs-developer.md` / `bugs-design-engineer.md`
+  - [x] Auto-resolve range: от последнего коммита, менявшего `/VERSION`, до HEAD (override через `--since`)
+  - [x] Interactive prompt по default'у, `--auto` режим без вопросов, `--dry-run` для просмотра
+  - [x] Pre-flight check: пропускаем already-closed без false-positive replace
+  - [x] Hint в `scripts/bump.sh` (после успешного bump'а — print подсказку)
+  - [x] Документировано в `agents/RULES.md` § Правило 2.7 (шаг 9)
+- **Статус:** Выполнено — 2026-05-26
 
 ---
 
@@ -3354,12 +3356,45 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Гипотеза:** Добавить `users.boss_id` (FK → users.id, nullable). При TG-share manager'ом — broadcast в chat_id РОПа (boss). Перекроет 80% случаев.
 - **Risk / costs:** Затрагивает все broadcast'ы (notifications, alerts, sales-summary). Нужен product-call: какой default'ный сценарий, что если у manager'а нет boss, что если boss = director (он уже в audience).
 - **Зависимости:** TASK-LEAD-089 ✅ (warn-полу-фикс уже сделан)
+- **Решение (2026-05-26):** реализовано backend-side как self-flow only. Миграция 0062 (`users.boss_id INTEGER NULL` + self-FK `SET NULL` + index). Helper `services/tg_broadcast.notify_user_or_boss()` — priority на `boss.tg_chat_id`, fallback на свой; `share-to-telegram` self-flow использует helper, response содержит `recipient: "boss"|"self"|"none"`. `PUT /api/users/{id}/boss` (director only) с validation (no self / cross-tenant / inactive / cycle). General broadcasts (notifications, alerts) — не меняются, остаются как есть. Frontend UI для назначения boss'а — TASK-LEAD-125.
+- **Статус:** Backend выполнено — 2026-05-26. Frontend — TASK-LEAD-125.
+
+### TASK-LEAD-125: UI для назначения boss'а пользователю (HYP-007 follow-up)
+- **Приоритет:** P3
+- **Оценка:** S (2-3ч)
+- **Описание:** На странице `/users` (director only) — добавить колонку «Руководитель» с возможностью выбора (dropdown из users того же тенанта). При сохранении — `PUT /api/users/{id}/boss {boss_id: int | null}`. Минорный indicator на share-to-telegram response: показывать «📨 Отправлено: РОПу Петрову» вместо просто «отправлено».
+- **Критерии готовности:**
+  - [ ] Колонка «Руководитель» в `/users` с dropdown'ом (только users тенанта, исключая самого user'а)
+  - [ ] Save через `api.userSetBoss(id, boss_id | null)`
+  - [ ] Frontend feedback при share-to-telegram: показать `recipient: "boss" | "self"` из response
+  - [ ] Опционально: для inactive user'ов — disabled в dropdown'е
+- **Зависимости:** HYP-007 backend ✅
+- **Статус:** Открыта
 
 ### HYP-008: ManagerSummary → «карточка менеджера на 1-on-1 prep»
 - **Источник:** Round 14 Z2 — расширить существующий drill-down
 - **Гипотеза:** Текущая ManagerSummary показывает текущую неделю. Расширить до месячного/квартального view с историей: тренды KPI, history of comments, активные plan-edit-requests, выполнение целей. РОП открывает за день до 1-on-1 — готовая повестка.
 - **Risk:** Scope creep. Нужно решить — отдельная страница `/manager/{id}/review?period=Q` или extension существующей.
 - **Зависимости:** HYP-005 ✅ (базовая ManagerSummary)
+- **Решение (2026-05-26):** реализовано как **расширение существующей** ManagerSummary (не отдельная страница). Базовый scope:
+  - Period selector «Неделя / Месяц / Квартал» в actions (persist `manager-summary.period.v1`)
+  - При period > week — fetch comments из `weeklyReportCommentList` по N=4/13 неделям через `useQueries` (lazy, только не для week)
+  - Section «История комментариев менеджера» — фильтр по `brand ∈ manager.brands`, скрыт когда week
+  - Section «Активные заявки на правку плана» — `planEditRequestList("pending")` + post-filter `requested_by === manager.manager_name`
+  - Тренды KPI (графики) — отложено в TASK-LEAD-126 (требует backend агрегацию)
+- **Статус:** Базовая реализация выполнена — 2026-05-26. Тренды KPI charts — TASK-LEAD-126.
+
+### TASK-LEAD-126: ManagerSummary тренды KPI charts (HYP-008 follow-up)
+- **Приоритет:** P3
+- **Оценка:** M (1-2д)
+- **Описание:** Расширить базовую HYP-008 ManagerSummary тренд-графиками: revenue / margin / orders по неделям за период (4 или 13 нед). Backend reuse `weeklyReportByManager(week_start)` через N=4/13 запросов (как сейчас сделано для comments через `useQueries`). Frontend — sparkline или recharts AreaChart. Сглаживание: 4-week MA для quarter.
+- **Критерии готовности:**
+  - [ ] `useQueries` для scoreboard'ов за N недель (manager.manager_user_id filter post-fetch)
+  - [ ] Sparkline компонент в actions row или новой Section «Тренды»
+  - [ ] 3-4 метрики: revenue, margin, orders (или margin_pct)
+  - [ ] Скрыто при period='week' (там не нужно)
+- **Зависимости:** HYP-008 ✅
+- **Статус:** Открыта
 
 ---
 
