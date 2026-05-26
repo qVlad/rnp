@@ -139,9 +139,34 @@ async def upload_xlsx(
     except ImportError:
         raise HTTPException(500, "openpyxl not installed on server")
 
-    content = await file.read()
     import io
-    wb = load_workbook(io.BytesIO(content), data_only=True)
+    import zipfile
+
+    content = await file.read()
+
+    # WB кнопка «Скачать» отдаёт ZIP с .xlsx внутри. Но и сам .xlsx — это zip
+    # (OOXML). Различаем по содержимому namelist:
+    #   - есть `xl/workbook.xml` → это сам xlsx, парсим как есть
+    #   - есть вложенный `*.xlsx` → это WB-обёртка, достаём первый xlsx
+    xlsx_bytes = content
+    inner_name: str | None = None
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as zf:
+            names = zf.namelist()
+            if "xl/workbook.xml" in names:
+                pass  # это xlsx напрямую
+            else:
+                inner = next((n for n in names if n.lower().endswith(".xlsx")), None)
+                if inner is None:
+                    raise HTTPException(
+                        400, "ZIP не содержит .xlsx (ожидался отчёт WB)"
+                    )
+                inner_name = inner
+                xlsx_bytes = zf.read(inner)
+    except zipfile.BadZipFile:
+        raise HTTPException(400, "файл не xlsx и не zip")
+
+    wb = load_workbook(io.BytesIO(xlsx_bytes), data_only=True)
     ws = wb.active
     data = list(ws.values)
     if len(data) < 2:
@@ -225,12 +250,15 @@ async def upload_xlsx(
         "16": float(acq_total),
     }
 
-    # report_id из имени файла «...№726993615_...»
+    # report_id из имени файла «...№726993615_...». Проверяем имя загруженного
+    # файла И имя вложенного xlsx (если был zip — номер может быть только внутри).
     report_id = None
     fname = file.filename or ""
-    m = re.search(r"№\s*(\d{6,})", fname) or re.search(r"(\d{9,})", fname)
-    if m:
-        report_id = int(m.group(1))
+    for candidate in (fname, inner_name or ""):
+        m = re.search(r"№\s*(\d{6,})", candidate) or re.search(r"(\d{9,})", candidate)
+        if m:
+            report_id = int(m.group(1))
+            break
 
     # Период недели — из min/max sale_dt (col M) или rr-дат. У xlsx нет
     # явной dateFrom; берём из данных через «Дата продажи».

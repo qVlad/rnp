@@ -228,7 +228,7 @@ export default function ReconciliationAuto() {
             <input
               ref={fileRef}
               type="file"
-              accept=".xlsx"
+              accept=".xlsx,.zip"
               hidden
               onChange={onFile}
             />
@@ -236,10 +236,10 @@ export default function ReconciliationAuto() {
               className="btn"
               onClick={onPick}
               disabled={xlsxMut.isPending}
-              title="Загрузить WB-xlsx «Еженедельный детализированный отчёт» — автозаполнит колонку «WB ЛК»"
+              title="Загрузить отчёт WB (xlsx или zip из кнопки «Скачать») — автозаполнит колонку «WB ЛК»"
             >
               <Icon name="upload" />
-              {xlsxMut.isPending ? "Парсю…" : "Загрузить xlsx WB"}
+              {xlsxMut.isPending ? "Парсю…" : "Загрузить xlsx/zip WB"}
             </button>
           </div>
         }
