@@ -115,7 +115,67 @@
     return `sum-h${h.toString(16)}`;
   }
 
+  // TASK-LEAD-141: реклама (Продвижение → Финансы) и воронка.
+  let lastAdvHash = "";
+  let lastFunnelHash = "";
+
+  function maybePostExtra(url: string, raw: unknown): boolean {
+    if (raw === null || typeof raw !== "object") return false;
+    const obj = raw as Record<string, any>;
+
+    // 1. Реклама: cmp.wildberries.ru/api/v6/upd → {upd_total_amount, upd_info}.
+    if ("upd_total_amount" in obj && Array.isArray(obj.upd_info)) {
+      const total = Number(obj.upd_total_amount);
+      // Период — из URL ?from=2026-05-18T... . Backend снапит к понедельнику.
+      const fromMatch = url.match(/[?&]from=([^&]+)/);
+      const fromDate = fromMatch
+        ? decodeURIComponent(fromMatch[1]).slice(0, 10)
+        : null;
+      if (!fromDate || !Number.isFinite(total)) return true;
+      const hash = `adv-${fromDate}-${total}`;
+      if (hash === lastAdvHash) return true;
+      lastAdvHash = hash;
+      console.log(`${TAG} matched ADV finance: ${total}₽ from ${fromDate}`, url);
+      window.postMessage(
+        { __rnp: "wb-adv-finance", week_start: fromDate, ad_cost: total },
+        "*",
+      );
+      return true;
+    }
+
+    // 2. Воронка: .../sales-funnel/report → data.chart.byWeek[0].
+    const byWeek = obj?.data?.chart?.byWeek;
+    if (Array.isArray(byWeek) && byWeek.length > 0 && byWeek[0] &&
+        typeof byWeek[0] === "object" && "orderCount" in byWeek[0]) {
+      const w = byWeek[0] as Record<string, any>;
+      const weekStart = typeof w.date === "string" ? w.date.slice(0, 10) : null;
+      const orderCount = Number(w.orderCount);
+      const orderSum = Number(w.orderSum);
+      if (!weekStart) return true;
+      const hash = `funnel-${weekStart}-${orderCount}-${orderSum}`;
+      if (hash === lastFunnelHash) return true;
+      lastFunnelHash = hash;
+      console.log(
+        `${TAG} matched FUNNEL: ${orderCount} заказов / ${orderSum}₽ week ${weekStart}`,
+        url,
+      );
+      window.postMessage(
+        {
+          __rnp: "wb-funnel",
+          week_start: weekStart,
+          orders_count: Number.isFinite(orderCount) ? orderCount : null,
+          orders_sum: Number.isFinite(orderSum) ? orderSum : null,
+        },
+        "*",
+      );
+      return true;
+    }
+    return false;
+  }
+
   function maybePost(url: string, raw: unknown): void {
+    // 0. Реклама/воронка (TASK-LEAD-141) — отдельные страницы ЛК.
+    if (maybePostExtra(url, raw)) return;
     // 1. Приоритет — сводка (единый fetch с итогами).
     const summary = looksLikeReportSummary(raw);
     if (summary) {

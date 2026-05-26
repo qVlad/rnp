@@ -9,8 +9,27 @@
 
 let reconLastSentHash = "";
 
+// TASK-LEAD-141: реклама/воронка → SW → /upload-extension-extra.
+let lastExtraHash = "";
 window.addEventListener("message", (e: MessageEvent) => {
   if (e.source !== window) return;
+  const kind = e.data?.__rnp;
+  if (kind === "wb-adv-finance" || kind === "wb-funnel") {
+    const payload = { ...e.data };
+    delete payload.__rnp;
+    const h = JSON.stringify(payload);
+    if (h === lastExtraHash) return;
+    lastExtraHash = h;
+    console.log(`[rnp-ext content recon] forwarding ${kind} to SW`, payload);
+    chrome.runtime
+      .sendMessage({ type: "rnp:recon-extra", ...payload })
+      .then((r) => console.log("[rnp-ext content recon] extra SW →", r))
+      .catch((err) => {
+        console.warn("[rnp-ext content recon] extra sendMessage failed:", err);
+        lastExtraHash = "";
+      });
+    return;
+  }
   if (e.data?.__rnp !== "wb-realization-report") return;
   const hash = String(e.data.hash || "");
   if (hash && hash === reconLastSentHash) return;

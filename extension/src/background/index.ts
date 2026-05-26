@@ -708,6 +708,68 @@ async function maybeUploadRealizationReport(payload: {
   }
 }
 
+// TASK-LEAD-141: реклама/воронка → /upload-extension-extra.
+const STORAGE_RECON_EXTRA_NOTIFIED = "rnp.reconExtra.notified";
+
+async function maybeUploadReconExtra(payload: {
+  week_start: string;
+  ad_cost?: number;
+  orders_count?: number;
+  orders_sum?: number;
+  source_url?: string | null;
+}): Promise<ReconUploadResult | { status: string }> {
+  const settings = await getSettings();
+  if (!settings.rnpUrl || !settings.rnpToken) return { status: "no-rnp-token" };
+
+  const body: Record<string, unknown> = { week_start: payload.week_start };
+  if (payload.ad_cost !== undefined) body.ad_cost = payload.ad_cost;
+  if (payload.orders_count !== undefined) body.orders_count = payload.orders_count;
+  if (payload.orders_sum !== undefined) body.orders_sum = payload.orders_sum;
+  if (payload.source_url) body.source_url = payload.source_url;
+
+  try {
+    const r = await fetch(
+      `${settings.rnpUrl.replace(/\/$/, "")}/api/reconciliation-auto/upload-extension-extra`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${settings.rnpToken}`,
+        },
+        body: JSON.stringify(body),
+      },
+    );
+    if (r.status === 403) return { status: "forbidden" };
+    if (!r.ok) {
+      let b = "";
+      try {
+        b = (await r.text()).slice(0, 200);
+      } catch {
+        /* ignore */
+      }
+      console.warn(`[rnp-ext SW] recon-extra: HTTP ${r.status} ${b}`);
+      return { status: "http-error", code: r.status, body: b } as ReconUploadResult;
+    }
+    const json = (await r.json()) as { week_start: string };
+    const notified = await chrome.storage.local.get(STORAGE_RECON_EXTRA_NOTIFIED);
+    if (!notified[STORAGE_RECON_EXTRA_NOTIFIED]) {
+      chrome.notifications.create("rnp.reconExtra.uploaded", {
+        type: "basic",
+        iconUrl: chrome.runtime.getURL("icons/icon-128.png"),
+        title: "Реклама/заказы загружены в РНП",
+        message: `Расширение подтянуло данные за неделю ${json.week_start}. Открой /reconciliation-auto — правила 9/10/11 (реклама/заказы) автозаполнены.`,
+        priority: 1,
+      });
+      await chrome.storage.local.set({ [STORAGE_RECON_EXTRA_NOTIFIED]: true });
+    }
+    return { status: "ok", week_start: json.week_start, rows_count: 0 };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn("[rnp-ext SW] recon-extra failed:", e);
+    return { status: "network-error", error: msg };
+  }
+}
+
 // ---- Message handlers from content scripts ----
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -841,6 +903,23 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           typeof msg.source_url === "string" ? msg.source_url : null,
       });
       console.log(`[rnp-ext SW] realization-report →`, result);
+      sendResponse(result);
+      return;
+    }
+    // ---- TASK-LEAD-141: реклама/воронка из ЛК WB → /upload-extension-extra.
+    //      Content script шлёт это когда interceptor поймал страницу
+    //      Продвижение→Финансы (ad_cost) или Воронка (orders_count/sum). ----
+    if (msg?.type === "rnp:recon-extra" && typeof msg.week_start === "string") {
+      const result = await maybeUploadReconExtra({
+        week_start: msg.week_start,
+        ad_cost: typeof msg.ad_cost === "number" ? msg.ad_cost : undefined,
+        orders_count:
+          typeof msg.orders_count === "number" ? msg.orders_count : undefined,
+        orders_sum:
+          typeof msg.orders_sum === "number" ? msg.orders_sum : undefined,
+        source_url: typeof msg.source_url === "string" ? msg.source_url : null,
+      });
+      console.log(`[rnp-ext SW] recon-extra →`, result);
       sendResponse(result);
       return;
     }

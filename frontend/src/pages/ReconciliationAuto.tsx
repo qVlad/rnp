@@ -431,9 +431,9 @@ export default function ReconciliationAuto() {
                         </details>
                       )}
                       {meta?.wb_source && (
-                        <div className="text-xs text-warn mt-1">
-                          ✋ Не из отчёта реализации. Источник:{" "}
-                          {meta.wb_source}. Введи вручную →
+                        <div className="text-xs text-muted mt-1">
+                          📡 Авто из расширения (открой в ЛК WB:{" "}
+                          {meta.wb_source}) или введи вручную →
                         </div>
                       )}
                     </td>
