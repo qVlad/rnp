@@ -20,7 +20,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ExtensionReconUpload, WbReportDetail
+from app.db.models import ExtensionReconExtra, ExtensionReconUpload, WbReportDetail
 from app.integrations.wb.statistics import _normalize_v2_row
 from app.services.auth import (
     CurrentUser,
@@ -103,6 +103,27 @@ async def reconciliation_auto(
         }
     else:
         result["extension_upload"] = None
+
+    # TASK-LEAD-141: реклама/заказы (правила 9/10/11) из отдельных страниц ЛК.
+    extra = (await session.execute(
+        select(ExtensionReconExtra)
+        .where(ExtensionReconExtra.tenant_id == user.tenant_id)
+        .where(ExtensionReconExtra.week_start == ws)
+    )).scalar_one_or_none()
+    if extra is not None:
+        extra_metrics: dict[str, float] = {}
+        if extra.ad_cost is not None:
+            extra_metrics["9"] = float(extra.ad_cost)
+        if extra.orders_count is not None:
+            extra_metrics["10"] = int(extra.orders_count)
+        if extra.orders_sum is not None:
+            extra_metrics["11"] = float(extra.orders_sum)
+        result["extension_extra"] = {
+            "uploaded_at": extra.uploaded_at.isoformat() if extra.uploaded_at else None,
+            "metrics_by_rule": extra_metrics,
+        }
+    else:
+        result["extension_extra"] = None
 
     return result
 
@@ -610,4 +631,86 @@ async def upload_extension(
         "rows_count": len(normalized),
         "rr_dt_range": [week_min.isoformat(), week_max.isoformat()],
         "metrics_by_rule": metrics_by_rule,
+    }
+
+
+@router.post("/upload-extension-extra")
+async def upload_extension_extra(
+    payload: dict = Body(...),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Реклама/заказы из ЛК WB через extension (TASK-LEAD-141, правила 9/10/11).
+
+    Body: `{week_start: "YYYY-MM-DD", ad_cost?: float, orders_count?: int,
+    orders_sum?: float, source_url?: str}`. Реклама (Продвижение → Финансы) и
+    заказы (Воронка) приходят с РАЗНЫХ страниц — поэтому поля опциональны,
+    UPSERT мёржит частично (COALESCE: не затираем уже сохранённое другой
+    страницей).
+
+    Доступ: director / head_of_sales.
+    """
+    if user.role not in ("director", "head_of_sales"):
+        raise HTTPException(403, "director or head required")
+
+    ws_raw = payload.get("week_start")
+    if not isinstance(ws_raw, str):
+        raise HTTPException(400, "week_start required (YYYY-MM-DD)")
+    try:
+        wk = date.fromisoformat(ws_raw[:10])
+    except Exception:
+        raise HTTPException(400, "bad week_start")
+    ws_snapped = wk - timedelta(days=wk.weekday())
+    we_excl = ws_snapped + timedelta(days=7)
+
+    def _num(key: str) -> float | None:
+        v = payload.get(key)
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    ad_cost = _num("ad_cost")
+    orders_sum = _num("orders_sum")
+    oc = payload.get("orders_count")
+    orders_count = int(oc) if isinstance(oc, (int, float)) else None
+    source_url = payload.get("source_url")
+
+    if ad_cost is None and orders_count is None and orders_sum is None:
+        raise HTTPException(400, "нужно хотя бы одно из ad_cost/orders_count/orders_sum")
+
+    # UPSERT с COALESCE — не затираем поля, пришедшие с другой страницы.
+    ins = pg_insert(ExtensionReconExtra).values(
+        tenant_id=user.tenant_id,
+        week_start=ws_snapped,
+        week_end=we_excl,
+        ad_cost=ad_cost,
+        orders_count=orders_count,
+        orders_sum=orders_sum,
+        uploaded_by_user_id=user.id,
+        source_url=source_url[:512] if isinstance(source_url, str) else None,
+    )
+    ins = ins.on_conflict_do_update(
+        index_elements=["tenant_id", "week_start"],
+        set_={
+            "ad_cost": func.coalesce(ins.excluded.ad_cost, ExtensionReconExtra.ad_cost),
+            "orders_count": func.coalesce(ins.excluded.orders_count, ExtensionReconExtra.orders_count),
+            "orders_sum": func.coalesce(ins.excluded.orders_sum, ExtensionReconExtra.orders_sum),
+            "uploaded_at": func.now(),
+            "uploaded_by_user_id": user.id,
+            "source_url": func.coalesce(ins.excluded.source_url, ExtensionReconExtra.source_url),
+            "week_end": we_excl,
+        },
+    )
+    await session.execute(ins)
+    await session.commit()
+
+    return {
+        "status": "ok",
+        "week_start": ws_snapped.isoformat(),
+        "ad_cost": ad_cost,
+        "orders_count": orders_count,
+        "orders_sum": orders_sum,
     }

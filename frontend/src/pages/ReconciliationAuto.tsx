@@ -114,12 +114,16 @@ export default function ReconciliationAuto() {
   // (если он уже что-то набил вручную) — поэтому проверяем что wbValues
   // пуст для соответствующих правил.
   useEffect(() => {
-    const upload = q.data?.extension_upload;
-    if (!upload) return;
+    // Объединяем метрики отчёта реализации (1-8,12-17) и extra (9,10,11
+    // реклама/заказы) — обе автозаполняют WB-колонку.
+    const fromReport = q.data?.extension_upload?.metrics_by_rule ?? {};
+    const fromExtra = q.data?.extension_extra?.metrics_by_rule ?? {};
+    const merged = { ...fromReport, ...fromExtra };
+    if (Object.keys(merged).length === 0) return;
     setWbValues((prev) => {
       const next = { ...prev };
       let changed = false;
-      for (const [k, v] of Object.entries(upload.metrics_by_rule)) {
+      for (const [k, v] of Object.entries(merged)) {
         const rn = Number(k);
         if (!(rn in next) || next[rn] === "" || next[rn] === undefined) {
           next[rn] = String(v);
@@ -135,6 +139,8 @@ export default function ReconciliationAuto() {
     q.data?.extension_upload?.uploaded_at,
     q.data?.extension_upload?.report_ids?.join(","),
     JSON.stringify(q.data?.extension_upload?.metrics_by_rule ?? {}),
+    q.data?.extension_extra?.uploaded_at,
+    JSON.stringify(q.data?.extension_extra?.metrics_by_rule ?? {}),
   ]);
 
   const xlsxMut = useMutation({

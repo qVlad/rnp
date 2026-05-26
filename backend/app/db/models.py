@@ -2646,6 +2646,36 @@ class ExtensionReconUpload(Base, TenantScopedMixin):
     )
 
 
+class ExtensionReconExtra(Base, TenantScopedMixin):
+    """Реклама/заказы из ЛК WB через extension (TASK-LEAD-141).
+
+    Правила 9/10/11 (Реклама, Кол-во заказов, Сумма заказов) не входят в отчёт
+    реализации — приходят с разных страниц ЛК (Продвижение → Финансы и Воронка
+    продаж). Одна строка на неделю; колонки nullable, UPSERT мёржит частично
+    (реклама и заказы — отдельные страницы).
+    """
+
+    __tablename__ = "extension_recon_extra"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    week_start: Mapped[date] = mapped_column(Date, nullable=False)
+    week_end: Mapped[date] = mapped_column(Date, nullable=False)
+    ad_cost: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    orders_count: Mapped[int | None] = mapped_column(Integer)
+    orders_sum: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    uploaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    uploaded_by_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "week_start", name="uq_extension_recon_extra_tenant_week"
+        ),
+    )
+
+
 class WbProductDimensionsHistory(Base, TenantScopedMixin):
     """История замеров габаритов карточек WB (TASK-LEAD-129, миграция 0063).
 

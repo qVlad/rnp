@@ -2774,6 +2774,10 @@ export interface ReconciliationAutoResponse {
     report_ids: number[];
     reports_count: number;
   } | null;
+  extension_extra?: {
+    uploaded_at: string | null;
+    metrics_by_rule: Record<string, number>;
+  } | null;
 }
 
 // ── TASK-LEAD-129: tracking перемерок WB ──
