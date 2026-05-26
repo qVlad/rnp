@@ -751,6 +751,10 @@ async def _sync_report_detail_async(tenant_id: int, days_back: int = 14) -> int:
                     )
                 await _bulk_upsert(session, WbReportDetail, values, pk_cols=["rrd_id"])
                 total += len(values)
+                # TASK-LEAD-131: commit per chunk. Without this, exception в
+                # следующей итерации (WB 429 на page N+1) откатывал ВСЕ ранее
+                # обработанные chunks — теряли свежие данные при backfill.
+                await session.commit()
         except Exception as e:
             log.warning("report_detail: chunk loop aborted (%s) — partial save", e)
             # If a SQL error aborted the transaction, every subsequent
