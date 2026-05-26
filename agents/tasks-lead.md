@@ -3412,12 +3412,15 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Оценка:** M (1-2д)
 - **Описание:** Расширить базовую HYP-008 ManagerSummary тренд-графиками: revenue / margin / orders по неделям за период (4 или 13 нед). Backend reuse `weeklyReportByManager(week_start)` через N=4/13 запросов (как сейчас сделано для comments через `useQueries`). Frontend — sparkline или recharts AreaChart. Сглаживание: 4-week MA для quarter.
 - **Критерии готовности:**
-  - [ ] `useQueries` для scoreboard'ов за N недель (manager.manager_user_id filter post-fetch)
-  - [ ] Sparkline компонент в actions row или новой Section «Тренды»
-  - [ ] 3-4 метрики: revenue, margin, orders (или margin_pct)
-  - [ ] Скрыто при period='week' (там не нужно)
+  - [x] `useQueries` для scoreboard'ов за N недель (post-filter по `manager_user_id`)
+  - [x] Helper `Sparkline` (recharts AreaChart, height=80, gradient-fill, custom Tooltip, скрытые axis'ы)
+  - [x] 3 метрики: revenue (emerald), margin (cyan), orders (amber). `margin_pct` показан под margin-chart'ом как `subLabel`
+  - [x] Lazy: `enabled: period !== "week"` — скрыто и не fetch'ится для недельного режима
+  - [x] Edge cases: «Загружаю», «Менеджер ничего не продавал», «Недостаточно данных (X из Y недель)»
+  - [x] WoW% под каждым sparkline (prev → current) с success/danger цветом
+  - [ ] 4-week MA сглаживание для quarter — отложено (sparkline и так компактный, MA добавит сложности)
 - **Зависимости:** HYP-008 ✅
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26
 
 ---
 
