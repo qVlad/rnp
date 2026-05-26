@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-LEAD-131",
-  "agent": "Claude Opus 4.7 — main session",
-  "started_at": "2026-05-26T15:03:49Z",
-  "expected_minutes": 30,
-  "notes": "fix fetch_report_detail_v2 + cooldown floor"
-}
