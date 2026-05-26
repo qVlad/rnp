@@ -63,7 +63,6 @@ from app.api import (
     units,
     users,
     view_presets,
-    wb_token,
     weekly_report,
 )
 from app.core.config import settings as cfg
@@ -232,7 +231,6 @@ app.include_router(cash_flow.router)
 app.include_router(calc.router)
 app.include_router(products.router)
 app.include_router(product_dimensions.router)
-app.include_router(wb_token.router)
 app.include_router(excel.router)
 app.include_router(off_platform.router)
 app.include_router(product_groups.router)

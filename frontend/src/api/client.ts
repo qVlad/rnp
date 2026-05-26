@@ -1314,21 +1314,6 @@ paymentOrderDelete: (payment_order_id: string) =>
   unarchiveProduct: (nm_id: number) =>
     request(`/api/products/${nm_id}/unarchive`, { method: "POST" }),
 
-  // ── WB token validator ──
-  validateWbToken: (token?: string) =>
-    request<{
-      ok: boolean;
-      source: "request" | "env" | "none";
-      decoded: any | null;
-      probe: { status: number; body_preview: string; headers: Record<string, string> };
-      issues: string[];
-      verdict: string;
-      error?: string;
-    }>("/api/wb/token/validate", {
-      method: "POST",
-      body: JSON.stringify({ token: token || null }),
-    }),
-
   getSettings: () => request("/api/settings"),
   putSettings: (body: Record<string, number | string | boolean | null>) =>
     request("/api/settings", { method: "PUT", body: JSON.stringify(body) }),

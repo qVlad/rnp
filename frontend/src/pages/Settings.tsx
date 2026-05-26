@@ -15,7 +15,6 @@ export default function Settings() {
     refetchInterval: 5_000,
     refetchIntervalInBackground: false,
   });
-  const whoQ = useQuery({ queryKey: ["whoami"], queryFn: () => api.whoami() });
   const cooldownQ = useQuery({
     queryKey: ["cooldown"],
     queryFn: () => api.getCooldown(),
@@ -121,15 +120,6 @@ export default function Settings() {
   const tgUnlinkMut = useMutation({
     mutationFn: () => api.tgUnlinkChat(),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["tg-status"] }),
-  });
-
-  // WB token validator (legacy, для проверки токена .env через diagnostics)
-  const [tokenInput, setTokenInput] = useState("");
-  const [validateResult, setValidateResult] = useState<any | null>(null);
-  const validateMut = useMutation({
-    mutationFn: (t?: string) => api.validateWbToken(t),
-    onSuccess: (d) => setValidateResult(d),
-    onError: (e: any) => setValidateResult({ ok: false, error: e.message }),
   });
 
   // Per-tenant WB-токен (multi-tenant, хранится в БД).
@@ -295,170 +285,6 @@ export default function Settings() {
             {autoSyncMsg}
           </div>
         )}
-      </section>
-
-      <section className="card">
-        <h2 className="font-medium mb-3">Подключение к WB (legacy via .env)</h2>
-        <div className="text-sm text-muted leading-relaxed">
-          <strong>Альтернатива: токен в `.env`</strong> (используется только
-          для default-tenant при single-tenant установке). Если уже задали
-          токен через форму выше — этот блок не нужен.
-          <br />
-          <br />
-          <strong>Как получить токен:</strong>
-          <ol className="list-decimal list-inside mt-2 space-y-1">
-            <li>
-              Откройте ЛК WB → <em>Профиль → Настройки → Доступ к API</em>
-            </li>
-            <li>
-              Создайте <strong>не-тестовый</strong> токен (галка «Тестовый» — снять)
-            </li>
-            <li>
-              Включите категории прав:{" "}
-              <code className="text-white">Statistics</code>,{" "}
-              <code className="text-white">Promotion</code>,{" "}
-              <code className="text-white">Finance</code> (рекомендуется)
-            </li>
-            <li>
-              Скопируйте JWT-строку (начинается с <code>eyJ…</code>)
-            </li>
-            <li>
-              В <code className="text-white">.env</code> установите{" "}
-              <code className="text-white">WB_TOKEN=&lt;токен&gt;</code> и
-              перезапустите контейнеры
-            </li>
-          </ol>
-        </div>
-        <div className="mt-3 text-sm">
-          Токен в <code>.env</code>:{" "}
-          <span className={whoQ.data?.wb_token_configured ? "text-success" : "text-danger"}>
-            {whoQ.data?.wb_token_configured ? (
-              <><Icon name="check" size={12} /> настроен</>
-            ) : (
-              <><Icon name="close" size={12} /> не настроен</>
-            )}
-          </span>
-        </div>
-
-        <div className="mt-4 border-t border-border pt-4">
-          <h3 className="font-medium text-sm uppercase tracking-wide text-muted mb-2">
-            Валидатор токена
-          </h3>
-          <div className="text-xs text-muted mb-2">
-            Проверьте токен <em>до</em> того как класть его в <code>.env</code>: декодируем
-            JWT, отправляем один пробный запрос в WB и показываем что вернулось.
-          </div>
-          <div className="flex gap-2 items-start">
-            <input
-              type="password"
-              className="input flex-1 font-mono text-xs"
-              placeholder="Вставьте JWT (eyJ…) или оставьте пустым чтобы проверить токен из .env"
-              value={tokenInput}
-              onChange={(e: any) => setTokenInput(e.target.value)}
-            />
-            <button
-              className="btn-primary"
-              disabled={validateMut.isPending}
-              onClick={() => validateMut.mutate(tokenInput || undefined)}
-            >
-              Проверить
-            </button>
-          </div>
-
-          {validateResult && (
-            <div className="mt-4 text-sm">
-              <div
-                className={`text-base font-semibold ${
-                  validateResult.ok ? "text-success" : "text-danger"
-                }`}
-              >
-                {validateResult.ok ? (
-                  <><Icon name="check" size={14} /> Токен валиден</>
-                ) : (
-                  <><Icon name="close" size={14} /> Есть проблемы</>
-                )}
-              </div>
-              {validateResult.error && (
-                <div className="text-danger text-xs mt-1">{validateResult.error}</div>
-              )}
-              {validateResult.verdict && (
-                <div className="text-xs text-muted mt-1">{validateResult.verdict}</div>
-              )}
-
-              {validateResult.decoded && (
-                <div className="mt-3 grid grid-cols-2 gap-2 text-xs font-mono">
-                  <div>
-                    <span className="text-muted">Тип:</span>{" "}
-                    {validateResult.decoded.t ? (
-                      <span className="text-warn">Тестовый (узкие лимиты!)</span>
-                    ) : (
-                      <span className="text-success">Обычный</span>
-                    )}
-                  </div>
-                  <div>
-                    <span className="text-muted">Истекает:</span>{" "}
-                    {validateResult.decoded.expired ? (
-                      <span className="text-danger">
-                        {validateResult.decoded.expires_at} (истёк!)
-                      </span>
-                    ) : (
-                      validateResult.decoded.expires_at || "—"
-                    )}
-                  </div>
-                  <div>
-                    <span className="text-muted">Account:</span>{" "}
-                    {validateResult.decoded.acc ?? "—"}
-                  </div>
-                  <div>
-                    <span className="text-muted">Owner ID:</span>{" "}
-                    {validateResult.decoded.oid ?? "—"}
-                  </div>
-                  <div className="col-span-2">
-                    <span className="text-muted">Scope bitmask (s):</span>{" "}
-                    {validateResult.decoded.scope_bits ?? "—"}
-                  </div>
-                </div>
-              )}
-
-              {validateResult.probe && (
-                <div className="mt-3 text-xs">
-                  <div className="text-muted">Probe-запрос:</div>
-                  <div className="font-mono">
-                    HTTP{" "}
-                    <span
-                      className={
-                        validateResult.probe.status === 200
-                          ? "text-success"
-                          : "text-danger"
-                      }
-                    >
-                      {validateResult.probe.status || "—"}
-                    </span>
-                    {validateResult.probe.headers &&
-                      Object.entries(validateResult.probe.headers).map(([k, v]) => (
-                        <div key={k} className="text-muted">
-                          {k}: {String(v)}
-                        </div>
-                      ))}
-                  </div>
-                  {validateResult.probe.body_preview && (
-                    <pre className="text-muted mt-1 overflow-x-auto whitespace-pre-wrap">
-                      {validateResult.probe.body_preview}
-                    </pre>
-                  )}
-                </div>
-              )}
-
-              {validateResult.issues && validateResult.issues.length > 0 && (
-                <ul className="mt-3 list-disc list-inside text-xs text-warn">
-                  {validateResult.issues.map((iss: string, i: number) => (
-                    <li key={i}>{iss}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-        </div>
       </section>
 
       <section className="card">
