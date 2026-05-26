@@ -97,9 +97,14 @@ function LeakCard({ item }: { item: LeakBreakdownItem }) {
   );
 }
 
-// Чарджбэк-блоки отдают details по категориям ({category,label,amount,count}),
-// а не по SKU — рисуем другую таблицу.
-const CHARGEBACK_LEAK_TYPES = new Set(["disputable_chargebacks", "review_deductions"]);
+// Блоки с details по категориям/типам ({label,amount,count}), а не по SKU —
+// рисуем таблицу label/count/amount. TASK-LEAD-144: wb_service_fees тоже сюда
+// (by_type: {label,amount,count}), иначе рендерилось undefined/0.
+const CHARGEBACK_LEAK_TYPES = new Set([
+  "disputable_chargebacks",
+  "review_deductions",
+  "wb_service_fees",
+]);
 
 function DetailTable({ item }: { item: LeakBreakdownItem }) {
   const rows = item.details;

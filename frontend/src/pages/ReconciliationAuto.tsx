@@ -27,6 +27,7 @@ import {
 } from "@/api/client";
 import PageHeader from "@/components/PageHeader";
 import { Icon } from "@/components/Icon";
+import { DateRangePicker, type DateRange } from "@/components/DateRangePicker";
 
 function fmtMoney(v: number, isCount: boolean = false): string {
   if (isCount) return Math.round(v).toLocaleString("ru-RU");
@@ -44,6 +45,32 @@ function lastClosedWeekStart(): string {
   const lastMon = new Date(thisMon);
   lastMon.setDate(thisMon.getDate() - 7);
   return lastMon.toISOString().slice(0, 10);
+}
+
+// Понедельник недели, в которую попадает дата (TASK-LEAD-146).
+function mondayOf(isoDate: string): string {
+  const d = new Date(isoDate + "T00:00:00");
+  const dow = (d.getDay() + 6) % 7; // Пн=0
+  d.setDate(d.getDate() - dow);
+  return d.toISOString().slice(0, 10);
+}
+
+function shiftWeek(isoDate: string, deltaWeeks: number): string {
+  const d = new Date(isoDate + "T00:00:00");
+  d.setDate(d.getDate() + deltaWeeks * 7);
+  return mondayOf(d.toISOString().slice(0, 10));
+}
+
+function fmtDM(isoDate: string): string {
+  const d = new Date(isoDate + "T00:00:00");
+  return d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
+}
+
+// Воскресенье недели (понедельник + 6 дней) — для отображения «18.05–24.05».
+function weekEndDM(mondayIso: string): string {
+  const d = new Date(mondayIso + "T00:00:00");
+  d.setDate(d.getDate() + 6);
+  return fmtDM(d.toISOString().slice(0, 10));
 }
 
 type DeltaTone = "ok" | "warn" | "danger" | "none";
@@ -270,15 +297,38 @@ export default function ReconciliationAuto() {
       />
 
       <div className="card p-4 flex flex-wrap items-center gap-4">
-        <label className="text-sm">
-          Неделя (пн):{" "}
-          <input
-            type="date"
-            className="input ml-2"
-            value={weekStart}
-            onChange={(e) => setWeekStart(e.target.value)}
-          />
-        </label>
+        {/* TASK-LEAD-146: Monday-first выбор недели через DateRangePicker
+            (нативный input type=date показывал воскресенье-первым по локали
+            браузера). Кнопки ◀▶ — шаг по неделям. Любая выбранная дата
+            снапится к понедельнику. */}
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-muted">Неделя (пн):</span>
+          <button
+            className="btn-secondary px-2"
+            onClick={() => setWeekStart(shiftWeek(weekStart, -1))}
+            title="Предыдущая неделя"
+          >
+            ◀
+          </button>
+          <div className="min-w-[150px]">
+            <DateRangePicker
+              from={weekStart}
+              to={weekStart}
+              onChange={(r: DateRange) => setWeekStart(mondayOf(r.from))}
+              compact
+            />
+          </div>
+          <button
+            className="btn-secondary px-2"
+            onClick={() => setWeekStart(shiftWeek(weekStart, 1))}
+            title="Следующая неделя"
+          >
+            ▶
+          </button>
+          <span className="text-muted font-mono">
+            {fmtDM(weekStart)}–{weekEndDM(weekStart)}
+          </span>
+        </div>
         {data && (
           <div className="text-sm text-muted">
             Период: <b>{data.week_start}</b> .. <b>{data.week_end}</b>
