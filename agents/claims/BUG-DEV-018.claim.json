@@ -1,7 +1,0 @@
-{
-  "task_id": "BUG-DEV-018",
-  "agent": "Claude Opus 4.7 — main session",
-  "started_at": "2026-05-26T20:49:45Z",
-  "expected_minutes": 15,
-  "notes": "leak-report: negative-margin includes 0-sales SKUs + double-count storage"
-}
