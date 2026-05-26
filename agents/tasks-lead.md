@@ -663,7 +663,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] Sync-обёртки в `backend/app/sync/tasks.py`
   - [ ] Юнит-тест парсинга response → нормализованная структура
 - **Зависимости:** TASK-LEAD-018
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -682,7 +682,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] Модели в `db/models.py`
   - [ ] up/down тестированы локально (alembic upgrade / downgrade)
 - **Зависимости:** UNIT-PLAN-001
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -699,7 +699,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] Модель `Product` в `db/models.py` обновлена
   - [ ] up/down тестированы локально
 - **Зависимости:** TASK-LEAD-018
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -719,7 +719,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] up/down тестированы локально
   - [ ] audit_log подключён на изменения overrides + constants_timeline
 - **Зависимости:** TASK-LEAD-018
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -738,7 +738,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] Запись в `sync_checkpoints` (новые keys: `wb_tariff_box`, `wb_tariff_pallet`, `wb_tariff_commission`)
   - [ ] Smoke-запуск локально → таблицы заполнены
 - **Зависимости:** UNIT-PLAN-001, UNIT-PLAN-002
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -757,7 +757,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] Кнопка «Sync now» с прогрессом
   - [ ] RBAC: director only (mutation), director+head (view)
 - **Зависимости:** UNIT-PLAN-002, UNIT-PLAN-005
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -776,7 +776,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] audit_log на CUD
   - [ ] RBAC: director only (mutation), director+head (view)
 - **Зависимости:** UNIT-PLAN-004
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -805,7 +805,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] Прогноз остатка на on_date + N дней (на основе текущего stock + средней скорости заказов)
   - [ ] Юнит-тесты: 5+ кейсов (с overrides и без, монопаллет / штучный, разные склады)
 - **Зависимости:** UNIT-PLAN-002, UNIT-PLAN-003, UNIT-PLAN-004, TASK-LEAD-018
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -824,7 +824,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] RBAC: director + head + manager (manager — только свои бренды)
   - [ ] Smoke в `tests/test_unit_plan_api.py`
 - **Зависимости:** UNIT-PLAN-008
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -846,7 +846,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] audit_log на overrides CUD + snapshot CUD
   - [ ] Pydantic-схемы для request/response
 - **Зависимости:** UNIT-PLAN-008
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -866,7 +866,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] Фильтры sticky сверху
   - [ ] Mobile/tablet adaptation
 - **Зависимости:** TASK-LEAD-018, UNIT-PLAN-009
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -887,7 +887,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] Меню-пункт «UNIT-план» с RBAC (директор+head — все, manager — свои бренды)
   - [ ] TypeScript типы для UnitPlanRow
 - **Зависимости:** UNIT-PLAN-009, UNIT-PLAN-011
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -906,7 +906,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] Анимация slide-in/out
   - [ ] Для manager: overrides доступны (он управляет своими брендами)
 - **Зависимости:** UNIT-PLAN-010, UNIT-PLAN-012
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -925,7 +925,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] Brand-filter для manager
   - [ ] Audit_log записывается (export = read, можно опционально)
 - **Зависимости:** UNIT-PLAN-009
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -942,7 +942,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] API уже готов (UNIT-PLAN-010)
   - [ ] RBAC: director + head (CUD), manager — read своих
 - **Зависимости:** UNIT-PLAN-010, UNIT-PLAN-012
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -960,7 +960,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] Цвет-маркировка: красный если OOS, жёлтый если < 14 дней
   - [ ] Юнит-тесты на forecast_stock_on_date
 - **Зависимости:** UNIT-PLAN-008, UNIT-PLAN-012
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -977,7 +977,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] UI: input'ы в top-panel для настройки окон
   - [ ] Юнит-тесты
 - **Зависимости:** UNIT-PLAN-008, UNIT-PLAN-012
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -996,7 +996,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] `ROADMAP.md` — пункт «UNIT-план» помечен выполненным
   - [ ] `CONTINUE_HERE.md` — топовая запись о завершении инициативы
 - **Зависимости:** UNIT-PLAN-008..017
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -1013,7 +1013,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] Сводка по типам отклонений (формула / округление / источник данных)
   - [ ] Финальный verdict: «1:1 / приемлемые отклонения / требуется доработка»
 - **Зависимости:** UNIT-PLAN-008..017
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -1031,7 +1031,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] XLSX export уважает brand-filter для manager
   - [ ] Отчёт в `agents/references/qa-unit-plan-rbac-YYYY-MM-DD.md`
 - **Зависимости:** UNIT-PLAN-009, UNIT-PLAN-010, UNIT-PLAN-012, UNIT-PLAN-014
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -1048,7 +1048,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] `wb_tariff_box` имеет 7 записей с разными effective_date (или 1 запись если тарифы не менялись — норма)
   - [ ] Отчёт в `agents/references/qa-unit-plan-tariffs-sync-YYYY-MM-DD.md`
 - **Зависимости:** UNIT-PLAN-005 (deployed)
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -1064,7 +1064,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] Применено в `UnitPlan.tsx` (через Tailwind tokens)
   - [ ] Visual smoke — выглядит консистентно с другими страницами
 - **Зависимости:** UNIT-PLAN-011, UNIT-PLAN-012
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -1082,7 +1082,7 @@ TASK-LEAD-039 frontend (switcher UI)              1 нед  claim Layout.tsx + A
   - [ ] Smoke на проде: `/unit-plan` рендерится, API отвечает, XLSX-export работает
   - [ ] `CONTINUE_HERE.md` обновлён с финальным state
 - **Зависимости:** UNIT-PLAN-018, UNIT-PLAN-019, UNIT-PLAN-020, UNIT-PLAN-021, UNIT-PLAN-022
-- **Статус:** Открыта
+- **Статус:** Выполнено — 2026-05-26 (stale-cleanup (эпик реализован в миграциях 0040-0047 + services/unit_plan*.py + UI /unit-plan))
 
 ---
 
@@ -3074,10 +3074,11 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Оценка:** S (1-2ч)
 - **Описание:** 3 кнопки-пресета рядом со слайдером velocity_boost: «Conservative +30%», «Typical +80%», «Optimistic +150%». Каждая при клике устанавливает соответствующее значение в slider. Под slider'ом — подсказка с публичными бенчмарками по категориям (одежда / электроника / косметика и т.д.) + ссылка на собственную историю «/promotions».
 - **Критерии готовности:**
-  - [ ] 3 кнопки-пресета в `frontend/src/pages/PromoCalculator.tsx` (стиль consistent с другими btn'ами)
-  - [ ] Подсказка под slider'ом (≤2 строки)
-  - [ ] Опционально: differentiated default по `Product.subject` если найдены публичные benchmarks
-- **Статус:** Открыта
+  - [x] 3 кнопки-пресета в `frontend/src/pages/PromoCalculator.tsx` — Conservative +30 / Typical +80 / Optimistic +150 (active-state highlight через `border-accent text-accent`)
+  - [x] Tooltip на каждой объясняет когда выбирать
+  - [x] Подсказка под пресетами (4-5 строк) — общие benchmarks + указатель на TASK-LEAD-100/101
+  - [ ] Differentiated default по `Product.subject` — отложено (требует benchmarks-таблицу; в эпике как часть LEAD-100/101)
+- **Статус:** Выполнено — 2026-05-26
 
 ### TASK-LEAD-100: PromoCalculator auto-suggest boost из истории акций тенанта
 
@@ -3364,11 +3365,22 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Оценка:** S (2-3ч)
 - **Описание:** На странице `/users` (director only) — добавить колонку «Руководитель» с возможностью выбора (dropdown из users того же тенанта). При сохранении — `PUT /api/users/{id}/boss {boss_id: int | null}`. Минорный indicator на share-to-telegram response: показывать «📨 Отправлено: РОПу Петрову» вместо просто «отправлено».
 - **Критерии готовности:**
-  - [ ] Колонка «Руководитель» в `/users` с dropdown'ом (только users тенанта, исключая самого user'а)
-  - [ ] Save через `api.userSetBoss(id, boss_id | null)`
-  - [ ] Frontend feedback при share-to-telegram: показать `recipient: "boss" | "self"` из response
-  - [ ] Опционально: для inactive user'ов — disabled в dropdown'е
+  - [x] Колонка «Руководитель» в `/users` (select, исключает самого user'а + inactive — фильтр `c.id !== u.id && c.is_active`)
+  - [x] `api.userSetBoss(id, boss_id | null)` + invalidate `["users"]`
+  - [x] Tooltip на header'е объясняет smysl («кому уйдут TG-уведомления через notify_user_or_boss»)
+  - [x] Backend validations (HYP-007): self-ref / cross-tenant / cycle detection — `alert(parseError())` на error
+  - [ ] Frontend feedback при share-to-telegram (показать `recipient` из response) — отложено в TASK-LEAD-127
 - **Зависимости:** HYP-007 backend ✅
+- **Статус:** Выполнено — 2026-05-26 (TG-share recipient indicator → 127)
+
+### TASK-LEAD-127: TG-share recipient indicator (HYP-007 follow-up)
+- **Приоритет:** P3 (XS — 15-30 мин)
+- **Описание:** Backend HYP-007 уже возвращает `recipient: "boss" | "self" | "none"` + `boss_id` в response `share-to-telegram`. Frontend сейчас показывает generic «отправлено». Расширить toast/message чтобы показывал «📨 Отправлено РОПу: Петров» (если recipient=boss + лукап boss_id → username) или «📨 Отправлено вам в личку» (если recipient=self).
+- **Критерии готовности:**
+  - [ ] Парсить `recipient` + `boss_id` из mutation response
+  - [ ] Lookup boss_id → user.full_name|username из `usersQ.data?.items` (если grant'нут access)
+  - [ ] Conditional toast/message: «РОПу Петров» / «вам в личку» / «не отправлено»
+- **Зависимости:** TASK-LEAD-125 ✅
 - **Статус:** Открыта
 
 ### HYP-008: ManagerSummary → «карточка менеджера на 1-on-1 prep»

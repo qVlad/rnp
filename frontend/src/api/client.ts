@@ -212,6 +212,8 @@ export const api = {
         is_active: boolean;
         last_login_at: string | null;
         created_at: string | null;
+        // HYP-007: руководитель этого пользователя (для manager → his ROP delivery).
+        boss_id?: number | null;
       }>;
     }>("/api/users"),
   createUser: (body: {
@@ -236,6 +238,14 @@ export const api = {
     }),
   deleteUser: (id: number) =>
     request(`/api/users/${id}`, { method: "DELETE" }),
+  // HYP-007 / TASK-LEAD-125: установить/убрать руководителя для пользователя.
+  // boss_id=null — убрать назначение. Backend проверяет self-ref / cross-tenant /
+  // cycle detection (см. backend/app/api/users.py).
+  userSetBoss: (id: number, boss_id: number | null) =>
+    request<{ ok: boolean; user_id: number; boss_id: number | null }>(
+      `/api/users/${id}/boss`,
+      { method: "PUT", body: JSON.stringify({ boss_id }) },
+    ),
 
   // ── Tenant modules (feature flags) ──
   listTenantModules: () =>

@@ -342,8 +342,40 @@ export default function PromoCalculator() {
               <span className="text-fg font-mono">+{boostPct}%</span>
               <span>500%</span>
             </div>
-            <div className="text-xs text-muted mt-1">
-              В среднем WB-акции дают +50…150%.
+            {/* TASK-LEAD-099 — пресеты boost'а. 3 типичных сценария + benchmarks hint. */}
+            <div className="flex flex-wrap gap-1 mt-2">
+              <button
+                type="button"
+                className={`btn text-xs ${boostPct === 30 ? "border-accent text-accent" : ""}`}
+                onClick={() => setBoostPct(30)}
+                title="Слабая акция / уже популярный товар — стабильный +30%"
+              >
+                Conservative +30%
+              </button>
+              <button
+                type="button"
+                className={`btn text-xs ${boostPct === 80 ? "border-accent text-accent" : ""}`}
+                onClick={() => setBoostPct(80)}
+                title="Средняя акция / средний товар — типично +50…150%, default +80%"
+              >
+                Typical +80%
+              </button>
+              <button
+                type="button"
+                className={`btn text-xs ${boostPct === 150 ? "border-accent text-accent" : ""}`}
+                onClick={() => setBoostPct(150)}
+                title="Сильная скидка / новый товар на хайповой полке — +150% и выше"
+              >
+                Optimistic +150%
+              </button>
+            </div>
+            <div className="text-xs text-muted mt-2 leading-relaxed">
+              📊 По нашим тестам WB-акции дают +50…150% к продажам.{" "}
+              <b>Conservative</b> — для топовых SKU (уже бегут хорошо),{" "}
+              <b>Typical</b> — для среднего портфеля,{" "}
+              <b>Optimistic</b> — для новинок и категорий с высокой
+              эластичностью спроса. Подбор boost'а по истории твоих акций —
+              в следующих этапах эпика (TASK-LEAD-100/101).
             </div>
           </div>
 

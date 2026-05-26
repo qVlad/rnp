@@ -45,7 +45,7 @@ TASKS_LEAD = ROOT / "agents" / "tasks-lead.md"
 BUGS_DEV = ROOT / "agents" / "bugs-developer.md"
 BUGS_UI = ROOT / "agents" / "bugs-design-engineer.md"
 
-ID_PATTERN = re.compile(r"\b(TASK-LEAD|BUG-DEV|BUG-UI)-(\d+)\b")
+ID_PATTERN = re.compile(r"\b(TASK-LEAD|BUG-DEV|BUG-UI|UNIT-PLAN)-(\d+)\b")
 
 
 def _run(cmd: list[str]) -> str:
@@ -83,7 +83,7 @@ def _collect_ids(rng: str) -> dict[str, list[str]]:
 
 
 def _file_for(full_id: str) -> Path:
-    if full_id.startswith("TASK-LEAD-"):
+    if full_id.startswith("TASK-LEAD-") or full_id.startswith("UNIT-PLAN-"):
         return TASKS_LEAD
     if full_id.startswith("BUG-DEV-"):
         return BUGS_DEV
@@ -92,15 +92,15 @@ def _file_for(full_id: str) -> Path:
     raise ValueError(f"unknown id prefix: {full_id}")
 
 
-def _resolved_label(full_id: str, today: str) -> str:
+def _resolved_label(full_id: str, today: str, reason: str = "auto-close") -> str:
     """Pattern для status-замены."""
     if full_id.startswith("BUG-"):
-        return f"Исправлено — {today} (auto-close)"
-    return f"Выполнено — {today} (auto-close)"
+        return f"Исправлено — {today} ({reason})"
+    return f"Выполнено — {today} ({reason})"
 
 
 def _try_close(full_id: str, commits: list[str], today: str,
-               *, auto: bool, dry_run: bool) -> str:
+               *, auto: bool, dry_run: bool, reason: str = "auto-close") -> str:
     """Returns: 'closed' | 'skipped' | 'already-closed' | 'not-found'."""
     path = _file_for(full_id)
     if not path.exists():
@@ -140,7 +140,7 @@ def _try_close(full_id: str, commits: list[str], today: str,
     if not is_open:
         return "already-closed"
 
-    new_status = _resolved_label(full_id, today)
+    new_status = _resolved_label(full_id, today, reason)
     commits_str = ", ".join(commits[:3])
     if len(commits) > 3:
         commits_str += f" + {len(commits) - 3} more"
@@ -169,26 +169,38 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--since", default=None,
                     help="git-range (default: from previous /VERSION commit to HEAD)")
+    ap.add_argument("--ids", default=None,
+                    help="Comma-separated list of IDs to close (bypasses git-log scan). "
+                         "Example: --ids UNIT-PLAN-001,UNIT-PLAN-002. Useful for stale-cleanup "
+                         "когда задачи реализованы, но ID не попали в commit message.")
+    ap.add_argument("--reason", default="auto-close",
+                    help="Suffix в новом статусе. Default: 'auto-close'. "
+                         "Для stale cleanup: --reason 'stale-cleanup'.")
     ap.add_argument("--auto", action="store_true",
                     help="Non-interactive — close all without prompting")
     ap.add_argument("--dry-run", action="store_true",
                     help="Show what would change, don't write files")
     args = ap.parse_args()
 
-    rng = _resolve_range(args.since)
-    print(f"→ Scanning commit range: {rng}")
-    ids = _collect_ids(rng)
-    if not ids:
-        print("✓ No TASK-LEAD/BUG-DEV/BUG-UI references in range — nothing to close.")
-        return 0
+    if args.ids:
+        explicit_ids = [s.strip() for s in args.ids.split(",") if s.strip()]
+        ids = {full_id: ["(explicit)"] for full_id in explicit_ids}
+        print(f"→ Using explicit IDs: {', '.join(sorted(ids.keys()))}")
+    else:
+        rng = _resolve_range(args.since)
+        print(f"→ Scanning commit range: {rng}")
+        ids = _collect_ids(rng)
+        if not ids:
+            print("✓ No TASK-LEAD/BUG-DEV/BUG-UI/UNIT-PLAN references in range — nothing to close.")
+            return 0
 
-    print(f"→ Found {len(ids)} unique ID(s): {', '.join(sorted(ids.keys()))}")
+        print(f"→ Found {len(ids)} unique ID(s): {', '.join(sorted(ids.keys()))}")
     today = date.today().isoformat()
 
     stats: dict[str, int] = {"closed": 0, "skipped": 0, "already-closed": 0, "not-found": 0}
     for full_id, commits in sorted(ids.items()):
         result = _try_close(full_id, commits, today,
-                            auto=args.auto, dry_run=args.dry_run)
+                            auto=args.auto, dry_run=args.dry_run, reason=args.reason)
         stats[result] += 1
         prefix = {
             "closed": "✓",

@@ -52,6 +52,14 @@ export default function Users() {
     onError: (e: any) => alert(parseError(e.message)),
   });
 
+  // TASK-LEAD-125 / HYP-007: установка boss'а (руководителя).
+  const setBossMut = useMutation({
+    mutationFn: ({ id, boss_id }: { id: number; boss_id: number | null }) =>
+      api.userSetBoss(id, boss_id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
+    onError: (e: any) => alert(parseError(e.message)),
+  });
+
   if (user?.role !== "director") {
     return (
       <div className="card text-warn">
@@ -144,6 +152,12 @@ export default function Users() {
                 <th className="text-left p-2">Логин</th>
                 <th className="text-left p-2">Имя</th>
                 <th className="text-left p-2">Роль</th>
+                <th
+                  className="text-left p-2"
+                  title="HYP-007: руководитель — кому уйдут TG-уведомления от этого user'а через notify_user_or_boss. Если пусто — отправка пойдёт user'у в личку."
+                >
+                  Руководитель
+                </th>
                 <th className="text-left p-2">Активен</th>
                 <th className="text-left p-2">Последний вход</th>
                 <th className="p-2"></th>
@@ -176,6 +190,29 @@ export default function Users() {
                       <option value="manager">manager</option>
                       <option value="head_of_sales">head_of_sales</option>
                       <option value="director">director</option>
+                    </select>
+                  </td>
+                  <td className="p-2">
+                    {/* TASK-LEAD-125: select boss'а — все active users тенанта, кроме самого user'а. */}
+                    <select
+                      className="input text-xs py-1"
+                      value={u.boss_id ?? ""}
+                      onChange={(e: any) => {
+                        const v = e.target.value;
+                        setBossMut.mutate({
+                          id: u.id,
+                          boss_id: v === "" ? null : Number(v),
+                        });
+                      }}
+                    >
+                      <option value="">— не назначен —</option>
+                      {items
+                        .filter((c) => c.id !== u.id && c.is_active)
+                        .map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.full_name || c.username}
+                          </option>
+                        ))}
                     </select>
                   </td>
                   <td className="p-2">
