@@ -625,7 +625,8 @@ type ReconUploadResult =
     };
 
 async function maybeUploadRealizationReport(payload: {
-  rows: unknown[];
+  rows?: unknown[];
+  summary?: Record<string, unknown>;
   hash: string;
   source_url?: string | null;
 }): Promise<ReconUploadResult> {
@@ -638,6 +639,14 @@ async function maybeUploadRealizationReport(payload: {
   }
 
   try {
+    const body: Record<string, unknown> = {
+      source_url: payload.source_url ?? null,
+    };
+    if (payload.summary) {
+      body.summary = payload.summary;
+    } else {
+      body.rows = payload.rows ?? [];
+    }
     const r = await fetch(
       `${settings.rnpUrl.replace(/\/$/, "")}/api/reconciliation-auto/upload-extension`,
       {
@@ -646,10 +655,7 @@ async function maybeUploadRealizationReport(payload: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${settings.rnpToken}`,
         },
-        body: JSON.stringify({
-          rows: payload.rows,
-          source_url: payload.source_url ?? null,
-        }),
+        body: JSON.stringify(body),
       },
     );
     if (r.status === 403) {
@@ -821,11 +827,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     //      `/api/reconciliation-auto/upload-extension`. ----
     if (
       msg?.type === "rnp:realization-report" &&
-      Array.isArray(msg.rows) &&
-      typeof msg.hash === "string"
+      typeof msg.hash === "string" &&
+      (Array.isArray(msg.rows) || (msg.summary && typeof msg.summary === "object"))
     ) {
       const result = await maybeUploadRealizationReport({
-        rows: msg.rows as unknown[],
+        rows: Array.isArray(msg.rows) ? (msg.rows as unknown[]) : undefined,
+        summary:
+          msg.summary && typeof msg.summary === "object"
+            ? (msg.summary as Record<string, unknown>)
+            : undefined,
         hash: msg.hash,
         source_url:
           typeof msg.source_url === "string" ? msg.source_url : null,

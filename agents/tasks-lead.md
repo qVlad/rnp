@@ -3634,8 +3634,9 @@ Round 12 пометил: «standalone-страницы /localization и /transit
   - [x] UI badge «📡 Загружено через расширение: N строк (HH:MM)» в шапке таблицы
   - [ ] Smoke-test на проде: открыть финотчёт в ЛК WB → проверить что данные появились в /reconciliation-auto
 - **Зависимости:** TASK-LEAD-137 ✅
-- **Решение:** Shape-based detection (≥50 строк + rrdId/supplierOperName/realizationreportId в первых 5 строках), не привязано к точному URL endpoint'а — если WB поменяет URL, парсер выживет. Сам endpoint неизвестен документально на 2026-05.
-- **Статус:** Выполнено — 2026-05-26 (smoke-test остаётся за пользователем)
+- **Решение v1:** Shape-detection detail-строк (≥50). **Провал smoke-теста** — ЛК `/reports-weekly/{id}/details` пагинирует по 15 строк → порог не срабатывал.
+- **Решение v2 (pivot 2026-05-26):** Переключились на endpoint **сводки** `/reports-weekly/{id}` (без /details) — отдаёт готовые итоги одним fetch'ем. Shape `{data: {totalSale, forPay, deliveryRub, paidStorageSum, paidAcceptanceSum, penalty, paidWithholdingSum, dateFrom, dateTo, detailsCount}}`. Маппим 7 метрик (правила 1,2,3,4,5,7,8). Детальные (14/15/16/17) сводка не даёт — ручной ввод / detail-fallback. Backend `_handle_summary_upload` + `_summary_to_metrics`. Interceptor `looksLikeReportSummary` приоритетнее detail-парса.
+- **Статус:** Выполнено — 2026-05-26 (v0.43.2; smoke-test summary-варианта за пользователем после rebuild extension)
 
 ### TASK-LEAD-139: Документация `RECON_GUIDE.md` — ручная сверка
 - **Приоритет:** P2 (S, 2-4ч)

@@ -78,7 +78,58 @@
     return `n${arr.length}-h${h.toString(16)}`;
   }
 
+  /** Детект сводки отчёта реализации `/reports-weekly/{id}` (без /details).
+   *  Shape: `{data: {totalSale, forPay, deliveryRub, dateFrom, dateTo, ...}}`.
+   *  Это ГОТОВЫЕ итоги недели — единый fetch, без пагинации. Предпочтительнее
+   *  detail-строк (которые ЛК отдаёт по 15 на страницу). */
+  function looksLikeReportSummary(
+    raw: unknown,
+  ): Record<string, unknown> | null {
+    if (raw === null || typeof raw !== "object") return null;
+    const obj = raw as Record<string, unknown>;
+    const data = (obj.data ?? obj) as Record<string, unknown>;
+    if (!data || typeof data !== "object") return null;
+    // Характерные поля сводки: forPay + deliveryRub + dateFrom/dateTo.
+    const hasForPay = "forPay" in data;
+    const hasDelivery = "deliveryRub" in data;
+    const hasDates = "dateFrom" in data && "dateTo" in data;
+    if (hasForPay && hasDelivery && hasDates) {
+      return data;
+    }
+    return null;
+  }
+
+  function summaryHash(s: Record<string, unknown>): string {
+    const str = JSON.stringify({
+      f: s.forPay,
+      d: s.deliveryRub,
+      df: s.dateFrom,
+      dt: s.dateTo,
+      id: s.id,
+    });
+    let h = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+    }
+    return `sum-h${h.toString(16)}`;
+  }
+
   function maybePost(url: string, raw: unknown): void {
+    // 1. Приоритет — сводка (единый fetch с итогами).
+    const summary = looksLikeReportSummary(raw);
+    if (summary) {
+      const hash = summaryHash(summary);
+      if (hash === lastPostedHash) return;
+      lastPostedHash = hash;
+      console.log(`${TAG} matched report SUMMARY from`, url, summary);
+      window.postMessage(
+        { __rnp: "wb-realization-report", url, summary, hash },
+        "*",
+      );
+      return;
+    }
+    // 2. Fallback — массив detail-строк (если ЛK когда-нибудь вернёт всё разом).
     const arr = looksLikeRealizationReport(raw);
     if (!arr) return;
     const hash = quickHash(arr);
@@ -89,12 +140,7 @@
       url,
     );
     window.postMessage(
-      {
-        __rnp: "wb-realization-report",
-        url,
-        rows: arr,
-        hash,
-      },
+      { __rnp: "wb-realization-report", url, rows: arr, hash },
       "*",
     );
   }

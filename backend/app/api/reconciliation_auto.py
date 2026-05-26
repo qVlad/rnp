@@ -200,13 +200,100 @@ async def upload_xlsx(
     }
 
 
+def _summary_to_metrics(summary: dict) -> dict[str, float]:
+    """Маппинг WB ЛК сводки `/reports-weekly/{id}` → metrics_by_rule.
+
+    Подтверждено на реальном ответе ЛК 2026-05-26 (report 726447628):
+    forPay / deliveryRub / paidStorageSum / paidAcceptanceSum / penalty /
+    paidWithholdingSum / totalSale.
+
+    Сводка не содержит детальных метрик (14 номинальная комиссия / 15 СПП /
+    16 эквайринг / 17 компенсации) — они остаются на ручной ввод / detail-парс.
+    """
+    def f(key: str) -> float:
+        v = summary.get(key)
+        try:
+            return float(v) if v is not None else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    return {
+        "1": f("totalSale"),          # Сумма продаж / виджет «Продажи»
+        "2": f("forPay"),             # К перечислению
+        "3": f("deliveryRub"),        # Логистика
+        "4": f("paidStorageSum"),     # Хранение
+        "5": f("paidAcceptanceSum"),  # Платная приёмка
+        "7": f("penalty"),            # Штрафы
+        "8": f("paidWithholdingSum"), # Прочие удержания (raw — включает рекламу/Джем)
+    }
+
+
+async def _handle_summary_upload(
+    session: AsyncSession,
+    user: CurrentUser,
+    summary: dict,
+    source_url: Any,
+) -> dict[str, Any]:
+    """Обработка сводки `/reports-weekly/{id}` — UPSERT 7 метрик за неделю."""
+    date_from = summary.get("dateFrom")
+    date_to = summary.get("dateTo")
+    week_start = None
+    if isinstance(date_from, str):
+        try:
+            week_start = datetime.fromisoformat(date_from.replace("Z", "+00:00")).date()
+        except Exception:
+            try:
+                week_start = date.fromisoformat(date_from[:10])
+            except Exception:
+                week_start = None
+    if week_start is None:
+        raise HTTPException(400, "summary.dateFrom не распарсился")
+    week_start_snapped = week_start - timedelta(days=week_start.weekday())
+    week_end_excl = week_start_snapped + timedelta(days=7)
+
+    metrics_by_rule = _summary_to_metrics(summary)
+    details_count = summary.get("detailsCount")
+    rows_count = int(details_count) if isinstance(details_count, (int, float)) else 0
+
+    ins = pg_insert(ExtensionReconUpload).values(
+        tenant_id=user.tenant_id,
+        week_start=week_start_snapped,
+        week_end=week_end_excl,
+        metrics_by_rule=metrics_by_rule,
+        rows_count=rows_count,
+        uploaded_by_user_id=user.id,
+        source_url=source_url[:512] if isinstance(source_url, str) else None,
+    ).on_conflict_do_update(
+        index_elements=["tenant_id", "week_start"],
+        set_={
+            "metrics_by_rule": metrics_by_rule,
+            "rows_count": rows_count,
+            "uploaded_at": func.now(),
+            "uploaded_by_user_id": user.id,
+            "source_url": source_url[:512] if isinstance(source_url, str) else None,
+            "week_end": week_end_excl,
+        },
+    )
+    await session.execute(ins)
+    await session.commit()
+
+    return {
+        "status": "ok",
+        "source": "summary",
+        "week_start": week_start_snapped.isoformat(),
+        "week_end": week_end_excl.isoformat(),
+        "rows_count": rows_count,
+        "metrics_by_rule": metrics_by_rule,
+    }
+
+
 @router.post("/upload-extension")
 async def upload_extension(
     payload: dict = Body(...),
     session: AsyncSession = Depends(get_db_tenant_scoped),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Chrome-extension шлёт raw-строки финотчёта WB из ЛК (TASK-LEAD-138).
+    """Chrome-extension шлёт сводку ИЛИ raw-строки финотчёта WB из ЛК (TASK-LEAD-138).
 
     Body: `{rows: [...wb_api_row...], source_url: str | null}` где rows — массив
     объектов прямо как WB API возвращает (camelCase). Backend нормализует через
@@ -223,10 +310,18 @@ async def upload_extension(
     if user.role not in ("director", "head_of_sales"):
         raise HTTPException(403, "director or head required")
 
-    raw_rows = payload.get("rows") or []
     source_url = payload.get("source_url")
+    summary = payload.get("summary")
+
+    # ── Вариант A: сводка из `/reports-weekly/{id}` (предпочтительно) ──
+    # WB ЛК отдаёт готовые итоги одним fetch'ем. Мапим 7 ключевых метрик.
+    if isinstance(summary, dict) and summary:
+        return await _handle_summary_upload(session, user, summary, source_url)
+
+    # ── Вариант B: detail-строки (fallback) ──
+    raw_rows = payload.get("rows") or []
     if not isinstance(raw_rows, list) or len(raw_rows) == 0:
-        raise HTTPException(400, "rows must be a non-empty list")
+        raise HTTPException(400, "either 'summary' or non-empty 'rows' required")
 
     # Нормализуем (camel → snake + aliases) и считаем метрики
     normalized = [_normalize_v2_row(r) for r in raw_rows if isinstance(r, dict)]
