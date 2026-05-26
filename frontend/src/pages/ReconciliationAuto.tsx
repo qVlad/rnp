@@ -52,12 +52,23 @@ function deltaInfo(
   our: number,
   wb: number | null,
   isCount: boolean,
+  indicative: boolean = false,
 ): { delta: number | null; tone: DeltaTone; label: string } {
   if (wb === null || isNaN(wb)) {
     return { delta: null, tone: "none", label: "—" };
   }
   const d = our - wb;
   const abs = Math.abs(d);
+  // Индикативные метрики (заказы из Воронки) — Δ нейтральная (не красная),
+  // т.к. расхождение с supplier/orders API ожидаемо.
+  if (indicative) {
+    if (abs < 1) return { delta: d, tone: "ok", label: isCount ? "0" : "≈0" };
+    return {
+      delta: d,
+      tone: "none",
+      label: (d > 0 ? "+" : "") + (isCount ? String(d) : fmtMoney(d)),
+    };
+  }
   if (isCount) {
     if (abs === 0) return { delta: d, tone: "ok", label: "0" };
     if (abs <= 2) return { delta: d, tone: "warn", label: d > 0 ? `+${d}` : `${d}` };
@@ -372,7 +383,12 @@ export default function ReconciliationAuto() {
                   wbInput !== undefined && wbInput !== ""
                     ? Number(wbInput.replace(",", ".").replace(/\s/g, ""))
                     : null;
-                const di = deltaInfo(m.our_value, wbNum, !!m.is_count);
+                const di = deltaInfo(
+                  m.our_value,
+                  wbNum,
+                  !!m.is_count,
+                  m.status === "indicative",
+                );
                 const badge = STATUS_BADGE[m.status] ?? STATUS_BADGE.ok;
                 return (
                   <tr
@@ -434,6 +450,11 @@ export default function ReconciliationAuto() {
                         <div className="text-xs text-muted mt-1">
                           📡 Авто из расширения (открой в ЛК WB:{" "}
                           {meta.wb_source}) или введи вручную →
+                        </div>
+                      )}
+                      {meta?.indicative_note && (
+                        <div className="text-xs text-faint mt-1 italic">
+                          ℹ️ {meta.indicative_note}
                         </div>
                       )}
                     </td>

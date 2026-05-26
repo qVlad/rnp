@@ -2755,6 +2755,7 @@ export interface ReconciliationAutoMetric {
     stage2_sale?: number;
     stage3_return?: number;
     wb_source?: string;
+    indicative_note?: string;
   };
 }
 

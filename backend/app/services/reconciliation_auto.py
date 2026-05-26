@@ -253,12 +253,13 @@ async def compute_truestats_metrics(
 
     # 10-11. Заказы — wb_orders по order_dt. WB Воронка «Заказали товаров»
     # считает GROSS (все заказы, включая позже отменённые) — поэтому НЕ
-    # фильтруем is_cancel, чтобы определение совпадало с воронкой WB
-    # (TASK-LEAD-141). Net-вариант (без отмен) давал заниженную цифру.
+    # фильтруем is_cancel (TASK-LEAD-141). Границы недели — по МСК (UTC+3),
+    # т.к. Воронка WB группирует дни по МСК; UTC-границы давали сдвиг суток.
+    _MSK = timezone(timedelta(hours=3))
     orders_where = [
         WbOrder.tenant_id == tenant_id,
-        WbOrder.order_dt >= datetime.combine(week_start, datetime.min.time(), tzinfo=timezone.utc),
-        WbOrder.order_dt < datetime.combine(week_end, datetime.min.time(), tzinfo=timezone.utc),
+        WbOrder.order_dt >= datetime.combine(week_start, datetime.min.time(), tzinfo=_MSK),
+        WbOrder.order_dt < datetime.combine(week_end, datetime.min.time(), tzinfo=_MSK),
     ]
     if brands is not None:
         orders_where.append(WbOrder.brand.in_(list(brands)))
@@ -337,13 +338,19 @@ async def compute_truestats_metrics(
                 ad_cost, status="ok",
                 meta={"wb_source": "ЛК WB → Продвижение → Финансы (фактические списания за период)"}),
         _metric(10, "ads_orders", "Кол-во заказов",
-                "COUNT wb_orders по order_dt (gross, как Воронка «Заказали»)",
-                orders_count, status="ok", is_count=True,
-                meta={"wb_source": "ЛК WB → Аналитика → Воронка продаж (столбец «Заказали товаров в шт»)"}),
+                "COUNT wb_orders по order_dt (gross, МСК)",
+                orders_count, status="indicative", is_count=True,
+                meta={
+                    "wb_source": "ЛК WB → Аналитика → Воронка продаж (столбец «Заказали товаров в шт»)",
+                    "indicative_note": "Воронка WB — отдельная аналитическая система, не сырой фид заказов. Δ с supplier/orders API нормальна (WB это отмечает). Индикативно.",
+                }),
         _metric(11, "ads_orders", "Сумма заказов",
-                "Σ price_with_disc по wb_orders (gross)",
-                orders_sum, status="ok",
-                meta={"wb_source": "ЛК WB → Аналитика → Воронка продаж (столбец «Заказали на сумму»)"}),
+                "Σ price_with_disc по wb_orders (gross, МСК)",
+                orders_sum, status="indicative",
+                meta={
+                    "wb_source": "ЛК WB → Аналитика → Воронка продаж (столбец «Заказали на сумму»)",
+                    "indicative_note": "Воронка WB ≠ supplier/orders API. Δ нормальна — индикативно.",
+                }),
         # group "advanced" (метрика 6 — qty)
         _metric(6, "advanced", "Кол-во проданных шт.",
                 "Σ quantity (Продажа − Возврат)",
