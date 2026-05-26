@@ -3470,6 +3470,23 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Зависимости:** —
 - **Статус:** Выполнено — 2026-05-26
 
+### TASK-LEAD-130: VersionBadge показывает SemVer + commit hash
+- **Приоритет:** P3 (XS, 10 мин)
+- **Источник:** Запрос пользователя 2026-05-26: «Где в интерфейсе увидеть 0.41.0?». Сейчас `VersionBadge` (sidebar + login/signup floating) показывает только git-commit-hash из `APP_VERSION` (которое `remote.sh` ставит как `git rev-parse --short HEAD`). SemVer `/VERSION` в UI нигде не видно — приходится открывать `/VERSION` или `package.json`.
+- **Описание:**
+  - `core/config.py` добавить поле `app_semver: str = "dev"` (читать env `APP_SEMVER`).
+  - `api/version` (`main.py:/api/version`) — возвращать `{version, semver, build_time, name}`.
+  - `scripts/remote.sh` — читать `/VERSION` локально и пробрасывать в `.env` на сервере как `APP_SEMVER=`.
+  - `VersionBadge.tsx` — рендерить `v{semver} · {hash}` (если semver есть и не `"dev"`), fallback на старый формат `v.{version}`. Tooltip: `Версия: {semver}\nКоммит: {hash}\nСобрано: {build_time}`.
+- **Критерии готовности:**
+  - [x] `cfg.app_semver` + env APP_SEMVER
+  - [x] `/api/version` возвращает `semver`
+  - [x] `remote.sh` пробрасывает SemVer
+  - [x] Badge показывает `v0.41.2 · <hash>`
+  - [x] bump.sh patch → 0.41.2, commit + push + deploy
+- **Зависимости:** —
+- **Статус:** Выполнено — 2026-05-26
+
 ---
 
 ## Формат / Жизненный цикл

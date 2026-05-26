@@ -663,7 +663,12 @@ export const api = {
   whoami: () =>
     request<{ wb_token_configured: boolean; debug: boolean }>("/api/whoami"),
   version: () =>
-    request<{ version: string; build_time: string; name: string }>("/api/version"),
+    request<{
+      version: string;
+      semver?: string;
+      build_time: string;
+      name: string;
+    }>("/api/version"),
 
   dashboard: (
     range: { period: "day" | "week" | "month" } | { start: string; end: string },

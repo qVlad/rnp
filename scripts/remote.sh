@@ -259,19 +259,24 @@ cmd_deploy() {
     echo "→ FORCE=1: пропускаю pre-flight проверку задач."
   fi
 
-  # 1.5 Версия: git short hash + ISO build time → в .env на сервере.
-  # Backend exposes их через /api/version, UI показывает в шапке.
-  local version build_time
+  # 1.5 Версия: git short hash + SemVer + ISO build time → в .env на сервере.
+  # Backend exposes их через /api/version, UI показывает в шапке как
+  # `v{semver} · {hash}` (см. components/VersionBadge.tsx).
+  local version semver build_time
   version="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
   if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
     version="${version}-dirty"
   fi
+  # SemVer — source of truth /VERSION (синхронно с pyproject/package.json через bump.sh).
+  semver="$(cat "$(dirname "${BASH_SOURCE[0]}")/../VERSION" 2>/dev/null | tr -d '[:space:]' || echo dev)"
+  [ -z "${semver}" ] && semver="dev"
   build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  echo "→ Версия: ${version} (built ${build_time})"
-  # Обновляем 2 строки в /opt/rnp/.env (создаём если нет).
+  echo "→ Версия: ${semver} (commit ${version}, built ${build_time})"
+  # Обновляем 3 строки в /opt/rnp/.env (создаём если нет).
   ssh_cmd "cd ${REMOTE_DIR} && touch .env && \
     grep -q '^APP_VERSION=' .env && sed -i 's|^APP_VERSION=.*|APP_VERSION=${version}|' .env || echo 'APP_VERSION=${version}' >> .env; \
-    grep -q '^BUILD_TIME=' .env  && sed -i 's|^BUILD_TIME=.*|BUILD_TIME=${build_time}|' .env  || echo 'BUILD_TIME=${build_time}' >> .env"
+    grep -q '^APP_SEMVER='  .env && sed -i 's|^APP_SEMVER=.*|APP_SEMVER=${semver}|'   .env || echo 'APP_SEMVER=${semver}'   >> .env; \
+    grep -q '^BUILD_TIME='  .env && sed -i 's|^BUILD_TIME=.*|BUILD_TIME=${build_time}|'   .env || echo 'BUILD_TIME=${build_time}' >> .env"
 
   # 2. rsync кода.
   echo "→ rsync кода → ${SERVER}:${REMOTE_DIR}/"

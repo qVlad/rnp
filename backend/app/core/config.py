@@ -10,11 +10,13 @@ class Settings(BaseSettings):
     app_name: str = "SellerFriends"
     debug: bool = False
 
-    # Версия сервиса для отображения в UI и логах. Подставляется в .env
-    # скриптом deploy (`./scripts/remote.sh deploy`) как `git rev-parse --short HEAD`.
-    # Локально без deploy — будет 'dev'.
+    # Git commit hash (короткий) — подставляется `./scripts/remote.sh deploy`
+    # как `git rev-parse --short HEAD`. Локально без deploy — 'dev'.
     app_version: str = "dev"
-    # Дата сборки/деплоя (ISO 8601). Тоже подставляется deploy-скриптом.
+    # SemVer (что катим, source of truth — `/VERSION`). Подставляется deploy-скриптом.
+    # В UI бейдж показывает `v{app_semver} · {app_version}`.
+    app_semver: str = "dev"
+    # Дата сборки/деплоя (ISO 8601). Подставляется deploy-скриптом.
     build_time: str = ""
 
     database_url: str = Field(

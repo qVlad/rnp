@@ -196,6 +196,7 @@ async def version() -> dict[str, str]:
     """
     return {
         "version": cfg.app_version,
+        "semver": cfg.app_semver,
         "build_time": cfg.build_time,
         "name": cfg.app_name,
     }
