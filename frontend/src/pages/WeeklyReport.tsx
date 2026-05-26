@@ -437,10 +437,19 @@ export default function WeeklyReport() {
       });
 
       if (result.shared) {
-        setToast({
-          text: `✓ Отправлено в ${result.sent} ${result.sent === 1 ? "чат" : "чат(ов)"}`,
-          type: "ok",
-        });
+        // TASK-LEAD-127: показываем куда фактически ушло сообщение.
+        // recipient === "boss" — manager → его руководителю (HYP-007 redirect).
+        // recipient === "self" — manager → в свою личку (boss не задан).
+        // mode === "all_directors" — broadcast (count = result.sent).
+        let toastText: string;
+        if (result.recipient === "boss") {
+          toastText = "✓ Отправлено руководителю в Telegram";
+        } else if (result.mode === "self") {
+          toastText = "✓ Отправлено в твою личку";
+        } else {
+          toastText = `✓ Отправлено в ${result.sent} ${result.sent === 1 ? "чат" : "чат(ов)"}`;
+        }
+        setToast({ text: toastText, type: "ok" });
       } else if (result.fallback === "download_pdf") {
         await doExport();
         setToast({

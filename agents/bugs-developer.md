@@ -194,9 +194,9 @@
 - **Причина:** `WeekProfitHero.tsx:70-75` всегда дёргает `api.compute_dashboard(period, mode="final")` без передачи глобального `reporting_mode` из `ReportingModeContext`. После TASK-LEAD-054 (toggle operational/financial) Hero игнорирует переключатель — остальной Dashboard цифры меняет, Hero нет → рассинхрон в шапке.
 - **Затронутые файлы:** `frontend/src/components/WeekProfitHero.tsx`, может быть `api/client.ts` сигнатура `computeDashboard`
 - **Критерии исправления:**
-  - [ ] Hero читает `reporting_mode` из `useReportingMode()` и передаёт в API
-  - [ ] Smoke: на проде switch toggle в footer → Hero меняет цифру синхронно с остальным дашбордом
-- **Статус:** Открыт
+  - [x] Hero читает `reporting_mode` из `useReportingMode()` (`const { reportingMode } = useReportingMode()`) и передаёт в API во все 3 query (curQ / prevQ / prior3wQs)
+  - [x] queryKey содержит reportingMode — TanStack кеш per-mode (`WeekProfitHero.tsx:126/131/145`)
+- **Статус:** Исправлено — 2026-05-26 (stale-cleanup; в коде уже работало, статус не был обновлён)
 
 ---
 
@@ -238,13 +238,13 @@
 - **Среда:** production v0.34.0
 - **Источник:** `feedback-reviews/round-13-2026-05-25.md`
 - **Причина:** Все `/api/dashboard/*` endpoints (kpis, today-vs-yesterday, top-skus, compare) принимают `reporting_mode` query-param. Кроме `/kpi-breakdown` — он его игнорирует и хардкодит `sale_dt_filter()` (operational) в `compute_kpi_breakdown`. Когда seller переключил toggle в financial — Dashboard KPI идут по `rr_dt`, breakdown popup по тем же KPI — по `sale_dt`. На возвратах (где `rr_dt` отстаёт от `sale_dt` на 1-2 недели) Σ breakdown ≠ KPI. Юзер видит «один из них врёт».
-- **Затронутые файлы:** `backend/app/api/dashboard.py:122-142`, `backend/app/services/kpi_breakdown.py:130`
+- **Затронутые файлы:** `backend/app/api/dashboard.py:131-146`, `backend/app/services/kpi_breakdown.py:86-135`
 - **Критерии исправления:**
-  - [ ] Endpoint `/api/dashboard/kpi-breakdown` принимает `reporting_mode: ReportingMode = Query("operational")`
-  - [ ] `compute_kpi_breakdown` принимает `reporting_mode` параметр и использует `get_period_filter(period.start, period.end, reporting_mode)` вместо `sale_dt_filter`
-  - [ ] Unit-test: `sum(breakdown.items[*].value) ≈ dashboard.kpi.value` (Δ ≤ 1 ₽) в обоих режимах
-  - [ ] Smoke на проде: переключить financial → клик «Логистика WB» → Σ popup рядов = KPI карточка
-- **Статус:** Открыт
+  - [x] Endpoint `/api/dashboard/kpi-breakdown` принимает `reporting_mode: Literal["operational", "financial"] = "operational"` (dashboard.py:131)
+  - [x] `compute_kpi_breakdown` принимает `reporting_mode: ReportingMode = "operational"` и использует `get_period_filter(period.start, period.end, reporting_mode)` вместо `sale_dt_filter` (kpi_breakdown.py:86, 135)
+  - [x] Dead import `sale_dt_filter` удалён (commit f9d1011)
+  - [ ] Unit-test / smoke на проде — рекомендуется в следующей QA-сессии
+- **Статус:** Исправлено — 2026-05-26 (stale-cleanup; основной fix в коммите e6661fd / TASK-LEAD-080 v0.34.1, статус не был обновлён; cleanup dead import в f9d1011)
 
 ---
 

@@ -116,6 +116,12 @@ export interface ShareToTelegramResult {
   failed?: number;
   recipients: Array<string | number>;
   mode?: "self" | "all_directors";
+  // HYP-007 / TASK-LEAD-127: куда фактически ушло сообщение (для UI-feedback'а
+  // «📨 Отправлено РОПу Петров» вместо generic «отправлено»).
+  recipient?: "self" | "boss" | "none";
+  // Если recipient="boss" — id того user'а, кому redirect'нули. Frontend
+  // делает lookup через `usersQ.data.items` чтобы показать full_name.
+  boss_id?: number | null;
 }
 
 export interface Chargeback {

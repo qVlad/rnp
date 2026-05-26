@@ -3375,12 +3375,18 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 
 ### TASK-LEAD-127: TG-share recipient indicator (HYP-007 follow-up)
 - **Приоритет:** P3 (XS — 15-30 мин)
-- **Описание:** Backend HYP-007 уже возвращает `recipient: "boss" | "self" | "none"` + `boss_id` в response `share-to-telegram`. Frontend сейчас показывает generic «отправлено». Расширить toast/message чтобы показывал «📨 Отправлено РОПу: Петров» (если recipient=boss + лукап boss_id → username) или «📨 Отправлено вам в личку» (если recipient=self).
+- **Описание:** Backend HYP-007 уже возвращает `recipient: "boss" | "self" | "none"` + `boss_id` в response `share-to-telegram`. Frontend сейчас показывает generic «отправлено». Расширить toast чтобы показывал куда фактически ушло.
 - **Критерии готовности:**
-  - [ ] Парсить `recipient` + `boss_id` из mutation response
-  - [ ] Lookup boss_id → user.full_name|username из `usersQ.data?.items` (если grant'нут access)
-  - [ ] Conditional toast/message: «РОПу Петров» / «вам в личку» / «не отправлено»
+  - [x] `ShareToTelegramResult` тип расширен полями `recipient?: "self" | "boss" | "none"` + `boss_id?: number | null`
+  - [x] Conditional toast: `recipient="boss"` → «✓ Отправлено руководителю в Telegram»; `mode="self"` → «✓ Отправлено в твою личку»; иначе — generic «в N чат(ов)»
+  - [ ] Lookup boss_id → full_name из backend (нужен `boss_name` field в response) — отложено в TASK-LEAD-128 (manager не имеет доступа к `/api/users`)
 - **Зависимости:** TASK-LEAD-125 ✅
+- **Статус:** Выполнено — 2026-05-26 (без имени boss'а; для full name → TASK-LEAD-128)
+
+### TASK-LEAD-128: backend boss_name в share-to-telegram response (LEAD-127 follow-up)
+- **Приоритет:** P3 (XS, 15 мин)
+- **Описание:** В `share-to-telegram` response добавить поле `boss_name?: str | null` (`boss.full_name or boss.username`) когда `recipient="boss"`. Frontend сможет показать «✓ Отправлено руководителю Петров Иванович в Telegram». Manager не имеет access к `/api/users`, поэтому lookup на клиенте невозможен — нужно отдать имя в response.
+- **Зависимости:** HYP-007 ✅ + TASK-LEAD-127 ✅
 - **Статус:** Открыта
 
 ### HYP-008: ManagerSummary → «карточка менеджера на 1-on-1 prep»
