@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-LEAD-142",
-  "agent": "Claude Opus 4.7 — main session",
-  "started_at": "2026-05-26T21:11:51Z",
-  "expected_minutes": 15,
-  "notes": "split удержание→review block, not summed into found"
-}
