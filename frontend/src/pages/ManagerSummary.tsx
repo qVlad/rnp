@@ -26,6 +26,14 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import {
+  Area,
+  AreaChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import {
   api,
   type WeeklyReportByManager,
   type WeeklyRecommendation,
@@ -33,6 +41,7 @@ import {
 } from "@/api/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
+import { CHART_COLORS, TOOLTIP_STYLE } from "@/lib/chartTheme";
 import PageHeader from "@/components/PageHeader";
 
 function fmtPeriod(from: string, to: string): string {
@@ -185,6 +194,17 @@ export default function ManagerSummary() {
     queries: historyWeeks.map((ws) => ({
       queryKey: ["manager-summary", "history-comments", ws],
       queryFn: () => api.weeklyReportCommentList(ws),
+      enabled: canAccess && period !== "week",
+    })),
+  });
+
+  // TASK-LEAD-126: тренды KPI charts (sparkline revenue/margin/orders) —
+  // тянем scoreboard за каждую неделю окна, фильтруем строку этого менеджера.
+  // Lazy: только при period !== "week" (на одну неделю тренда нет).
+  const historyScoreboardQs = useQueries({
+    queries: historyWeeks.map((ws) => ({
+      queryKey: ["manager-summary", "history-scoreboard", ws],
+      queryFn: () => api.weeklyReportByManager(ws),
       enabled: canAccess && period !== "week",
     })),
   });
@@ -348,6 +368,97 @@ export default function ManagerSummary() {
           <KpiBlock label="Возвраты" value={fmtNum(manager.returns)} goodUp={false} />
         </div>
       </section>
+
+      {/* TASK-LEAD-126: тренды KPI (sparkline revenue/margin/orders) для периодов
+          месяц / квартал. На «неделя» одной точки тренда нет → секция скрыта. */}
+      {period !== "week" && (() => {
+        // historyWeeks от current назад — reverse чтобы chart рос вправо
+        // (старые недели слева → текущая справа).
+        const isLoading = historyScoreboardQs.some((q) => q.isLoading);
+        const trend = historyScoreboardQs
+          .map((q, idx) => {
+            const ws = historyWeeks[idx];
+            const items = ((q.data as any)?.items ?? []) as WeeklyReportByManager[];
+            const row = items.find((m) => m.manager_user_id === managerId);
+            return row
+              ? {
+                  week: ws,
+                  revenue: row.revenue,
+                  margin: row.margin,
+                  margin_pct: row.margin_pct,
+                  orders: row.orders,
+                }
+              : {
+                  week: ws,
+                  revenue: null as number | null,
+                  margin: null as number | null,
+                  margin_pct: null as number | null,
+                  orders: null as number | null,
+                };
+          })
+          .reverse();
+
+        const filled = trend.filter((t) => t.revenue != null);
+        const hasEnoughData = filled.length >= Math.ceil(trend.length / 2);
+        const periodLabelShort =
+          period === "month" ? "за 4 нед" : "за квартал, 13 нед";
+
+        return (
+          <section className="card">
+            <h2 className="font-medium mb-1">
+              Тренды KPI{" "}
+              <span className="text-muted text-xs font-normal">
+                ({periodLabelShort})
+              </span>
+            </h2>
+            <p className="text-xs text-muted mb-3">
+              Динамика выручки, маржи и заказов менеджера по неделям.
+              Левее — старше, правее — текущая.
+            </p>
+            {isLoading ? (
+              <div className="text-muted text-sm">Загружаю тренды…</div>
+            ) : filled.length === 0 ? (
+              <div className="text-muted text-sm">
+                Менеджер ничего не продавал за выбранный период.
+              </div>
+            ) : !hasEnoughData ? (
+              <div className="text-muted text-sm">
+                Недостаточно данных для тренда (есть точки за {filled.length} из{" "}
+                {trend.length} недель).
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <Sparkline
+                  title="Выручка"
+                  data={trend}
+                  dataKey="revenue"
+                  color={CHART_COLORS[0]}
+                  formatValue={(v) => fmtRub(v)}
+                />
+                <Sparkline
+                  title="Маржа"
+                  data={trend}
+                  dataKey="margin"
+                  color={CHART_COLORS[3]}
+                  formatValue={(v) => fmtRub(v)}
+                  subLabel={(row) =>
+                    row.margin_pct != null
+                      ? `(${fmtPct(row.margin_pct, 1)})`
+                      : ""
+                  }
+                />
+                <Sparkline
+                  title="Заказы"
+                  data={trend}
+                  dataKey="orders"
+                  color={CHART_COLORS[1]}
+                  formatValue={(v) => fmtNum(v)}
+                />
+              </div>
+            )}
+          </section>
+        );
+      })()}
 
       {/* Top-3 рекомендации */}
       {recs.length > 0 && (
@@ -715,6 +826,109 @@ function KpiBlock({
       </span>
       {deltaText && (
         <span className={`text-xs font-mono ${deltaCls}`}>{deltaText}</span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * TASK-LEAD-126: компактный sparkline для KPI-тренда менеджера.
+ * - height=80, width=100% — не давит вертикально.
+ * - XAxis скрыт (hide), YAxis скрыт (hide) — нужны только Area + Tooltip.
+ * - Под графиком: current value (последняя точка) + WoW: prev→current.
+ * - Recharts пропускает null-точки автоматически (connectNulls={false}).
+ */
+type TrendRow = {
+  week: string;
+  revenue: number | null;
+  margin: number | null;
+  margin_pct: number | null;
+  orders: number | null;
+};
+
+function Sparkline({
+  title,
+  data,
+  dataKey,
+  color,
+  formatValue,
+  subLabel,
+}: {
+  title: string;
+  data: TrendRow[];
+  dataKey: "revenue" | "margin" | "orders";
+  color: string;
+  formatValue: (v: number) => string;
+  subLabel?: (row: TrendRow) => string;
+}) {
+  // Current = последняя точка с данными. Prev = предпоследняя точка с данными.
+  const filled = data.filter((d) => d[dataKey] != null);
+  const current = filled.length > 0 ? filled[filled.length - 1] : null;
+  const prev = filled.length > 1 ? filled[filled.length - 2] : null;
+
+  let wowText = "";
+  let wowCls = "text-muted";
+  if (current && prev) {
+    const cur = current[dataKey] as number;
+    const prv = prev[dataKey] as number;
+    if (prv !== 0 && Number.isFinite(prv) && Number.isFinite(cur)) {
+      const pct = ((cur - prv) / Math.abs(prv)) * 100;
+      const arrow = pct === 0 ? "" : pct > 0 ? "▲ +" : "▼ ";
+      wowCls = pct === 0 ? "text-muted" : pct > 0 ? "text-success" : "text-danger";
+      wowText = `${arrow}${pct.toFixed(1)}% WoW`;
+    }
+  }
+
+  const gradId = `spark-grad-${dataKey}`;
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="text-xs text-muted uppercase">{title}</div>
+      <div style={{ width: "100%", height: 80 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={data} margin={{ top: 4, right: 4, left: 4, bottom: 4 }}>
+            <defs>
+              <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={color} stopOpacity={0.35} />
+                <stop offset="100%" stopColor={color} stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <XAxis dataKey="week" hide />
+            <YAxis hide domain={["auto", "auto"]} />
+            <Tooltip
+              contentStyle={TOOLTIP_STYLE}
+              cursor={{ stroke: color, strokeOpacity: 0.3 }}
+              formatter={(value: any) =>
+                value == null
+                  ? ["—", title]
+                  : [formatValue(value as number), title]
+              }
+              labelFormatter={(label: any) => `Неделя ${label}`}
+            />
+            <Area
+              type="monotone"
+              dataKey={dataKey}
+              stroke={color}
+              strokeWidth={2}
+              fill={`url(#${gradId})`}
+              connectNulls={false}
+              isAnimationActive={false}
+              dot={false}
+              activeDot={{ r: 3 }}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="flex items-baseline gap-2">
+        <span className="text-lg font-mono font-semibold">
+          {current ? formatValue(current[dataKey] as number) : "—"}
+        </span>
+        {current && subLabel && (
+          <span className="text-muted text-xs">{subLabel(current)}</span>
+        )}
+      </div>
+      {wowText && (
+        <span className={`text-xs font-mono ${wowCls}`}>{wowText}</span>
       )}
     </div>
   );
