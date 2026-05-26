@@ -1,24 +1,60 @@
 /**
- * Аудит-артефакт «найдено N₽» (TASK-LEAD-140).
+ * Аудит-артефакт «найдено N₽» (TASK-LEAD-140, таксономия TASK-LEAD-142).
  *
- * Одно число сверху — сколько денег у кабинета утекает или можно вернуть за
- * период — + breakdown по 5 источникам (оспоримые штрафы / минусовые SKU /
- * дохлый сток в хранении / переплата логистики из-за перемеров / убыточные
- * акции) + recon trust-badge «сверено с WB до рубля».
+ * Три ЧЕСТНЫХ итога вместо одной кучи:
+ *   1. 💰 НАЙДЕНО — вернуть (оспоримые удержания/штрафы) + дёшево остановить
+ *      (минусовые проданные SKU, переплата логистики из-за перемеров).
+ *   2. 📦 ЗАМОРОЖЕНО / ПОД РИСКОМ — дохлый сток: хранение капает + капитал
+ *      заморожен в товаре. НЕ чистая экономия (вывоз/распродажа стоит денег).
+ *   3. 📉 УЖЕ ПОТЕРЯНО — убыточные акции постфактум, вернуть нельзя (урок).
  *
- * Используется как ритуал входа в клуб (онбординг кабинета) и печатный
- * sales-артефакт: кнопка «Печать / PDF» → window.print(); scoped print-CSS
- * прячет сайдбар (<aside>) и контролы, оставляя только отчёт.
+ * Печатный/PDF-вид: «Печать / PDF» → window.print(); scoped print-CSS прячет
+ * сайдбар (<aside>) и контролы. Backend: GET /api/leak-report.
  *
- * Backend: GET /api/leak-report (services/leak_report.py).
+ * NB (тех-долг TASK-LEAD-142): тип ответа описан ЛОКАЛЬНО здесь, а не в
+ * api/client.ts — на момент правки client.ts держал чужой uncommitted WIP
+ * (recon-auto), трогать его нельзя. Консолидировать `LeakReportV2` в client.ts
+ * когда сосед закоммитит.
  */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { LeakBreakdownItem } from "@/api/client";
 import { api } from "@/api/client";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 import { DateRangePicker } from "@/components/DateRangePicker";
+
+type LeakGroup = "found" | "frozen" | "lost";
+
+interface LeakItem {
+  leak_type: string;
+  label: string;
+  group: LeakGroup;
+  kind: string;
+  icon: string;
+  amount: number;
+  count: number;
+  hint: string;
+  frozen_capital?: number;
+  details: Array<Record<string, any>>;
+}
+
+interface LeakReportV2 {
+  period: { from: string; to: string };
+  totals: {
+    found_rub: number;
+    frozen_rub: number;
+    frozen_capital_rub: number;
+    lost_rub: number;
+  };
+  trust_badge: {
+    available: boolean;
+    weeks_total?: number;
+    weeks_matched?: number;
+    max_diff_pct?: number;
+  };
+  breakdown: LeakItem[];
+  generated_at: string;
+}
 
 function iso(d: Date) {
   return d.toISOString().slice(0, 10);
@@ -40,37 +76,38 @@ const PRINT_CSS = `
 }
 `;
 
-/** Карточка одного источника утечки + раскрытие топ-SKU. */
-function LeakCard({ item }: { item: LeakBreakdownItem }) {
+const KIND_CHIP: Record<string, { label: string; cls: string }> = {
+  recover: { label: "вернуть", cls: "bg-emerald-100 text-emerald-700" },
+  stop: { label: "остановить", cls: "bg-amber-100 text-amber-700" },
+  frozen: { label: "заморожено", cls: "bg-sky-100 text-sky-700" },
+  lost: { label: "потеряно", cls: "bg-rose-100 text-rose-700" },
+};
+
+function LeakCard({ item }: { item: LeakItem }) {
   const [open, setOpen] = useState(false);
   const empty = item.amount <= 0 && item.count === 0;
+  const chip = KIND_CHIP[item.kind] ?? { label: item.kind, cls: "bg-gray-100 text-gray-600" };
   return (
-    <div
-      className={`lr-card card p-4 ${empty ? "opacity-60" : ""}`}
-      data-kind={item.kind}
-    >
+    <div className={`lr-card card p-4 ${empty ? "opacity-60" : ""}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-lg">{item.icon}</span>
             <span className="font-medium">{item.label}</span>
-            <span
-              className={`text-tiny px-1.5 py-0.5 rounded ${
-                item.kind === "recover"
-                  ? "bg-emerald-100 text-emerald-700"
-                  : "bg-amber-100 text-amber-700"
-              }`}
-            >
-              {item.kind === "recover" ? "вернуть" : "прекратить"}
+            <span className={`text-tiny px-1.5 py-0.5 rounded ${chip.cls}`}>
+              {chip.label}
             </span>
           </div>
           <p className="text-tiny text-muted mt-1">{item.hint}</p>
         </div>
         <div className="text-right shrink-0">
-          <div className="text-h3 font-semibold tabular-nums">
-            {fmtRub(item.amount)}
-          </div>
+          <div className="text-h3 font-semibold tabular-nums">{fmtRub(item.amount)}</div>
           <div className="text-tiny text-muted">{fmtNum(item.count)} SKU/строк</div>
+          {item.frozen_capital != null && item.frozen_capital > 0 && (
+            <div className="text-tiny text-sky-700 mt-0.5">
+              заморожено в товаре: {fmtRub(item.frozen_capital)}
+            </div>
+          )}
         </div>
       </div>
 
@@ -92,9 +129,8 @@ function LeakCard({ item }: { item: LeakBreakdownItem }) {
   );
 }
 
-/** Таблица деталей — колонки зависят от типа источника. */
-function DetailTable({ item }: { item: LeakBreakdownItem }) {
-  const rows = item.details as Array<Record<string, any>>;
+function DetailTable({ item }: { item: LeakItem }) {
+  const rows = item.details;
   if (item.leak_type === "recoverable_chargebacks") {
     return (
       <table className="w-full text-tiny">
@@ -110,7 +146,6 @@ function DetailTable({ item }: { item: LeakBreakdownItem }) {
       </table>
     );
   }
-  // SKU-таблицы (минус-маржа / дохлый сток / перемеры / акции)
   return (
     <table className="w-full text-tiny">
       <tbody>
@@ -118,11 +153,7 @@ function DetailTable({ item }: { item: LeakBreakdownItem }) {
           <tr key={i} className="border-t border-border/50">
             <td className="py-1 w-8">
               {r.photo_url ? (
-                <img
-                  src={String(r.photo_url)}
-                  alt=""
-                  className="w-6 h-6 rounded object-cover"
-                />
+                <img src={String(r.photo_url)} alt="" className="w-6 h-6 rounded object-cover" />
               ) : null}
             </td>
             <td className="py-1">
@@ -147,7 +178,7 @@ function detailMeta(type: string, r: Record<string, any>): string {
     case "negative_margin_skus":
       return `${fmtPct(Number(r.margin_pct))} · ${fmtNum(r.units_sold)} шт`;
     case "dead_stock_storage":
-      return `сток ${fmtNum(r.stock)}`;
+      return `сток ${fmtNum(r.stock)} · заморожено ${fmtRub(Number(r.frozen_capital ?? 0))}`;
     case "remeasure_logistics":
       return `${Number(r.prev_volume_l)}→${Number(r.volume_l)} л · ${fmtNum(r.units_sold)} шт`;
     case "loss_making_promos":
@@ -162,15 +193,18 @@ export default function LeakReport() {
 
   const q = useQuery({
     queryKey: ["leak-report", range.from, range.to],
-    queryFn: () => api.leakReport({ from: range.from, to: range.to }),
+    queryFn: () =>
+      api.leakReport({ from: range.from, to: range.to }) as unknown as Promise<LeakReportV2>,
   });
 
   const data = q.data;
   const badge = data?.trust_badge;
-  const sorted = useMemo(
-    () => (data ? [...data.breakdown].sort((a, b) => b.amount - a.amount) : []),
-    [data],
-  );
+  const byGroup = useMemo(() => {
+    const g: Record<LeakGroup, LeakItem[]> = { found: [], frozen: [], lost: [] };
+    if (data) for (const it of data.breakdown) g[it.group]?.push(it);
+    for (const k of Object.keys(g) as LeakGroup[]) g[k].sort((a, b) => b.amount - a.amount);
+    return g;
+  }, [data]);
 
   return (
     <div className="max-w-4xl">
@@ -180,12 +214,7 @@ export default function LeakReport() {
         subtitle={`Период ${range.from} → ${range.to}`}
         actions={
           <div className="lr-no-print flex items-end gap-2">
-            <DateRangePicker
-              from={range.from}
-              to={range.to}
-              onChange={setRange}
-              compact
-            />
+            <DateRangePicker from={range.from} to={range.to} onChange={setRange} compact />
             <button
               type="button"
               className="btn"
@@ -199,47 +228,79 @@ export default function LeakReport() {
       />
 
       {q.isLoading && <div className="text-muted">Считаем утечки…</div>}
-      {q.isError && (
-        <div className="text-danger">Ошибка: {(q.error as Error).message}</div>
-      )}
+      {q.isError && <div className="text-danger">Ошибка: {(q.error as Error).message}</div>}
 
       {data && (
         <>
-          {/* Hero — одно число */}
-          <div className="card p-6 mb-4 text-center">
+          {/* Hero — НАЙДЕНО (вернуть + дёшево остановить) */}
+          <div className="card p-6 mb-3 text-center">
             <div className="text-tiny text-muted uppercase tracking-wide">
-              Найдено за период
+              Найдено за период · можно вернуть или дёшево остановить
             </div>
             <div className="text-[40px] leading-none font-bold tabular-nums my-2">
-              {fmtRub(data.total_found_rub)}
-            </div>
-            <div className="flex justify-center gap-6 text-tiny mt-3">
-              <span className="text-emerald-700">
-                💰 Можно вернуть: <b>{fmtRub(data.total_recover_rub)}</b>
-              </span>
-              <span className="text-amber-700">
-                🩹 Можно прекратить: <b>{fmtRub(data.total_prevent_rub)}</b>
-              </span>
+              {fmtRub(data.totals.found_rub)}
             </div>
             {badge?.available && (
-              <div className="text-tiny text-muted mt-3">
-                ✅ Сверено с WB-кабинетом: {badge.weeks_matched}/{badge.weeks_total}{" "}
-                недель совпали до 1% (макс. расхождение {fmtPct(badge.max_diff_pct)})
+              <div className="text-tiny text-muted mt-2">
+                ✅ Сверено с WB-кабинетом: {badge.weeks_matched}/{badge.weeks_total} недель
+                совпали до 1% (макс. расхождение {fmtPct(badge.max_diff_pct)})
               </div>
             )}
           </div>
 
-          {/* Breakdown */}
-          <div className="grid grid-cols-1 gap-3">
-            {sorted.map((item) => (
-              <LeakCard key={item.leak_type} item={item} />
-            ))}
+          {/* Два вторичных итога — НЕ входят в «найдено» */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+            <div className="card p-4">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">📦</span>
+                <span className="font-medium">Заморожено / под риском</span>
+              </div>
+              <div className="text-h3 font-semibold tabular-nums mt-1">
+                {fmtRub(data.totals.frozen_capital_rub)}
+              </div>
+              <div className="text-tiny text-muted">
+                капитал в дохлом стоке · хранение капает {fmtRub(data.totals.frozen_rub)}/период.
+                Прекратить стоит денег (вывоз/распродажа) — не чистая экономия.
+              </div>
+            </div>
+            <div className="card p-4">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">📉</span>
+                <span className="font-medium">Уже потеряно</span>
+              </div>
+              <div className="text-h3 font-semibold tabular-nums mt-1">
+                {fmtRub(data.totals.lost_rub)}
+              </div>
+              <div className="text-tiny text-muted">
+                убыточные акции постфактум — вернуть нельзя, урок на будущее.
+              </div>
+            </div>
           </div>
 
+          {/* Breakdown по группам */}
+          {(
+            [
+              ["found", "💰 Найдено — вернуть и остановить"],
+              ["frozen", "📦 Заморожено / под риском"],
+              ["lost", "📉 Уже потеряно"],
+            ] as [LeakGroup, string][]
+          ).map(([group, title]) =>
+            byGroup[group].length === 0 ? null : (
+              <div key={group} className="mb-4">
+                <h2 className="text-tiny text-muted uppercase tracking-wide mb-2">{title}</h2>
+                <div className="grid grid-cols-1 gap-3">
+                  {byGroup[group].map((item) => (
+                    <LeakCard key={item.leak_type} item={item} />
+                  ))}
+                </div>
+              </div>
+            ),
+          )}
+
           <p className="text-tiny text-muted mt-4">
-            Отчёт сформирован {new Date(data.generated_at).toLocaleString("ru-RU")}.
-            Суммы — оценка по данным кабинета; «вернуть» = претензии в WB, «прекратить»
-            = управленческие решения по SKU.
+            Отчёт сформирован {new Date(data.generated_at).toLocaleString("ru-RU")}. «Найдено» =
+            возврат + дёшево остановить. «Заморожено» и «потеряно» в эту сумму НЕ входят: первое
+            требует затрат на вывоз/распродажу, второе уже потрачено.
           </p>
         </>
       )}

@@ -41,6 +41,13 @@ from app.db.models import (
 )
 from app.services.chargebacks import CATEGORY_LABELS, INCOME_CATEGORIES
 from app.services.pnl_reconciliation import build_reconciliation
+
+# Категории чарджбэков, которые НЕ идут в «оспоримые / вернуть» (TASK-LEAD-142):
+#   - damage_compensation  — «Компенсация ущерба»: деньги В ПОЛЬЗУ селлера
+#     (WB возмещает нам за порчу), это доход, а не штраф к возврату.
+#   - voluntary_compensation — «Добровольная компенсация при возврате»: селлер
+#     согласился сам → оспорить нельзя (и это его расход, не возвратный).
+NON_RECOVERABLE_CATEGORIES = set(INCOME_CATEGORIES) | {"voluntary_compensation"}
 from app.services.period_aggregates import OP_SALE
 from app.services.unit_economics import build_unit_economics
 
@@ -94,7 +101,7 @@ async def _recoverable_chargebacks(
         )
         .where(
             Chargeback.status.in_(("new", "disputing")),
-            Chargeback.category.notin_(tuple(INCOME_CATEGORIES)),
+            Chargeback.category.notin_(tuple(NON_RECOVERABLE_CATEGORIES)),
             Chargeback.operation_dt >= date_from,
             Chargeback.operation_dt <= date_to,
         )
@@ -164,8 +171,16 @@ def _negative_margin(items: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _dead_stock_storage(items: list[dict[str, Any]]) -> dict[str, Any]:
-    """Платим хранение за сток, который не продаётся (units_sold_gross ≤ порог)."""
+def _dead_stock_storage(
+    items: list[dict[str, Any]], cogs: dict[int, float]
+) -> dict[str, Any]:
+    """Платим хранение за сток, который не продаётся (units_sold_gross ≤ порог).
+
+    Это НЕ чистая экономия (TASK-LEAD-142): чтобы прекратить, надо распродать
+    (потеря маржи) либо вывезти/утилизировать (плата WB + логистика). Плюс в
+    товаре заморожен капитал = stock × COGS. Поэтому отдаём и `storage` (что
+    капает за период), и `frozen_capital` (сколько заморожено в товаре).
+    """
     dead = [
         it
         for it in items
@@ -175,8 +190,16 @@ def _dead_stock_storage(items: list[dict[str, Any]]) -> dict[str, Any]:
     ]
     dead.sort(key=lambda it: _f(it.get("storage")), reverse=True)
     total = round(sum(_f(it.get("storage")) for it in dead), 2)
+    frozen_capital = round(
+        sum(
+            int(it.get("stock", 0) or 0) * cogs.get(int(it["nm_id"]), 0.0)
+            for it in dead
+        ),
+        2,
+    )
     return {
         "amount": total,
+        "frozen_capital": frozen_capital,
         "count": len(dead),
         "top_skus": [
             {
@@ -186,6 +209,9 @@ def _dead_stock_storage(items: list[dict[str, Any]]) -> dict[str, Any]:
                 "photo_url": it.get("photo_url"),
                 "storage": round(_f(it.get("storage")), 2),
                 "stock": int(it.get("stock", 0) or 0),
+                "frozen_capital": round(
+                    int(it.get("stock", 0) or 0) * cogs.get(int(it["nm_id"]), 0.0), 2
+                ),
             }
             for it in dead[:TOP_SKU_LIMIT]
         ],
@@ -338,6 +364,7 @@ async def _loss_making_promos(
     date_from: date,
     date_to: date,
     brands: set[str] | None,
+    cogs: dict[int, float],
 ) -> dict[str, Any]:
     """Акционные продажи, ушедшие в минус после комиссии/логистики/COGS.
 
@@ -376,7 +403,6 @@ async def _loss_making_promos(
     if not rows:
         return {"amount": 0.0, "count": 0, "top_skus": []}
 
-    cogs = await _latest_cogs_per_unit(session)
     meta_rows = (
         await session.execute(
             select(Product.nm_id, Product.vendor_code, Product.brand, Product.photo_url).where(
@@ -458,55 +484,59 @@ async def build_leak_report(
     units_by_nm = {
         int(it["nm_id"]): int(it.get("units_sold_gross", 0) or 0) for it in items
     }
+    cogs = await _latest_cogs_per_unit(session)
 
     chargebacks = await _recoverable_chargebacks(
         session, date_from=date_from, date_to=date_to, brands=brands
     )
     negative = _negative_margin(items)
-    dead_stock = _dead_stock_storage(items)
+    dead_stock = _dead_stock_storage(items, cogs)
     remeasure = await _remeasure_logistics_overpay(
         session, date_to=date_to, units_by_nm=units_by_nm, brands=brands
     )
     promos = await _loss_making_promos(
-        session, date_from=date_from, date_to=date_to, brands=brands
+        session, date_from=date_from, date_to=date_to, brands=brands, cogs=cogs
     )
     badge = await _trust_badge(session, brands=brands)
 
+    # ── 3 честных итога (TASK-LEAD-142) ──────────────────────────────────
+    #   found  — деньги, которые реально вернуть / дёшево остановить
+    #   frozen — дохлый сток: хранение капает + капитал заморожен, действие
+    #            (вывоз/распродажа/утилизация) тоже стоит денег → НЕ чистая экономия
+    #   lost   — уже потеряно (убыточные акции постфактум), вернуть нельзя — урок
     breakdown = [
         {
             "leak_type": "recoverable_chargebacks",
-            "label": "Оспоримые штрафы и удержания",
+            "label": "Удержания и штрафы WB — разобрать",
+            "group": "found",
             "kind": "recover",
             "icon": "💰",
             "amount": chargebacks["amount"],
             "count": chargebacks["count"],
-            "hint": "Можно подать претензию в WB и вернуть",
+            "hint": (
+                "WB удержал/оштрафовал — разобрать и оспорить спорные. "
+                "Выигрыш не гарантирован, часть удержаний легитимна (логистика/"
+                "коррекции). «Компенсация ущерба» и «добровольная компенсация» "
+                "сюда НЕ входят (первое — доход селлера, второе — не оспаривается)."
+            ),
             "details": chargebacks["by_category"],
         },
         {
             "leak_type": "negative_margin_skus",
             "label": "SKU, проданные в убыток",
-            "kind": "prevent",
+            "group": "found",
+            "kind": "stop",
             "icon": "📉",
             "amount": negative["amount"],
             "count": negative["count"],
-            "hint": "Чистая прибыль по SKU отрицательна — поднять цену / срезать рекламу / вывести",
+            "hint": "Реально проданы с отрицательной прибылью — поднять цену / срезать рекламу (действие почти бесплатное)",
             "details": negative["top_skus"],
-        },
-        {
-            "leak_type": "dead_stock_storage",
-            "label": "Платное хранение дохлого стока",
-            "kind": "prevent",
-            "icon": "📦",
-            "amount": dead_stock["amount"],
-            "count": dead_stock["count"],
-            "hint": "Платим за хранение остатков, которые не продаются — распродать / вывезти",
-            "details": dead_stock["top_skus"],
         },
         {
             "leak_type": "remeasure_logistics",
             "label": "Переплата логистики из-за перемеров WB",
-            "kind": "prevent",
+            "group": "found",
+            "kind": "stop",
             "icon": "🔧",
             "amount": remeasure["amount"],
             "count": remeasure["count"],
@@ -514,30 +544,45 @@ async def build_leak_report(
             "details": remeasure["top_skus"],
         },
         {
+            "leak_type": "dead_stock_storage",
+            "label": "Хранение дохлого стока",
+            "group": "frozen",
+            "kind": "frozen",
+            "icon": "📦",
+            "amount": dead_stock["amount"],
+            "frozen_capital": dead_stock["frozen_capital"],
+            "count": dead_stock["count"],
+            "hint": (
+                "Хранение капает + в товаре заморожен капитал (сток×COGS). "
+                "Прекратить = распродать (потеря маржи) либо вывезти/утилизировать "
+                "(плата WB + логистика). Это НЕ чистая экономия, а сигнал разобраться."
+            ),
+            "details": dead_stock["top_skus"],
+        },
+        {
             "leak_type": "loss_making_promos",
-            "label": "Убыточные акции",
-            "kind": "prevent",
+            "label": "Убыточные акции (уже потеряно)",
+            "group": "lost",
+            "kind": "lost",
             "icon": "🏷️",
             "amount": promos["amount"],
             "count": promos["count"],
-            "hint": "Эти SKU торговались на акции ниже себестоимости+логистики",
+            "hint": "Эти SKU торговались на акции ниже себестоимости+логистики. Вернуть нельзя — урок на будущее.",
             "details": promos["top_skus"],
         },
     ]
 
-    total_found = round(sum(b["amount"] for b in breakdown), 2)
-    total_recover = round(
-        sum(b["amount"] for b in breakdown if b["kind"] == "recover"), 2
-    )
-    total_prevent = round(
-        sum(b["amount"] for b in breakdown if b["kind"] == "prevent"), 2
-    )
+    def _sum(group: str) -> float:
+        return round(sum(b["amount"] for b in breakdown if b["group"] == group), 2)
 
     return {
         "period": {"from": date_from.isoformat(), "to": date_to.isoformat()},
-        "total_found_rub": total_found,
-        "total_recover_rub": total_recover,
-        "total_prevent_rub": total_prevent,
+        "totals": {
+            "found_rub": _sum("found"),
+            "frozen_rub": _sum("frozen"),
+            "frozen_capital_rub": dead_stock["frozen_capital"],
+            "lost_rub": _sum("lost"),
+        },
         "trust_badge": badge,
         "breakdown": breakdown,
         "generated_at": datetime.now(timezone.utc).isoformat(),
