@@ -231,7 +231,7 @@ async def compute_truestats_metrics(
             )
         ))
     ads_row = (await session.execute(
-        select(func.coalesce(func.sum(WbAdStatsDaily.sum), 0).label("ad_cost"))
+        select(func.coalesce(func.sum(WbAdStatsDaily.sum_spent), 0).label("ad_cost"))
         .where(and_(*ads_where))
     )).one()
     ad_cost = float(ads_row.ad_cost or 0)
