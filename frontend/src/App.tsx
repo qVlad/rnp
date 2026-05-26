@@ -58,6 +58,7 @@ import AbTestNew from "./pages/AbTestNew";
 import AbTestDetail from "./pages/AbTestDetail";
 import ManagersKpi from "./pages/ManagersKpi";
 import PromoCalculator from "./pages/PromoCalculator";
+import LeakReport from "./pages/LeakReport";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, needsBootstrap } = useAuth();
@@ -143,6 +144,14 @@ export default function App() {
             }
           />
           <Route path="chargebacks" element={<Chargebacks />} />
+          <Route
+            path="leak-report"
+            element={
+              <DirectorOrHead>
+                <LeakReport />
+              </DirectorOrHead>
+            }
+          />
           <Route
             path="managers-kpi"
             element={

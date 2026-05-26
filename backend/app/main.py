@@ -40,6 +40,7 @@ from app.api import (
     off_platform,
     opex,
     plan_edit_requests,
+    leak_report,
     plans,
     pnl,
     product_dimensions,
@@ -270,6 +271,7 @@ app.include_router(managers_kpi.router)
 app.include_router(manager_summary.router)
 app.include_router(weekly_report.router)
 app.include_router(metric_templates.router)
+app.include_router(leak_report.router)
 app.include_router(promo_calculator.router)
 app.include_router(reconciliation_4way.router)
 app.include_router(reconciliation_auto.router)

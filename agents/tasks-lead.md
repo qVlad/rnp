@@ -3660,6 +3660,60 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Зависимости:** TASK-LEAD-132..136 (правильные формулы у нас)
 - **Статус:** Запланировано — 2026-05-26
 
+### TASK-LEAD-140: Leak-report — «найдено N₽» аудит-артефакт (club onboarding)
+- **Приоритет:** P1 (M, 1-2д на v1)
+- **Источник:** Запрос пользователя 2026-05-26 — коммерциализация РНП через
+  модель «закрытый клуб селлеров» (founding-cohort, founder-led). Аудит-отчёт =
+  ритуал входа в клуб: подключаем кабинет → показываем одно число «сколько денег
+  утекает/можно вернуть». Он же sales-артефакт для предпродажи (свой кабинет как
+  кейс). См. memory `project-internal-tool` (обновлён 2026-05-26).
+- **Описание:** Новый сервис `services/leak_report.py` + endpoint `/api/leak-report`
+  (имя `/api/audit-*` НЕ брать — занято mutation audit-log'ом). Агрегирует
+  «найденные деньги» по периоду в одно число + breakdown по категориям.
+  **Recon — НЕ источник суммы**, а badge доверия «✅ сверено с WB 1:1 (Δ0₽)».
+  - **Источники (готовы к reuse):**
+    - 💰 Оспоримые штрафы/чарджбэки — `Chargeback.amount_rub − recovered_amount`,
+      фильтр по disputable-статусам (`services/chargebacks.py`, models 1764+)
+    - 🩹 SKU в минусе по марже — `pnl_builder.build_pnl` leak-lines + units
+    - 🩹 Дохлый сток в платном хранении — storage + остатки
+  - **Источники (v2 — нужна новая логика):**
+    - 🩹 Перемеры → переплата логистики: `WbProductDimensionsHistory` (Δ volume) ×
+      Δ тарифа из `wb_tariff_box`/`unit-plan` логистики. Эмоционально сильнейший
+      крючок, но точный ₽ = новый расчёт.
+    - 🩹 Убыточные акции постфактум: promo_calc сейчас только forward — нужна
+      ретро-оценка (actual margin с акцией vs baseline) из `wb_report_detail`
+      (`seller_promo`).
+  - **Период/скоуп:** через `period_aggregates` canonical-фильтры (consistency
+    с дашбордом), `current_brands_filter`. Pattern endpoint'а — как
+    `api/promo_calculator.py:simulate` (service → envelope с totals).
+  - **Output envelope:** `{ period, total_found_rub, trust_badge: {recon_delta_pct},
+    breakdown: [{leak_type, label, amount, kind: recover|prevent, sku_count}],
+    details }`.
+  - **UI:** страница/печатный экран «Аудит кабинета» — одно число сверху +
+    breakdown-карточки + recon-badge. Для скриншота в клуб-оффер. (Фаза C.)
+- **Критерии готовности (v1):**
+  - [x] `services/leak_report.py` — агрегатор всех 5 источников (расширено vs 3)
+  - [x] `GET /api/leak-report?from&to` (director_or_head, brands-filter урезает)
+  - [x] Recon trust-badge встроен (reuse `build_reconciliation` periods)
+  - [x] UI-экран `pages/LeakReport.tsx` с «найдено N₽» + breakdown + badge + печать/PDF
+  - [x] FEATURES.md + CLAUDE.md (новая API-группа) + version bump (0.44.0)
+  - [ ] Smoke на своём кабинете → артефакт-скриншот (**за пользователем** после
+        deploy — локально нет docker/venv для tsc+import-check)
+- **Зависимости:** chargebacks (0036), dimensions-history (0063, для v2),
+  promo_calc (для v2)
+- **Решение о скоупе v1 (пользователь, 2026-05-26):** ПОЛНЫЙ — все 5 источников
+  с точным обсчётом (включая перемеры → Δ логистики и ретро-оценку убыточных
+  акций). Формат вывода — **печатный/PDF-вид** (страница + print-CSS, export в PDF
+  для отправки селлеру файлом).
+- **Фазы реализации:**
+  - A. `services/leak_report.py` + endpoint + 3 готовых источника + recon-badge
+  - B. Перемеры → Δ логистики (tariff lookup)
+  - C. Ретро-оценка убыточных акций (`seller_promo` из wb_report_detail)
+  - D. Frontend print/PDF страница `/leak-report`
+  - E. docs + bump + commit
+- **Статус:** Выполнено — 2026-05-26 (v0.44.0; deploy + smoke за пользователем —
+  локально tsc/import-check не прогнать, нет docker/venv)
+
 ---
 
 ## Формат / Жизненный цикл

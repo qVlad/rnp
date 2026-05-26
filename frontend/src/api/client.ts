@@ -2664,7 +2664,43 @@ paymentOrderDelete: (payment_order_id: string) =>
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  // Leak-report «найдено N₽» (TASK-LEAD-140) — аудит-артефакт кабинета.
+  leakReport: (params: { from?: string; to?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
+    return request<LeakReport>(
+      `/api/leak-report${qs.toString() ? `?${qs}` : ""}`,
+    );
+  },
 };
+
+export interface LeakBreakdownItem {
+  leak_type: string;
+  label: string;
+  kind: "recover" | "prevent";
+  icon: string;
+  amount: number;
+  count: number;
+  hint: string;
+  details: Array<Record<string, unknown>>;
+}
+
+export interface LeakReport {
+  period: { from: string; to: string };
+  total_found_rub: number;
+  total_recover_rub: number;
+  total_prevent_rub: number;
+  trust_badge: {
+    available: boolean;
+    weeks_total?: number;
+    weeks_matched?: number;
+    max_diff_pct?: number;
+  };
+  breakdown: LeakBreakdownItem[];
+  generated_at: string;
+}
 
 /**
  * Точка timeline тарифов WB. Поля зависят от типа (box/pallet/commission) —
