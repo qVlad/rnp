@@ -24,7 +24,6 @@ from app.services.period_aggregates import (
     REVENUE_FIELD,
     ReportingMode,
     get_period_filter,
-    sale_dt_filter,
 )
 from app.services.periods import Period
 
