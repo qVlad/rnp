@@ -116,10 +116,12 @@
   }
 
   // TASK-LEAD-141: реклама (Продвижение → Финансы) и воронка.
+  // TASK-LEAD-142: Jam — поисковые запросы по карточке.
   let lastAdvHash = "";
   let lastFunnelHash = "";
+  let lastJamHash = "";
 
-  function maybePostExtra(url: string, raw: unknown): boolean {
+  function maybePostExtra(url: string, raw: unknown, reqBody?: string): boolean {
     if (raw === null || typeof raw !== "object") return false;
     const obj = raw as Record<string, any>;
 
@@ -170,12 +172,51 @@
       );
       return true;
     }
+
+    // 3. Jam (TASK-LEAD-142): search-texts → data.items[] с {text, frequency}.
+    //    nmId и период — в теле запроса (reqBody).
+    const jamItems = obj?.data?.items;
+    if (Array.isArray(jamItems) && jamItems.length > 0 && jamItems[0] &&
+        typeof jamItems[0] === "object" &&
+        "text" in jamItems[0] && "frequency" in jamItems[0]) {
+      let nmId: number | null = null;
+      let ps: string | null = null;
+      let pe: string | null = null;
+      try {
+        const body = reqBody ? JSON.parse(reqBody) : null;
+        if (body && typeof body === "object") {
+          nmId = typeof body.nmId === "number" ? body.nmId : null;
+          ps = body.currentPeriod?.start ?? null;
+          pe = body.currentPeriod?.end ?? null;
+        }
+      } catch {
+        /* ignore */
+      }
+      if (nmId === null) return true; // без nmId данные бесполезны
+      const hash = `jam-${nmId}-${ps}-${jamItems.length}`;
+      if (hash === lastJamHash) return true;
+      lastJamHash = hash;
+      console.log(
+        `${TAG} matched JAM search-texts: nm=${nmId} ${jamItems.length} запросов period ${ps}`,
+      );
+      window.postMessage(
+        {
+          __rnp: "wb-jam",
+          nm_id: nmId,
+          period_start: ps,
+          period_end: pe,
+          items: jamItems,
+        },
+        "*",
+      );
+      return true;
+    }
     return false;
   }
 
-  function maybePost(url: string, raw: unknown): void {
-    // 0. Реклама/воронка (TASK-LEAD-141) — отдельные страницы ЛК.
-    if (maybePostExtra(url, raw)) return;
+  function maybePost(url: string, raw: unknown, reqBody?: string): void {
+    // 0. Реклама/воронка/Jam (TASK-LEAD-141/142) — отдельные страницы ЛК.
+    if (maybePostExtra(url, raw, reqBody)) return;
     // 1. Приоритет — сводка (единый fetch с итогами).
     const summary = looksLikeReportSummary(raw);
     if (summary) {
@@ -225,6 +266,14 @@
     } catch {
       /* ignore */
     }
+    // TASK-LEAD-142: тело запроса (для Jam нужен nmId из body).
+    let reqBody: string | undefined;
+    try {
+      const b = (init && init.body) || (input instanceof Request ? undefined : undefined);
+      if (typeof b === "string") reqBody = b;
+    } catch {
+      /* ignore */
+    }
     const resp = await origFetch(input as RequestInfo, init);
     try {
       if (url && shouldInspect(url)) {
@@ -241,7 +290,7 @@
             } catch {
               return;
             }
-            maybePost(url, parsed);
+            maybePost(url, parsed, reqBody);
           })
           .catch(() => undefined);
       }
@@ -266,7 +315,8 @@
     return origOpen.apply(this, arguments as any);
   };
   const origSend = OrigXHR.prototype.send;
-  OrigXHR.prototype.send = function (this: XHRWithMeta) {
+  OrigXHR.prototype.send = function (this: XHRWithMeta, body?: unknown) {
+    const reqBody = typeof body === "string" ? body : undefined;
     try {
       this.addEventListener("load", () => {
         try {
@@ -282,7 +332,7 @@
           } catch {
             return;
           }
-          maybePost(url, parsed);
+          maybePost(url, parsed, reqBody);
         } catch {
           /* swallow */
         }

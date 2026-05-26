@@ -14,6 +14,26 @@ let lastExtraHash = "";
 window.addEventListener("message", (e: MessageEvent) => {
   if (e.source !== window) return;
   const kind = e.data?.__rnp;
+  // TASK-LEAD-142: Jam — поисковые запросы.
+  if (kind === "wb-jam") {
+    const payload = { ...e.data };
+    delete payload.__rnp;
+    const h = `jam-${payload.nm_id}-${payload.period_start}-${(payload.items || []).length}`;
+    if (h === lastExtraHash) return;
+    lastExtraHash = h;
+    console.log("[rnp-ext content recon] forwarding wb-jam to SW", {
+      nm_id: payload.nm_id,
+      count: (payload.items || []).length,
+    });
+    chrome.runtime
+      .sendMessage({ type: "rnp:jam-queries", ...payload })
+      .then((r) => console.log("[rnp-ext content recon] jam SW →", r))
+      .catch((err) => {
+        console.warn("[rnp-ext content recon] jam sendMessage failed:", err);
+        lastExtraHash = "";
+      });
+    return;
+  }
   if (kind === "wb-adv-finance" || kind === "wb-funnel") {
     const payload = { ...e.data };
     delete payload.__rnp;

@@ -770,6 +770,59 @@ async function maybeUploadReconExtra(payload: {
   }
 }
 
+// TASK-LEAD-142: Jam search-texts → /api/jam/upload-extension.
+const STORAGE_JAM_NOTIFIED = "rnp.jam.notified";
+
+async function maybeUploadJam(payload: {
+  nm_id: number;
+  period_start: string | null;
+  period_end: string | null;
+  items: unknown[];
+}): Promise<{ status: string; upserted?: number }> {
+  const settings = await getSettings();
+  if (!settings.rnpUrl || !settings.rnpToken) return { status: "no-rnp-token" };
+  try {
+    const r = await fetch(
+      `${settings.rnpUrl.replace(/\/$/, "")}/api/jam/upload-extension`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${settings.rnpToken}`,
+        },
+        body: JSON.stringify(payload),
+      },
+    );
+    if (r.status === 403) return { status: "forbidden" };
+    if (!r.ok) {
+      let b = "";
+      try {
+        b = (await r.text()).slice(0, 200);
+      } catch {
+        /* ignore */
+      }
+      console.warn(`[rnp-ext SW] jam: HTTP ${r.status} ${b}`);
+      return { status: "http-error" };
+    }
+    const json = (await r.json()) as { upserted: number };
+    const notified = await chrome.storage.local.get(STORAGE_JAM_NOTIFIED);
+    if (!notified[STORAGE_JAM_NOTIFIED] && json.upserted > 0) {
+      chrome.notifications.create("rnp.jam.uploaded", {
+        type: "basic",
+        iconUrl: chrome.runtime.getURL("icons/icon-128.png"),
+        title: "Поисковые запросы загружены в РНП",
+        message: `Подтянули ${json.upserted} запросов. Открывай карточки в «Поисковые запросы» ЛК — РНП будет копить данные в /jam.`,
+        priority: 1,
+      });
+      await chrome.storage.local.set({ [STORAGE_JAM_NOTIFIED]: true });
+    }
+    return { status: "ok", upserted: json.upserted };
+  } catch (e) {
+    console.warn("[rnp-ext SW] jam failed:", e);
+    return { status: "network-error" };
+  }
+}
+
 // ---- Message handlers from content scripts ----
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -920,6 +973,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         source_url: typeof msg.source_url === "string" ? msg.source_url : null,
       });
       console.log(`[rnp-ext SW] recon-extra →`, result);
+      sendResponse(result);
+      return;
+    }
+    // ---- TASK-LEAD-142: Jam — поисковые запросы из ЛК WB. ----
+    if (
+      msg?.type === "rnp:jam-queries" &&
+      typeof msg.nm_id === "number" &&
+      Array.isArray(msg.items)
+    ) {
+      const result = await maybeUploadJam({
+        nm_id: msg.nm_id,
+        period_start: typeof msg.period_start === "string" ? msg.period_start : null,
+        period_end: typeof msg.period_end === "string" ? msg.period_end : null,
+        items: msg.items as unknown[],
+      });
+      console.log(`[rnp-ext SW] jam-queries →`, result);
       sendResponse(result);
       return;
     }

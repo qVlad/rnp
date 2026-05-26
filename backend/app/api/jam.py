@@ -11,10 +11,12 @@ Endpoints:
 """
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import JamQuery, Product
@@ -109,6 +111,94 @@ async def jam_skus(
         "items": [
             {"nm_id": int(r.nm_id), "queries": int(r.queries)} for r in rows
         ]
+    }
+
+
+@router.post("/upload-extension")
+async def jam_upload_extension(
+    payload: dict = Body(...),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Поисковые запросы из ЛК WB через Chrome-extension (TASK-LEAD-142).
+
+    WB endpoint `search-report/product/search-texts` (на seller-content —
+    ЛК-внутренний API, токен туда не ходит, поэтому через extension на живой
+    сессии). Body: `{nm_id, period_start, period_end, items: [...]}` где
+    items — `data.items[]` из ответа WB (text + frequency + openCard + orders +
+    addToCart).
+
+    Маппинг в JamQuery: query=text, views=openCard, orders=orders,
+    clicks=addToCart. UPSERT по (tenant, nm_id, query, period_start).
+    """
+    if user.role not in ("director", "head_of_sales"):
+        raise HTTPException(403, "director or head required")
+
+    nm_id = payload.get("nm_id")
+    if not isinstance(nm_id, int):
+        raise HTTPException(400, "nm_id обязателен (int)")
+    items = payload.get("items")
+    if not isinstance(items, list) or not items:
+        raise HTTPException(400, "items пуст")
+
+    def _pd(v: Any, default: date) -> date:
+        if isinstance(v, str) and len(v) >= 10:
+            try:
+                return date.fromisoformat(v[:10])
+            except Exception:
+                return default
+        return default
+
+    today = date.today()
+    period_start = _pd(payload.get("period_start"), today - timedelta(days=7))
+    period_end = _pd(payload.get("period_end"), today)
+
+    def _num(d: Any) -> int:
+        # WB поля вида {"current": N, ...} либо плоское число.
+        if isinstance(d, dict):
+            d = d.get("current")
+        try:
+            return int(float(d)) if d is not None else 0
+        except (TypeError, ValueError):
+            return 0
+
+    upserted = 0
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        text = it.get("text")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        values = {
+            "tenant_id": user.tenant_id,
+            "nm_id": nm_id,
+            "query": text.strip()[:512],
+            "period_start": period_start,
+            "period_end": period_end,
+            "orders": _num(it.get("orders")),
+            "clicks": _num(it.get("addToCart")),
+            "views": _num(it.get("openCard")),
+            "ad_spent": 0,
+        }
+        ins = pg_insert(JamQuery).values(**values).on_conflict_do_update(
+            index_elements=["tenant_id", "nm_id", "query", "period_start"],
+            set_={
+                "period_end": period_end,
+                "orders": values["orders"],
+                "clicks": values["clicks"],
+                "views": values["views"],
+            },
+        )
+        await session.execute(ins)
+        upserted += 1
+    await session.commit()
+
+    return {
+        "status": "ok",
+        "nm_id": nm_id,
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "upserted": upserted,
     }
 
 

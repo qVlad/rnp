@@ -1788,7 +1788,7 @@ async def _sync_jam_async(tenant_id: int, days_back: int = 30) -> dict[str, Any]
     Возвращает {tenants_processed, skus_processed, queries_upserted, errors}.
     """
     from datetime import date as _date, timedelta as _td
-    from app.db.models import AppSetting, Product
+    from app.db.models import AppSetting, JamQuery, Product
     from app.integrations.wb.jam import EndpointNotFoundError, fetch_jam_for_nm, normalize_jam_row
     from app.services.jam import upsert_jam_query
 
@@ -1836,15 +1836,28 @@ async def _sync_jam_async(tenant_id: int, days_back: int = 30) -> dict[str, Any]
                     custom_path=custom_path,
                 )
             except EndpointNotFoundError as e:
-                # Все кандидаты вернули 404 — конфигурация endpoint неправильная.
-                # Остальные SKU гонять бессмысленно (получим то же).
-                msg = (
-                    "Endpoint WB Jam не найден среди кандидатов. "
-                    "Зайдите в /jam → Подключение и впишите точный URL "
-                    "из вашей подписки (или дождитесь обновления списка кандидатов)."
-                )
-                errors.append(msg)
-                log.error("jam: %s", e)
+                # Все API-кандидаты 404. TASK-LEAD-142: WB перенёс поисковые
+                # запросы в ЛК-внутренний API (seller-content), токен туда не
+                # ходит. Данные теперь поступают через Chrome-extension
+                # (POST /api/jam/upload-extension). Если в jam_queries уже есть
+                # свежие данные от расширения — это НЕ ошибка, помечаем ok.
+                jam_have = (await session.execute(
+                    select(func.count(JamQuery.id)).where(
+                        JamQuery.tenant_id == tenant_id
+                    )
+                )).scalar() or 0
+                if jam_have > 0:
+                    msg = None  # данные есть (через extension) — не шумим
+                    log.info("jam: API 404, но %d запросов есть через extension", jam_have)
+                else:
+                    msg = (
+                        "WB Jam через API недоступен (поисковые запросы в ЛК-"
+                        "внутреннем API). Установите Chrome-расширение РНП и "
+                        "откройте «Поисковые запросы» по карточкам в ЛК — данные "
+                        "подтянутся автоматически в /jam."
+                    )
+                    errors.append(msg)
+                log.info("jam: endpoint not found via API — %s", e)
                 break
             except Exception as e:
                 msg = f"nm {nm}: {type(e).__name__}: {str(e)[:200]}"
