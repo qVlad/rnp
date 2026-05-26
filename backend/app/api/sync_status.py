@@ -42,7 +42,9 @@ ENTITY_META: dict[str, dict[str, str]] = {
     "redeem_notifications": {"label": "Уведомления о выкупе", "category": "documents"},
     "offset_acts": {"label": "Акты взаимозачёта", "category": "documents"},
     "product_photos": {"label": "Фото товаров", "category": "content"},
-    "jam": {"label": "Поисковые запросы", "category": "analytics"},
+    # TASK-LEAD-145: «Поисковые запросы» (jam) убраны из статуса — публичного
+    # API нет (только ЛК-внутренний), данные идут через Chrome-extension,
+    # не через beat-синк. Раньше всегда висело skipped с пугающим сообщением.
 }
 
 WB_CATEGORIES = ["statistics", "finance", "advert", "analytics", "documents", "content"]
@@ -155,7 +157,12 @@ async def get_sync_status(
     entities: list[dict[str, Any]] = []
     seen = set()
     for r in rows:
-        meta = ENTITY_META.get(r.entity, {"label": r.entity, "category": ""})
+        # TASK-LEAD-145: показываем только известные entity. Скрытые из
+        # ENTITY_META (напр. jam — нет публичного API, идёт через extension)
+        # не висят в статусе, даже если в БД остался старый checkpoint.
+        if r.entity not in ENTITY_META:
+            continue
+        meta = ENTITY_META[r.entity]
         last = r.last_synced_at
         age_s = int((now - last).total_seconds()) if last else None
         entities.append({

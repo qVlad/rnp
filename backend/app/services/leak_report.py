@@ -61,7 +61,18 @@ DISPUTABLE_CATEGORIES = {
 # Прочие удержания → блок «разобрать» (group=review), НЕ суммируются в «найдено»:
 # generic «Удержание» в массе легитимно, платная приёмка / хранение с низким ИЛ —
 # это реальные сборы, а не возвратные деньги. Показываем, но не обещаем возврат.
-REVIEW_CATEGORIES = {"deduction", "low_il_storage_fee", "paid_acceptance"}
+# TASK-LEAD-144: «deduction» убран из chargeback-review — удержания теперь
+# считаются напрямую из wb_report_detail по bonus_type_name (_wb_deduction_split),
+# чтобы отделить договорные сервисы (реклама/Джем) от спорных. Здесь остаются
+# только платная приёмка + хранение с низким ИЛ.
+REVIEW_CATEGORIES = {"low_il_storage_fee", "paid_acceptance"}
+
+# Договорные услуги WB в удержаниях (реклама/медиа/подписки/займы) — НЕ потеря,
+# а расходы на сервисы. Совпадает с DEDUCTION_EXCLUSION_KEYWORDS автосверки.
+_SERVICE_FEE_KEYWORDS: tuple[str, ...] = (
+    "Продвижение", "Реклама", "Медиа", "Джем", "Подписк", "WB-Тариф",
+    "Заём", "Займ", "Погашен",
+)
 from app.services.period_aggregates import OP_SALE
 from app.services.unit_economics import build_unit_economics
 
@@ -155,6 +166,77 @@ async def _chargebacks_split(
         "disputable": _bucket(DISPUTABLE_CATEGORIES),
         "review": _bucket(REVIEW_CATEGORIES),
     }
+
+
+async def _wb_deduction_split(
+    session: AsyncSession,
+    *,
+    date_from: date,
+    date_to: date,
+    brands: set[str] | None,
+) -> dict[str, Any]:
+    """Удержания (`supplier_oper_name='Удержание'`) из wb_report_detail, делятся
+    по `bonus_type_name` на два ведра (TASK-LEAD-144):
+
+    - `service_fee` — договорные услуги WB (реклама/медиа/Джем/займы). НЕ потеря,
+      а расходы на сервисы → отдельный инфо-блок «Расходы на сервисы WB».
+    - `genuine` — прочие удержания без известного сервиса → «разобрать»
+      (тут бывают ошибки WB, потенциально оспоримо).
+
+    Удержания — company-level (nm_id обычно NULL), поэтому для manager-scope
+    (brands задан) возвращаем нули — менеджер не видит общефирменные удержания.
+    """
+    empty = {"amount": 0.0, "count": 0, "by_type": []}
+    if brands is not None:
+        return {"service_fee": dict(empty), "genuine": dict(empty)}
+
+    rows = (await session.execute(
+        select(
+            WbReportDetail.bonus_type_name,
+            func.sum(WbReportDetail.deduction).label("amount"),
+            func.count().label("cnt"),
+        )
+        .where(WbReportDetail.supplier_oper_name == "Удержание")
+        .where(WbReportDetail.deduction != 0)
+        .where(WbReportDetail.rr_dt >= date_from)
+        .where(WbReportDetail.rr_dt <= date_to)
+        .group_by(WbReportDetail.bonus_type_name)
+    )).all()
+
+    def _is_service(bonus: str) -> bool:
+        b = (bonus or "").lower()
+        return any(kw.lower() in b for kw in _SERVICE_FEE_KEYWORDS)
+
+    # Аггрегируем по «чистому» имени сервиса (без «, документ №...»).
+    def _clean(bonus: str) -> str:
+        return (bonus or "Удержание").split(", документ")[0].strip()
+
+    svc: dict[str, list[float]] = {}
+    gen: dict[str, list[float]] = {}
+    for r in rows:
+        amt = _f(r.amount)
+        if amt == 0:
+            continue
+        target = svc if _is_service(r.bonus_type_name) else gen
+        key = _clean(r.bonus_type_name)
+        if key not in target:
+            target[key] = [0.0, 0]
+        target[key][0] += amt
+        target[key][1] += int(r.cnt)
+
+    def _pack(d: dict[str, list[float]]) -> dict[str, Any]:
+        by_type = [
+            {"label": k, "amount": round(v[0], 2), "count": int(v[1])}
+            for k, v in d.items()
+        ]
+        by_type.sort(key=lambda x: x["amount"], reverse=True)
+        return {
+            "amount": round(sum(x["amount"] for x in by_type), 2),
+            "count": sum(x["count"] for x in by_type),
+            "by_type": by_type,
+        }
+
+    return {"service_fee": _pack(svc), "genuine": _pack(gen)}
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -513,6 +595,10 @@ async def build_leak_report(
     chargebacks = await _chargebacks_split(
         session, date_from=date_from, date_to=date_to, brands=brands
     )
+    # TASK-LEAD-144: удержания делим на договорные сервисы vs спорные.
+    ded = await _wb_deduction_split(
+        session, date_from=date_from, date_to=date_to, brands=brands
+    )
     negative = _negative_margin(items)
     dead_stock = _dead_stock_storage(items, cogs)
     remeasure = await _remeasure_logistics_overpay(
@@ -550,15 +636,34 @@ async def build_leak_report(
             "group": "review",
             "kind": "review",
             "icon": "🔍",
-            "amount": chargebacks["review"]["amount"],
-            "count": chargebacks["review"]["count"],
+            # TASK-LEAD-144: genuine-удержания (не сервисы) из wb_report_detail
+            # + платная приёмка/хранение с низким ИЛ из chargebacks.
+            "amount": round(ded["genuine"]["amount"] + chargebacks["review"]["amount"], 2),
+            "count": ded["genuine"]["count"] + chargebacks["review"]["count"],
             "hint": (
-                "Generic «Удержание», платная приёмка, хранение с низким ИЛ — "
-                "в массе легитимны, не возвратные. Проверить спорные, но в «найдено» "
-                "НЕ входит. «Компенсация ущерба» (доход) и «добровольная компенсация» "
-                "(не оспаривается) сюда тоже не входят."
+                "Удержания БЕЗ известного сервиса (не реклама/Джем) + платная "
+                "приёмка + хранение с низким ИЛ. Тут бывают ошибки WB — проверить "
+                "спорные. В «найдено» НЕ входит (в массе легитимны)."
             ),
-            "details": chargebacks["review"]["by_category"],
+            "details": ded["genuine"]["by_type"] + chargebacks["review"]["by_category"],
+        },
+        {
+            # TASK-LEAD-144: договорные услуги WB (реклама/Джем/займы) — НЕ потеря,
+            # а расходы на сервисы. Инфо-блок, не суммируется в found/review/lost.
+            "leak_type": "wb_service_fees",
+            "label": "Расходы на сервисы WB",
+            "group": "info",
+            "kind": "info",
+            "icon": "💼",
+            "amount": ded["service_fee"]["amount"],
+            "count": ded["service_fee"]["count"],
+            "hint": (
+                "Договорные удержания за услуги WB, которые ты подключил: "
+                "реклама (ВБ.Продвижение/Медиа), подписка Джем, погашение займов. "
+                "Это не «потеря» и не оспаривается — твои расходы на сервисы. "
+                "Показано чтобы видеть полную картину удержаний."
+            ),
+            "details": ded["service_fee"]["by_type"],
         },
         {
             "leak_type": "negative_margin_skus",

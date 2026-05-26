@@ -2681,7 +2681,7 @@ paymentOrderDelete: (payment_order_id: string) =>
 //   review — удержания WB к разбору (в массе легитимны), НЕ в «найдено»
 //   frozen — дохлый сток (хранение капает + замороженный капитал stock×COGS)
 //   lost   — убыточные акции постфактум, вернуть нельзя
-export type LeakGroup = "found" | "review" | "frozen" | "lost";
+export type LeakGroup = "found" | "review" | "frozen" | "lost" | "info";
 
 export interface LeakBreakdownItem {
   leak_type: string;

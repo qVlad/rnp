@@ -48,6 +48,7 @@ const KIND_CHIP: Record<string, { label: string; cls: string }> = {
   review: { label: "разобрать", cls: "bg-violet-100 text-violet-700" },
   frozen: { label: "заморожено", cls: "bg-sky-100 text-sky-700" },
   lost: { label: "потеряно", cls: "bg-rose-100 text-rose-700" },
+  info: { label: "сервисы WB", cls: "bg-gray-100 text-gray-600" },
 };
 
 function LeakCard({ item }: { item: LeakBreakdownItem }) {
@@ -170,7 +171,7 @@ export default function LeakReport() {
   const data = q.data;
   const badge = data?.trust_badge;
   const byGroup = useMemo(() => {
-    const g: Record<LeakGroup, LeakBreakdownItem[]> = { found: [], review: [], frozen: [], lost: [] };
+    const g: Record<LeakGroup, LeakBreakdownItem[]> = { found: [], review: [], frozen: [], lost: [], info: [] };
     if (data) for (const it of data.breakdown) g[it.group]?.push(it);
     for (const k of Object.keys(g) as LeakGroup[]) g[k].sort((a, b) => b.amount - a.amount);
     return g;
@@ -267,6 +268,7 @@ export default function LeakReport() {
               ["review", "🔍 Разобрать — удержания WB"],
               ["frozen", "📦 Заморожено / под риском"],
               ["lost", "📉 Уже потеряно"],
+              ["info", "💼 Расходы на сервисы WB (справочно)"],
             ] as [LeakGroup, string][]
           ).map(([group, title]) =>
             byGroup[group].length === 0 ? null : (
