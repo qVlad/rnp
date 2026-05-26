@@ -2409,10 +2409,13 @@ paymentOrderDelete: (payment_order_id: string) =>
   },
 
   // ── TASK-LEAD-137: автосверка с WB ЛК ──
-  reconciliationAuto: (week_start?: string) => {
-    const qs = week_start ? `?week_start=${week_start}` : "";
+  reconciliationAuto: (week_start?: string, realization_id?: number) => {
+    const qs = new URLSearchParams();
+    if (week_start) qs.set("week_start", week_start);
+    if (realization_id != null) qs.set("realization_id", String(realization_id));
+    const s = qs.toString();
     return request<ReconciliationAutoResponse>(
-      `/api/reconciliation-auto${qs}`,
+      `/api/reconciliation-auto${s ? `?${s}` : ""}`,
     );
   },
   reconciliationAutoUploadXlsx: async (file: File) => {
@@ -2723,11 +2726,13 @@ export interface ReconciliationAutoResponse {
   scope: "company" | "brands";
   metrics: ReconciliationAutoMetric[];
   groups: Record<string, string>;
+  scoped_realization_id?: number | null;
   extension_upload: {
     uploaded_at: string | null;
     rows_count: number;
     metrics_by_rule: Record<string, number>;
-    source_url: string | null;
+    report_ids: number[];
+    reports_count: number;
   } | null;
 }
 

@@ -2616,6 +2616,9 @@ class ExtensionReconUpload(Base, TenantScopedMixin):
     __tablename__ = "extension_recon_uploads"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    # Per-report (TASK-LEAD-138 v2): неделя может содержать несколько отчётов
+    # (основной + корректировки). Храним каждый отдельно, UI суммирует.
+    realization_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     week_start: Mapped[date] = mapped_column(Date, nullable=False)
     week_end: Mapped[date] = mapped_column(Date, nullable=False)
     metrics_by_rule: Mapped[dict] = mapped_column(JSONB, nullable=False)
@@ -2628,7 +2631,12 @@ class ExtensionReconUpload(Base, TenantScopedMixin):
 
     __table_args__ = (
         UniqueConstraint(
-            "tenant_id", "week_start", name="uq_extension_recon_tenant_week"
+            "tenant_id", "realization_id", name="uq_extension_recon_tenant_realization"
+        ),
+        Index(
+            "ix_extension_recon_tenant_realization",
+            "tenant_id",
+            "realization_id",
         ),
         Index(
             "ix_extension_recon_tenant_week",

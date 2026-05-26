@@ -157,17 +157,26 @@ export default function ReconciliationAuto() {
   // нашей БД за эту неделю — значит в ЛК WB открыт отчёт ДРУГОГО юрлица.
   const cabinetMismatch = useMemo(() => {
     const upload = data?.extension_upload;
-    if (!upload?.source_url || !data) return null;
-    const m = upload.source_url.match(/\/report\/(\d+)/);
-    if (!m) return null;
-    const extReportId = Number(m[1]);
+    if (!upload?.report_ids?.length || !data) return null;
     if (data.realization_ids.length === 0) return null;
-    if (data.realization_ids.includes(extReportId)) return null;
+    // Несовпадение: ни один загруженный отчёт не входит в наши realization_ids.
+    const anyMatch = upload.report_ids.some((id) =>
+      data.realization_ids.includes(id),
+    );
+    if (anyMatch) return null;
     return {
-      extReportId,
+      extReportIds: upload.report_ids,
       ourIds: data.realization_ids,
     };
-  }, [data?.extension_upload?.source_url, data?.realization_ids]);
+  }, [data?.extension_upload?.report_ids, data?.realization_ids]);
+
+  // Какие отчёты недели ещё НЕ загружены через extension (для подсказки).
+  const missingReports = useMemo(() => {
+    const upload = data?.extension_upload;
+    if (!data || data.realization_ids.length <= 1) return [];
+    const loaded = new Set(upload?.report_ids ?? []);
+    return data.realization_ids.filter((id) => !loaded.has(id));
+  }, [data?.extension_upload?.report_ids, data?.realization_ids]);
 
   const grouped = useMemo(() => {
     if (!data) return [] as Array<[string, ReconciliationAutoMetric[]]>;
@@ -253,19 +262,10 @@ export default function ReconciliationAuto() {
             Scope: <b>{data.scope}</b>
             {data.extension_upload && (
               <span className="ml-3 text-success">
-                📡 Загружено через расширение:{" "}
+                📡 Через расширение:{" "}
+                {data.extension_upload.reports_count} отчёт(ов) (№
+                {data.extension_upload.report_ids.join(", №")}),{" "}
                 {data.extension_upload.rows_count.toLocaleString("ru-RU")} строк
-                {data.extension_upload.uploaded_at && (
-                  <>
-                    {" "}
-                    (
-                    {new Date(data.extension_upload.uploaded_at).toLocaleString(
-                      "ru-RU",
-                      { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" },
-                    )}
-                    )
-                  </>
-                )}
               </span>
             )}
           </div>
@@ -286,17 +286,27 @@ export default function ReconciliationAuto() {
             <span className="text-danger text-lg">⚠️</span>
             <div className="text-sm">
               <b className="text-danger">Несовпадение кабинета.</b> Расширение
-              загрузило отчёт <b>№{cabinetMismatch.extReportId}</b> из ЛК WB, но
-              в данных РНП за эту неделю —{" "}
-              <b>№{cabinetMismatch.ourIds.join(", ")}</b>. Это разные
+              загрузило отчёт(ы) <b>№{cabinetMismatch.extReportIds.join(", №")}</b>{" "}
+              из ЛК WB, но в данных РНП за эту неделю —{" "}
+              <b>№{cabinetMismatch.ourIds.join(", №")}</b>. Это разные
               WB-кабинеты/юрлица — сверка будет некорректной.
               <div className="text-muted mt-1">
-                Открой в ЛК WB отчёт того кабинета, чей токен подключён к РНП
-                (№{cabinetMismatch.ourIds[0]}), либо переключи активный кабинет
-                в РНП.
+                Открой в ЛК WB отчёт того кабинета, чей токен подключён к РНП,
+                либо переключи активный кабинет в РНП.
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {missingReports.length > 0 && (
+        <div className="card p-3 border border-warn/40 bg-warn/10 text-sm">
+          <span className="text-warn">⚠️ Загружены не все отчёты недели.</span>{" "}
+          В РНП за эту неделю {data!.realization_ids.length} отчёта, через
+          расширение загружено{" "}
+          {data!.extension_upload?.reports_count ?? 0}. Не хватает: №
+          {missingReports.join(", №")}. Открой их в ЛК WB (Финансы → Отчёт
+          реализации) — WB-колонка досуммируется и Δ сойдётся.
         </div>
       )}
 

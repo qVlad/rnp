@@ -89,18 +89,32 @@ async def compute_truestats_metrics(
     week_start: date,
     week_end: date,
     brands: set[str] | None = None,
+    realization_id: int | None = None,
 ) -> dict[str, Any]:
     """17 метрик TS для одной недели.
 
     `week_end` exclusive (как везде в проекте). Если brands=None — company-scope.
+
+    `realization_id` (TASK-LEAD-138): если задан — метрики из wb_report_detail
+    (правила 1-8, 12-17) считаются ТОЛЬКО по этому отчёту, а не по всей неделе.
+    Нужно для точной сверки отчёт-в-отчёт с WB ЛК summary (когда за неделю
+    несколько отчётов: основной + корректировки). Реклама/заказы (9,10,11) —
+    всегда по неделе (у них нет realization_id).
     """
-    # Базовый фильтр на wb_report_detail: по rr_dt принадлежит [week_start, week_end)
-    # — это финансовая методология (как в TS).
-    base_where = [
-        WbReportDetail.tenant_id == tenant_id,
-        WbReportDetail.rr_dt >= week_start,
-        WbReportDetail.rr_dt < week_end,
-    ]
+    # Базовый фильтр на wb_report_detail. По умолчанию — по rr_dt неделе
+    # (финансовая методология TS). Если задан realization_id — по нему
+    # (точная сверка с конкретным WB-отчётом).
+    if realization_id is not None:
+        base_where = [
+            WbReportDetail.tenant_id == tenant_id,
+            WbReportDetail.realization_id == realization_id,
+        ]
+    else:
+        base_where = [
+            WbReportDetail.tenant_id == tenant_id,
+            WbReportDetail.rr_dt >= week_start,
+            WbReportDetail.rr_dt < week_end,
+        ]
     if brands is not None:
         if not brands:
             # Manager без брендов — вернём пустые значения чтобы не падать.

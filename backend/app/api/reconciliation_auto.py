@@ -39,6 +39,7 @@ router = APIRouter(prefix="/api/reconciliation-auto", tags=["reconciliation-auto
 @router.get("")
 async def reconciliation_auto(
     week_start: Annotated[date | None, Query(description="ISO date, понедельник")] = None,
+    realization_id: Annotated[int | None, Query(description="скоуп на конкретный WB-отчёт")] = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
     user: CurrentUser = Depends(get_current_user),
@@ -64,21 +65,40 @@ async def reconciliation_auto(
         week_start=ws,
         week_end=we,
         brands=brands,
+        realization_id=realization_id,
     )
+    result["scoped_realization_id"] = realization_id
 
-    # TASK-LEAD-138: подмешиваем последнюю extension-загрузку для этой недели
-    # — UI автозаполняет «WB ЛК» колонку из этих значений (если есть).
-    ext_row = (await session.execute(
+    # TASK-LEAD-138: подмешиваем extension-загрузки для этой недели. Неделя
+    # может содержать несколько отчётов (основной + корректировки) — суммируем
+    # их metrics_by_rule, чтобы WB-колонка = полная неделя = наша БД.
+    ext_rows = (await session.execute(
         select(ExtensionReconUpload)
         .where(ExtensionReconUpload.tenant_id == user.tenant_id)
         .where(ExtensionReconUpload.week_start == ws)
-    )).scalar_one_or_none()
-    if ext_row is not None:
+        .order_by(ExtensionReconUpload.uploaded_at.desc())
+    )).scalars().all()
+    if ext_rows:
+        agg: dict[str, float] = {}
+        report_ids: list[int] = []
+        latest_uploaded_at = None
+        total_rows = 0
+        for er in ext_rows:
+            report_ids.append(er.realization_id)
+            total_rows += er.rows_count or 0
+            if latest_uploaded_at is None and er.uploaded_at:
+                latest_uploaded_at = er.uploaded_at
+            for k, v in (er.metrics_by_rule or {}).items():
+                try:
+                    agg[k] = agg.get(k, 0.0) + float(v)
+                except (TypeError, ValueError):
+                    pass
         result["extension_upload"] = {
-            "uploaded_at": ext_row.uploaded_at.isoformat() if ext_row.uploaded_at else None,
-            "rows_count": ext_row.rows_count,
-            "metrics_by_rule": ext_row.metrics_by_rule,
-            "source_url": ext_row.source_url,
+            "uploaded_at": latest_uploaded_at.isoformat() if latest_uploaded_at else None,
+            "rows_count": total_rows,
+            "metrics_by_rule": agg,
+            "report_ids": sorted(report_ids),
+            "reports_count": len(report_ids),
         }
     else:
         result["extension_upload"] = None
@@ -261,8 +281,20 @@ async def _handle_summary_upload(
     details_count = summary.get("detailsCount")
     rows_count = int(details_count) if isinstance(details_count, (int, float)) else 0
 
+    # realization_id из summary.id (или из source_url как fallback).
+    realization_id = summary.get("id")
+    if not isinstance(realization_id, int):
+        m = re.search(r"/report/(\d+)", source_url or "") if isinstance(source_url, str) else None
+        if m:
+            realization_id = int(m.group(1))
+    if not isinstance(realization_id, int):
+        raise HTTPException(400, "не удалось определить realization_id (summary.id)")
+
+    # UPSERT per-report (tenant, realization_id) — несколько отчётов недели
+    # хранятся раздельно, GET суммирует.
     ins = pg_insert(ExtensionReconUpload).values(
         tenant_id=user.tenant_id,
+        realization_id=realization_id,
         week_start=week_start_snapped,
         week_end=week_end_excl,
         metrics_by_rule=metrics_by_rule,
@@ -270,13 +302,14 @@ async def _handle_summary_upload(
         uploaded_by_user_id=user.id,
         source_url=source_url[:512] if isinstance(source_url, str) else None,
     ).on_conflict_do_update(
-        index_elements=["tenant_id", "week_start"],
+        index_elements=["tenant_id", "realization_id"],
         set_={
             "metrics_by_rule": metrics_by_rule,
             "rows_count": rows_count,
             "uploaded_at": func.now(),
             "uploaded_by_user_id": user.id,
             "source_url": source_url[:512] if isinstance(source_url, str) else None,
+            "week_start": week_start_snapped,
             "week_end": week_end_excl,
         },
     )
@@ -286,6 +319,7 @@ async def _handle_summary_upload(
     return {
         "status": "ok",
         "source": "summary",
+        "realization_id": realization_id,
         "week_start": week_start_snapped.isoformat(),
         "week_end": week_end_excl.isoformat(),
         "rows_count": rows_count,
