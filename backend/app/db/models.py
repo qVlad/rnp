@@ -570,6 +570,15 @@ class User(Base, TenantScopedMixin):
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # TASK-DEV-014/017 follow-up — per-user Telegram chat для multi-recipient
     tg_chat_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    # HYP-007 (миграция 0062) — manager → ROP delivery для TG-share.
+    # Если у manager'а назначен boss → /weekly-report/share-to-telegram
+    # (recipient=self) шлёт отчёт boss'у вместо самого manager'а.
+    # `ondelete='SET NULL'` — если boss удалён, manager не ломается.
+    boss_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -586,6 +595,17 @@ class User(Base, TenantScopedMixin):
         back_populates="user",
         cascade="all, delete-orphan",
         lazy="selectin",
+    )
+
+    # HYP-007: self-FK на руководителя. `remote_side=[id]` + явный
+    # foreign_keys, чтобы SA не путал с другими FK на users.id
+    # (UserTenantAccess.granted_by и т.д. — там foreign_keys уже
+    # ограничены, но boss_id живёт в самой таблице users).
+    boss: Mapped["User | None"] = relationship(
+        "User",
+        remote_side="User.id",
+        foreign_keys="User.boss_id",
+        lazy="select",
     )
 
 

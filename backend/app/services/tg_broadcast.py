@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Iterable
+from typing import Any, Iterable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -59,6 +59,75 @@ async def notify_user(
     except Exception as e:  # noqa: BLE001
         log.warning("notify_user failed (user_id=%s): %s", user_id, e)
         return False
+
+
+async def notify_user_or_boss(
+    session: AsyncSession,
+    user_id: int,
+    text: str,
+    *,
+    parse_mode: str = "HTML",
+) -> dict[str, Any]:
+    """Шлём приоритетно boss'у (если у user'а есть `boss_id`), fallback на self.
+
+    HYP-007 (TASK-DEV-XXX): manager жмёт «📨 в Telegram» в /weekly-report →
+    отчёт должен попадать его РОПу (boss), а не в личку. Если boss не
+    назначен или у boss'а нет tg_chat_id → fallback на свой tg_chat_id.
+
+    Returns `{sent: bool, recipient: "boss" | "self" | "none",
+              boss_id: int | None, redirected: bool}`.
+    `redirected=True` означает «отправили не туда где ожидал отправитель»
+    (т.е. boss'у). Used для audit-логирования вызывающей стороной.
+    """
+    result: dict[str, Any] = {
+        "sent": False,
+        "recipient": "none",
+        "boss_id": None,
+        "redirected": False,
+    }
+    try:
+        row = (
+            await session.execute(
+                select(User.boss_id, User.tg_chat_id).where(User.id == user_id)
+            )
+        ).first()
+        if not row:
+            return result
+        boss_id, self_chat = row[0], row[1]
+
+        # 1. Try boss first
+        if boss_id is not None:
+            boss_chat = (
+                await session.execute(
+                    select(User.tg_chat_id).where(
+                        User.id == boss_id,
+                        User.is_active.is_(True),
+                        User.tg_chat_id.isnot(None),
+                    )
+                )
+            ).scalar_one_or_none()
+            if boss_chat:
+                ok = await send_message(str(boss_chat), text, parse_mode=parse_mode)
+                if ok:
+                    result.update(
+                        sent=True,
+                        recipient="boss",
+                        boss_id=boss_id,
+                        redirected=True,
+                    )
+                    return result
+                # boss send failed — fallthrough to self
+
+        # 2. Fallback на свой chat
+        if self_chat:
+            ok = await send_message(str(self_chat), text, parse_mode=parse_mode)
+            if ok:
+                result.update(sent=True, recipient="self", boss_id=boss_id)
+                return result
+        return result
+    except Exception as e:  # noqa: BLE001
+        log.warning("notify_user_or_boss failed (user_id=%s): %s", user_id, e)
+        return result
 
 
 async def broadcast_to_directors(

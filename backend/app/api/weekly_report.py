@@ -29,9 +29,14 @@ from app.services.auth import (
     get_db_tenant_scoped,
     require_director_or_head,
 )
+from app.services.audit import audit_log
 from app.services.metrics import compute_dashboard
 from app.services.periods import period_from_range
-from app.services.tg_broadcast import broadcast_to_directors, notify_user
+from app.services.tg_broadcast import (
+    broadcast_to_directors,
+    notify_user,
+    notify_user_or_boss,
+)
 from app.services.weekly_recommendations import build_recommendations
 from app.services.weekly_report import by_manager
 
@@ -437,20 +442,47 @@ async def share_to_telegram(
     )
 
     if recipient_filter == "self":
-        # Personal chat fallback
-        sent = await notify_user(session, user.id, message, parse_mode="HTML")
-        if not sent:
+        # HYP-007: для manager'а с привязанным boss'ом — приоритет на boss.
+        # Для director/head'а boss обычно не задан → notify_user_or_boss
+        # эквивалентен notify_user (self chat). Поведение идентично, но
+        # теперь возвращается `recipient: self|boss|none`.
+        delivery = await notify_user_or_boss(
+            session, user.id, message, parse_mode="HTML"
+        )
+        if not delivery["sent"]:
             return {
                 "shared": False,
                 "fallback": "download_pdf",
                 "reason": "no_tg_chat_id",
                 "sent": 0,
                 "recipients": [],
+                "recipient": "none",
             }
+        # Audit log: если redirected на boss'а — фиксируем для прозрачности
+        if delivery["redirected"]:
+            try:
+                await audit_log(
+                    session,
+                    "users",
+                    "tg.share.boss_redirect",
+                    entity_id=str(user.id),
+                    after={
+                        "user_id": user.id,
+                        "boss_id": delivery["boss_id"],
+                        "week_start": body.week_start.isoformat(),
+                    },
+                    actor=actor_name,
+                )
+                await session.commit()
+            except Exception:  # noqa: BLE001
+                # Audit-fail не должен ломать основной flow (TG уже отправлен)
+                await session.rollback()
         return {
             "shared": True,
             "sent": 1,
-            "recipients": ["self"],
+            "recipients": [delivery["recipient"]],
+            "recipient": delivery["recipient"],
+            "boss_id": delivery["boss_id"],
             "mode": "self",
         }
 
@@ -464,11 +496,13 @@ async def share_to_telegram(
             "sent": 0,
             "failed": result["failed"],
             "recipients": [],
+            "recipient": "none",
         }
     return {
         "shared": True,
         "sent": result["sent"],
         "failed": result["failed"],
         "recipients": result["recipients"],
+        "recipient": "directors",
         "mode": "all_directors",
     }
