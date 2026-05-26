@@ -3739,9 +3739,10 @@ Round 12 пометил: «standalone-страницы /localization и /transit
   - **Frozen capital:** dead-stock отдаёт `frozen_capital = Σ(stock×COGS)`.
   - **UI:** hero = только `found`; два вторичных итога (заморожено / потеряно)
     с пометкой «НЕ входят в найдено»; breakdown сгруппирован по `group`.
-  - **Тех-долг:** тип `LeakReportV2` описан локально в `LeakReport.tsx`, не в
-    `client.ts` — на момент правки client.ts держал чужой uncommitted WIP
-    (recon-auto, TASK-LEAD-141). Консолидировать в client.ts позже.
+  - **Тех-долг (закрыт v0.44.9):** тип консолидирован в `client.ts`
+    (`LeakReport`/`LeakBreakdownItem`/`LeakGroup`), локальный `LeakReportV2` +
+    каст из `LeakReport.tsx` убраны. (Откладывалось пока client.ts держал чужой
+    WIP recon-auto; на момент правки уже был чист.)
   - **Доработка (v0.44.7):** generic «Удержание» вынесено из «найдено» в 4-ю
     группу `review` («разобрать», не суммируется в found). Категории чарджбэков
     разбиты на `DISPUTABLE_CATEGORIES` (штраф + коррекции → found) vs

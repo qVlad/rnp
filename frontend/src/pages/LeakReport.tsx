@@ -11,51 +11,16 @@
  * Печатный/PDF-вид: «Печать / PDF» → window.print(); scoped print-CSS прячет
  * сайдбар (<aside>) и контролы. Backend: GET /api/leak-report.
  *
- * NB (тех-долг TASK-LEAD-142): тип ответа описан ЛОКАЛЬНО здесь, а не в
- * api/client.ts — на момент правки client.ts держал чужой uncommitted WIP
- * (recon-auto), трогать его нельзя. Консолидировать `LeakReportV2` в client.ts
- * когда сосед закоммитит.
+ * Тип ответа — `LeakReport` / `LeakBreakdownItem` в api/client.ts (единый
+ * источник правды; тех-долг TASK-LEAD-142 закрыт — раньше тип жил локально,
+ * пока client.ts держал чужой WIP).
  */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/api/client";
+import { api, type LeakBreakdownItem, type LeakGroup } from "@/api/client";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
 import PageHeader from "@/components/PageHeader";
 import { DateRangePicker } from "@/components/DateRangePicker";
-
-type LeakGroup = "found" | "review" | "frozen" | "lost";
-
-interface LeakItem {
-  leak_type: string;
-  label: string;
-  group: LeakGroup;
-  kind: string;
-  icon: string;
-  amount: number;
-  count: number;
-  hint: string;
-  frozen_capital?: number;
-  details: Array<Record<string, any>>;
-}
-
-interface LeakReportV2 {
-  period: { from: string; to: string };
-  totals: {
-    found_rub: number;
-    review_rub: number;
-    frozen_rub: number;
-    frozen_capital_rub: number;
-    lost_rub: number;
-  };
-  trust_badge: {
-    available: boolean;
-    weeks_total?: number;
-    weeks_matched?: number;
-    max_diff_pct?: number;
-  };
-  breakdown: LeakItem[];
-  generated_at: string;
-}
 
 function iso(d: Date) {
   return d.toISOString().slice(0, 10);
@@ -85,7 +50,7 @@ const KIND_CHIP: Record<string, { label: string; cls: string }> = {
   lost: { label: "потеряно", cls: "bg-rose-100 text-rose-700" },
 };
 
-function LeakCard({ item }: { item: LeakItem }) {
+function LeakCard({ item }: { item: LeakBreakdownItem }) {
   const [open, setOpen] = useState(false);
   const empty = item.amount <= 0 && item.count === 0;
   const chip = KIND_CHIP[item.kind] ?? { label: item.kind, cls: "bg-gray-100 text-gray-600" };
@@ -131,7 +96,7 @@ function LeakCard({ item }: { item: LeakItem }) {
   );
 }
 
-function DetailTable({ item }: { item: LeakItem }) {
+function DetailTable({ item }: { item: LeakBreakdownItem }) {
   const rows = item.details;
   if (item.leak_type === "recoverable_chargebacks") {
     return (
@@ -195,14 +160,13 @@ export default function LeakReport() {
 
   const q = useQuery({
     queryKey: ["leak-report", range.from, range.to],
-    queryFn: () =>
-      api.leakReport({ from: range.from, to: range.to }) as unknown as Promise<LeakReportV2>,
+    queryFn: () => api.leakReport({ from: range.from, to: range.to }),
   });
 
   const data = q.data;
   const badge = data?.trust_badge;
   const byGroup = useMemo(() => {
-    const g: Record<LeakGroup, LeakItem[]> = { found: [], review: [], frozen: [], lost: [] };
+    const g: Record<LeakGroup, LeakBreakdownItem[]> = { found: [], review: [], frozen: [], lost: [] };
     if (data) for (const it of data.breakdown) g[it.group]?.push(it);
     for (const k of Object.keys(g) as LeakGroup[]) g[k].sort((a, b) => b.amount - a.amount);
     return g;

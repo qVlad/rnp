@@ -2676,22 +2676,35 @@ paymentOrderDelete: (payment_order_id: string) =>
   },
 };
 
+// Leak-report «найдено ₽» (TASK-LEAD-140/142). 4 честные группы:
+//   found  — вернуть (оспоримые штрафы/коррекции) + дёшево остановить
+//   review — удержания WB к разбору (в массе легитимны), НЕ в «найдено»
+//   frozen — дохлый сток (хранение капает + замороженный капитал stock×COGS)
+//   lost   — убыточные акции постфактум, вернуть нельзя
+export type LeakGroup = "found" | "review" | "frozen" | "lost";
+
 export interface LeakBreakdownItem {
   leak_type: string;
   label: string;
-  kind: "recover" | "prevent";
+  group: LeakGroup;
+  kind: string; // recover | stop | review | frozen | lost
   icon: string;
   amount: number;
   count: number;
   hint: string;
+  frozen_capital?: number; // только для dead_stock_storage
   details: Array<Record<string, unknown>>;
 }
 
 export interface LeakReport {
   period: { from: string; to: string };
-  total_found_rub: number;
-  total_recover_rub: number;
-  total_prevent_rub: number;
+  totals: {
+    found_rub: number;
+    review_rub: number;
+    frozen_rub: number;
+    frozen_capital_rub: number;
+    lost_rub: number;
+  };
   trust_badge: {
     available: boolean;
     weeks_total?: number;
