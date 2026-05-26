@@ -1,0 +1,7 @@
+{
+  "task_id": "TASK-LEAD-138",
+  "agent": "Claude Opus 4.7 — main session",
+  "started_at": "2026-05-26T19:01:01Z",
+  "expected_minutes": 40,
+  "notes": "pivot to summary endpoint"
+}
