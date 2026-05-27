@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-LEAD-151",
-  "agent": "Claude Opus 4.7 — main session",
-  "started_at": "2026-05-27T18:23:47Z",
-  "expected_minutes": 15,
-  "notes": "fix tz-сдвиг в date-хелперах ReconciliationAuto (MSK toISOString)"
-}
