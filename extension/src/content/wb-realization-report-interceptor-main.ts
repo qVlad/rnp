@@ -119,11 +119,31 @@
   // TASK-LEAD-142: Jam — поисковые запросы по карточке.
   let lastAdvHash = "";
   let lastJamHash = "";
-  // TASK-LEAD-147: аккумулятор Ленты заказов (постраничный, дедуп по order.id).
-  let lastOrdersHash = "";
-  let _ordersAccumKey = "";
-  let _ordersIds = new Set<string>();
-  let _ordersSum = 0;
+  // TASK-LEAD-147/149: аккумулятор Ленты заказов (постраничный).
+  // Бакетируем по дате ОФОРМЛЕНИЯ заказа (`order.created`), а НЕ по фильтру
+  // Ленты (она фильтрует/сортирует по статус-дате `order.updated`, из-за чего
+  // в неделю попадают заказы, оформленные раньше). Ключ — понедельник недели
+  // created в МСК. Это совпадает 1:1 с нашим `wb_orders.order_dt`.
+  const _ordersBuckets = new Map<
+    string,
+    { count: number; sum: number; lastEmit: number }
+  >();
+  const _seenOrderIds = new Set<string>();
+
+  /** Понедельник МСК-недели для ISO-таймстампа (`2026-05-24T21:21:42+03:00`). */
+  function mskMonday(isoTs: unknown): string | null {
+    if (typeof isoTs !== "string") return null;
+    const t = Date.parse(isoTs);
+    if (Number.isNaN(t)) return null;
+    // Сдвигаем на +3ч, чтобы getUTC* давал МСК-«настенное» время.
+    const msk = new Date(t + 3 * 3600 * 1000);
+    const dow = (msk.getUTCDay() + 6) % 7; // Пн=0
+    const monday = new Date(msk.getTime() - dow * 86400000);
+    const y = monday.getUTCFullYear();
+    const m = String(monday.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(monday.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
 
   function maybePostExtra(url: string, raw: unknown, reqBody?: string): boolean {
     if (raw === null || typeof raw !== "object") return false;
@@ -149,53 +169,49 @@
       return true;
     }
 
-    // 2. Лента заказов (TASK-LEAD-147): order-feed/orders → data.orders[].
-    //    Постранично (50/стр, cursor) — аккумулируем по order.id по мере
-    //    прокрутки. Gross (все статусы, как наш wb_orders). Период — из
-    //    тела запроса currentPeriod.start. Заменяет Воронку (была by-design
-    //    разрыв: аналитика vs сырой фид).
+    // 2. Лента заказов (TASK-LEAD-147/149): order-feed/orders → data.orders[].
+    //    Постранично (50/стр, cursor). Бакетируем по дате ОФОРМЛЕНИЯ
+    //    (`order.created`) в МСК-неделю, дедуп по order.id. Gross (все
+    //    статусы — как наш wb_orders). Игнорируем фильтр Ленты: он по
+    //    статус-дате (`updated`), а нам нужна дата оформления. Совет юзеру:
+    //    задать в Ленте период «с начала недели по сегодня» и проскроллить.
     const feed = obj?.data?.orders;
     if (Array.isArray(feed) && feed.length > 0 && feed[0] &&
         typeof feed[0] === "object" && feed[0].order &&
         typeof feed[0].order === "object" && "id" in feed[0].order) {
-      let ws: string | null = null;
-      try {
-        const b = reqBody ? JSON.parse(reqBody) : null;
-        ws = b?.currentPeriod?.start ? String(b.currentPeriod.start).slice(0, 10) : null;
-      } catch {
-        /* ignore */
-      }
-      if (!ws) return true;
-      // Новый период — сбрасываем аккумулятор.
-      if (_ordersAccumKey !== ws) {
-        _ordersAccumKey = ws;
-        _ordersIds = new Set<string>();
-        _ordersSum = 0;
-      }
       for (const it of feed) {
         const o = (it as any)?.order;
         const id = o?.id;
-        if (typeof id !== "string" || _ordersIds.has(id)) continue;
-        _ordersIds.add(id);
-        _ordersSum += Number(o?.price?.seller) || 0;
+        if (typeof id !== "string" || _seenOrderIds.has(id)) continue;
+        const wk = mskMonday(o?.created);
+        if (!wk) continue;
+        _seenOrderIds.add(id);
+        let b = _ordersBuckets.get(wk);
+        if (!b) {
+          b = { count: 0, sum: 0, lastEmit: -1 };
+          _ordersBuckets.set(wk, b);
+        }
+        b.count += 1;
+        b.sum += Number(o?.price?.seller) || 0;
       }
-      const count = _ordersIds.size;
-      const sum = Math.round(_ordersSum * 100) / 100;
-      const hash = `feed-${ws}-${count}`;
-      if (hash === lastOrdersHash) return true;
-      lastOrdersHash = hash;
-      console.log(
-        `${TAG} matched ORDERS-FEED (Лента): накоплено ${count} заказов / ${sum}₽ week ${ws} (прокрути до конца для полной цифры)`,
-      );
-      window.postMessage(
-        {
-          __rnp: "wb-orders-feed",
-          week_start: ws,
-          orders_count: count,
-          orders_sum: sum,
-        },
-        "*",
-      );
+      // Эмитим только недели, чей счётчик изменился с прошлого раза.
+      for (const [wk, b] of _ordersBuckets) {
+        if (b.count === b.lastEmit) continue;
+        b.lastEmit = b.count;
+        const sum = Math.round(b.sum * 100) / 100;
+        console.log(
+          `${TAG} matched ORDERS-FEED (Лента): неделя ${wk} → ${b.count} заказов / ${sum}₽ (по дате оформления; прокрути всю Ленту за период)`,
+        );
+        window.postMessage(
+          {
+            __rnp: "wb-orders-feed",
+            week_start: wk,
+            orders_count: b.count,
+            orders_sum: sum,
+          },
+          "*",
+        );
+      }
       return true;
     }
 
