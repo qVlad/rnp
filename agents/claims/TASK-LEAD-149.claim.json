@@ -1,0 +1,7 @@
+{
+  "task_id": "TASK-LEAD-149",
+  "agent": "Claude Opus 4.7 — main session",
+  "started_at": "2026-05-27T14:18:24Z",
+  "expected_minutes": 25,
+  "notes": "Лента: бакетировать заказы по дате оформления (order.created), не по фильтру статус-даты"
+}
