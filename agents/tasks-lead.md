@@ -3799,6 +3799,24 @@ Round 12 пометил: «standalone-страницы /localization и /transit
   `RECON_GUIDE.md`. (extension orders-capture оставлен — безвреден, не рендерится.)
 - **Статус:** Выполнено — 2026-05-27
 
+### TASK-LEAD-151: fix — календарь автосверки съезжал на день (tz-баг в МСК)
+- **Приоритет:** P1 (smoke 2026-05-27)
+- **Источник:** Виджет недели на `/reconciliation-auto` показывал воскресенье
+  вместо понедельника (выделял 10.05 вместо 18.05), каждый клик ◀ накапливал
+  сдвиг. Причина: хелперы `mondayOf`/`shiftWeek`/`weekEndDM`/`lastClosedWeekStart`
+  создавали `Date` из локальной полуночи (`new Date(iso+"T00:00:00")`), а
+  возвращали через `toISOString()` (UTC). В МСК (UTC+3) локальная полночь =
+  21:00 предыдущего дня UTC → дата минус сутки. `mondayOf("2026-05-11")` давал
+  `"2026-05-10"`.
+- **Решение:** вся арифметика дат переведена на UTC-консистентность
+  (`T00:00:00Z` + `getUTCDay`/`setUTCDate`, `toLocaleDateString` с `timeZone:"UTC"`).
+  `lastClosedWeekStart` теперь = `shiftWeek(mondayOf(todayIso()), -1)`. Picker
+  получает `to=weekEndIso` (воскресенье) → подсвечивает всю неделю Пн-Вс, а не
+  один день. DateRangePicker сам по себе корректен (всё на локальных компонентах,
+  без toISOString) — баг был только в хелперах страницы.
+- **Затронуто:** `frontend/src/pages/ReconciliationAuto.tsx`.
+- **Статус:** Выполнено — 2026-05-27
+
 ---
 
 ## Формат / Жизненный цикл

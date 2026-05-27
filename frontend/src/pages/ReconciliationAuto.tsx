@@ -37,40 +37,51 @@ function fmtMoney(v: number, isCount: boolean = false): string {
   });
 }
 
+// Локальная календарная дата «сегодня» как ISO (без таймзонного сдвига).
+function todayIso(): string {
+  const n = new Date();
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+}
+
 function lastClosedWeekStart(): string {
-  const today = new Date();
-  const daysSinceMon = (today.getDay() + 6) % 7; // Mon=0, Sun=6
-  const thisMon = new Date(today);
-  thisMon.setDate(today.getDate() - daysSinceMon);
-  const lastMon = new Date(thisMon);
-  lastMon.setDate(thisMon.getDate() - 7);
-  return lastMon.toISOString().slice(0, 10);
+  return shiftWeek(mondayOf(todayIso()), -1);
 }
 
 // Понедельник недели, в которую попадает дата (TASK-LEAD-146).
+// ВСЯ арифметика — в UTC (T00:00:00Z + getUTC*/setUTCDate), иначе в МСК
+// (UTC+3) toISOString() сдвигает дату на день назад (TASK-LEAD-151).
 function mondayOf(isoDate: string): string {
-  const d = new Date(isoDate + "T00:00:00");
-  const dow = (d.getDay() + 6) % 7; // Пн=0
-  d.setDate(d.getDate() - dow);
+  const d = new Date(isoDate + "T00:00:00Z");
+  const dow = (d.getUTCDay() + 6) % 7; // Пн=0
+  d.setUTCDate(d.getUTCDate() - dow);
   return d.toISOString().slice(0, 10);
 }
 
 function shiftWeek(isoDate: string, deltaWeeks: number): string {
-  const d = new Date(isoDate + "T00:00:00");
-  d.setDate(d.getDate() + deltaWeeks * 7);
+  const d = new Date(isoDate + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + deltaWeeks * 7);
   return mondayOf(d.toISOString().slice(0, 10));
 }
 
 function fmtDM(isoDate: string): string {
-  const d = new Date(isoDate + "T00:00:00");
-  return d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
+  const d = new Date(isoDate + "T00:00:00Z");
+  return d.toLocaleDateString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: "UTC",
+  });
 }
 
-// Воскресенье недели (понедельник + 6 дней) — для отображения «18.05–24.05».
+// Воскресенье недели (понедельник + 6 дней), ISO — для highlight'а диапазона.
+function weekEndIso(mondayIso: string): string {
+  const d = new Date(mondayIso + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + 6);
+  return d.toISOString().slice(0, 10);
+}
+
+// Воскресенье недели — для отображения «18.05–24.05».
 function weekEndDM(mondayIso: string): string {
-  const d = new Date(mondayIso + "T00:00:00");
-  d.setDate(d.getDate() + 6);
-  return fmtDM(d.toISOString().slice(0, 10));
+  return fmtDM(weekEndIso(mondayIso));
 }
 
 type DeltaTone = "ok" | "warn" | "danger" | "none";
@@ -313,7 +324,7 @@ export default function ReconciliationAuto() {
           <div className="min-w-[150px]">
             <DateRangePicker
               from={weekStart}
-              to={weekStart}
+              to={weekEndIso(weekStart)}
               onChange={(r: DateRange) => setWeekStart(mondayOf(r.from))}
               compact
             />
