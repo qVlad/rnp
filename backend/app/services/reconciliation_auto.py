@@ -19,13 +19,13 @@ match по `supplier_oper_name`.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 from typing import Any
 
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Product, WbAdStatsDaily, WbOrder, WbReportDetail
+from app.db.models import Product, WbAdStatsDaily, WbReportDetail
 
 
 # TASK-LEAD-135: keyword-based blacklist на `bonus_type_name`. Если в имени
@@ -77,7 +77,7 @@ METRIC_GROUPS: dict[str, str] = {
     "sales": "Продажи и комиссии",
     "logistics": "Логистика, хранение, штрафы",
     "deductions": "Удержания",
-    "ads_orders": "Реклама и заказы",
+    "ads_orders": "Реклама",
     "advanced": "Расширенные метрики",
 }
 
@@ -251,28 +251,11 @@ async def compute_truestats_metrics(
     )).one()
     ad_cost = float(ads_row.ad_cost or 0)
 
-    # 10-11. Заказы — wb_orders по order_dt. WB Воронка «Заказали товаров»
-    # считает GROSS (все заказы, включая позже отменённые) — поэтому НЕ
-    # фильтруем is_cancel (TASK-LEAD-141). Границы недели — по МСК (UTC+3),
-    # т.к. Воронка WB группирует дни по МСК; UTC-границы давали сдвиг суток.
-    _MSK = timezone(timedelta(hours=3))
-    orders_where = [
-        WbOrder.tenant_id == tenant_id,
-        WbOrder.order_dt >= datetime.combine(week_start, datetime.min.time(), tzinfo=_MSK),
-        WbOrder.order_dt < datetime.combine(week_end, datetime.min.time(), tzinfo=_MSK),
-    ]
-    if brands is not None:
-        orders_where.append(WbOrder.brand.in_(list(brands)))
-    orders_row = (await session.execute(
-        select(
-            func.count().label("orders_count"),
-            func.coalesce(func.sum(WbOrder.price_with_disc), 0).label("orders_sum"),
-        ).where(and_(*orders_where))
-    )).one()
-    orders_count = int(orders_row.orders_count or 0)
-    orders_sum = float(orders_row.orders_sum or 0)
+    # Правила 10-11 (заказы) УДАЛЕНЫ из сверки (TASK-LEAD-150) — см. коммент
+    # у group "ads_orders" ниже. Statistics API `/supplier/orders` не отдаёт
+    # рассрочку, систематически ниже дашборда WB → сверять бессмысленно.
 
-    # Собираем 17 метрик в линейный список — фронт рендерит таблицу.
+    # Собираем метрики в линейный список — фронт рендерит таблицу.
     metrics = [
         # group "sales"
         _metric(1, "sales", "Сумма продаж",
@@ -330,27 +313,22 @@ async def compute_truestats_metrics(
                     "stage2_sale": float(comp_stage2),
                     "stage3_return": float(comp_stage3),
                 }),
-        # group "ads_orders" — НЕ из отчёта реализации! Источник WB — другие
-        # разделы ЛК (Продвижение / Воронка). xlsx и summary их не содержат,
-        # поэтому WB-колонка автозаполнению не подлежит → ручной ввод.
+        # group "ads_orders" — НЕ из отчёта реализации! Источник WB —
+        # раздел ЛК Продвижение → Финансы. xlsx/summary его не содержат →
+        # WB-колонка автозаполнению не подлежит, ручной ввод / extension.
+        #
+        # Правила 10/11 (заказы) СКРЫТЫ из сверки (TASK-LEAD-150): наш
+        # `wb_orders` тянется из Statistics API `/supplier/orders`, который
+        # ПО ДИЗАЙНУ WB не отдаёт заказы в рассрочку («Оплата частями») и сам
+        # WB-справочник помечает его «для сверок не использовать». Поэтому он
+        # систематически ниже Воронки/Ленты ЛК на долю рассрочки (~16%) —
+        # сверять его с дашбордом WB бессмысленно. Деньги сверяются отдельно
+        # (правила 1-17 из отчёта реализации). См. WB_API_REFERENCE.md §
+        # /supplier/orders и RECON_GUIDE.md правило 10-11.
         _metric(9, "ads_orders", "Реклама ВБ.Продвижение",
                 "Σ sum по wb_ad_stats_daily (фактические списания)",
                 ad_cost, status="ok",
                 meta={"wb_source": "ЛК WB → Продвижение → Финансы (фактические списания за период)"}),
-        _metric(10, "ads_orders", "Кол-во заказов",
-                "COUNT wb_orders по order_dt (gross, МСК)",
-                orders_count, status="ok", is_count=True,
-                meta={
-                    "wb_source": "ЛК WB → Аналитика → Лента заказов (период «с начала недели по сегодня», проскролль весь список)",
-                    "indicative_note": "Лента в UI фильтруется по СТАТУС-дате, а мы считаем по дате ОФОРМЛЕНИЯ (order.created). Расширение само разложит заказы по неделе оформления — поэтому в Ленте задай период пошире (с начала недели по сегодня) и проскролль до конца: заказы, оформленные на неделе, но выкупленные/отменённые позже, иначе не попадут.",
-                }),
-        _metric(11, "ads_orders", "Сумма заказов",
-                "Σ price_with_disc по wb_orders (gross, МСК)",
-                orders_sum, status="ok",
-                meta={
-                    "wb_source": "ЛК WB → Аналитика → Лента заказов (Σ price.seller, по дате оформления)",
-                    "indicative_note": "Сумма по дате оформления (order.created), бакетируется автоматически. Задай период пошире и проскролль всю Ленту.",
-                }),
         # group "advanced" (метрика 6 — qty)
         _metric(6, "advanced", "Кол-во проданных шт.",
                 "Σ quantity (Продажа − Возврат)",
