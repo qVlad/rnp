@@ -1,0 +1,7 @@
+{
+  "task_id": "TASK-LEAD-150",
+  "agent": "Claude Opus 4.7 — main session",
+  "started_at": "2026-05-27T16:17:26Z",
+  "expected_minutes": 20,
+  "notes": "Скрыть рр10/11 (заказы) из автосверки + документировать рассрочку Statistics API"
+}
