@@ -35,6 +35,7 @@ from app.db.models import (
     WbFunnelDaily,
     WbOrder,
     WbPrice,
+    WbReportDetail,
     WbSale,
     WbStockSnapshot,
     WbTariffBox,
@@ -800,14 +801,17 @@ async def _count_orders_in_period(
 ) -> dict[int, int]:
     """Заказов per nm_id за период [from, to] inclusive.
 
-    TASK-LEAD-153: primary source — `wb_funnel_daily` (WB Analytics API
-    sales-funnel, ВКЛЮЧАЕТ рассрочку, parity с дашбордом WB). Fallback per-
-    nm — `wb_orders` (Statistics API, без рассрочки) для тех nm, по которым
-    funnel ещё не синканулся в этом периоде.
+    Иерархия источников (TASK-LEAD-153/157):
+    1. **Primary `wb_funnel_daily`** (Analytics API, ВКЛЮЧАЕТ рассрочку) —
+       работает только для последних 7 дней (WB API rolling-окно).
+    2. **Retro-fallback `wb_orders` ∪ `wb_report_detail` по srid** — для
+       периодов >7 дней. Союз ловит и Statistics-API заказы, и рассрочка-
+       заказы, которые в итоге дошли до отчёта реализации. Не покрывает
+       отмены до доставки (их нет ни там, ни там) — это документированный
+       gap, см. UNIT_PLAN.md.
 
     Coverage-сигнал: nm есть в результате funnel-запроса (хоть одна строка
-    в периоде) → используем funnel. Иначе → fallback на wb_orders gross,
-    MSK boundary (TASK-LEAD-152).
+    в периоде) → используем funnel. Иначе → retro-union.
     """
     if not nm_ids:
         return {}
@@ -840,23 +844,38 @@ async def _count_orders_in_period(
     if not missing:
         return result
 
-    # 2) Fallback: wb_orders gross, MSK boundary.
+    # 2) Retro-fallback: union(wb_orders, wb_report_detail) по srid.
+    # MSK boundary (TASK-LEAD-152) для wb_orders; report_detail.order_dt
+    # тоже timestamptz, фильтр работает корректно с MSK-границей.
     start_dt = datetime.combine(period_from, datetime.min.time(), tzinfo=_MSK)
     end_dt = datetime.combine(
         period_to + timedelta(days=1), datetime.min.time(), tzinfo=_MSK
     )
-    fb_stmt = (
-        select(WbOrder.nm_id, func.count())
-        .where(
-            WbOrder.tenant_id == tenant_id,
-            WbOrder.nm_id.in_(missing),
-            WbOrder.order_dt >= start_dt,
-            WbOrder.order_dt < end_dt,
-        )
-        .group_by(WbOrder.nm_id)
+    per_nm: dict[int, set[str]] = {}
+
+    orders_stmt = select(WbOrder.nm_id, WbOrder.srid).where(
+        WbOrder.tenant_id == tenant_id,
+        WbOrder.nm_id.in_(missing),
+        WbOrder.order_dt >= start_dt,
+        WbOrder.order_dt < end_dt,
     )
-    for nm, cnt in (await session.execute(fb_stmt)).all():
-        result[int(nm)] = int(cnt or 0)
+    for nm, srid in (await session.execute(orders_stmt)).all():
+        if srid:
+            per_nm.setdefault(int(nm), set()).add(str(srid))
+
+    rd_stmt = select(WbReportDetail.nm_id, WbReportDetail.srid).where(
+        WbReportDetail.tenant_id == tenant_id,
+        WbReportDetail.nm_id.in_(missing),
+        WbReportDetail.order_dt >= start_dt,
+        WbReportDetail.order_dt < end_dt,
+        WbReportDetail.srid.isnot(None),
+    )
+    for nm, srid in (await session.execute(rd_stmt)).all():
+        if srid:
+            per_nm.setdefault(int(nm), set()).add(str(srid))
+
+    for nm in missing:
+        result[nm] = len(per_nm.get(nm, set()))
     return result
 
 
@@ -870,10 +889,15 @@ async def _count_sold_in_period(
 ) -> dict[int, int]:
     """Выкупов per nm_id за период [from, to] inclusive.
 
-    TASK-LEAD-153: primary — `wb_funnel_daily.buyouts_count` (Analytics API,
-    нетит выкуп с возвратом как Воронка ЛК). Fallback per-nm — wb_sales
-    нетто (`count(is_return=False) − count(is_return=True)`, MSK boundary,
-    TASK-LEAD-152).
+    Иерархия источников (TASK-LEAD-153/157):
+    1. **Primary `wb_funnel_daily.buyouts_count`** (Analytics API, нетит выкуп
+       с возвратом как Воронка ЛК). Работает только для последних 7 дней.
+    2. **Retro-fallback `wb_report_detail`** (финансовый отчёт реализации,
+       АВТОРИТЕТНЫЙ источник): `SUM(quantity для Продажа) − SUM(quantity
+       для Возврат)` по `sale_dt`. Сходится с WB-ЛК до штуки и закрывает
+       рассрочку (если она реализовалась).
+    3. **Last-resort `wb_sales`** (Statistics API, нетто) — если у nm нет ни
+       funnel-, ни report_detail-данных.
     """
     if not nm_ids:
         return {}
@@ -905,11 +929,43 @@ async def _count_sold_in_period(
     if not missing:
         return result
 
+    # 2) Retro-primary: report_detail (Продажа − Возврат by sale_dt, MSK).
     start_dt = datetime.combine(period_from, datetime.min.time(), tzinfo=_MSK)
     end_dt = datetime.combine(
         period_to + timedelta(days=1), datetime.min.time(), tzinfo=_MSK
     )
-    fb_stmt = (
+    rd_stmt = (
+        select(
+            WbReportDetail.nm_id,
+            func.sum(
+                case((WbReportDetail.supplier_oper_name.in_(("Продажа", "продажа")),
+                      WbReportDetail.quantity), else_=0)
+            )
+            - func.sum(
+                case((WbReportDetail.supplier_oper_name.in_(("Возврат", "возврат")),
+                      WbReportDetail.quantity), else_=0)
+            ),
+        )
+        .where(
+            WbReportDetail.tenant_id == tenant_id,
+            WbReportDetail.nm_id.in_(missing),
+            WbReportDetail.sale_dt >= start_dt,
+            WbReportDetail.sale_dt < end_dt,
+        )
+        .group_by(WbReportDetail.nm_id)
+    )
+    rd_covered: set[int] = set()
+    for nm, net in (await session.execute(rd_stmt)).all():
+        nm_int = int(nm)
+        rd_covered.add(nm_int)
+        result[nm_int] = int(net or 0)
+
+    still_missing = [n for n in missing if n not in rd_covered]
+    if not still_missing:
+        return result
+
+    # 3) Last-resort: wb_sales net.
+    sales_stmt = (
         select(
             WbSale.nm_id,
             func.sum(case((WbSale.is_return.is_(False), 1), else_=0))
@@ -917,13 +973,13 @@ async def _count_sold_in_period(
         )
         .where(
             WbSale.tenant_id == tenant_id,
-            WbSale.nm_id.in_(missing),
+            WbSale.nm_id.in_(still_missing),
             WbSale.sale_dt >= start_dt,
             WbSale.sale_dt < end_dt,
         )
         .group_by(WbSale.nm_id)
     )
-    for nm, net in (await session.execute(fb_stmt)).all():
+    for nm, net in (await session.execute(sales_stmt)).all():
         result[int(nm)] = int(net or 0)
     return result
 

@@ -3929,6 +3929,53 @@ Round 12 пометил: «standalone-страницы /localization и /transit
   `USER_GUIDE.md` (раздел).
 - **Статус:** Выполнено — 2026-05-28
 
+### TASK-LEAD-157: Hybrid retro для unit-plan — wb_report_detail как авторитетный источник для выкупов и union с wb_orders для заказов
+- **Приоритет:** P1 (smoke 2026-05-28 — для периодов >7 дней назад funnel пуст из-за WB rolling-window)
+- **Источник:** WB Analytics API имеет hard 7-day rolling-окно (TASK-LEAD-153,
+  подтверждено 2026-05-28). Для retro-периодов (апрель и старше) funnel
+  всегда пуст → unit-plan показывал wb_orders без рассрочки и wb_sales без
+  Воронка-семантики. Юзер предложил «брать из фин отчётов — там данные
+  зафиксированы».
+- **Решение (3-tier hybrid в `unit_plan_loader`):**
+  - **Заказы (BB/BD/BE):** primary funnel → retro union `wb_orders ∪
+    wb_report_detail` по srid (ловит рассрочка-заказы дошедшие до отчёта).
+    Не покрывает отмены до доставки — gap документирован, для 100%
+    паритета с Воронкой нужен TASK-LEAD-158.
+  - **Выкупы (BC):** primary funnel → retro `wb_report_detail` (Σ qty
+    Продажа − Σ qty Возврат, авторитетный) → last-resort wb_sales.
+  - Coverage-сигнал на каждом уровне: nm имеет ≥1 строку → используем,
+    иначе fallback.
+- **Затронуто:** `services/unit_plan_loader.py` (новые fallback'и в обеих
+  функциях), `UNIT_PLAN.md` (блок «Источники по периоду» обновлён до 3-tier).
+- **Статус:** Выполнено — 2026-05-28
+
+### TASK-LEAD-158: Воронка через extension — 100% паритет с дашбордом WB на любых периодах
+- **Приоритет:** P2 (запланировано, не делаем сейчас)
+- **Источник:** TASK-LEAD-157 закрыл retro выкупов точно, retro заказов
+  приближённо (без отмен-до-доставки). Для 100% паритета с тем что
+  пользователь видит в ЛК → Аналитика → Воронка продаж нужен прямой
+  захват внутреннего endpoint'а Воронки через расширение РНП (как
+  TASK-LEAD-142 для Jam / TASK-LEAD-149 для Ленты заказов). WB не отдаёт
+  Воронку через документированный API глубже 7 дней.
+- **План реализации:**
+  - Backend: миграция `wb_funnel_voronka_uploads (tenant, nm_id, dt,
+    orders_count, buyouts_count, …, uploaded_by_user_id, uploaded_at)` —
+    либо расширить существующий `wb_funnel_daily` тегом source='voronka'.
+  - Backend endpoint `POST /api/promo-calculator/funnel-upload` (или общий)
+    принимает payload от extension.
+  - Extension: новый MAIN-world interceptor на seller.wildberries.ru на URL
+    voronka-эндпоинта (нужно отловить через DevTools при прокрутке
+    «Воронки продаж» на любом периоде — у Лентой и Jam'ом эту схему уже
+    отработали). MS дедупит по hash и шлёт SW → POST на backend.
+  - Loader: добавить 4-й tier приоритета `voronka_uploads` ВЫШЕ funnel и
+    report_detail (т.к. это то что user реально видит).
+  - UI hint в `/unit-plan`: если для периода нет voronka-данных →
+    «прокрути Воронку продаж в ЛК WB за нужный период, расширение
+    подгрузит».
+- **Когда делать:** когда user явно попросит 100% паритет с дашбордом или
+  при появлении бизнес-кейса где приближение TASK-LEAD-157 недостаточно.
+- **Статус:** Запланировано — 2026-05-28
+
 ---
 
 ## Формат / Жизненный цикл
