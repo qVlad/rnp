@@ -44,9 +44,13 @@ from app.sync.checkpoints import update_checkpoint
 
 log = get_logger(__name__)
 
-DAYS_BACK = 90
-# WB Analytics v3 sales-funnel ограничивает period: >7-8 дней → 400 «excess
-# limit on days». Подобрано эмпирически 2026-05-28 (TASK-LEAD-153).
+DAYS_BACK = 7
+# WB Analytics v3 sales-funnel — жёсткое окно **rolling 7 дней** от сегодня.
+# Запрос за период старше 7 дней назад (даже chunk-by-chunk) → 400 «invalid
+# start day: excess limit on days». Подобрано эмпирически 2026-05-28
+# (TASK-LEAD-153). Backfill истории через API НЕВОЗМОЖЕН — данные старше
+# 7 дней есть только в дашборде ЛК (интерсептором расширения, как Лента).
+# Ежедневный rolling-sync накапливает локальную историю с момента старта.
 DATE_CHUNK_DAYS = 7
 NM_CHUNK = 1000
 

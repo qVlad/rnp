@@ -576,6 +576,17 @@ file_bytes, filename, content_type)`.
 **Rate limit:** 3/мин, min_interval 20с. Категория `analytics` в `WbApiClient`.
 **Limit на payload:** до 1000 nmIDs за запрос (с декабря 2025).
 
+> ⚠️ **Жёсткое 7-дневное rolling-окно (подтверждено 2026-05-28, TASK-LEAD-153).**
+> WB v3 sales-funnel принимает только запросы где `selectedPeriod.start ≥
+> today − 7 days`. Любой start старше 7 дней назад (даже период длиной 1 день) →
+> 400 `invalid start day: excess limit on days`. **Backfill истории через API
+> невозможен.** Окно `selectedPeriod.end − selectedPeriod.start` тоже ≤ 7 дней
+> (8+ → та же ошибка). Поэтому ежедневный `sync.funnel_daily` (TASK-LEAD-153)
+> качает только последние 7 дней rolling — историческую глубину набираем
+> локально, накопительно. Для исторических периодов остаётся `wb_orders`
+> fallback (с задокументированным разрывом на рассрочку) либо extension-
+> интерсептор Воронки ЛК (отдельная фича, не реализована).
+
 **Response items:** `{"nmID", "vendorCode", "history": [{"dt": "YYYY-MM-DD",
 "openCardCount", "addToCartCount", "ordersCount", "buyoutsCount", "ordersSumRub", ...}]}`.
 
