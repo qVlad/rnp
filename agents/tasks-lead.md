@@ -3904,6 +3904,31 @@ Round 12 пометил: «standalone-страницы /localization и /transit
   `CLAUDE.md` (новое подправило 1a).
 - **Статус:** Выполнено — 2026-05-28
 
+### TASK-LEAD-155: Калькулятор рентабельности WB-акций — отдельная страница с авто-подгрузкой акций из WB API
+- **Приоритет:** P1 (запрос пользователя 2026-05-28, after TASK-LEAD-154 rename)
+- **Источник:** После переименования `/promo-calculator` в «Калькулятор
+  рентабельности» (generic) под именем «Калькулятор рентабельности WB-акций»
+  поедет новая страница: подгрузка списка акций из WB Promo Calendar API +
+  список товаров, которые WB предлагает добавить + симуляция «до/после» по
+  каждому SKU со скидкой акции.
+- **Решение:**
+  - Backend: добавлены 2 WB-обёртки в `integrations/wb/promotions.py` —
+    `get_promotion_details(token, ids)` и `get_promotion_nomenclatures(token, id)`
+    с graceful fallback на пустой список при 401/404/5xx. Endpoints:
+    `GET /api/promo-calculator/wb-promotions` (list, fetches token from
+    tenant), `GET /api/promo-calculator/wb-promotions/{id}` (details +
+    nomenclatures combined). Reuse существующий `POST /simulate`.
+  - Frontend: новая страница `pages/PromoCalculatorWb.tsx` —
+    Step 1 dropdown акций, Step 2 фильтр + checkbox-таблица товаров с
+    скидкой / boost / baseline, Step 3 результат с маржей до/после.
+    Route `/promo-calculator-wb` в App.tsx + sidebar «Калькулятор WB-акций».
+  - USER_GUIDE.md обновлён: новый раздел с описанием.
+- **Затронуто:** `integrations/wb/promotions.py` (+2 wrapper), `api/promo_calculator.py`
+  (+2 endpoint), `frontend/src/pages/PromoCalculatorWb.tsx` (new), `App.tsx`
+  (route), `Layout.tsx` (sidebar), `api/client.ts` (2 method),
+  `USER_GUIDE.md` (раздел).
+- **Статус:** Выполнено — 2026-05-28
+
 ---
 
 ## Формат / Жизненный цикл

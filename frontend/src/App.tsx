@@ -58,6 +58,7 @@ import AbTestNew from "./pages/AbTestNew";
 import AbTestDetail from "./pages/AbTestDetail";
 import ManagersKpi from "./pages/ManagersKpi";
 import PromoCalculator from "./pages/PromoCalculator";
+import PromoCalculatorWb from "./pages/PromoCalculatorWb";
 import LeakReport from "./pages/LeakReport";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -274,6 +275,7 @@ export default function App() {
           />
           <Route path="calc" element={<UnitCalculator />} />
           <Route path="promo-calculator" element={<PromoCalculator />} />
+          <Route path="promo-calculator-wb" element={<PromoCalculatorWb />} />
           <Route
             path="users"
             element={

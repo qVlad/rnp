@@ -126,4 +126,119 @@ async def list_active_promotions(
         return []
 
 
-__all__ = ["list_active_promotions"]
+async def get_promotion_details(
+    token: str, promotion_ids: list[int]
+) -> list[dict[str, Any]]:
+    """`GET /api/v1/calendar/promotions/details?promotionIDs=...` — детали акций.
+
+    Возвращает `[{id, name, startDateTime, endDateTime, type, discount, ...}]`.
+    Graceful fallback на пустой список при 4xx/5xx (TASK-LEAD-155).
+    """
+    if not promotion_ids:
+        return []
+    try:
+        import httpx
+
+        await _promo_limiter.acquire()
+        async with httpx.AsyncClient(
+            timeout=30.0,
+            headers={
+                "Authorization": token,
+                "Accept": "application/json",
+                "User-Agent": "RNP-Seller-Service/1.0 (httpx; python)",
+            },
+        ) as client:
+            resp = await client.get(
+                f"{_PROMO_BASE}/api/v1/calendar/promotions/details",
+                params={"promotionIDs": [str(pid) for pid in promotion_ids]},
+            )
+            if resp.status_code in (401, 403, 404):
+                log.info(
+                    "WB Promo Calendar details: %s (token/route)", resp.status_code
+                )
+                return []
+            if resp.status_code >= 400:
+                log.warning(
+                    "WB Promo Calendar details: %s body=%s",
+                    resp.status_code, (resp.text or "")[:200],
+                )
+                return []
+            data = resp.json() if resp.content else {}
+        promotions = (
+            data.get("data", {}).get("promotions") if isinstance(data, dict) else None
+        )
+        if not promotions and isinstance(data, list):
+            promotions = data
+        return promotions or []
+    except (WbApiError, WbCooldownActive) as e:
+        log.warning("WB Promo details error: %s", e)
+        return []
+    except Exception as e:  # noqa: BLE001
+        log.warning("WB Promo details unexpected: %s", e)
+        return []
+
+
+async def get_promotion_nomenclatures(
+    token: str, promotion_id: int, *, in_action: bool | None = None
+) -> list[dict[str, Any]]:
+    """`GET /api/v1/calendar/promotions/nomenclatures?promotionID=...` — товары.
+
+    WB отдаёт nomenclature-уровень: для каждого nm_id флаг `inAction` (уже в
+    акции или предложение). Возвращает `[{nmID, price, discountedPrice,
+    inAction, ...}]`. По умолчанию запрашиваем ВСЕ (предложения + участвующие),
+    UI разделит. Graceful fallback на пустой список (TASK-LEAD-155).
+    """
+    try:
+        import httpx
+
+        await _promo_limiter.acquire()
+        async with httpx.AsyncClient(
+            timeout=30.0,
+            headers={
+                "Authorization": token,
+                "Accept": "application/json",
+                "User-Agent": "RNP-Seller-Service/1.0 (httpx; python)",
+            },
+        ) as client:
+            params: dict[str, Any] = {"promotionID": promotion_id}
+            if in_action is not None:
+                params["inAction"] = "true" if in_action else "false"
+            resp = await client.get(
+                f"{_PROMO_BASE}/api/v1/calendar/promotions/nomenclatures",
+                params=params,
+            )
+            if resp.status_code in (401, 403, 404):
+                log.info(
+                    "WB Promo Calendar nomenclatures: %s (token/route)", resp.status_code
+                )
+                return []
+            if resp.status_code >= 400:
+                log.warning(
+                    "WB Promo Calendar nomenclatures: %s body=%s",
+                    resp.status_code, (resp.text or "")[:200],
+                )
+                return []
+            data = resp.json() if resp.content else {}
+        # Структура ответа: {data: {nomenclatures: [...]}, ...} или плоский список.
+        if isinstance(data, dict):
+            nomen = data.get("data", {}).get("nomenclatures") or data.get(
+                "nomenclatures"
+            )
+            if isinstance(nomen, list):
+                return nomen
+        if isinstance(data, list):
+            return data
+        return []
+    except (WbApiError, WbCooldownActive) as e:
+        log.warning("WB Promo nomenclatures error: %s", e)
+        return []
+    except Exception as e:  # noqa: BLE001
+        log.warning("WB Promo nomenclatures unexpected: %s", e)
+        return []
+
+
+__all__ = [
+    "list_active_promotions",
+    "get_promotion_details",
+    "get_promotion_nomenclatures",
+]

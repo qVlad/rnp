@@ -2665,6 +2665,28 @@ paymentOrderDelete: (payment_order_id: string) =>
       body: JSON.stringify(body),
     }),
 
+  // TASK-LEAD-155: WB Promo Calendar API через backend.
+  promoCalculatorListWbPromotions: (params: { start_date?: string; end_date?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.start_date) qs.set("start_date", params.start_date);
+    if (params.end_date) qs.set("end_date", params.end_date);
+    return request<Array<{
+      id: number;
+      name: string;
+      start_date_time: string | null;
+      end_date_time: string | null;
+      type: string | null;
+      in_promo_action: boolean | null;
+    }>>(`/api/promo-calculator/wb-promotions${qs.toString() ? `?${qs}` : ""}`);
+  },
+
+  promoCalculatorGetWbPromotion: (promotionId: number) =>
+    request<{
+      promotion_id: number;
+      details: Record<string, unknown> | null;
+      nomenclatures: Array<Record<string, unknown>>;
+    }>(`/api/promo-calculator/wb-promotions/${promotionId}`),
+
   // Leak-report «найдено N₽» (TASK-LEAD-140) — аудит-артефакт кабинета.
   leakReport: (params: { from?: string; to?: string } = {}) => {
     const qs = new URLSearchParams();

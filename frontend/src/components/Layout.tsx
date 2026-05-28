@@ -79,6 +79,7 @@ const GROUPS: Group[] = [
       { to: "/supply-calculator", label: "Калькулятор поставки" },
       { to: "/transit-calculator", label: "Калькулятор транзита" },
       { to: "/promo-calculator", label: "Калькулятор рентабельности" },
+      { to: "/promo-calculator-wb", label: "Калькулятор WB-акций" },
     ],
   },
   {

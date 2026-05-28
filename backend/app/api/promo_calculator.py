@@ -7,24 +7,93 @@ Brand-filter через `current_brands_filter` — manager видит толь�
 nm_id из своего whitelist'а. SKU вне whitelist'а просто пропускаются
 (не 403 — возможно манагер выбрал смешанный набор, частичный результат
 полезнее ошибки).
+
+TASK-LEAD-155: добавлены GET endpoints для подгрузки актуальных WB-акций
+из `dp-calendar-api.wildberries.ru` — отдельная страница UI с auto-fill.
 """
 from __future__ import annotations
 
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, conint, condecimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models import Tenant
 from app.db.session import get_db  # noqa: F401  (used by get_db_tenant_scoped)
-from app.services.auth import current_brands_filter, get_db_tenant_scoped
+from app.integrations.wb.promotions import (
+    get_promotion_details,
+    get_promotion_nomenclatures,
+    list_active_promotions,
+)
+from app.services.auth import (
+    current_brands_filter,
+    get_current_user,
+    get_db_tenant_scoped,
+)
 from app.services.promo_calculator import (
     PromoSimulationInput,
     simulate_promo_for_skus,
 )
+from app.services.secrets_crypto import decrypt
 
 router = APIRouter(prefix="/api/promo-calculator", tags=["promo-calculator"])
+
+
+async def _resolve_wb_token(session: AsyncSession, tenant_id: int) -> str:
+    tenant = await session.get(Tenant, tenant_id)
+    if tenant is None or not tenant.wb_token:
+        raise HTTPException(400, "WB-токен не настроен — открой /settings")
+    token = decrypt(tenant.wb_token) or ""
+    if not token:
+        raise HTTPException(400, "WB-токен не расшифровывается")
+    return token
+
+
+@router.get("/wb-promotions")
+async def list_wb_promotions(
+    start_date: date | None = Query(None, description="ISO YYYY-MM-DD"),
+    end_date: date | None = Query(None, description="ISO YYYY-MM-DD"),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    user=Depends(get_current_user),
+) -> list[dict[str, Any]]:
+    """Список WB-акций в окне дат.
+
+    Источник: `GET dp-calendar-api/api/v1/calendar/promotions` (TASK-LEAD-155).
+    По умолчанию — текущий день .. +90 дней. WB иногда возвращает 401/404 —
+    тогда отдаём пустой список (graceful fallback).
+    """
+    token = await _resolve_wb_token(session, user.tenant_id)
+    sd = start_date or date.today()
+    ed = end_date or (sd + timedelta(days=90))
+    promos = await list_active_promotions(
+        token, start_date=sd, end_date=ed, include_all=True
+    )
+    return promos
+
+
+@router.get("/wb-promotions/{promotion_id}")
+async def get_wb_promotion(
+    promotion_id: int,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    user=Depends(get_current_user),
+) -> dict[str, Any]:
+    """Детали акции WB + список товаров (предложенных и участвующих).
+
+    Объединяет два WB-эндпоинта `details` и `nomenclatures`. nm_id, по которым
+    WB предлагает участвовать, — это поле `inAction=false`; уже участвующие —
+    `inAction=true`. UI сам разделит/покажет toggle.
+    """
+    token = await _resolve_wb_token(session, user.tenant_id)
+    details = await get_promotion_details(token, [promotion_id])
+    nomenclatures = await get_promotion_nomenclatures(token, promotion_id)
+    return {
+        "promotion_id": promotion_id,
+        "details": details[0] if details else None,
+        "nomenclatures": nomenclatures,
+    }
 
 
 class SimulateRequest(BaseModel):
