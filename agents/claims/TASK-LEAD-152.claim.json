@@ -1,0 +1,7 @@
+{
+  "task_id": "TASK-LEAD-152",
+  "agent": "Claude Opus 4.7 — main session",
+  "started_at": "2026-05-28T13:35:03Z",
+  "expected_minutes": 15,
+  "notes": "unit-plan: Заказано→gross + Выкуплено→нетто + MSK boundary"
+}
