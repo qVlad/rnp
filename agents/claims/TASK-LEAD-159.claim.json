@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-LEAD-159",
-  "agent": "Claude Opus 4.8 — main session",
-  "started_at": "2026-05-28T20:14:18Z",
-  "expected_minutes": 30,
-  "notes": "сжатие CLAUDE.md — убрать дубли с FEATURES/RULES/WB_API_REFERENCE"
-}
