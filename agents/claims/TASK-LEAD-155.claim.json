@@ -1,0 +1,7 @@
+{
+  "task_id": "TASK-LEAD-155",
+  "agent": "Claude Opus 4.7 — main session",
+  "started_at": "2026-05-28T15:21:45Z",
+  "expected_minutes": 120,
+  "notes": "WB-promo calculator: новая страница + API-обёртки details/nomenclatures + simulate"
+}
