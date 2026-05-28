@@ -624,29 +624,7 @@ export default function WeeklyReport() {
           </section>
         )}
 
-        {/* Header card — для PDF */}
-        <section className="card">
-          <div className="flex items-baseline justify-between flex-wrap gap-2">
-            <div>
-              <div className="text-xs text-muted uppercase">Отчёт менеджера</div>
-              <div className="font-medium mt-1">
-                {user?.full_name || user?.username || "—"}
-                {user?.brands && user.brands.length > 0 && (
-                  <span className="text-muted text-xs ml-2">
-                    бренды: {user.brands.join(", ")}
-                  </span>
-                )}
-              </div>
-            </div>
-            <div className="text-right">
-              <div className="text-xs text-muted uppercase">Период</div>
-              <div className="font-mono font-medium mt-1">{fmtPeriod(current)}</div>
-              <div className="text-xs text-muted">
-                {current.from} — {current.to}
-              </div>
-            </div>
-          </div>
-        </section>
+        {/* «Отчёт менеджера» header удалён 2026-05-28 по запросу — не нужен. */}
 
         {/* TASK-LEAD-064 — Top-3 actionable рекомендации.
             Скрыта если recs пуст (не показываем пустой блок).

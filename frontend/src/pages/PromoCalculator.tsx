@@ -230,7 +230,7 @@ export default function PromoCalculator() {
     <div className="flex flex-col gap-4">
       {/* Hero */}
       <PageHeader
-        title="Калькулятор рентабельности WB-акций"
+        title="Калькулятор рентабельности"
         subtitle={
           <>
             Симулирует влияние акции (скидка × N дней × ожидаемый рост продаж)
