@@ -12,6 +12,7 @@ celery_app = Celery(
         "app.sync.tasks_abtest",
         "app.sync.tasks_tariffs",
         "app.sync.tasks_prices",
+        "app.sync.tasks_funnel",
         "app.sync.tasks_product_volume",
         "app.sync.tasks_scoreboard",
         "app.sync.event_consumers",
@@ -321,6 +322,16 @@ celery_app.conf.update(
         "sync-prices-30m": {
             "task": "sync.prices",
             "schedule": crontab(minute="*/30"),
+        },
+        # --- WB Funnel Daily (TASK-LEAD-153) ---
+        # Ежедневно 06:00 МСК (после orders/sales sync) — тянет per-day
+        # заказы/выкупы/выручку из Analytics API (sales-funnel) за
+        # последние 90 дней. ВКЛЮЧАЕТ рассрочку — авторитетный источник
+        # для unit-plan и dashboard preliminary KPI (`wb_orders` остаётся
+        # для drill-down). См. tasks_funnel.py.
+        "sync-funnel-daily": {
+            "task": "sync.funnel_daily",
+            "schedule": crontab(hour=6, minute=0),
         },
         # --- Manager weekly scoreboard pre-aggregation (TASK-LEAD-087) ---
         # Ежедневно 04:30 МСК — сразу после `sync_report_detail` (04:15),

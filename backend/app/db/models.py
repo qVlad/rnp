@@ -539,6 +539,44 @@ class WbAdStatsDaily(Base, TenantScopedMixin):
     __table_args__ = (Index("ix_ad_stats_advert_date_nm", "advert_id", "stat_date", "nm_id"),)
 
 
+class WbFunnelDaily(Base, TenantScopedMixin):
+    """Per-day заказы/выкупы/выручка из WB Analytics API (TASK-LEAD-153).
+
+    Источник: `POST /api/analytics/v3/sales-funnel/products/history` — тот же
+    API, на котором стоит Воронка ЛК. ВКЛЮЧАЕТ рассрочку («Оплата частями»),
+    в отличие от Statistics API `/supplier/orders` (там её нет by design).
+    Парные цифры дашборду WB.
+
+    Используется как авторитетный источник для:
+    - `/unit-plan` Заказано/Выкуплено П1/П2/П3
+    - `/dashboard` preliminary KPI (orders_count, revenue_gross, buyouts_count)
+
+    `wb_orders`/`wb_sales` остаются для drill-down по бренду/региону/cancel-rate.
+    """
+
+    __tablename__ = "wb_funnel_daily"
+
+    # Composite PK (tenant_id, nm_id, dt) — без autoincrement id, чтобы upsert
+    # был дешёвым.
+    tenant_id: Mapped[int] = mapped_column(  # type: ignore[assignment]
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True
+    )
+    nm_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    dt: Mapped[date] = mapped_column(Date, primary_key=True)
+    orders_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    buyouts_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    orders_sum_rub: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2), default=Decimal("0"), server_default="0"
+    )
+    open_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cart_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (Index("idx_wb_funnel_daily_tenant_dt", "tenant_id", "dt"),)
+
+
 class AppSetting(Base):
     __tablename__ = "settings"
 

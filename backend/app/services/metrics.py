@@ -21,6 +21,7 @@ from app.db.models import (
     ExternalAdCost,
     Product,
     WbAdStatsDaily,
+    WbFunnelDaily,
     WbOrder,
     WbReportDetail,
     WbSale,
@@ -131,22 +132,85 @@ class KPI:
         }
 
 
+async def _funnel_covers_period(
+    session: AsyncSession, period_from: date, period_to: date
+) -> bool:
+    """Tenant has any `wb_funnel_daily` rows in [from, to] inclusive?
+
+    Используется для решения: брать orders/revenue/buyouts из funnel
+    (Analytics API, ВКЛЮЧАЕТ рассрочку — parity с Воронкой ЛК) или fallback
+    на wb_orders/wb_sales (Statistics API, без рассрочки). TASK-LEAD-153.
+    Сессия уже tenant-scoped — auto-фильтр через TenantScopedMixin.
+    """
+    stmt = (
+        select(func.count())
+        .select_from(WbFunnelDaily)
+        .where(WbFunnelDaily.dt >= period_from, WbFunnelDaily.dt <= period_to)
+        .limit(1)
+    )
+    cnt = (await session.execute(stmt)).scalar() or 0
+    return int(cnt) > 0
+
+
 async def _orders_aggregate(
     session: AsyncSession,
     start: datetime,
     end: datetime,
     brands: set[str] | None = None,
 ) -> dict[str, float]:
-    # NB: revenue_gross and orders both EXCLUDE cancelled orders. WB seller
-    # cabinet does the same — including cancels here would double-count.
-    # `cancellations` is exposed separately for transparency.
-    stmt = select(
-        func.coalesce(
-            func.sum(case((WbOrder.is_cancel, 0), else_=1)), 0
-        ).label("orders"),
+    """Preliminary KPI заказов.
+
+    TASK-LEAD-153: если у тенанта есть `wb_funnel_daily` за период — берём
+    `orders` (gross, ВКЛЮЧАЯ рассрочку и отменённые — как Воронка ЛК) и
+    `revenue_gross` (Σ orderSum) оттуда. `cancellations` и `orders_active`
+    остаются из wb_orders — funnel их не отдаёт. Семантика «orders»
+    изменилась: теперь это gross-цифра Воронки (была active без отмен).
+    `orders_active` сохраняет старую семантику для UI, где это важно.
+
+    Fallback на wb_orders (без рассрочки): если funnel ещё не синканулся.
+    """
+    sub = _nm_id_subq(brands)
+    period_from = start.date()
+    period_to = (end - timedelta(microseconds=1)).date()
+
+    # Cancellations + orders_active — всегда из wb_orders (funnel не отдаёт).
+    cancel_stmt = select(
         func.coalesce(
             func.sum(case((WbOrder.is_cancel, 0), else_=1)), 0
         ).label("orders_active"),
+        func.coalesce(
+            func.sum(case((WbOrder.is_cancel, 1), else_=0)), 0
+        ).label("cancellations"),
+    ).where(WbOrder.order_dt >= start, WbOrder.order_dt < end)
+    if sub is not None:
+        cancel_stmt = cancel_stmt.where(WbOrder.nm_id.in_(sub))
+    cancel_row = (await session.execute(cancel_stmt)).one()
+
+    if await _funnel_covers_period(session, period_from, period_to):
+        f_stmt = select(
+            func.coalesce(func.sum(WbFunnelDaily.orders_count), 0).label("orders"),
+            func.coalesce(
+                func.sum(WbFunnelDaily.orders_sum_rub), 0
+            ).label("revenue_gross"),
+        ).where(
+            WbFunnelDaily.dt >= period_from,
+            WbFunnelDaily.dt <= period_to,
+        )
+        if sub is not None:
+            f_stmt = f_stmt.where(WbFunnelDaily.nm_id.in_(sub))
+        f_row = (await session.execute(f_stmt)).one()
+        return {
+            "orders": _f(f_row.orders),
+            "orders_active": _f(cancel_row.orders_active),
+            "revenue_gross": _f(f_row.revenue_gross),
+            "cancellations": _f(cancel_row.cancellations),
+        }
+
+    # Fallback: legacy wb_orders aggregate (без рассрочки).
+    fb_stmt = select(
+        func.coalesce(
+            func.sum(case((WbOrder.is_cancel, 0), else_=1)), 0
+        ).label("orders"),
         func.coalesce(
             func.sum(
                 case(
@@ -156,19 +220,15 @@ async def _orders_aggregate(
             ),
             0,
         ).label("revenue_gross"),
-        func.coalesce(
-            func.sum(case((WbOrder.is_cancel, 1), else_=0)), 0
-        ).label("cancellations"),
     ).where(WbOrder.order_dt >= start, WbOrder.order_dt < end)
-    sub = _nm_id_subq(brands)
     if sub is not None:
-        stmt = stmt.where(WbOrder.nm_id.in_(sub))
-    row = (await session.execute(stmt)).one()
+        fb_stmt = fb_stmt.where(WbOrder.nm_id.in_(sub))
+    fb_row = (await session.execute(fb_stmt)).one()
     return {
-        "orders": _f(row.orders),
-        "orders_active": _f(row.orders_active),
-        "revenue_gross": _f(row.revenue_gross),
-        "cancellations": _f(row.cancellations),
+        "orders": _f(fb_row.orders),
+        "orders_active": _f(cancel_row.orders_active),
+        "revenue_gross": _f(fb_row.revenue_gross),
+        "cancellations": _f(cancel_row.cancellations),
     }
 
 
@@ -178,10 +238,19 @@ async def _sales_aggregate(
     end: datetime,
     brands: set[str] | None = None,
 ) -> dict[str, float]:
-    stmt = select(
-        func.coalesce(
-            func.sum(case((WbSale.is_return, 0), else_=1)), 0
-        ).label("sales"),
+    """Preliminary KPI выкупов.
+
+    TASK-LEAD-153: `sales` (выкупы) теперь из `wb_funnel_daily.buyouts_count`
+    (Analytics API, нетит выкуп с возвратом как Воронка). `returns`,
+    `for_pay_net`, `for_pay_returns` — из wb_sales (funnel не отдаёт payout).
+    Fallback на wb_sales если funnel пуст.
+    """
+    sub = _nm_id_subq(brands)
+    period_from = start.date()
+    period_to = (end - timedelta(microseconds=1)).date()
+
+    # Returns + payout — всегда из wb_sales.
+    sale_stmt = select(
         func.coalesce(
             func.sum(case((WbSale.is_return, 1), else_=0)), 0
         ).label("returns"),
@@ -191,16 +260,33 @@ async def _sales_aggregate(
         func.coalesce(
             func.sum(case((WbSale.is_return, WbSale.for_pay), else_=0)), 0
         ).label("for_pay_returns"),
+        func.coalesce(
+            func.sum(case((WbSale.is_return, 0), else_=1)), 0
+        ).label("sales_legacy"),
     ).where(WbSale.sale_dt >= start, WbSale.sale_dt < end)
-    sub = _nm_id_subq(brands)
     if sub is not None:
-        stmt = stmt.where(WbSale.nm_id.in_(sub))
-    row = (await session.execute(stmt)).one()
+        sale_stmt = sale_stmt.where(WbSale.nm_id.in_(sub))
+    sale_row = (await session.execute(sale_stmt)).one()
+
+    if await _funnel_covers_period(session, period_from, period_to):
+        f_stmt = select(
+            func.coalesce(func.sum(WbFunnelDaily.buyouts_count), 0).label("sales"),
+        ).where(
+            WbFunnelDaily.dt >= period_from,
+            WbFunnelDaily.dt <= period_to,
+        )
+        if sub is not None:
+            f_stmt = f_stmt.where(WbFunnelDaily.nm_id.in_(sub))
+        f_sales = (await session.execute(f_stmt)).scalar() or 0
+        sales_value = _f(f_sales)
+    else:
+        sales_value = _f(sale_row.sales_legacy)
+
     return {
-        "sales": _f(row.sales),
-        "returns": _f(row.returns),
-        "for_pay_net": _f(row.for_pay_net),
-        "for_pay_returns": _f(row.for_pay_returns),
+        "sales": sales_value,
+        "returns": _f(sale_row.returns),
+        "for_pay_net": _f(sale_row.for_pay_net),
+        "for_pay_returns": _f(sale_row.for_pay_returns),
     }
 
 

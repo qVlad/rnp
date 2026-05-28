@@ -3840,6 +3840,35 @@ Round 12 пометил: «standalone-страницы /localization и /transit
   блок про рассрочку).
 - **Статус:** Выполнено — 2026-05-28
 
+### TASK-LEAD-153: wb_funnel_daily — авторитетный источник заказов/выкупов (с рассрочкой)
+- **Приоритет:** P0 (smoke 2026-05-28, фрустрация юзера: «иначе это всё фигня»)
+- **Источник:** После TASK-LEAD-152 unit-plan vs Воронка остался разрыв 10-16% по
+  заказам — Statistics API `/supplier/orders` не отдаёт рассрочку («Оплата частями»).
+  WB Воронка ЛК тянется из Analytics API `POST /api/analytics/v3/sales-funnel/
+  products/history`, который ВКЛЮЧАЕТ рассрочку. Обёртка
+  `analytics.fetch_nm_report_history` уже есть (A/B-модуль использует).
+- **Решение:** новый авторитетный источник.
+  - Миграция 0067: `wb_funnel_daily (tenant_id, nm_id, dt, orders_count,
+    buyouts_count, orders_sum_rub, open_count, cart_count, synced_at)` PK
+    `(tenant_id, nm_id, dt)`.
+  - Celery task `sync.funnel_daily` (`tasks_funnel.py`): rolling 90 дней, chunks
+    30 дн × 1000 nm_ids, upsert. Beat: ежедневно 06:00 MSK.
+  - `unit_plan_loader._count_orders/sold_in_period`: primary funnel, per-nm
+    fallback на wb_orders/wb_sales (gross/нетто, MSK boundary — наследие 152).
+  - `metrics._orders_aggregate`/`_sales_aggregate` (preliminary KPI dashboard):
+    `orders`, `revenue_gross`, `sales` теперь из funnel если он покрывает
+    период; `cancellations`, `orders_active`, `returns`, `for_pay_*` остаются
+    из wb_orders/wb_sales (funnel их не отдаёт). Tenant-уровневая coverage-
+    проверка (`_funnel_covers_period`) — fallback на legacy если пусто.
+  - Семантическая нота: `orders` в preliminary теперь gross (включает позже
+    отменённые) как в Воронке ЛК; для отдельного просмотра non-cancelled
+    остаётся `orders_active`.
+- **Затронуто:** `db/migrations/versions/0067_wb_funnel_daily.py`, `db/models.py`
+  (WbFunnelDaily), `sync/tasks_funnel.py` (новый), `sync/celery_app.py` (include +
+  beat), `services/unit_plan_loader.py`, `services/metrics.py`. После деплоя —
+  один раз ad-hoc запустить `sync.funnel_daily` для backfill 90 дн.
+- **Статус:** Выполнено — 2026-05-28
+
 ---
 
 ## Формат / Жизненный цикл

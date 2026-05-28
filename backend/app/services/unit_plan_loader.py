@@ -32,6 +32,7 @@ from app.db.models import (
     Product,
     UnitPlanGlobalConfig,
     UnitPlanOverride,
+    WbFunnelDaily,
     WbOrder,
     WbPrice,
     WbSale,
@@ -797,36 +798,66 @@ async def _count_orders_in_period(
     period_from: date,
     period_to: date,
 ) -> dict[int, int]:
-    """COUNT wb_orders per nm_id за период [from, to] inclusive по order_dt.
+    """Заказов per nm_id за период [from, to] inclusive.
 
-    GROSS — все заказы, включая позже отменённые (parity с WB Воронкой,
-    которая в столбце «Заказали товаров, шт» считает gross). TASK-LEAD-152.
-    Границы периода — МСК (UTC+3): WB сам группирует дни по МСК, UTC давал
-    сдвиг на 3 часа.
+    TASK-LEAD-153: primary source — `wb_funnel_daily` (WB Analytics API
+    sales-funnel, ВКЛЮЧАЕТ рассрочку, parity с дашбордом WB). Fallback per-
+    nm — `wb_orders` (Statistics API, без рассрочки) для тех nm, по которым
+    funnel ещё не синканулся в этом периоде.
 
-    NB: Statistics API `/supplier/orders` по дизайну не отдаёт заказы в
-    рассрочку (~20%) → остаточный разрыв с Воронкой даже в gross-режиме.
-    См. `WB_API_REFERENCE.md` § /supplier/orders.
+    Coverage-сигнал: nm есть в результате funnel-запроса (хоть одна строка
+    в периоде) → используем funnel. Иначе → fallback на wb_orders gross,
+    MSK boundary (TASK-LEAD-152).
     """
     if not nm_ids:
         return {}
+
+    # 1) Primary: wb_funnel_daily.
+    funnel_stmt = (
+        select(
+            WbFunnelDaily.nm_id,
+            func.sum(WbFunnelDaily.orders_count),
+            func.count(),
+        )
+        .where(
+            WbFunnelDaily.tenant_id == tenant_id,
+            WbFunnelDaily.nm_id.in_(nm_ids),
+            WbFunnelDaily.dt >= period_from,
+            WbFunnelDaily.dt <= period_to,
+        )
+        .group_by(WbFunnelDaily.nm_id)
+    )
+    funnel_rows = (await session.execute(funnel_stmt)).all()
+    result: dict[int, int] = {}
+    covered: set[int] = set()
+    for nm, total, row_count in funnel_rows:
+        nm_int = int(nm)
+        covered.add(nm_int)
+        if int(row_count or 0) > 0:
+            result[nm_int] = int(total or 0)
+
+    missing = [n for n in nm_ids if n not in covered]
+    if not missing:
+        return result
+
+    # 2) Fallback: wb_orders gross, MSK boundary.
     start_dt = datetime.combine(period_from, datetime.min.time(), tzinfo=_MSK)
-    # period_to is inclusive → exclusive boundary = next day
     end_dt = datetime.combine(
         period_to + timedelta(days=1), datetime.min.time(), tzinfo=_MSK
     )
-    stmt = (
+    fb_stmt = (
         select(WbOrder.nm_id, func.count())
         .where(
             WbOrder.tenant_id == tenant_id,
-            WbOrder.nm_id.in_(nm_ids),
+            WbOrder.nm_id.in_(missing),
             WbOrder.order_dt >= start_dt,
             WbOrder.order_dt < end_dt,
         )
         .group_by(WbOrder.nm_id)
     )
-    rows = (await session.execute(stmt)).all()
-    return {int(nm): int(cnt or 0) for nm, cnt in rows}
+    for nm, cnt in (await session.execute(fb_stmt)).all():
+        result[int(nm)] = int(cnt or 0)
+    return result
 
 
 async def _count_sold_in_period(
@@ -837,20 +868,48 @@ async def _count_sold_in_period(
     period_from: date,
     period_to: date,
 ) -> dict[int, int]:
-    """NET buy-outs per nm_id за период [from, to] по sale_dt.
+    """Выкупов per nm_id за период [from, to] inclusive.
 
-    Формула: `count(is_return=False) − count(is_return=True)` за тот же
-    период — parity с WB Воронкой «Выкупили товаров» (она нетит выкуп с
-    возвратом в периоде). TASK-LEAD-152. Границы — МСК.
+    TASK-LEAD-153: primary — `wb_funnel_daily.buyouts_count` (Analytics API,
+    нетит выкуп с возвратом как Воронка ЛК). Fallback per-nm — wb_sales
+    нетто (`count(is_return=False) − count(is_return=True)`, MSK boundary,
+    TASK-LEAD-152).
     """
     if not nm_ids:
         return {}
+
+    funnel_stmt = (
+        select(
+            WbFunnelDaily.nm_id,
+            func.sum(WbFunnelDaily.buyouts_count),
+            func.count(),
+        )
+        .where(
+            WbFunnelDaily.tenant_id == tenant_id,
+            WbFunnelDaily.nm_id.in_(nm_ids),
+            WbFunnelDaily.dt >= period_from,
+            WbFunnelDaily.dt <= period_to,
+        )
+        .group_by(WbFunnelDaily.nm_id)
+    )
+    funnel_rows = (await session.execute(funnel_stmt)).all()
+    result: dict[int, int] = {}
+    covered: set[int] = set()
+    for nm, total, row_count in funnel_rows:
+        nm_int = int(nm)
+        covered.add(nm_int)
+        if int(row_count or 0) > 0:
+            result[nm_int] = int(total or 0)
+
+    missing = [n for n in nm_ids if n not in covered]
+    if not missing:
+        return result
+
     start_dt = datetime.combine(period_from, datetime.min.time(), tzinfo=_MSK)
     end_dt = datetime.combine(
         period_to + timedelta(days=1), datetime.min.time(), tzinfo=_MSK
     )
-    # Нетто = выкупы − возвраты в периоде. SUM(CASE) одним запросом.
-    stmt = (
+    fb_stmt = (
         select(
             WbSale.nm_id,
             func.sum(case((WbSale.is_return.is_(False), 1), else_=0))
@@ -858,14 +917,15 @@ async def _count_sold_in_period(
         )
         .where(
             WbSale.tenant_id == tenant_id,
-            WbSale.nm_id.in_(nm_ids),
+            WbSale.nm_id.in_(missing),
             WbSale.sale_dt >= start_dt,
             WbSale.sale_dt < end_dt,
         )
         .group_by(WbSale.nm_id)
     )
-    rows = (await session.execute(stmt)).all()
-    return {int(nm): int(cnt or 0) for nm, cnt in rows}
+    for nm, net in (await session.execute(fb_stmt)).all():
+        result[int(nm)] = int(net or 0)
+    return result
 
 
 async def load_historical_snapshots(
