@@ -574,7 +574,9 @@ file_bytes, filename, content_type)`.
 ```
 
 **Rate limit:** 3/мин, min_interval 20с. Категория `analytics` в `WbApiClient`.
-**Limit на payload:** до 1000 nmIDs за запрос (с декабря 2025).
+**Limit на payload:** **MAX 20 nmIDs за запрос** (подтверждено эмпирически 2026-05-28
+TASK-LEAD-153 — старые доки говорили 1000, но реальность 21+ → 400 «too many
+nmIds is expected - max 20»).
 
 > ⚠️ **Жёсткое 7-дневное rolling-окно (подтверждено 2026-05-28, TASK-LEAD-153).**
 > WB v3 sales-funnel принимает только запросы где `selectedPeriod.start ≥
