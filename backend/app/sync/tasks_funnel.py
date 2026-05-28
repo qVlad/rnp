@@ -45,7 +45,9 @@ from app.sync.checkpoints import update_checkpoint
 log = get_logger(__name__)
 
 DAYS_BACK = 90
-DATE_CHUNK_DAYS = 30
+# WB Analytics v3 sales-funnel ограничивает period: >7-8 дней → 400 «excess
+# limit on days». Подобрано эмпирически 2026-05-28 (TASK-LEAD-153).
+DATE_CHUNK_DAYS = 7
 NM_CHUNK = 1000
 
 
