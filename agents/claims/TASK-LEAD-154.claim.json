@@ -1,0 +1,7 @@
+{
+  "task_id": "TASK-LEAD-154",
+  "agent": "Claude Opus 4.7 — main session",
+  "started_at": "2026-05-28T15:16:20Z",
+  "expected_minutes": 10,
+  "notes": "UI batch: top-N до 500 + убрать Отчёт менеджера + рен. промо-калькулятора"
+}
