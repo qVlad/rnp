@@ -340,13 +340,21 @@ ELSE: 0
 | Excel | Header | DTO | Источник |
 |---|---|---|---|
 | BA | Чистая прибыль 1-я нед. мая | `profit_week_1` | snapshot |
-| BB | Заказано 12.04-13.05 | `orders_period_1` | `wb_orders` агрегат |
-| BC | Выкуплено 12.04-13.05 | `sold_period_1` | `wb_sales` |
-| BD | Заказано 11-12.2025 | `orders_period_2` | snapshot 2025-11 |
-| BE | Заказано 06-07.2025 | `orders_period_3` | snapshot 2025-06 |
+| BB | Заказано 12.04-13.05 | `orders_period_1` | `wb_orders` gross (incl. cancelled), MSK boundary — parity с WB Воронкой |
+| BC | Выкуплено 12.04-13.05 | `sold_period_1` | `wb_sales` net: `count(is_return=False) − count(is_return=True)` за период (нетит выкуп с возвратом, как Воронка) |
+| BD | Заказано 11-12.2025 | `orders_period_2` | snapshot 2025-11 (gross) |
+| BE | Заказано 06-07.2025 | `orders_period_3` | snapshot 2025-06 (gross) |
 | BF | Прогноз остатка на 1.08.2026 | `stock_forecast` | `I − BE` |
 
 Периоды снапшотов — настраиваемые через UI (см. UNIT-PLAN-017).
+
+> ⚠️ **Остаточный разрыв с WB Воронкой по заказам — рассрочка.** `wb_orders` тянется
+> из Statistics API `/supplier/orders`, который **по дизайну WB не отдаёт заказы в
+> рассрочку** («Оплата частями», ~20% всех заказов). Воронка ЛК их считает →
+> наша `BB/BD/BE` остаётся ниже Воронки на долю рассрочки даже после перехода
+> на gross (TASK-LEAD-152). Это документированное ограничение источника, не баг.
+> Деньги/аналитика рентабельности от этого не страдают (берётся из отчёта
+> реализации). Подробнее: `WB_API_REFERENCE.md` § `/supplier/orders`.
 
 ---
 

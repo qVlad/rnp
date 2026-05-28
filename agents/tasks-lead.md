@@ -3817,6 +3817,29 @@ Round 12 пометил: «standalone-страницы /localization и /transit
 - **Затронуто:** `frontend/src/pages/ReconciliationAuto.tsx`.
 - **Статус:** Выполнено — 2026-05-27
 
+### TASK-LEAD-152: unit-plan — заказы gross + выкупы нетто + MSK boundary
+- **Приоритет:** P1 (smoke 2026-05-28, разъезд с WB Воронкой на /unit-plan)
+- **Источник:** Юзер проверил Апрель 2026 на /unit-plan vs Воронка ЛК (nm
+  386557925): Заказано 289 vs Воронка 709 (2.5× ниже), Выкуплено 297 vs
+  Воронка 266 (выше на 31). Причины:
+  1. `unit_plan_loader._count_orders_in_period` фильтровал `is_cancel=False`,
+     Воронка считает gross. Cancel-rate ~44% (с прода) × 0.8 (рассрочка) ≈
+     0.45 → 709 × 0.45 = 319 ≈ наш 289. Подтверждено.
+  2. `_count_sold_in_period` считал только `is_return=False`, Воронка
+     «Выкупили товаров» нетит выкуп с возвратом. Прод-запрос: 297 выкупов −
+     20 возвратов = 277 (≈ Воронка 266, ост. ~10 — возможно lag report'а).
+  3. Границы периода `tzinfo=timezone.utc` → 01.04 03:00 MSK — 01.05 03:00 MSK
+     (сдвиг на 3 часа). WB группирует по МСК.
+- **Решение:** убран `is_cancel=False` (gross), `count_sold` теперь нетто
+  (`SUM(case is_return=False, 1) − SUM(case is_return=True, 1)`), boundaries
+  MSK (`tzinfo=timezone(timedelta(hours=3))`). Остаточный разрыв «рассрочка»
+  (~20%) задокументирован в UNIT_PLAN.md § BA-BF (ссылка на
+  WB_API_REFERENCE.md § /supplier/orders).
+- **Затронуто:** `backend/app/services/unit_plan_loader.py` (BB/BC/BD/BE,
+  одна функция на orders, одна на sold), `UNIT_PLAN.md` (таблица BA-BF +
+  блок про рассрочку).
+- **Статус:** Выполнено — 2026-05-28
+
 ---
 
 ## Формат / Жизненный цикл

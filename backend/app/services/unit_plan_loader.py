@@ -24,7 +24,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Iterable
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -786,6 +786,9 @@ async def load_per_nm_snapshots(
 # ---------------------------------------------------------------------------
 
 
+_MSK = timezone(timedelta(hours=3))
+
+
 async def _count_orders_in_period(
     session: AsyncSession,
     *,
@@ -794,13 +797,23 @@ async def _count_orders_in_period(
     period_from: date,
     period_to: date,
 ) -> dict[int, int]:
-    """COUNT wb_orders per nm_id за период [from, to] inclusive по order_dt."""
+    """COUNT wb_orders per nm_id за период [from, to] inclusive по order_dt.
+
+    GROSS — все заказы, включая позже отменённые (parity с WB Воронкой,
+    которая в столбце «Заказали товаров, шт» считает gross). TASK-LEAD-152.
+    Границы периода — МСК (UTC+3): WB сам группирует дни по МСК, UTC давал
+    сдвиг на 3 часа.
+
+    NB: Statistics API `/supplier/orders` по дизайну не отдаёт заказы в
+    рассрочку (~20%) → остаточный разрыв с Воронкой даже в gross-режиме.
+    См. `WB_API_REFERENCE.md` § /supplier/orders.
+    """
     if not nm_ids:
         return {}
-    start_dt = datetime.combine(period_from, datetime.min.time(), tzinfo=timezone.utc)
+    start_dt = datetime.combine(period_from, datetime.min.time(), tzinfo=_MSK)
     # period_to is inclusive → exclusive boundary = next day
     end_dt = datetime.combine(
-        period_to + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc
+        period_to + timedelta(days=1), datetime.min.time(), tzinfo=_MSK
     )
     stmt = (
         select(WbOrder.nm_id, func.count())
@@ -809,7 +822,6 @@ async def _count_orders_in_period(
             WbOrder.nm_id.in_(nm_ids),
             WbOrder.order_dt >= start_dt,
             WbOrder.order_dt < end_dt,
-            WbOrder.is_cancel.is_(False),
         )
         .group_by(WbOrder.nm_id)
     )
@@ -825,21 +837,30 @@ async def _count_sold_in_period(
     period_from: date,
     period_to: date,
 ) -> dict[int, int]:
-    """COUNT wb_sales (is_return=False) per nm_id за период [from, to] по sale_dt."""
+    """NET buy-outs per nm_id за период [from, to] по sale_dt.
+
+    Формула: `count(is_return=False) − count(is_return=True)` за тот же
+    период — parity с WB Воронкой «Выкупили товаров» (она нетит выкуп с
+    возвратом в периоде). TASK-LEAD-152. Границы — МСК.
+    """
     if not nm_ids:
         return {}
-    start_dt = datetime.combine(period_from, datetime.min.time(), tzinfo=timezone.utc)
+    start_dt = datetime.combine(period_from, datetime.min.time(), tzinfo=_MSK)
     end_dt = datetime.combine(
-        period_to + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc
+        period_to + timedelta(days=1), datetime.min.time(), tzinfo=_MSK
     )
+    # Нетто = выкупы − возвраты в периоде. SUM(CASE) одним запросом.
     stmt = (
-        select(WbSale.nm_id, func.count())
+        select(
+            WbSale.nm_id,
+            func.sum(case((WbSale.is_return.is_(False), 1), else_=0))
+            - func.sum(case((WbSale.is_return.is_(True), 1), else_=0)),
+        )
         .where(
             WbSale.tenant_id == tenant_id,
             WbSale.nm_id.in_(nm_ids),
             WbSale.sale_dt >= start_dt,
             WbSale.sale_dt < end_dt,
-            WbSale.is_return.is_(False),
         )
         .group_by(WbSale.nm_id)
     )
