@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-LEAD-153",
-  "agent": "Claude Opus 4.7 — main session",
-  "started_at": "2026-05-28T15:01:20Z",
-  "expected_minutes": 90,
-  "notes": "wb_funnel_daily из Analytics API: миграция + sync + unit-plan + dashboard preliminary"
-}
