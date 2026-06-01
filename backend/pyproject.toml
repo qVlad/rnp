@@ -1,6 +1,6 @@
 [project]
 name = "rnp-backend"
-version = "0.47.0"
+version = "0.47.1"
 description = "RNP (Hand on the Pulse) for Wildberries — backend"
 requires-python = ">=3.12"
 dependencies = [

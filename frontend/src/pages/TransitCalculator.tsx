@@ -943,7 +943,7 @@ export default function TransitCalculator() {
             из ЛК. Открой в ЛК WB{" "}
             <a
               className="text-accent underline"
-              href="https://seller.wildberries.ru/supplies-management/all-supplies"
+              href="https://seller.wildberries.ru/supplies-management/transit-report"
               target="_blank"
               rel="noreferrer"
             >
@@ -970,7 +970,7 @@ export default function TransitCalculator() {
             WB пересматривает тарифы часто. Открой в ЛК WB{" "}
             <a
               className="text-accent underline"
-              href="https://seller.wildberries.ru/supplies-management/all-supplies"
+              href="https://seller.wildberries.ru/supplies-management/transit-report"
               target="_blank"
               rel="noreferrer"
             >
@@ -1007,7 +1007,7 @@ export default function TransitCalculator() {
               className="text-accent underline"
               onClick={() =>
                 window.open(
-                  "https://seller.wildberries.ru/supplies-management/all-supplies",
+                  "https://seller.wildberries.ru/supplies-management/transit-report",
                   "_blank",
                   "noopener",
                 )

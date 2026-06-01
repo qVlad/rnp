@@ -25,6 +25,44 @@
 
 ---
 
+## BUG-DEV-019: Транзитные тарифы не подгружаются — shape-парсер extension не узнаёт ответ WB
+
+- **Приоритет:** P1
+- **Обнаружено:** 2026-06-01 (пользователь, prod)
+- **Среда:** prod
+- **Причина:** `wb-transit-tariffs-interceptor-main.ts` парсит ответ WB вслепую
+  (URL endpoint'а и shape транзитных тарифов не задокументированы). Парсер ищет
+  поля `warehouseFrom`/`hubName`/`rateSmall`/`rateLarge` и т.д. Диагностика из
+  консоли юзера: interceptor впрыскивается и `installed`, токен/подключение ОК,
+  но строки `matched transit tariffs (N rows)` НЕТ → `looksLikeTransitTariffs`
+  не распознал ни одной строки. Реальный URL страницы —
+  `/supplies-management/transit-report` (не `all-supplies`, на который шлют
+  баннеры калькулятора — мелкий сопутствующий баг).
+- **Затронутые файлы:**
+  - `extension/src/content/wb-transit-tariffs-interceptor-main.ts` (`pick`/`tryParseRow`/`unwrapArray` — подогнать под реальную структуру WB)
+  - `frontend/src/pages/TransitCalculator.tsx` (баннер-ссылки → `/supplies-management/transit-report`)
+- **Реальный shape WB** (endpoint `seller-supply.wildberries.ru/ns/sm/supply-manager/api/v1/plan/transitTariffsV2`, JSON-RPC POST, ответ `{result:{items:[…]}}`):
+  ```
+  { transitWarehouseName: "Обухово",            // hub
+    destinationWarehouseName: "Волгоград: Питание", // destination
+    currentTariff: 7000,                         // плоская сумма (не per-liter)
+    tariffTable: { perVolume: [{from:0,to:1500,value:5.8},{from:1500,to:0,value:4.1}], perWeight:0 } }
+  ```
+  Парсер искал `transitWarehouse`/`hubName`/`rateSmall` → 0 совпадений. Тариф —
+  двухступенчатый в `perVolume` (₽/л), не плоские поля. Часть маршрутов
+  (паллетные/СГТ) имеют `perVolume: []` + только `currentTariff` → пропускаем
+  (модель РНП per-liter).
+- **Критерии исправления:**
+  - [x] Получить реальный JSON ответа WB со страницы transit-report
+  - [x] `tryParseRow`: hub←`transitWarehouseName`, dest←`destinationWarehouseName`, тариф из `tariffTable.perVolume` (small=tier from:0, large=tier to:0, threshold=1500) + плоский fallback
+  - [x] Near-miss диагностика (лог ключей при transit-like URL без матча)
+  - [x] Баннер-ссылки `TransitCalculator.tsx` → `/supplies-management/transit-report`
+  - [x] Парсер прогнан на реальном JSON (node-replica): 4/5 sample-строк, паллетная пропущена
+  - [ ] Prod-smoke: reload расширения → на transit-report `matched transit tariffs` + upload `ok`, выпадашки заполняются (за юзером)
+- **Статус:** Исправлено — 2026-06-01 (extension dist пересобран; нужен reload расширения + prod-deploy frontend для баннер-ссылок)
+
+---
+
 ## BUG-DEV-001: chargebacks sync — AttributeError `WbReportDetail.supplier_oper_dt`
 
 - **Приоритет:** P0

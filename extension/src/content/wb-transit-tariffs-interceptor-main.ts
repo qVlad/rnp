@@ -70,25 +70,65 @@
     threshold_l: number | null;
   };
 
+  const toNum = (v: unknown): number | null => {
+    if (v === null || v === undefined) return null;
+    const n = typeof v === "number" ? v : Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+
+  /** Двухступенчатый тариф ₽/л из `tariffTable.perVolume`.
+   *  Реальный shape WB (transitTariffsV2, 2026-06):
+   *    perVolume = [{from:0,to:1500,value:5.8},{from:1500,to:0,value:4.1}]
+   *  где `to:0` у верхней ступени = «до бесконечности», порог = `to` нижней. */
+  function parseVolumeTiers(o: Record<string, unknown>): {
+    small: number | null;
+    large: number | null;
+    threshold: number | null;
+  } | null {
+    const tt = o["tariffTable"];
+    if (!tt || typeof tt !== "object") return null;
+    const pv = (tt as Record<string, unknown>)["perVolume"];
+    if (!Array.isArray(pv) || pv.length === 0) return null;
+    const tiers = pv
+      .map((t) => {
+        const r = (t || {}) as Record<string, unknown>;
+        return {
+          from: toNum(r["from"]),
+          to: toNum(r["to"]),
+          value: toNum(r["value"]),
+        };
+      })
+      .filter((t) => t.value !== null)
+      .sort((a, b) => (a.from ?? 0) - (b.from ?? 0));
+    if (tiers.length === 0) return null;
+    const lower = tiers[0];
+    const upper = tiers.length > 1 ? tiers[tiers.length - 1] : null;
+    return {
+      small: lower.value,
+      large: upper ? upper.value : null,
+      threshold: lower.to && lower.to > 0 ? lower.to : null,
+    };
+  }
+
   /** Попытка распарсить один элемент массива в `TransitRow`. */
   function tryParseRow(item: unknown): TransitRow | null {
     if (!item || typeof item !== "object") return null;
     const o = item as Record<string, unknown>;
     const hub = pick<string>(o, [
+      "transitWarehouseName", // реальный shape WB (transitTariffsV2, 2026-06)
       "warehouseFrom",
       "hubName",
       "hub",
-      "from",
       "sourceWarehouse",
       "transitWarehouse",
       "fromWarehouse",
       "warehouse_from",
     ]);
     const dest = pick<string>(o, [
+      "destinationWarehouseName", // реальный shape WB (transitTariffsV2, 2026-06)
       "warehouseTo",
       "destinationWarehouse",
       "destination",
-      "to",
       "targetWarehouse",
       "finalWarehouse",
       "toWarehouse",
@@ -96,50 +136,45 @@
     ]);
     if (typeof hub !== "string" || typeof dest !== "string") return null;
     if (!hub.trim() || !dest.trim()) return null;
-    const rateSmall =
-      pick<number | string>(o, [
-        "rateSmall",
-        "priceSmall",
-        "pricePerLiterSmall",
-        "tariffSmall",
-        "rate",
-        "price",
-        "pricePerLiter",
-        "tariff",
-        "ratePerLiter",
-      ]) ?? null;
-    const rateLarge =
-      pick<number | string>(o, [
-        "rateLarge",
-        "priceLarge",
-        "pricePerLiterLarge",
-        "tariffLarge",
-        "rateBig",
-        "priceBig",
-      ]) ?? null;
-    const threshold =
-      pick<number | string>(o, [
-        "thresholdL",
-        "threshold",
-        "volumeThreshold",
-        "thresholdLiters",
-        "tierThreshold",
-      ]) ?? null;
 
-    const toNum = (v: unknown): number | null => {
-      if (v === null || v === undefined) return null;
-      const n = typeof v === "number" ? v : Number(v);
-      return Number.isFinite(n) && n >= 0 ? n : null;
-    };
-    const rs = toNum(rateSmall);
-    const rl = toNum(rateLarge);
-    if (rs === null && rl === null) return null; // нет полезных данных
+    // 1) Реальный формат WB — двухступенчатый perVolume.
+    const tiers = parseVolumeTiers(o);
+    let rs = tiers?.small ?? null;
+    let rl = tiers?.large ?? null;
+    let threshold = tiers?.threshold ?? null;
+
+    // 2) Fallback на плоские поля (если WB вернёт другой формат).
+    if (rs === null && rl === null) {
+      rs = toNum(
+        pick<number | string>(o, [
+          "rateSmall", "priceSmall", "pricePerLiterSmall", "tariffSmall",
+          "rate", "price", "pricePerLiter", "tariff", "ratePerLiter",
+        ]),
+      );
+      rl = toNum(
+        pick<number | string>(o, [
+          "rateLarge", "priceLarge", "pricePerLiterLarge", "tariffLarge",
+          "rateBig", "priceBig",
+        ]),
+      );
+    }
+    if (threshold === null) {
+      threshold = toNum(
+        pick<number | string>(o, [
+          "thresholdL", "threshold", "volumeThreshold", "thresholdLiters", "tierThreshold",
+        ]),
+      );
+    }
+
+    // Нет per-liter тарифа (паллетные/СГТ маршруты: perVolume пустой,
+    // только плоский currentTariff) — пропускаем, наша модель per-liter.
+    if (rs === null && rl === null) return null;
     return {
       hub_name: hub.trim(),
       destination_warehouse: dest.trim(),
       rate_small: rs,
       rate_large: rl,
-      threshold_l: toNum(threshold) ?? 1500,
+      threshold_l: threshold ?? 1500,
     };
   }
 
@@ -160,9 +195,29 @@
 
   let postedCount = 0;
   let lastPostedAt = 0;
+  const debuggedUrls = new Set<string>();
   function maybePost(url: string, raw: unknown): void {
     const rows = looksLikeTransitTariffs(raw);
-    if (!rows) return;
+    if (!rows) {
+      // Near-miss диагностика: URL похож на транзитный (transit/tariff), но
+      // распарсить не вышло → логируем ключи первого элемента (раз на URL).
+      // Помогает быстро поймать смену shape WB в будущем.
+      if (/transit|tariff/i.test(url) && !debuggedUrls.has(url)) {
+        debuggedUrls.add(url);
+        const arr = unwrapArray(raw);
+        const sample =
+          Array.isArray(arr) && arr[0] && typeof arr[0] === "object"
+            ? Object.keys(arr[0] as Record<string, unknown>)
+            : null;
+        console.warn(
+          `${TAG} transit-like URL, но parse не дал строк:`,
+          url,
+          "| ключи 1-го элемента:",
+          sample,
+        );
+      }
+      return;
+    }
     // Дедуп по timing — не чаще раз в 2 сек на тот же URL.
     const now = Date.now();
     if (now - lastPostedAt < 2000) return;
