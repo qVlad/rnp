@@ -73,23 +73,6 @@ const DEFAULTS: SavedParams = {
   compare_warehouses: [],
 };
 
-// Известные хабы WB (на 2026-05, из research). Список свободно редактируется
-// юзером — это просто подсказки в datalist.
-const KNOWN_HUBS = [
-  "Обухово",
-  "Шушары",
-  "Чашниково",
-  "Чехов 1",
-  "Чехов 2",
-  "Электросталь",
-  "Подольск",
-  "Краснодар",
-  "Казань",
-  "Екатеринбург",
-  "Новосибирск",
-  "Тула",
-];
-
 type ProductOption = {
   nm_id: number;
   vendor_code: string | null;
@@ -703,15 +686,94 @@ export default function TransitCalculator() {
 
   const warehouses = whQ.data?.items ?? [];
 
-  // Хабы для datalist: hard-coded список + хабы из backend (auto-fetched
-  // тарифы). Дубли убираем.
-  const datalistHubs = useMemo(() => {
-    const set = new Set<string>(KNOWN_HUBS);
+  // TASK-DEV-028: хаб/склад строятся СТРОГО из реально подгруженных тарифов
+  // транзита (из ЛК WB через расширение РНП). Никакого хардкода — если данных
+  // нет, показываем «транзит недоступен» и предлагаем подгрузить.
+  const transitItems = transitListQ.data?.items ?? [];
+  const hasTransitData = transitItems.length > 0;
+
+  // Дата последней подгрузки = max(synced_at) по всем тарифам tenant'а.
+  const lastSyncedIso = useMemo<string | null>(() => {
+    let best = -Infinity;
+    let bestIso: string | null = null;
+    for (const t of transitListQ.data?.items ?? []) {
+      if (!t.synced_at) continue;
+      const ms = new Date(t.synced_at).getTime();
+      if (Number.isFinite(ms) && ms > best) {
+        best = ms;
+        bestIso = t.synced_at;
+      }
+    }
+    return bestIso;
+  }, [transitListQ.data]);
+  const dataAgeDays = useMemo<number | null>(() => {
+    if (!lastSyncedIso) return null;
+    const ms = new Date(lastSyncedIso).getTime();
+    if (!Number.isFinite(ms)) return null;
+    return Math.floor((Date.now() - ms) / (24 * 3600 * 1000));
+  }, [lastSyncedIso]);
+  // 3-дневный порог несвежести (раньше per-pair 30д). WB пересматривает
+  // транзитные тарифы часто — данные старше 3 дней считаем требующими refresh.
+  const dataIsStale = dataAgeDays != null && dataAgeDays > 3;
+
+  // Реальные хабы (транзитные распределительные склады) из подгруженных пар.
+  const realHubs = useMemo<string[]>(() => {
+    const set = new Set<string>();
     for (const t of transitListQ.data?.items ?? []) {
       if (t.hub_name) set.add(t.hub_name);
     }
-    return Array.from(set).sort();
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "ru"));
   }, [transitListQ.data]);
+
+  // Конечные склады, реально доступные транзитом из выбранного хаба.
+  const destForHub = useMemo<string[]>(() => {
+    if (!params.hub) return [];
+    const hubLower = params.hub.trim().toLowerCase();
+    const set = new Set<string>();
+    for (const t of transitListQ.data?.items ?? []) {
+      if (t.hub_name.toLowerCase() === hubLower && t.destination_warehouse) {
+        set.add(t.destination_warehouse);
+      }
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "ru"));
+  }, [params.hub, transitListQ.data]);
+
+  const hubInRealList = useMemo(
+    () =>
+      realHubs.some(
+        (h) => h.toLowerCase() === params.hub.trim().toLowerCase(),
+      ),
+    [realHubs, params.hub],
+  );
+
+  // Ручной ввод хаба/склада — fallback для случая когда нужной пары нет в
+  // подгруженных данных WB (страница по дизайну поддерживает manual-режим:
+  // WB не отдаёт транзитные тарифы через API). Авто-включаем если в localStorage
+  // сохранён хаб, которого нет в реальном списке.
+  const [manualMode, setManualMode] = useState(false);
+  useEffect(() => {
+    if (hasTransitData && params.hub && !hubInRealList) setManualMode(true);
+  }, [hasTransitData, hubInRealList, params.hub]);
+
+  // Смена хаба через select — сбрасываем конечный склад если он недоступен из
+  // нового хаба (иначе остался бы выбран склад из старой пары).
+  const pickHub = (newHub: string) => {
+    // В ручном режиме / без подгруженных данных пару валидировать нечем —
+    // просто пишем хаб, не трогая выбранный склад.
+    if (!hasTransitData || manualMode) {
+      update({ hub: newHub });
+      return;
+    }
+    const destValid =
+      !params.final_warehouse ||
+      transitItems.some(
+        (t) =>
+          t.hub_name.toLowerCase() === newHub.trim().toLowerCase() &&
+          t.destination_warehouse.toLowerCase() ===
+            params.final_warehouse.trim().toLowerCase(),
+      );
+    update({ hub: newHub, ...(destValid ? {} : { final_warehouse: "" }) });
+  };
   const finalTariff = useMemo<TariffTimelineRow | null>(() => {
     if (!params.final_warehouse) return null;
     const items = tariffsQ.data?.items ?? [];
@@ -832,71 +894,107 @@ export default function TransitCalculator() {
           </>
         }
         actions={
-          <a
-            href="/docs/transit-calculator"
-            className="btn text-xs"
-            title="Методика расчёта транзитной поставки (TASK-LEAD-095)"
-          >
-            📖 Методика
-          </a>
+          <div className="flex items-center gap-2">
+            {/* TASK-DEV-028: дата последней подгрузки тарифов транзита из ЛК WB. */}
+            <span
+              className="text-xs px-2 py-1 rounded whitespace-nowrap"
+              style={{
+                background: !hasTransitData
+                  ? "rgba(148,163,184,0.15)"
+                  : dataIsStale
+                  ? "rgba(255,140,0,0.15)"
+                  : "rgba(16,185,129,0.12)",
+              }}
+              title="Дата последней подгрузки тарифов транзита из ЛК WB через расширение РНП"
+            >
+              {hasTransitData
+                ? `🚚 Данные WB: ${
+                    lastSyncedIso
+                      ? new Date(lastSyncedIso).toLocaleDateString("ru-RU")
+                      : "—"
+                  } · ${formatRelativeTime(lastSyncedIso)}`
+                : "🚚 Данные транзита не подгружены"}
+            </span>
+            <a
+              href="/docs/transit-calculator"
+              className="btn text-xs"
+              title="Методика расчёта транзитной поставки (TASK-LEAD-095)"
+            >
+              📖 Методика
+            </a>
+          </div>
         }
       />
 
-      {/* Auto-fetched status banner — TASK-LEAD-078 + TASK-LEAD-094 stale */}
+      {/* TASK-DEV-028: глобальный статус подгрузки данных транзита. WB не
+          отдаёт транзитные тарифы через API — их поставляет расширение РНП из
+          ЛК. Нет данных → транзит недоступен. Данные старше 3 дней → refresh. */}
+      {!hasTransitData ? (
+        <section
+          className="card text-xs"
+          style={{ background: "rgba(255,140,0,0.12)" }}
+        >
+          <p>
+            <b>🚫 Тарифы транзита не подгружены — транзит недоступен.</b> WB не
+            отдаёт транзитные тарифы через API, их поставляет{" "}
+            <a className="text-accent" href="/settings#extension-tokens">
+              Chrome-расширение РНП
+            </a>{" "}
+            из ЛК. Открой в ЛК WB{" "}
+            <a
+              className="text-accent underline"
+              href="https://seller.wildberries.ru/supplies-management/all-supplies"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Поставки → Транзитные направления
+            </a>{" "}
+            при подключённом расширении (роль director / head_of_sales) — пары
+            «хаб → склад» подтянутся автоматически. До этого можно посчитать
+            вручную через «✂ ввести вручную» ниже.
+          </p>
+        </section>
+      ) : dataIsStale ? (
+        <section
+          className="card text-xs"
+          style={{ background: "rgba(255,140,0,0.12)" }}
+        >
+          <p>
+            <b>
+              ⚠ Данные транзита подгружены{" "}
+              {lastSyncedIso
+                ? new Date(lastSyncedIso).toLocaleDateString("ru-RU")
+                : "—"}{" "}
+              ({dataAgeDays} дн назад) — возможно устарели.
+            </b>{" "}
+            WB пересматривает тарифы часто. Открой в ЛК WB{" "}
+            <a
+              className="text-accent underline"
+              href="https://seller.wildberries.ru/supplies-management/all-supplies"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Поставки → Транзитные направления
+            </a>{" "}
+            — расширение РНП подтянет свежие значения.
+          </p>
+        </section>
+      ) : null}
+
+      {/* Per-pair статус подставленного тарифа (TASK-LEAD-078) */}
       {transitFromBackend ? (
-        (() => {
-          // TASK-LEAD-094: stale-tariff банер. WB регулярно меняет транзитные
-          // тарифы (последнее повышение +20% с 2026-04-01). Если synced_at >
-          // 30 дней назад — показываем оранжевую плашку с CTA «открой ЛК WB».
-          const syncedMs = transitFromBackend.synced_at
-            ? new Date(transitFromBackend.synced_at).getTime()
-            : NaN;
-          const ageDays = Number.isFinite(syncedMs)
-            ? Math.floor((Date.now() - syncedMs) / (24 * 3600 * 1000))
-            : 0;
-          const isStale = ageDays > 30;
-          return (
-            <>
-              <section
-                className="card text-xs"
-                style={{ background: "rgba(16,185,129,0.08)" }}
-              >
-                <p>
-                  <b>📊 Тариф из ЛК WB</b> · обновлён{" "}
-                  {formatRelativeTime(transitFromBackend.synced_at)}.
-                  Подставлен автоматически для пары «{params.hub} →{" "}
-                  {params.final_warehouse}». Можно править руками если нужно —
-                  твои значения не перезапишутся, пока не сменишь пару
-                  хаб+склад.
-                </p>
-              </section>
-              {isStale && (
-                <section
-                  className="card text-xs"
-                  style={{ background: "rgba(255,140,0,0.12)" }}
-                >
-                  <p>
-                    <b>
-                      ⚠ Тариф транзита для этой пары не обновлялся {ageDays}{" "}
-                      дней.
-                    </b>{" "}
-                    WB периодически пересматривает тарифы. Открой в ЛК WB →{" "}
-                    <a
-                      className="text-accent underline"
-                      href="https://seller.wildberries.ru/supplies-management/all-supplies"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Поставки → Транзитные направления
-                    </a>{" "}
-                    для проверки — расширение РНП автоматически подтянет новые
-                    значения.
-                  </p>
-                </section>
-              )}
-            </>
-          );
-        })()
+        <section
+          className="card text-xs"
+          style={{ background: "rgba(16,185,129,0.08)" }}
+        >
+          <p>
+            <b>📊 Тариф из ЛК WB</b> · обновлён{" "}
+            {formatRelativeTime(transitFromBackend.synced_at)}. Подставлен
+            автоматически для пары «{params.hub} → {params.final_warehouse}».
+            Можно править руками если нужно — твои значения не перезапишутся,
+            пока не сменишь пару хаб+склад.
+          </p>
+        </section>
       ) : params.hub && params.final_warehouse ? (
         <section
           className="card text-xs"
@@ -931,39 +1029,19 @@ export default function TransitCalculator() {
             той же страницы ЛК.
           </p>
         </section>
-      ) : (
+      ) : hasTransitData ? (
         <section
           className="card text-xs"
           style={{ background: "rgba(255,193,7,0.08)" }}
         >
           <p>
-            <b>⚠️ Где взять тариф транзита:</b>{" "}
-            <a
-              className="text-accent"
-              href="https://seller.wildberries.ru/supplies-management/all-supplies"
-              target="_blank"
-              rel="noreferrer"
-            >
-              ЛК WB
-            </a>{" "}
-            → Поставки и заказы → Поставки (FBW) → <b>Транзитные направления</b>.
-            Если у тебя установлено{" "}
-            <a className="text-accent" href="/settings#extension-tokens">
-              Chrome-расширение РНП
-            </a>{" "}
-            — оно автоматически подтянет тарифы при заходе на эту страницу.
-            Иначе — выбери пару «хаб → конечный_склад» и впиши <code>₽/л</code>{" "}
-            ниже. Двухступенчатая шкала: до 1500 л — выше, от 1500 л — ниже.
-            С 1 апреля 2026 WB поднял тарифы транзита в среднем на ~20%.
+            📊 Подгружено <b>{transitListQ.data?.total ?? 0}</b> пар «хаб →
+            склад» из ЛК WB — выбери хаб и конечный склад, тариф подставится
+            автоматически. Двухступенчатая шкала: до 1500 л — выше, от 1500 л —
+            ниже. С 1 апреля 2026 WB поднял тарифы транзита в среднем на ~20%.
           </p>
-          {transitListQ.data && transitListQ.data.total > 0 ? (
-            <p className="mt-1 text-muted">
-              📊 В базе уже {transitListQ.data.total} пар хабов из ЛК — выбери
-              хаб и конечный склад чтобы тариф подставился автоматически.
-            </p>
-          ) : null}
         </section>
-      )}
+      ) : null}
 
       {/* Form */}
       <section className="card">
@@ -1043,37 +1121,104 @@ export default function TransitCalculator() {
             <span className="text-xs text-muted uppercase tracking-wide">
               Хаб (транзитный склад)
             </span>
-            <input
-              type="text"
-              className="input"
-              list="transit-hubs"
-              value={params.hub}
-              onChange={(e: any) => update({ hub: e.target.value })}
-              placeholder="например, Обухово"
-            />
-            <datalist id="transit-hubs">
-              {datalistHubs.map((h) => (
-                <option key={h} value={h} />
-              ))}
-            </datalist>
+            {hasTransitData && !manualMode ? (
+              <>
+                <select
+                  className="input"
+                  value={
+                    realHubs.find(
+                      (h) => h.toLowerCase() === params.hub.trim().toLowerCase(),
+                    ) ?? ""
+                  }
+                  onChange={(e: any) => pickHub(e.target.value)}
+                  disabled={transitListQ.isLoading}
+                >
+                  <option value="">— выбери хаб —</option>
+                  {realHubs.map((h) => (
+                    <option key={h} value={h}>
+                      {h}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="text-xs text-muted hover:text-accent text-left"
+                  onClick={() => setManualMode(true)}
+                  title="Ввести хаб, которого нет в подгруженных тарифах WB"
+                >
+                  ✂ ввести вручную
+                </button>
+              </>
+            ) : (
+              <>
+                <input
+                  type="text"
+                  className="input"
+                  list="transit-hubs"
+                  value={params.hub}
+                  onChange={(e: any) => pickHub(e.target.value)}
+                  placeholder="название хаба из ЛК WB"
+                />
+                {realHubs.length > 0 && (
+                  <datalist id="transit-hubs">
+                    {realHubs.map((h) => (
+                      <option key={h} value={h} />
+                    ))}
+                  </datalist>
+                )}
+                {hasTransitData && (
+                  <button
+                    type="button"
+                    className="text-xs text-muted hover:text-accent text-left"
+                    onClick={() => setManualMode(false)}
+                  >
+                    ← выбрать из списка
+                  </button>
+                )}
+              </>
+            )}
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-xs text-muted uppercase tracking-wide">
               Конечный склад
             </span>
-            <select
-              className="input"
-              value={params.final_warehouse}
-              onChange={(e: any) => update({ final_warehouse: e.target.value })}
-              disabled={whQ.isLoading}
-            >
-              <option value="">— выбери склад —</option>
-              {warehouses.map((w) => (
-                <option key={w} value={w}>
-                  {w}
+            {hasTransitData && !manualMode ? (
+              <select
+                className="input"
+                value={params.final_warehouse}
+                onChange={(e: any) =>
+                  update({ final_warehouse: e.target.value })
+                }
+                disabled={!params.hub}
+              >
+                <option value="">
+                  {!params.hub
+                    ? "— сначала выбери хаб —"
+                    : destForHub.length === 0
+                    ? "— нет направлений из этого хаба —"
+                    : "— выбери склад —"}
                 </option>
-              ))}
-            </select>
+                {destForHub.map((w) => (
+                  <option key={w} value={w}>
+                    {w}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <select
+                className="input"
+                value={params.final_warehouse}
+                onChange={(e: any) => update({ final_warehouse: e.target.value })}
+                disabled={whQ.isLoading}
+              >
+                <option value="">— выбери склад —</option>
+                {warehouses.map((w) => (
+                  <option key={w} value={w}>
+                    {w}
+                  </option>
+                ))}
+              </select>
+            )}
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-xs text-muted uppercase tracking-wide">
