@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-DEV-028",
-  "agent": "Claude Opus 4.8 — main session",
-  "started_at": "2026-06-01T15:37:40Z",
-  "expected_minutes": 45,
-  "notes": "TransitCalculator: real-data dropdowns + sync date + 3d stale"
-}
