@@ -1,7 +1,0 @@
-{
-  "task_id": "BUG-DEV-019",
-  "agent": "Claude Opus 4.8 — main session",
-  "started_at": "2026-06-01T18:45:56Z",
-  "expected_minutes": 60,
-  "notes": "transit tariffs shape parser fix + diagnostic"
-}
