@@ -1274,9 +1274,28 @@ export default function TransitCalculator() {
 
       {/* Transit tariff inputs */}
       <section className="card">
-        <h3 className="font-medium mb-3 text-sm">
-          Тариф транзита (вписать из ЛК WB)
-        </h3>
+        <h3 className="font-medium mb-1 text-sm">Тариф транзита</h3>
+        {/* TASK-DEV-029: когда тариф подставлен из ЛК (transitFromBackend) —
+            ручные поля сворачиваем, чтобы не сбивать с толку. Блок остаётся
+            доступен как fallback (WB не отдаёт транзит через публичный API). */}
+        {transitFromBackend ? (
+          <p className="text-xs text-muted mb-2">
+            ✓ Подставлен автоматически из ЛК WB для пары «{params.hub} →{" "}
+            {params.final_warehouse}». Править вручную обычно не нужно — разверни
+            ниже только если хочешь перекрыть значение.
+          </p>
+        ) : (
+          <p className="text-xs text-muted mb-2">
+            WB не отдаёт транзитные тарифы через API. Если для твоей пары тариф
+            не подгрузился расширением — впиши <code>₽/л</code> из ЛК вручную.
+          </p>
+        )}
+        <details open={!transitFromBackend}>
+          <summary className="text-xs text-muted cursor-pointer hover:text-fg mb-2">
+            {transitFromBackend
+              ? "✏️ Править тариф вручную"
+              : "Поля тарифа ₽/л"}
+          </summary>
 
         {/* Simple: один тариф ₽/л — если знаешь точную цену довоза. */}
         <div className="mb-3">
@@ -1383,6 +1402,7 @@ export default function TransitCalculator() {
           </label>
         </div>
         )}
+        </details>
       </section>
 
       {/* External logistics — physically deliver to hub */}
@@ -1803,7 +1823,9 @@ export default function TransitCalculator() {
                     ? "Максимум 5 складов"
                     : "+ добавить склад"}
                 </option>
-                {warehouses
+                {/* TASK-DEV-029: только реальные направления выбранного хаба
+                    (как и основной select склада), full-list лишь в manual. */}
+                {(hasTransitData && !manualMode ? destForHub : warehouses)
                   .filter(
                     (w) =>
                       w !== params.final_warehouse &&

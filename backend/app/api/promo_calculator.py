@@ -52,6 +52,53 @@ async def _resolve_wb_token(session: AsyncSession, tenant_id: int) -> str:
     return token
 
 
+def _normalize_nomenclatures(
+    items: list[dict[str, Any]], in_action: bool
+) -> list[dict[str, Any]]:
+    """Нормализует WB nomenclature-item'ы в форму, которую ждёт фронт:
+    ``{nmID, inAction, price, discountedPrice}``.
+
+    BUG-DEV-020: WB не отдаёт флаг `inAction` внутри item'а — тегируем по тому,
+    каким запросом получили. Толерантно достаём nmID (`id`/`nmID`/`nmId`) и
+    цены либо с верхнего уровня, либо из первого размера `sizes[]` (WB иногда
+    кладёт price/discountedPrice именно туда).
+    """
+
+    def _num(v: Any) -> float:
+        try:
+            n = float(v)
+            return n if n >= 0 else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    out: list[dict[str, Any]] = []
+    for n in items or []:
+        if not isinstance(n, dict):
+            continue
+        nm = n.get("id") or n.get("nmID") or n.get("nmId") or n.get("nmid") or 0
+        price = n.get("price")
+        disc = n.get("discountedPrice")
+        if (price is None or disc is None) and isinstance(n.get("sizes"), list):
+            for sz in n["sizes"]:
+                if not isinstance(sz, dict):
+                    continue
+                if price is None and sz.get("price") is not None:
+                    price = sz.get("price")
+                if disc is None and sz.get("discountedPrice") is not None:
+                    disc = sz.get("discountedPrice")
+                if price is not None and disc is not None:
+                    break
+        out.append(
+            {
+                "nmID": int(nm) if nm else 0,
+                "inAction": in_action,
+                "price": _num(price),
+                "discountedPrice": _num(disc),
+            }
+        )
+    return out
+
+
 @router.get("/wb-promotions")
 async def list_wb_promotions(
     start_date: date | None = Query(None, description="ISO YYYY-MM-DD"),
@@ -88,7 +135,19 @@ async def get_wb_promotion(
     """
     token = await _resolve_wb_token(session, user.tenant_id)
     details = await get_promotion_details(token, [promotion_id])
-    nomenclatures = await get_promotion_nomenclatures(token, promotion_id)
+
+    # BUG-DEV-020: WB требует обязательный `inAction` — зовём дважды
+    # (предложенные + участвующие) и тегируем каждый nm, т.к. WB не отдаёт
+    # флаг inAction внутри item'а.
+    suggested = await get_promotion_nomenclatures(
+        token, promotion_id, in_action=False
+    )
+    participating = await get_promotion_nomenclatures(
+        token, promotion_id, in_action=True
+    )
+    nomenclatures = _normalize_nomenclatures(suggested, False) + _normalize_nomenclatures(
+        participating, True
+    )
     return {
         "promotion_id": promotion_id,
         "details": details[0] if details else None,

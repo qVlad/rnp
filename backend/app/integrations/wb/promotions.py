@@ -179,19 +179,23 @@ async def get_promotion_details(
 
 
 async def get_promotion_nomenclatures(
-    token: str, promotion_id: int, *, in_action: bool | None = None
+    token: str, promotion_id: int, *, in_action: bool, limit: int = 1000
 ) -> list[dict[str, Any]]:
-    """`GET /api/v1/calendar/promotions/nomenclatures?promotionID=...` — товары.
+    """`GET /api/v1/calendar/promotions/nomenclatures` — товары акции.
 
-    WB отдаёт nomenclature-уровень: для каждого nm_id флаг `inAction` (уже в
-    акции или предложение). Возвращает `[{nmID, price, discountedPrice,
-    inAction, ...}]`. По умолчанию запрашиваем ВСЕ (предложения + участвующие),
-    UI разделит. Graceful fallback на пустой список (TASK-LEAD-155).
+    BUG-DEV-020: WB требует ОБЯЗАТЕЛЬНЫЕ `inAction` (bool) + `limit` (≤1000) +
+    пагинацию `offset` — без них отдаёт пусто/400. `inAction=true` — товары уже
+    в акции, `false` — предложенные (можно добавить). WB НЕ возвращает флаг
+    inAction внутри item'а, поэтому вызывающая сторона тегирует сама.
+
+    Возвращает «сырые» nomenclature-item'ы WB (нормализация — в
+    `api/promo_calculator.get_wb_promotion`). Graceful fallback на [] при ошибке.
     """
+    out: list[dict[str, Any]] = []
+    offset = 0
     try:
         import httpx
 
-        await _promo_limiter.acquire()
         async with httpx.AsyncClient(
             timeout=30.0,
             headers={
@@ -200,41 +204,57 @@ async def get_promotion_nomenclatures(
                 "User-Agent": "RNP-Seller-Service/1.0 (httpx; python)",
             },
         ) as client:
-            params: dict[str, Any] = {"promotionID": promotion_id}
-            if in_action is not None:
-                params["inAction"] = "true" if in_action else "false"
-            resp = await client.get(
-                f"{_PROMO_BASE}/api/v1/calendar/promotions/nomenclatures",
-                params=params,
-            )
-            if resp.status_code in (401, 403, 404):
+            while True:
+                await _promo_limiter.acquire()
+                params: dict[str, Any] = {
+                    "promotionID": promotion_id,
+                    "inAction": "true" if in_action else "false",
+                    "limit": limit,
+                    "offset": offset,
+                }
+                resp = await client.get(
+                    f"{_PROMO_BASE}/api/v1/calendar/promotions/nomenclatures",
+                    params=params,
+                )
+                if resp.status_code in (401, 403, 404):
+                    log.info(
+                        "WB Promo nomenclatures: %s (token/route)", resp.status_code
+                    )
+                    return out
+                if resp.status_code >= 400:
+                    log.warning(
+                        "WB Promo nomenclatures: %s body=%s",
+                        resp.status_code, (resp.text or "")[:300],
+                    )
+                    return out
+                data = resp.json() if resp.content else {}
+
+                nomen: Any = None
+                if isinstance(data, dict):
+                    nomen = data.get("data", {}).get("nomenclatures") or data.get(
+                        "nomenclatures"
+                    )
+                elif isinstance(data, list):
+                    nomen = data
+                if not isinstance(nomen, list):
+                    nomen = []
+                out.extend(nomen)
                 log.info(
-                    "WB Promo Calendar nomenclatures: %s (token/route)", resp.status_code
+                    "WB Promo nomenclatures promo=%s in_action=%s offset=%s got=%s",
+                    promotion_id, in_action, offset, len(nomen),
                 )
-                return []
-            if resp.status_code >= 400:
-                log.warning(
-                    "WB Promo Calendar nomenclatures: %s body=%s",
-                    resp.status_code, (resp.text or "")[:200],
-                )
-                return []
-            data = resp.json() if resp.content else {}
-        # Структура ответа: {data: {nomenclatures: [...]}, ...} или плоский список.
-        if isinstance(data, dict):
-            nomen = data.get("data", {}).get("nomenclatures") or data.get(
-                "nomenclatures"
-            )
-            if isinstance(nomen, list):
-                return nomen
-        if isinstance(data, list):
-            return data
-        return []
+                if len(nomen) < limit:
+                    break
+                offset += limit
+                if offset > 50000:  # safety-стоп от бесконечного цикла
+                    break
+        return out
     except (WbApiError, WbCooldownActive) as e:
         log.warning("WB Promo nomenclatures error: %s", e)
-        return []
+        return out
     except Exception as e:  # noqa: BLE001
         log.warning("WB Promo nomenclatures unexpected: %s", e)
-        return []
+        return out
 
 
 __all__ = [

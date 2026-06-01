@@ -25,6 +25,29 @@
 
 ---
 
+## BUG-DEV-020: /promo-calculator-wb — товары внутри акции не загружаются (0)
+
+- **Приоритет:** P1
+- **Обнаружено:** 2026-06-01 (пользователь, prod)
+- **Среда:** prod
+- **Причина:** список акций грузится (54), но nomenclatures внутри акции = 0
+  на всех вкладках. `get_promotion_nomenclatures` зовётся БЕЗ обязательных для
+  WB Promo Calendar API параметров `inAction` и `limit` → WB отдаёт пусто/400
+  → graceful fallback `[]`. Плюс `get_wb_promotion` зовёт nomenclatures один
+  раз, а нужно дважды (inAction=false=предложенные, true=участвующие) с
+  тегированием каждого nm, т.к. WB не возвращает флаг inAction в самом item'е.
+- **Затронутые файлы:**
+  - `backend/app/integrations/wb/promotions.py` (`get_promotion_nomenclatures`)
+  - `backend/app/api/promo_calculator.py` (`get_wb_promotion`)
+- **Критерии исправления:**
+  - [x] nomenclatures шлёт `inAction` (required) + `limit=1000` + пагинацию `offset`
+  - [x] `get_wb_promotion` зовёт дважды (suggested/participating), нормализует item → `{nmID, inAction, price, discountedPrice}` (толерантно: id/nmID, price из top-level или sizes[0])
+  - [x] log счётчика на успех + body на 4xx (диагностика shape)
+  - [ ] Smoke на проде: вкладки «предложенные»/«уже участвуют» наполняются (за юзером после deploy)
+- **Статус:** Исправлено — 2026-06-01 (backend; нужен prod-deploy + smoke. Если shape ответа WB иной — log покажет, доточим)
+
+---
+
 ## BUG-DEV-019: Транзитные тарифы не подгружаются — shape-парсер extension не узнаёт ответ WB
 
 - **Приоритет:** P1
