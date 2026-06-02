@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-DEV-031",
-  "agent": "Claude Opus 4.8 — main session",
-  "started_at": "2026-06-02T14:32:28Z",
-  "expected_minutes": 45,
-  "notes": "promo simulate per-SKU real price + current/promo price columns"
-}
