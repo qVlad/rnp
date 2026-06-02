@@ -28,6 +28,7 @@ from app.integrations.wb.promotions import (
     get_promotion_details,
     get_promotion_nomenclatures,
     list_active_promotions,
+    probe_nomenclatures_params,
 )
 from app.services.auth import (
     current_brands_filter,
@@ -157,7 +158,7 @@ async def get_wb_promotion(
         "nomenclatures": nomenclatures,
     }
     if debug:
-        # BUG-DEV-020: сырой ответ WB для диагностики (автоакции и т.п.).
+        # BUG-DEV-020: сырой ответ WB + probe перебора параметров (422 автоакций).
         out["debug"] = {
             "suggested": await debug_nomenclatures_raw(
                 token, promotion_id, in_action=False
@@ -165,6 +166,7 @@ async def get_wb_promotion(
             "participating": await debug_nomenclatures_raw(
                 token, promotion_id, in_action=True
             ),
+            "probe": await probe_nomenclatures_params(token, promotion_id),
         }
     return out
 

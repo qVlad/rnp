@@ -322,9 +322,71 @@ async def debug_nomenclatures_raw(
     return info
 
 
+async def probe_nomenclatures_params(
+    token: str, promotion_id: int
+) -> list[dict[str, Any]]:
+    """Перебор вариантов параметров nomenclatures (BUG-DEV-020 probe).
+
+    WB отдаёт 422 на `{promotionID, inAction, limit, offset}` для автоакций.
+    Пробуем разные комбинации, чтобы найти принимаемую. Возвращает список
+    `{params, status, body, count}` — смотрим какая даёт 200 с данными.
+    """
+    combos: list[dict[str, Any]] = [
+        {"promotionID": promotion_id},
+        {"promotionID": promotion_id, "inAction": "true"},
+        {"promotionID": promotion_id, "inAction": "false"},
+        {"promotionID": promotion_id, "limit": 100},
+        {"promotionID": promotion_id, "inAction": "true", "limit": 100},
+        {"promotionID": promotion_id, "inAction": "true", "limit": 100, "offset": 0},
+        {"promotionID": promotion_id, "inAction": "true", "limit": 1000},
+        # camelCase id-варианты на случай иного контракта
+        {"id": promotion_id, "inAction": "true", "limit": 100},
+        {"promotionId": promotion_id, "inAction": "true", "limit": 100},
+    ]
+    out: list[dict[str, Any]] = []
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(
+            timeout=30.0,
+            headers={
+                "Authorization": token,
+                "Accept": "application/json",
+                "User-Agent": "RNP-Seller-Service/1.0 (httpx; python)",
+            },
+        ) as client:
+            for params in combos:
+                rec: dict[str, Any] = {"params": params, "status": None, "body": None, "count": 0}
+                try:
+                    await _promo_limiter.acquire()
+                    resp = await client.get(
+                        f"{_PROMO_BASE}/api/v1/calendar/promotions/nomenclatures",
+                        params=params,
+                    )
+                    rec["status"] = resp.status_code
+                    rec["body"] = (resp.text or "")[:160]
+                    if resp.status_code < 400 and resp.content:
+                        data = resp.json()
+                        nomen = None
+                        if isinstance(data, dict):
+                            nomen = data.get("data", {}).get(
+                                "nomenclatures"
+                            ) or data.get("nomenclatures")
+                        elif isinstance(data, list):
+                            nomen = data
+                        rec["count"] = len(nomen) if isinstance(nomen, list) else 0
+                except Exception as e:  # noqa: BLE001
+                    rec["body"] = f"EXC: {e}"
+                out.append(rec)
+    except Exception as e:  # noqa: BLE001
+        out.append({"params": "client-init", "body": f"EXC: {e}"})
+    return out
+
+
 __all__ = [
     "list_active_promotions",
     "get_promotion_details",
     "get_promotion_nomenclatures",
     "debug_nomenclatures_raw",
+    "probe_nomenclatures_params",
 ]

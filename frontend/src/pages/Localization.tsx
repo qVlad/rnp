@@ -312,11 +312,16 @@ export default function Localization() {
         )}
       </div>
 
-      {/* Worst SKUs */}
-      <div className="card">
+      {/* Worst SKUs — BUG-DEV-022: переносим последним блоком на странице
+          через flex order (родитель flex-col). */}
+      <div className="card" style={{ order: 10 }}>
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <h2 className="text-lg font-semibold">
-            Top-{worstLimit} SKU с худшей локализацией
+            SKU с худшей локализацией
+            <span className="text-muted font-normal text-sm">
+              {" "}— показано {d.worst_skus.length}
+              {d.worst_skus.length >= worstLimit ? ` из ${worstLimit}` : ""}
+            </span>
           </h2>
           <label className="flex items-center gap-2 text-xs text-muted">
             Размер списка:
