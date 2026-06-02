@@ -1,0 +1,7 @@
+{
+  "task_id": "BUG-DEV-020",
+  "agent": "Claude Opus 4.8 — main session",
+  "started_at": "2026-06-02T10:06:58Z",
+  "expected_minutes": 30,
+  "notes": "speed up calendar limiter + split probe"
+}
