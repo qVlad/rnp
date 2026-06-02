@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-DEV-031",
-  "agent": "Claude Opus 4.8 — main session",
-  "started_at": "2026-06-02T15:16:27Z",
-  "expected_minutes": 60,
-  "notes": "real current price (price×(1-discount)) vs promo + per-unit margin + total"
-}
