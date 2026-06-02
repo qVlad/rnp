@@ -1,7 +1,0 @@
-{
-  "task_id": "BUG-DEV-021",
-  "agent": "Claude Opus 4.8 — main session",
-  "started_at": "2026-06-02T08:40:48Z",
-  "expected_minutes": 45,
-  "notes": "supply wh tariff filter + localization limit + heatmap colors"
-}
