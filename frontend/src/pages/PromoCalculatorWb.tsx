@@ -191,6 +191,16 @@ export default function PromoCalculatorWb() {
 
   const result = simMut.data;
 
+  // TASK-DEV-031: реальные цены WB по nm (как в таблице выбора) — для колонок
+  // «Цена сейчас» / «Цена в акции» в результатах (price → planPrice).
+  const wbPriceByNm = useMemo(() => {
+    const m: Record<number, { price: number; promo: number }> = {};
+    for (const x of items) {
+      if (x.nmId > 0) m[x.nmId] = { price: x.price, promo: x.discountedPrice };
+    }
+    return m;
+  }, [items]);
+
   // TASK-DEV-030: мутация сравнения выбранных акций.
   const compareMut = useMutation({
     mutationFn: () => {
@@ -622,22 +632,18 @@ export default function PromoCalculatorWb() {
                     </td>
                     <td className="px-2 py-1">{item.brand ?? "—"}</td>
                     <td className="px-2 py-1 text-right">
-                      {fmtRub(item.baseline.avg_price)}
+                      {fmtRub(wbPriceByNm[item.nm_id]?.price)}
                     </td>
                     <td className="px-2 py-1 text-right">
-                      {fmtRub(item.with_promo.avg_price)}
-                      {item.baseline.avg_price > 0 && (
-                        <div className="text-xs text-muted">
-                          −
-                          {Math.round(
-                            (1 -
-                              item.with_promo.avg_price /
-                                item.baseline.avg_price) *
-                              100,
-                          )}
-                          %
-                        </div>
-                      )}
+                      {fmtRub(wbPriceByNm[item.nm_id]?.promo)}
+                      {(() => {
+                        const w = wbPriceByNm[item.nm_id];
+                        if (!w || !w.price || !w.promo) return null;
+                        const pct = Math.round((1 - w.promo / w.price) * 100);
+                        return (
+                          <div className="text-xs text-muted">−{pct}%</div>
+                        );
+                      })()}
                     </td>
                     <td className="px-2 py-1 text-right">
                       {fmtRub(item.baseline.margin_total)}
