@@ -106,16 +106,25 @@ export default function PromoCalculatorWb() {
     return boosts.length ? Math.max(...boosts) : null;
   }, [details]);
 
-  // Достаём nm_id / inAction / цены из произвольной WB-схемы (camelCase).
+  // TASK-DEV-031: backend отдаёт base_price (номинал), current_price (с текущей
+  // скидкой — реальная цена ДО акции), promo_price (planPrice), discount_pct,
+  // plan_discount_pct. Цена «сейчас» = current_price, в акции = promo_price.
   const items = useMemo(() => {
     return nomenclatures.map((n) => {
-      const nmId = Number((n.nmID ?? n.nmId ?? n.NM_ID ?? 0) as number);
-      const inAction = Boolean(n.inAction ?? n.InAction ?? false);
-      const price = Number((n.price ?? n.Price ?? 0) as number);
-      const discountedPrice = Number(
-        (n.discountedPrice ?? n.DiscountedPrice ?? 0) as number,
-      );
-      return { nmId, inAction, price, discountedPrice };
+      const num = (v: unknown) => Number((v ?? 0) as number);
+      const nmId = num(n.nmID ?? n.nmId);
+      const basePrice = num(n.base_price ?? n.price);
+      const currentPrice = num(n.current_price) || basePrice;
+      const promoPrice = num(n.promo_price ?? n.discountedPrice);
+      return {
+        nmId,
+        inAction: Boolean(n.inAction ?? false),
+        basePrice,
+        currentPrice,
+        promoPrice,
+        discountPct: num(n.discount_pct),
+        planDiscountPct: num(n.plan_discount_pct),
+      };
     }).filter((x) => x.nmId > 0);
   }, [nomenclatures]);
 
@@ -133,9 +142,11 @@ export default function PromoCalculatorWb() {
       (details.discount ?? details.discountPercent ?? details.Discount ?? 0) as number,
     );
     if (d > 0) return d;
-    const sample = items.find((x) => x.price > 0 && x.discountedPrice > 0);
+    const sample = items.find((x) => x.currentPrice > 0 && x.promoPrice > 0);
     if (sample) {
-      return Math.round(((sample.price - sample.discountedPrice) / sample.price) * 100);
+      return Math.round(
+        ((sample.currentPrice - sample.promoPrice) / sample.currentPrice) * 100,
+      );
     }
     return 25;
   }, [details, items, overrideDiscount]);
@@ -166,14 +177,17 @@ export default function PromoCalculatorWb() {
       .filter((nm) => !excluded.has(nm));
   }, [isAuto, manualNmIds, filteredItems, excluded]);
 
-  // TASK-DEV-031: реальные акционные цены WB по каждому SKU (planPrice).
-  // Передаём в simulate — скидка считается per-SKU из цены, а не единой ставкой.
-  const promoPrices = useMemo(() => {
-    const m: Record<number, number> = {};
+  // TASK-DEV-031: реальные цены WB по каждому SKU. current — текущая (с текущей
+  // скидкой), promo — акционная (planPrice). Передаём в simulate.
+  const { currentPrices, promoPrices } = useMemo(() => {
+    const cur: Record<number, number> = {};
+    const promo: Record<number, number> = {};
     for (const x of items) {
-      if (x.nmId > 0 && x.discountedPrice > 0) m[x.nmId] = x.discountedPrice;
+      if (x.nmId <= 0) continue;
+      if (x.currentPrice > 0) cur[x.nmId] = x.currentPrice;
+      if (x.promoPrice > 0) promo[x.nmId] = x.promoPrice;
     }
-    return m;
+    return { currentPrices: cur, promoPrices: promo };
   }, [items]);
 
   const simMut = useMutation({
@@ -186,6 +200,7 @@ export default function PromoCalculatorWb() {
         baseline_period_days: baselinePeriod,
         // для автоакций per-SKU цен нет (ручной ввод) → пусто, идёт discount_pct
         promo_prices: isAuto ? undefined : promoPrices,
+        current_prices: isAuto ? undefined : currentPrices,
       }),
   });
 
@@ -194,9 +209,18 @@ export default function PromoCalculatorWb() {
   // TASK-DEV-031: реальные цены WB по nm (как в таблице выбора) — для колонок
   // «Цена сейчас» / «Цена в акции» в результатах (price → planPrice).
   const wbPriceByNm = useMemo(() => {
-    const m: Record<number, { price: number; promo: number }> = {};
+    const m: Record<
+      number,
+      { current: number; promo: number; discountPct: number; planDiscountPct: number }
+    > = {};
     for (const x of items) {
-      if (x.nmId > 0) m[x.nmId] = { price: x.price, promo: x.discountedPrice };
+      if (x.nmId > 0)
+        m[x.nmId] = {
+          current: x.currentPrice,
+          promo: x.promoPrice,
+          discountPct: x.discountPct,
+          planDiscountPct: x.planDiscountPct,
+        };
     }
     return m;
   }, [items]);
@@ -482,8 +506,8 @@ export default function PromoCalculatorWb() {
                     <tr>
                       <th className="px-2 py-1 w-8">✓</th>
                       <th className="px-2 py-1">nm_id</th>
-                      <th className="px-2 py-1 text-right">Цена</th>
-                      <th className="px-2 py-1 text-right">Со скидкой</th>
+                      <th className="px-2 py-1 text-right">Цена сейчас</th>
+                      <th className="px-2 py-1 text-right">Цена в акции</th>
                       <th className="px-2 py-1">Статус</th>
                     </tr>
                   </thead>
@@ -505,9 +529,16 @@ export default function PromoCalculatorWb() {
                             {x.nmId}
                           </a>
                         </td>
-                        <td className="px-2 py-1 text-right">{fmtRub(x.price)}</td>
                         <td className="px-2 py-1 text-right">
-                          {fmtRub(x.discountedPrice)}
+                          {fmtRub(x.currentPrice)}
+                          {x.discountPct > 0 && (
+                            <div className="text-xs text-muted">
+                              тек. −{Math.round(x.discountPct)}%
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-2 py-1 text-right">
+                          {fmtRub(x.promoPrice)}
                         </td>
                         <td className="px-2 py-1">
                           {x.inAction ? (
@@ -632,28 +663,42 @@ export default function PromoCalculatorWb() {
                     </td>
                     <td className="px-2 py-1">{item.brand ?? "—"}</td>
                     <td className="px-2 py-1 text-right">
-                      {fmtRub(wbPriceByNm[item.nm_id]?.price)}
+                      {fmtRub(wbPriceByNm[item.nm_id]?.current)}
+                      {(() => {
+                        const w = wbPriceByNm[item.nm_id];
+                        if (!w || !w.discountPct) return null;
+                        return (
+                          <div className="text-xs text-muted">
+                            тек. −{Math.round(w.discountPct)}%
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="px-2 py-1 text-right">
                       {fmtRub(wbPriceByNm[item.nm_id]?.promo)}
                       {(() => {
                         const w = wbPriceByNm[item.nm_id];
-                        if (!w || !w.price || !w.promo) return null;
-                        const pct = Math.round((1 - w.promo / w.price) * 100);
+                        if (!w || !w.current || !w.promo) return null;
+                        const pct = Math.round((1 - w.promo / w.current) * 100);
                         return (
-                          <div className="text-xs text-muted">−{pct}%</div>
+                          <div className="text-xs text-muted">
+                            к тек. {pct >= 0 ? "−" : "+"}
+                            {Math.abs(pct)}%
+                          </div>
                         );
                       })()}
                     </td>
                     <td className="px-2 py-1 text-right">
                       {fmtRub(item.baseline.margin_total)}
                       <div className="text-xs text-muted">
+                        {fmtRub(item.baseline.margin_per_unit)}/шт ·{" "}
                         {fmtPct(item.baseline.margin_pct)}
                       </div>
                     </td>
                     <td className="px-2 py-1 text-right">
                       {fmtRub(item.with_promo.margin_total)}
                       <div className="text-xs text-muted">
+                        {fmtRub(item.with_promo.margin_per_unit)}/шт ·{" "}
                         {fmtPct(item.with_promo.margin_pct)}
                       </div>
                     </td>

@@ -58,13 +58,17 @@ async def _resolve_wb_token(session: AsyncSession, tenant_id: int) -> str:
 def _normalize_nomenclatures(
     items: list[dict[str, Any]], in_action: bool
 ) -> list[dict[str, Any]]:
-    """Нормализует WB nomenclature-item'ы в форму, которую ждёт фронт:
-    ``{nmID, inAction, price, discountedPrice}``.
+    """Нормализует WB nomenclature-item'ы для фронта.
 
-    BUG-DEV-020: WB не отдаёт флаг `inAction` внутри item'а — тегируем по тому,
-    каким запросом получили. Толерантно достаём nmID (`id`/`nmID`/`nmId`) и
-    цены либо с верхнего уровня, либо из первого размера `sizes[]` (WB иногда
-    кладёт price/discountedPrice именно туда).
+    TASK-DEV-031: WB-item = `{id, inAction, price, discount, planPrice,
+    planDiscount}`, где `price` — номинал, `discount` — ТЕКУЩАЯ скидка
+    (установлена до акции), `planDiscount` — скидка акции, `planPrice` —
+    акционная цена. Реальная текущая цена (по которой реально продаётся) =
+    `price × (1 − discount/100)`, НЕ номинал. Отдаём:
+    `{nmID, inAction, base_price, discount_pct, current_price, promo_price,
+    plan_discount_pct}` (+ legacy `price`/`discountedPrice`).
+
+    BUG-DEV-020: WB не кладёт `inAction` в item — тегируем по запросу.
     """
 
     def _num(v: Any) -> float:
@@ -79,31 +83,45 @@ def _normalize_nomenclatures(
         if not isinstance(n, dict):
             continue
         nm = n.get("id") or n.get("nmID") or n.get("nmId") or n.get("nmid") or 0
-        price = n.get("price")
-        # BUG-DEV-020: реальная акционная цена WB — это `planPrice`
-        # (см. дока nomenclatures), а не `discountedPrice`. Fallback на старые
-        # имена для совместимости.
-        disc = (
-            n.get("planPrice")
-            if n.get("planPrice") is not None
-            else n.get("discountedPrice")
-        )
-        if (price is None or disc is None) and isinstance(n.get("sizes"), list):
+        base_price = _num(n.get("price"))
+        disc_pct = _num(n.get("discount"))  # текущая скидка %
+        plan_disc_pct = _num(n.get("planDiscount"))  # скидка акции %
+        promo_price = n.get("planPrice")
+        if promo_price is None:
+            promo_price = n.get("discountedPrice")
+        promo_price = _num(promo_price)
+        # fallback из sizes[]
+        if (base_price <= 0 or promo_price <= 0) and isinstance(n.get("sizes"), list):
             for sz in n["sizes"]:
                 if not isinstance(sz, dict):
                     continue
-                if price is None and sz.get("price") is not None:
-                    price = sz.get("price")
-                if disc is None and sz.get("discountedPrice") is not None:
-                    disc = sz.get("discountedPrice")
-                if price is not None and disc is not None:
+                if base_price <= 0:
+                    base_price = _num(sz.get("price"))
+                if promo_price <= 0:
+                    promo_price = _num(sz.get("planPrice") or sz.get("discountedPrice"))
+                if base_price > 0 and promo_price > 0:
                     break
+        # текущая цена = номинал × (1 − текущая скидка)
+        current_price = (
+            round(base_price * (1.0 - disc_pct / 100.0), 2)
+            if base_price > 0
+            else 0.0
+        )
+        # если planPrice не пришёл — считаем из planDiscount
+        if promo_price <= 0 and base_price > 0 and plan_disc_pct > 0:
+            promo_price = round(base_price * (1.0 - plan_disc_pct / 100.0), 2)
         out.append(
             {
                 "nmID": int(nm) if nm else 0,
                 "inAction": in_action,
-                "price": _num(price),
-                "discountedPrice": _num(disc),
+                "base_price": base_price,
+                "discount_pct": disc_pct,
+                "current_price": current_price or base_price,
+                "promo_price": promo_price,
+                "plan_discount_pct": plan_disc_pct,
+                # legacy-поля
+                "price": base_price,
+                "discountedPrice": promo_price,
             }
         )
     return out
@@ -277,9 +295,10 @@ class SimulateRequest(BaseModel):
     duration_days: conint(ge=1, le=60) = 7  # type: ignore
     expected_velocity_boost_pct: condecimal(ge=Decimal("0"), le=Decimal("500")) = Decimal("80")  # type: ignore
     baseline_period_days: conint(ge=1, le=90) = 14  # type: ignore
-    # TASK-DEV-031: реальные акционные цены WB по nm (planPrice). Если задано —
-    # скидка считается per-SKU из цены, иначе единый discount_pct.
+    # TASK-DEV-031: реальные цены WB по nm. current_prices — текущая (с текущей
+    # скидкой), promo_prices — акционная (planPrice). Заданы → расчёт по ним.
     promo_prices: dict[int, float] | None = None
+    current_prices: dict[int, float] | None = None
 
 
 @router.post("/simulate")
@@ -312,6 +331,7 @@ async def simulate_promo_endpoint(
         expected_velocity_boost_pct=Decimal(body.expected_velocity_boost_pct),
         baseline_period_days=int(body.baseline_period_days),
         promo_prices=body.promo_prices,
+        current_prices=body.current_prices,
     )
     results = await simulate_promo_for_skus(session, payload, brands=brands)
 

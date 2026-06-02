@@ -2627,6 +2627,7 @@ paymentOrderDelete: (payment_order_id: string) =>
     expected_velocity_boost_pct: number;
     baseline_period_days: number;
     promo_prices?: Record<number, number>;
+    current_prices?: Record<number, number>;
   }) =>
     request<{
       params: {

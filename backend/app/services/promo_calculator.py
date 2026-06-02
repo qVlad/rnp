@@ -60,11 +60,12 @@ class PromoSimulationInput:
     duration_days: int  # 1..60, сколько дней длится акция
     expected_velocity_boost_pct: Decimal  # 0..500, ожидаемый рост продаж
     baseline_period_days: int = 14  # 7/14/30, окно для расчёта baseline
-    # TASK-DEV-031: реальная акционная цена WB по каждому nm (planPrice). Если
-    # задана для SKU — скидка считается из неё (1 − promo/baseline_price), а не
-    # из единого discount_pct. discount_pct остаётся fallback'ом (автоакции /
-    # ручной ввод без WB-цены).
+    # TASK-DEV-031: реальные цены WB по каждому nm. current_prices — текущая
+    # цена (price×(1−текущая_скидка), по ней реально продаётся ДО акции),
+    # promo_prices — акционная (planPrice). Если заданы — расчёт по ним, иначе
+    # fallback на realized avg_price + единый discount_pct (автоакции/ручной).
     promo_prices: dict[int, float] | None = None
+    current_prices: dict[int, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -124,6 +125,8 @@ def simulate_promo(
     discount_pct: float,
     duration_days: int,
     expected_velocity_boost_pct: float,
+    current_price_abs: float | None = None,
+    new_price_abs: float | None = None,
 ) -> PromoSimulationResult:
     """Pure-функция: baseline + параметры акции → симулированный исход.
 
@@ -152,19 +155,36 @@ def simulate_promo(
     boost_pct = max(0.0, min(1000.0, float(expected_velocity_boost_pct)))
     duration_days = max(1, int(duration_days))
 
-    # Baseline
-    bl_price = baseline.avg_price
+    # Baseline. TASK-DEV-031: bl_price = реальная ТЕКУЩАЯ цена WB
+    # (price×(1−текущая_скидка)), если передана; иначе realized avg_price.
+    bl_price = (
+        current_price_abs
+        if current_price_abs and current_price_abs > 0
+        else baseline.avg_price
+    )
     bl_velocity = baseline.velocity_per_day
     bl_buyout = max(0.01, min(1.0, baseline.buyout_rate))  # avoid 0-div / >1
     bl_units_per_day = bl_velocity  # velocity уже NET (buyout-учтённый sales)
     bl_revenue_per_day = bl_units_per_day * bl_price
-    bl_margin_per_unit = baseline.margin_per_unit
+    # Маржа/шт пересчитываем от bl_price (консистентно с new_price ниже), а не
+    # берём baseline.margin_per_unit (он был от avg_price).
+    bl_margin_per_unit = (
+        bl_price
+        - baseline.cogs_per_unit
+        - baseline.commission_rate * bl_price
+        - baseline.logistics_per_unit
+    )
     bl_margin_per_day = bl_margin_per_unit * bl_units_per_day
     bl_revenue_total = bl_revenue_per_day * duration_days
     bl_margin_total = bl_margin_per_day * duration_days
 
-    # With promo
-    new_price = bl_price * (1.0 - discount_pct / 100.0)
+    # With promo. new_price = реальная акционная цена (planPrice), если передана;
+    # иначе bl_price × (1 − discount_pct).
+    new_price = (
+        new_price_abs
+        if new_price_abs and new_price_abs > 0
+        else bl_price * (1.0 - discount_pct / 100.0)
+    )
     new_velocity = bl_velocity * (1.0 + boost_pct / 100.0)
     new_units_per_day = new_velocity  # boost применяется к net-velocity
     new_revenue_per_day = new_units_per_day * new_price
@@ -553,24 +573,27 @@ async def simulate_promo_for_skus(
         brands=brands,
     )
     promo_prices = payload.promo_prices or {}
+    current_prices = payload.current_prices or {}
+
+    def _lookup(d: dict, nm: int) -> float | None:
+        v = d.get(nm)
+        if v is None:
+            v = d.get(str(nm))  # type: ignore[arg-type]
+        return float(v) if v else None
+
     results: list[PromoSimulationResult] = []
     for nm in nm_ids:
         bl = baselines.get(nm)
         if bl is None:
             continue
-        # TASK-DEV-031: если есть реальная акционная цена WB — скидка по ней
-        # (per-SKU), иначе единый discount_pct.
-        disc = float(payload.discount_pct)
-        wb_promo = promo_prices.get(nm) or promo_prices.get(str(nm))  # type: ignore[arg-type]
-        if wb_promo and bl.avg_price > 0:
-            eff = (1.0 - float(wb_promo) / bl.avg_price) * 100.0
-            disc = max(0.0, min(99.0, eff))
         results.append(
             simulate_promo(
                 bl,
-                discount_pct=disc,
+                discount_pct=float(payload.discount_pct),
                 duration_days=payload.duration_days,
                 expected_velocity_boost_pct=float(payload.expected_velocity_boost_pct),
+                current_price_abs=_lookup(current_prices, nm),
+                new_price_abs=_lookup(promo_prices, nm),
             )
         )
     return results
