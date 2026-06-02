@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Tenant
 from app.db.session import get_db  # noqa: F401  (used by get_db_tenant_scoped)
 from app.integrations.wb.promotions import (
+    debug_nomenclatures_raw,
     get_promotion_details,
     get_promotion_nomenclatures,
     list_active_promotions,
@@ -125,6 +126,7 @@ async def list_wb_promotions(
 @router.get("/wb-promotions/{promotion_id}")
 async def get_wb_promotion(
     promotion_id: int,
+    debug: bool = Query(False, description="BUG-DEV-020: вернуть сырой ответ WB"),
     session: AsyncSession = Depends(get_db_tenant_scoped),
     user=Depends(get_current_user),
 ) -> dict[str, Any]:
@@ -149,11 +151,22 @@ async def get_wb_promotion(
     nomenclatures = _normalize_nomenclatures(suggested, False) + _normalize_nomenclatures(
         participating, True
     )
-    return {
+    out: dict[str, Any] = {
         "promotion_id": promotion_id,
         "details": details[0] if details else None,
         "nomenclatures": nomenclatures,
     }
+    if debug:
+        # BUG-DEV-020: сырой ответ WB для диагностики (автоакции и т.п.).
+        out["debug"] = {
+            "suggested": await debug_nomenclatures_raw(
+                token, promotion_id, in_action=False
+            ),
+            "participating": await debug_nomenclatures_raw(
+                token, promotion_id, in_action=True
+            ),
+        }
+    return out
 
 
 class ComparePromoMeta(BaseModel):

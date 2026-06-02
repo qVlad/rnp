@@ -43,8 +43,13 @@
   - [x] nomenclatures шлёт `inAction` (required) + `limit=1000` + пагинацию `offset`
   - [x] `get_wb_promotion` зовёт дважды (suggested/participating), нормализует item → `{nmID, inAction, price, discountedPrice}` (толерантно: id/nmID, price из top-level или sizes[0])
   - [x] log счётчика на успех + body на 4xx (диагностика shape)
-  - [ ] Smoke на проде: вкладки «предложенные»/«уже участвуют» наполняются (за юзером после deploy)
-- **Статус:** Исправлено — 2026-06-01 (backend; нужен prod-deploy + smoke. Если shape ответа WB иной — log покажет, доточим)
+  - [ ] Smoke на проде: вкладки «предложенные»/«уже участвуют» наполняются
+- **2026-06-02:** после deploy v0.47.2 товары всё ещё 0 (автоакция «макс.
+  бустинг»). inAction+limit fix не помог → shape/endpoint иной (возможно
+  автоакции отдаются не через calendar API). Добавлен `debug_nomenclatures_raw`
+  + `GET /wb-promotions/{id}?debug=1` → сырой статус/тело/ключи WB для захвата
+  из браузера (как делали с транзитом). Ждём реальный ответ.
+- **Статус:** В работе — 2026-06-02 — диагностика реального shape WB (debug endpoint задеплоен)
 
 ---
 

@@ -257,8 +257,74 @@ async def get_promotion_nomenclatures(
         return out
 
 
+async def debug_nomenclatures_raw(
+    token: str, promotion_id: int, *, in_action: bool, limit: int = 1000
+) -> dict[str, Any]:
+    """Диагностика: сырой ответ WB nomenclatures (BUG-DEV-020).
+
+    Возвращает HTTP-статус, фрагмент тела, и — если распарсилось — верхние
+    ключи объекта и ключи первого item'а. Нужен чтобы увидеть реальную
+    структуру WB для автоакций (а не гадать). Используется в endpoint'е
+    `/wb-promotions/{id}?debug=1`.
+    """
+    info: dict[str, Any] = {
+        "in_action": in_action,
+        "status": None,
+        "body_snippet": None,
+        "top_level_keys": None,
+        "first_item_keys": None,
+        "parsed_count": 0,
+    }
+    try:
+        import httpx
+
+        await _promo_limiter.acquire()
+        async with httpx.AsyncClient(
+            timeout=30.0,
+            headers={
+                "Authorization": token,
+                "Accept": "application/json",
+                "User-Agent": "RNP-Seller-Service/1.0 (httpx; python)",
+            },
+        ) as client:
+            resp = await client.get(
+                f"{_PROMO_BASE}/api/v1/calendar/promotions/nomenclatures",
+                params={
+                    "promotionID": promotion_id,
+                    "inAction": "true" if in_action else "false",
+                    "limit": limit,
+                    "offset": 0,
+                },
+            )
+            info["status"] = resp.status_code
+            text = resp.text or ""
+            info["body_snippet"] = text[:600]
+            try:
+                data = resp.json() if resp.content else {}
+            except Exception:  # noqa: BLE001
+                return info
+        if isinstance(data, dict):
+            info["top_level_keys"] = list(data.keys())
+            nomen = data.get("data", {}).get("nomenclatures") or data.get(
+                "nomenclatures"
+            )
+            if isinstance(nomen, list):
+                info["parsed_count"] = len(nomen)
+                if nomen and isinstance(nomen[0], dict):
+                    info["first_item_keys"] = list(nomen[0].keys())
+        elif isinstance(data, list):
+            info["parsed_count"] = len(data)
+            if data and isinstance(data[0], dict):
+                info["first_item_keys"] = list(data[0].keys())
+                info["top_level_keys"] = "(top-level array)"
+    except Exception as e:  # noqa: BLE001
+        info["body_snippet"] = f"EXC: {e}"
+    return info
+
+
 __all__ = [
     "list_active_promotions",
     "get_promotion_details",
     "get_promotion_nomenclatures",
+    "debug_nomenclatures_raw",
 ]
