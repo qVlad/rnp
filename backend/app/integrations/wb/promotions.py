@@ -179,7 +179,7 @@ async def get_promotion_details(
 
 
 async def get_promotion_nomenclatures(
-    token: str, promotion_id: int, *, in_action: bool, limit: int = 1000
+    token: str, promotion_id: int, *, in_action: bool, limit: int = 100
 ) -> list[dict[str, Any]]:
     """`GET /api/v1/calendar/promotions/nomenclatures` — товары акции.
 

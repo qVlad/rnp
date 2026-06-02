@@ -90,7 +90,14 @@
   + `GET /wb-promotions/{id}?debug=1` → сырой статус/тело/ключи WB для захвата
   из браузера (как делали с транзитом). Ждём реальный ответ.
 - **2026-06-02 debug-результат:** WB `nomenclatures` → **HTTP 422** `{"errorText":"Unprocessable entity"}` на обоих inAction для автоакции (promo 2503, `type:"auto"`). `details` богатые (inPromoActionTotal=5 + notInPromoActionTotal=12 = 17 товаров). Раньше (без params) был 200 empty → значит inAction/limit/offset отвергаются. Добавлен `probe_nomenclatures_params` (?debug=1 → debug.probe[]) — перебор комбо для поиска принимаемой WB. Ждём probe-результат.
-- **Статус:** В работе — 2026-06-02 — probe параметров nomenclatures (422 автоакции)
+- **2026-06-02 РЕШЕНО по офиц. доке WB** (юзер прислал пример из swagger):
+  рабочий запрос `?promotionID=1&inAction=true&limit=10&offset=0` → 200. Причины
+  нашего 422: (1) `limit=1000` выше макс. (рабочий пример — 10) → снизил до 100;
+  (2) акционная цена в ответе — поле **`planPrice`** (не `discountedPrice`!),
+  товар: `{id, inAction, price, currencyCode, planPrice, discount, planDiscount}`.
+  Парсер: nmID←`id`, акционная цена←`planPrice`, текущая←`price`. (Доки
+  dev.wildberries.ru за бот-защитой 498 — на будущее читать через Claude-in-Chrome.)
+- **Статус:** Исправлено — 2026-06-02 (limit≤100 + planPrice; нужен prod-smoke)
 
 ---
 

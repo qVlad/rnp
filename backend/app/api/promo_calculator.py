@@ -80,7 +80,14 @@ def _normalize_nomenclatures(
             continue
         nm = n.get("id") or n.get("nmID") or n.get("nmId") or n.get("nmid") or 0
         price = n.get("price")
-        disc = n.get("discountedPrice")
+        # BUG-DEV-020: реальная акционная цена WB — это `planPrice`
+        # (см. дока nomenclatures), а не `discountedPrice`. Fallback на старые
+        # имена для совместимости.
+        disc = (
+            n.get("planPrice")
+            if n.get("planPrice") is not None
+            else n.get("discountedPrice")
+        )
         if (price is None or disc is None) and isinstance(n.get("sizes"), list):
             for sz in n["sizes"]:
                 if not isinstance(sz, dict):
