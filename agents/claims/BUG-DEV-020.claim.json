@@ -1,0 +1,7 @@
+{
+  "task_id": "BUG-DEV-020",
+  "agent": "Claude Opus 4.8 — main session",
+  "started_at": "2026-06-02T10:27:52Z",
+  "expected_minutes": 45,
+  "notes": "autopromo: skip nomenclatures (WB N/A) + manual SKU fallback"
+}
