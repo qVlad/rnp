@@ -166,6 +166,16 @@ export default function PromoCalculatorWb() {
       .filter((nm) => !excluded.has(nm));
   }, [isAuto, manualNmIds, filteredItems, excluded]);
 
+  // TASK-DEV-031: реальные акционные цены WB по каждому SKU (planPrice).
+  // Передаём в simulate — скидка считается per-SKU из цены, а не единой ставкой.
+  const promoPrices = useMemo(() => {
+    const m: Record<number, number> = {};
+    for (const x of items) {
+      if (x.nmId > 0 && x.discountedPrice > 0) m[x.nmId] = x.discountedPrice;
+    }
+    return m;
+  }, [items]);
+
   const simMut = useMutation({
     mutationFn: () =>
       api.promoCalculatorSimulate({
@@ -174,6 +184,8 @@ export default function PromoCalculatorWb() {
         duration_days: durationDays,
         expected_velocity_boost_pct: boostPct,
         baseline_period_days: baselinePeriod,
+        // для автоакций per-SKU цен нет (ручной ввод) → пусто, идёт discount_pct
+        promo_prices: isAuto ? undefined : promoPrices,
       }),
   });
 
@@ -335,8 +347,17 @@ export default function PromoCalculatorWb() {
                   </div>
                 </div>
                 <div className="flex gap-4">
-                  <label className="text-sm flex flex-col gap-1">
-                    <span className="text-muted text-xs uppercase">Скидка</span>
+                  <label
+                    className="text-sm flex flex-col gap-1"
+                    title={
+                      isAuto
+                        ? "Автоакция: реальных цен WB нет — скидка применяется ко всем SKU единой ставкой."
+                        : "Fallback-скидка. Для товаров с реальной акционной ценой WB (колонка «Со скидкой») расчёт идёт по ней per-SKU; это поле используется только если у SKU нет цены WB."
+                    }
+                  >
+                    <span className="text-muted text-xs uppercase">
+                      Скидка{!isAuto && " (fallback)"}
+                    </span>
                     <input
                       type="number"
                       className="input w-24"
@@ -579,6 +600,8 @@ export default function PromoCalculatorWb() {
                 <tr>
                   <th className="px-2 py-1">SKU</th>
                   <th className="px-2 py-1">Бренд</th>
+                  <th className="px-2 py-1 text-right">Цена сейчас</th>
+                  <th className="px-2 py-1 text-right">Цена в акции</th>
                   <th className="px-2 py-1 text-right">Маржа до</th>
                   <th className="px-2 py-1 text-right">Маржа после</th>
                   <th className="px-2 py-1 text-right">Δ маржа</th>
@@ -598,6 +621,24 @@ export default function PromoCalculatorWb() {
                       )}
                     </td>
                     <td className="px-2 py-1">{item.brand ?? "—"}</td>
+                    <td className="px-2 py-1 text-right">
+                      {fmtRub(item.baseline.avg_price)}
+                    </td>
+                    <td className="px-2 py-1 text-right">
+                      {fmtRub(item.with_promo.avg_price)}
+                      {item.baseline.avg_price > 0 && (
+                        <div className="text-xs text-muted">
+                          −
+                          {Math.round(
+                            (1 -
+                              item.with_promo.avg_price /
+                                item.baseline.avg_price) *
+                              100,
+                          )}
+                          %
+                        </div>
+                      )}
+                    </td>
                     <td className="px-2 py-1 text-right">
                       {fmtRub(item.baseline.margin_total)}
                       <div className="text-xs text-muted">

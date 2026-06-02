@@ -56,10 +56,15 @@ class PromoSimulationInput:
     """Параметры симуляции акции (приходят с фронта)."""
 
     nm_ids: list[int]
-    discount_pct: Decimal  # 0..100, скидка от текущей цены
+    discount_pct: Decimal  # 0..100, скидка от текущей цены (fallback)
     duration_days: int  # 1..60, сколько дней длится акция
     expected_velocity_boost_pct: Decimal  # 0..500, ожидаемый рост продаж
     baseline_period_days: int = 14  # 7/14/30, окно для расчёта baseline
+    # TASK-DEV-031: реальная акционная цена WB по каждому nm (planPrice). Если
+    # задана для SKU — скидка считается из неё (1 − promo/baseline_price), а не
+    # из единого discount_pct. discount_pct остаётся fallback'ом (автоакции /
+    # ручной ввод без WB-цены).
+    promo_prices: dict[int, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -547,15 +552,23 @@ async def simulate_promo_for_skus(
         baseline_period_days=payload.baseline_period_days,
         brands=brands,
     )
+    promo_prices = payload.promo_prices or {}
     results: list[PromoSimulationResult] = []
     for nm in nm_ids:
         bl = baselines.get(nm)
         if bl is None:
             continue
+        # TASK-DEV-031: если есть реальная акционная цена WB — скидка по ней
+        # (per-SKU), иначе единый discount_pct.
+        disc = float(payload.discount_pct)
+        wb_promo = promo_prices.get(nm) or promo_prices.get(str(nm))  # type: ignore[arg-type]
+        if wb_promo and bl.avg_price > 0:
+            eff = (1.0 - float(wb_promo) / bl.avg_price) * 100.0
+            disc = max(0.0, min(99.0, eff))
         results.append(
             simulate_promo(
                 bl,
-                discount_pct=float(payload.discount_pct),
+                discount_pct=disc,
                 duration_days=payload.duration_days,
                 expected_velocity_boost_pct=float(payload.expected_velocity_boost_pct),
             )

@@ -638,6 +638,21 @@
 
 ---
 
+### TASK-DEV-031: /promo-calculator-wb — симуляция по реальной per-SKU цене WB + колонки «Цена сейчас/в акции»
+
+- **Исполнитель:** Developer (main session)
+- **Приоритет:** P2 (пользователь 2026-06-02: «скидка 37% где применяется? покажи текущую и акционную цену»)
+- **Оценка:** S
+- **Источник:** поле СКИДКА применялось единой ставкой ко всем SKU, хотя у каждого товара своя реальная акционная цена WB (planPrice) в таблице выбора (9100→5708=37%, но 10500→5145=51% и т.д.) — расчёт игнорировал per-SKU цены.
+- **Сделано:**
+  - Backend: `PromoSimulationInput.promo_prices {nm:price}` + `SimulateRequest.promo_prices`. В `simulate_promo_for_skus` если есть реальная цена WB и baseline>0 → скидка per-SKU = (1−promo/baseline)×100, иначе единый discount_pct (fallback для автоакций/ручного).
+  - Frontend: шлём `promo_prices` (из items discountedPrice) для не-авто; колонки «Цена сейчас» (baseline.avg_price) + «Цена в акции» (with_promo.avg_price + −X%) в результатах; поле «Скидка (fallback)» с пояснением.
+- **Критерии:** [x] AST+tsc 0 ошибок · [ ] prod-smoke (2507: per-SKU цены/маржа)
+- **Зависимости:** BUG-DEV-020 ✅
+- **Статус:** Выполнено — 2026-06-02 (нужен prod-smoke)
+
+---
+
 ### TASK-DEV-030: /promo-calculator-wb — матрица сравнения «текущие продажи vs N акций» (per-unit маржа)
 
 - **Исполнитель:** Developer (main session)

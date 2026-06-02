@@ -277,6 +277,9 @@ class SimulateRequest(BaseModel):
     duration_days: conint(ge=1, le=60) = 7  # type: ignore
     expected_velocity_boost_pct: condecimal(ge=Decimal("0"), le=Decimal("500")) = Decimal("80")  # type: ignore
     baseline_period_days: conint(ge=1, le=90) = 14  # type: ignore
+    # TASK-DEV-031: реальные акционные цены WB по nm (planPrice). Если задано —
+    # скидка считается per-SKU из цены, иначе единый discount_pct.
+    promo_prices: dict[int, float] | None = None
 
 
 @router.post("/simulate")
@@ -308,6 +311,7 @@ async def simulate_promo_endpoint(
         duration_days=int(body.duration_days),
         expected_velocity_boost_pct=Decimal(body.expected_velocity_boost_pct),
         baseline_period_days=int(body.baseline_period_days),
+        promo_prices=body.promo_prices,
     )
     results = await simulate_promo_for_skus(session, payload, brands=brands)
 
