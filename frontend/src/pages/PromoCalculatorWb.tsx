@@ -409,6 +409,16 @@ export default function PromoCalculatorWb() {
                     Распознано SKU: {manualNmIds.length}
                   </div>
                 </div>
+              ) : items.length === 0 ? (
+                <div
+                  className="text-sm mb-2 px-3 py-3 rounded"
+                  style={{ background: "rgba(148,163,184,0.10)" }}
+                >
+                  В этой акции <b>нет ваших товаров</b> — WB вернул пустой список
+                  (ваши SKU не входят в эту акцию; участие во всех акциях не
+                  обязательно). Выберите другую акцию — например ту, где вы уже
+                  участвуете или куда WB предлагает товары.
+                </div>
               ) : (
               <>
               {/* Фильтр товаров */}
