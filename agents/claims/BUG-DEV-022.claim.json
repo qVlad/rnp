@@ -1,0 +1,7 @@
+{
+  "task_id": "BUG-DEV-022",
+  "agent": "Claude Opus 4.8 — main session",
+  "started_at": "2026-06-02T09:09:47Z",
+  "expected_minutes": 45,
+  "notes": "localization worst-sku block move + count"
+}
