@@ -1,0 +1,7 @@
+{
+  "task_id": "BUG-DEV-020",
+  "agent": "Claude Opus 4.8 — main session",
+  "started_at": "2026-06-02T09:09:41Z",
+  "expected_minutes": 45,
+  "notes": "probe nomenclatures params (422 autopromo)"
+}
