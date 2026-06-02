@@ -32,7 +32,10 @@ log = get_logger(__name__)
 # WB Promo Calendar host (не входит в стандартный набор `Category` в client.py —
 # отдельный лимитер хранится локально; см. _call_calendar()).
 _PROMO_BASE = "https://dp-calendar-api.wildberries.ru"
-_promo_limiter = TokenBucketLimiter(6, min_interval_s=10.0)
+# BUG-DEV-020: 10s между запросами был сверх-осторожным (debug с probe →
+# таймаут, страница товаров грузилась медленно). Calendar API спокойно держит
+# ~1 req/s. 1.0s — безопасный баланс.
+_promo_limiter = TokenBucketLimiter(60, min_interval_s=1.0)
 
 
 async def list_active_promotions(

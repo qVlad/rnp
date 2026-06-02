@@ -134,7 +134,7 @@ async def list_wb_promotions(
 @router.get("/wb-promotions/{promotion_id}")
 async def get_wb_promotion(
     promotion_id: int,
-    debug: bool = Query(False, description="BUG-DEV-020: вернуть сырой ответ WB"),
+    debug: int = Query(0, description="BUG-DEV-020: 1=сырой ответ WB, 2=+probe"),
     session: AsyncSession = Depends(get_db_tenant_scoped),
     user=Depends(get_current_user),
 ) -> dict[str, Any]:
@@ -164,8 +164,8 @@ async def get_wb_promotion(
         "details": details[0] if details else None,
         "nomenclatures": nomenclatures,
     }
-    if debug:
-        # BUG-DEV-020: сырой ответ WB + probe перебора параметров (422 автоакций).
+    if debug >= 1:
+        # BUG-DEV-020: сырой ответ WB (debug=1) + probe перебора (debug=2, медленнее).
         out["debug"] = {
             "suggested": await debug_nomenclatures_raw(
                 token, promotion_id, in_action=False
@@ -173,8 +173,11 @@ async def get_wb_promotion(
             "participating": await debug_nomenclatures_raw(
                 token, promotion_id, in_action=True
             ),
-            "probe": await probe_nomenclatures_params(token, promotion_id),
         }
+        if debug >= 2:
+            out["debug"]["probe"] = await probe_nomenclatures_params(
+                token, promotion_id
+            )
     return out
 
 
