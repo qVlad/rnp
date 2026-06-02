@@ -354,6 +354,17 @@ export default function Localization() {
             </>
           )}
         </div>
+        {/* BUG-DEV-022: честно объясняем, почему строк меньше выбранного N. */}
+        {d.worst_skus.length > 0 && d.worst_skus.length < worstLimit && (
+          <div
+            className="text-xs mb-3 px-3 py-2 rounded"
+            style={{ background: "rgba(255,193,7,0.10)" }}
+          >
+            Показано {d.worst_skus.length} из выбранных {worstLimit} — у
+            остальных артикулов меньше 5 заказов за период, поэтому они исключены
+            (по ним статистика локализации недостоверна).
+          </div>
+        )}
         {d.worst_skus.length === 0 ? (
           <div className="text-muted text-sm">
             Нет SKU с ≥ 5 заказами за период
