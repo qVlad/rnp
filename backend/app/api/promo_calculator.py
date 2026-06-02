@@ -35,6 +35,7 @@ from app.services.auth import (
 )
 from app.services.promo_calculator import (
     PromoSimulationInput,
+    compare_promos_for_skus,
     simulate_promo_for_skus,
 )
 from app.services.secrets_crypto import decrypt
@@ -153,6 +154,78 @@ async def get_wb_promotion(
         "details": details[0] if details else None,
         "nomenclatures": nomenclatures,
     }
+
+
+class ComparePromoMeta(BaseModel):
+    """Одна акция-столбец для матрицы сравнения (TASK-DEV-030)."""
+
+    id: int
+    name: str | None = None
+    start: str | None = None
+    end: str | None = None
+    # Ручной override скидки % — если задан, цена считается как
+    # baseline×(1−disc), иначе берётся реальная WB-цена (discountedPrice).
+    discount_override_pct: float | None = Field(default=None, ge=0, le=99)
+
+
+class CompareRequest(BaseModel):
+    promotions: list[ComparePromoMeta] = Field(..., min_length=1, max_length=6)
+    baseline_period_days: conint(ge=1, le=90) = 14  # type: ignore
+
+
+@router.post("/compare")
+async def compare_promotions_endpoint(
+    body: CompareRequest,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    user=Depends(get_current_user),
+    brands: set[str] | None = Depends(current_brands_filter),
+) -> dict[str, Any]:
+    """Матрица «текущие продажи vs N акций» по per-unit марже (TASK-DEV-030).
+
+    Для каждой акции тянем nomenclatures (предложенные + участвующие) → цена по
+    SKU = WB discountedPrice (или baseline×(1−override) если задан override %).
+    Строки = объединение всех SKU акций (с baseline-продажами).
+    """
+    token = await _resolve_wb_token(session, user.tenant_id)
+    promotions: list[dict[str, Any]] = []
+    for meta in body.promotions:
+        suggested = await get_promotion_nomenclatures(token, meta.id, in_action=False)
+        participating = await get_promotion_nomenclatures(
+            token, meta.id, in_action=True
+        )
+        norm = _normalize_nomenclatures(suggested, False) + _normalize_nomenclatures(
+            participating, True
+        )
+        sku_price: dict[int, float] = {}
+        for n in norm:
+            nm = int(n.get("nmID") or 0)
+            dp = n.get("discountedPrice") or n.get("price") or 0
+            if nm and dp:
+                # если nm встречается и как предложенный, и как участвующий —
+                # берём первую (обычно совпадают по цене).
+                sku_price.setdefault(nm, float(dp))
+        promotions.append(
+            {
+                "id": meta.id,
+                "name": meta.name or f"Акция {meta.id}",
+                "start": meta.start,
+                "end": meta.end,
+                "sku_price": sku_price,
+            }
+        )
+
+    overrides = {
+        m.id: float(m.discount_override_pct)
+        for m in body.promotions
+        if m.discount_override_pct is not None
+    }
+    return await compare_promos_for_skus(
+        session,
+        promotions=promotions,
+        overrides=overrides,
+        baseline_period_days=int(body.baseline_period_days),
+        brands=brands,
+    )
 
 
 class SimulateRequest(BaseModel):

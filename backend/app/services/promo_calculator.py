@@ -405,6 +405,129 @@ async def _load_baselines(
     return out
 
 
+def _margin_at_price(baseline: SkuBaseline, price: float) -> dict[str, float]:
+    """Per-unit маржа на заданной цене (без объёма/буста — TASK-DEV-030).
+
+    Использует baseline'овые cogs / commission_rate / logistics_per_unit.
+    Возвращает ``{price, margin_rub, margin_pct}``.
+    """
+    price = max(0.0, float(price))
+    commission_per_unit = baseline.commission_rate * price
+    margin_rub = (
+        price
+        - baseline.cogs_per_unit
+        - commission_per_unit
+        - baseline.logistics_per_unit
+    )
+    margin_pct = (margin_rub / price * 100.0) if price > 0 else 0.0
+    return {
+        "price": round(price, 2),
+        "margin_rub": round(margin_rub, 2),
+        "margin_pct": round(margin_pct, 1),
+    }
+
+
+async def compare_promos_for_skus(
+    session: AsyncSession,
+    *,
+    promotions: list[dict[str, Any]],
+    overrides: dict[int, float] | None = None,
+    baseline_period_days: int = 14,
+    brands: set[str] | None = None,
+) -> dict[str, Any]:
+    """Матрица сравнения «текущие продажи vs N акций» по per-unit марже.
+
+    Args:
+        promotions: ``[{id, name, start, end, sku_price: {nm_id: promo_price}}]``
+            — sku_price берётся из WB nomenclatures (discountedPrice).
+        overrides: ``{promo_id: discount_pct}`` — если задан, цена акции
+            считается как ``baseline_price × (1 − disc/100)`` вместо WB-цены.
+        baseline_period_days: окно для baseline (как в simulate).
+        brands: RBAC manager-фильтр.
+
+    Returns:
+        ``{promotions: [{id, name, start, end}], rows: [...], skipped_no_baseline: int}``
+        rows: ``{nm_id, vendor_code, brand, photo_url,
+                 baseline: {price, margin_rub, margin_pct},
+                 cells: {promo_id: {price, margin_rub, margin_pct, discount_pct} | None}}``
+        SKU без baseline-продаж (avg_price<=0) пропускаются — для них нет
+        достоверных commission/logistics, маржа была бы вводящей в заблуждение.
+    """
+    overrides = overrides or {}
+
+    # Union всех nm из всех акций (сохраняем порядок появления).
+    nm_order: list[int] = []
+    seen: set[int] = set()
+    for p in promotions:
+        for nm in (p.get("sku_price") or {}).keys():
+            nm_i = int(nm)
+            if nm_i not in seen:
+                seen.add(nm_i)
+                nm_order.append(nm_i)
+
+    baselines = await _load_baselines(
+        session,
+        nm_ids=nm_order,
+        baseline_period_days=baseline_period_days,
+        brands=brands,
+    )
+
+    rows: list[dict[str, Any]] = []
+    skipped_no_baseline = 0
+    for nm in nm_order:
+        bl = baselines.get(nm)
+        if bl is None or bl.avg_price <= 0:
+            skipped_no_baseline += 1
+            continue
+        base_cell = _margin_at_price(bl, bl.avg_price)
+        cells: dict[str, Any] = {}
+        for p in promotions:
+            pid = int(p["id"])
+            ov = overrides.get(pid)
+            if ov is not None:
+                price = bl.avg_price * (1.0 - max(0.0, min(99.0, float(ov))) / 100.0)
+            else:
+                wb_price = (p.get("sku_price") or {}).get(nm) or (
+                    p.get("sku_price") or {}
+                ).get(str(nm))
+                price = float(wb_price) if wb_price else None
+            if price is None or price <= 0:
+                cells[str(pid)] = None
+                continue
+            cell = _margin_at_price(bl, price)
+            cell["discount_pct"] = (
+                round((1.0 - price / bl.avg_price) * 100.0, 1)
+                if bl.avg_price > 0
+                else None
+            )
+            cells[str(pid)] = cell
+        rows.append(
+            {
+                "nm_id": nm,
+                "vendor_code": bl.vendor_code,
+                "brand": bl.brand,
+                "photo_url": bl.photo_url,
+                "baseline": base_cell,
+                "cells": cells,
+            }
+        )
+
+    return {
+        "promotions": [
+            {
+                "id": int(p["id"]),
+                "name": p.get("name") or "—",
+                "start": p.get("start"),
+                "end": p.get("end"),
+            }
+            for p in promotions
+        ],
+        "rows": rows,
+        "skipped_no_baseline": skipped_no_baseline,
+        "baseline_period_days": baseline_period_days,
+    }
+
+
 async def simulate_promo_for_skus(
     session: AsyncSession,
     payload: PromoSimulationInput,
@@ -446,4 +569,5 @@ __all__ = [
     "SkuBaseline",
     "simulate_promo",
     "simulate_promo_for_skus",
+    "compare_promos_for_skus",
 ]

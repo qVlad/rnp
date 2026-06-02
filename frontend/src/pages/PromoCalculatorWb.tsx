@@ -64,6 +64,14 @@ export default function PromoCalculatorWb() {
   const [baselinePeriod, setBaselinePeriod] = useState<number>(14);
   const [overrideDiscount, setOverrideDiscount] = useState<number | null>(null);
 
+  // TASK-DEV-030: режим «сравнение нескольких акций» (матрица per-unit маржи).
+  const [mode, setMode] = useState<"simulate" | "compare">("simulate");
+  const [comparePromoIds, setComparePromoIds] = useState<number[]>([]);
+  // override скидки % на акцию (пусто = реальная цена WB).
+  const [compareOverrides, setCompareOverrides] = useState<
+    Record<number, string>
+  >({});
+
   // 1. Список акций (90 дней вперёд).
   const promosQ = useQuery({
     queryKey: ["wb-promotions"],
@@ -147,6 +155,41 @@ export default function PromoCalculatorWb() {
 
   const result = simMut.data;
 
+  // TASK-DEV-030: мутация сравнения выбранных акций.
+  const compareMut = useMutation({
+    mutationFn: () => {
+      const promos = (promosQ.data ?? [])
+        .filter((p) => comparePromoIds.includes(p.id))
+        .map((p) => {
+          const ov = compareOverrides[p.id];
+          const ovNum = ov != null && ov !== "" ? Number(ov) : null;
+          return {
+            id: p.id,
+            name: p.name,
+            start: p.start_date_time,
+            end: p.end_date_time,
+            discount_override_pct:
+              ovNum != null && Number.isFinite(ovNum) ? ovNum : null,
+          };
+        });
+      return api.promoCalculatorCompare({
+        promotions: promos,
+        baseline_period_days: baselinePeriod,
+      });
+    },
+  });
+  const compareData = compareMut.data;
+
+  const toggleComparePromo = (id: number) => {
+    setComparePromoIds((prev) =>
+      prev.includes(id)
+        ? prev.filter((x) => x !== id)
+        : prev.length >= 6
+        ? prev
+        : [...prev, id],
+    );
+  };
+
   const sortedResultItems = useMemo(() => {
     if (!result?.items) return [];
     return [...result.items].sort(
@@ -182,6 +225,25 @@ export default function PromoCalculatorWb() {
         }
       />
 
+      {/* Переключатель режима (TASK-DEV-030) */}
+      <div className="flex gap-2 text-sm">
+        {(["simulate", "compare"] as const).map((m) => (
+          <button
+            key={m}
+            className={`px-3 py-1.5 rounded ${
+              mode === m ? "bg-accent text-white" : "bg-soft"
+            }`}
+            onClick={() => setMode(m)}
+          >
+            {m === "simulate"
+              ? "Симуляция одной акции"
+              : "Сравнение акций (матрица)"}
+          </button>
+        ))}
+      </div>
+
+      {mode === "simulate" && (
+      <>
       {/* Шаг 1: выбор акции */}
       <div className="card">
         <h2 className="font-medium mb-3">1. Выбери акцию WB</h2>
@@ -509,6 +571,228 @@ export default function PromoCalculatorWb() {
           </div>
         </div>
       )}
+      </>
+      )}
+
+      {/* ===== Режим сравнения акций (TASK-DEV-030) ===== */}
+      {mode === "compare" && (
+        <>
+          <div className="card">
+            <h2 className="font-medium mb-3">
+              1. Выбери акции для сравнения (до 6)
+            </h2>
+            {promosQ.isLoading && (
+              <div className="text-muted text-sm">Загружаю акции из WB…</div>
+            )}
+            {promosQ.data && promosQ.data.length > 0 && (
+              <div className="flex flex-col gap-1 max-h-72 overflow-y-auto">
+                {promosQ.data.map((p) => {
+                  const checked = comparePromoIds.includes(p.id);
+                  return (
+                    <div
+                      key={p.id}
+                      className="flex items-center gap-2 text-sm py-0.5"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleComparePromo(p.id)}
+                      />
+                      <span className="flex-1">
+                        {p.name}{" "}
+                        <span className="text-xs text-muted">
+                          ({fmtDate(p.start_date_time)} —{" "}
+                          {fmtDate(p.end_date_time)})
+                        </span>
+                      </span>
+                      {checked && (
+                        <label className="text-xs text-muted flex items-center gap-1">
+                          скидка %
+                          <input
+                            type="number"
+                            className="input w-20 text-xs"
+                            placeholder="из WB"
+                            min={0}
+                            max={99}
+                            value={compareOverrides[p.id] ?? ""}
+                            onChange={(e) =>
+                              setCompareOverrides((prev) => ({
+                                ...prev,
+                                [p.id]: e.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div className="flex items-center gap-3 mt-3">
+              <button
+                className="btn-primary"
+                disabled={comparePromoIds.length === 0 || compareMut.isPending}
+                onClick={() => compareMut.mutate()}
+              >
+                {compareMut.isPending
+                  ? "Считаю…"
+                  : `Сравнить (${comparePromoIds.length} акц.)`}
+              </button>
+              <label className="text-xs text-muted flex items-center gap-1">
+                Baseline
+                <select
+                  className="input w-24"
+                  value={baselinePeriod}
+                  onChange={(e) => setBaselinePeriod(Number(e.target.value))}
+                >
+                  <option value={7}>7 дн</option>
+                  <option value={14}>14 дн</option>
+                  <option value={30}>30 дн</option>
+                </select>
+              </label>
+              <span className="text-xs text-muted">
+                Скидка пуста = реальная цена WB; впиши % чтобы пересчитать.
+              </span>
+            </div>
+            {compareMut.error && (
+              <div className="text-danger text-sm mt-2">
+                Ошибка: {String(compareMut.error)}
+              </div>
+            )}
+          </div>
+
+          {compareData && (
+            <div className="card">
+              <h2 className="font-medium mb-1">
+                2. Матрица: текущие продажи vs акции
+              </h2>
+              <div className="text-xs text-muted mb-3">
+                Маржа per-unit на цене продажи (без СПП). Baseline за{" "}
+                {compareData.baseline_period_days} дн.
+                {compareData.skipped_no_baseline > 0 &&
+                  ` · Пропущено ${compareData.skipped_no_baseline} SKU без продаж за период (нет baseline).`}
+              </div>
+              {compareData.rows.length === 0 ? (
+                <div className="text-muted text-sm py-4">
+                  Нет SKU с продажами за baseline-период в выбранных акциях.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="text-sm border-collapse">
+                    <thead>
+                      <tr className="text-muted">
+                        <th
+                          rowSpan={2}
+                          className="px-2 py-1 text-left sticky left-0 bg-bg border-r border-soft"
+                        >
+                          SKU
+                        </th>
+                        <th
+                          colSpan={3}
+                          className="px-2 py-1 text-center border-r border-soft"
+                        >
+                          Текущие продажи
+                        </th>
+                        {compareData.promotions.map((p) => (
+                          <th
+                            key={p.id}
+                            colSpan={3}
+                            className="px-2 py-1 text-center border-r border-soft"
+                            title={`${fmtDate(p.start)} — ${fmtDate(p.end)}`}
+                          >
+                            {p.name}
+                          </th>
+                        ))}
+                      </tr>
+                      <tr className="text-muted text-xs">
+                        {Array.from({
+                          length: compareData.promotions.length + 1,
+                        }).map((_, gi) => (
+                          <FragmentCols key={gi} />
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {compareData.rows.map((row) => (
+                        <tr key={row.nm_id} className="border-t border-soft">
+                          <td className="px-2 py-1 font-mono sticky left-0 bg-bg border-r border-soft whitespace-nowrap">
+                            <a
+                              href={`/units?nm_id=${row.nm_id}`}
+                              className="hover:underline"
+                            >
+                              {row.nm_id}
+                            </a>
+                            {row.vendor_code && (
+                              <div className="text-xs text-muted">
+                                {row.vendor_code}
+                              </div>
+                            )}
+                          </td>
+                          <CompareCells cell={row.baseline} />
+                          {compareData.promotions.map((p) => (
+                            <CompareCells
+                              key={p.id}
+                              cell={row.cells[String(p.id)] ?? null}
+                            />
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
     </div>
+  );
+}
+
+/** Заголовки 3 подколонок одной группы (цена / маржа ₽ / маржа %). */
+function FragmentCols() {
+  return (
+    <>
+      <th className="px-2 py-1 text-right font-normal">Цена</th>
+      <th className="px-2 py-1 text-right font-normal">Маржа ₽</th>
+      <th className="px-2 py-1 text-right font-normal border-r border-soft">
+        Маржа %
+      </th>
+    </>
+  );
+}
+
+/** 3 ячейки одной группы. null = нет тарифа/цены по этой акции. */
+function CompareCells({
+  cell,
+}: {
+  cell: {
+    price: number;
+    margin_rub: number;
+    margin_pct: number;
+  } | null;
+}) {
+  if (!cell) {
+    return (
+      <td
+        colSpan={3}
+        className="px-2 py-1 text-center text-muted border-r border-soft"
+      >
+        —
+      </td>
+    );
+  }
+  const cls = cell.margin_rub >= 0 ? "text-success" : "text-danger";
+  return (
+    <>
+      <td className="px-2 py-1 text-right">{fmtRub(cell.price)}</td>
+      <td className={`px-2 py-1 text-right ${cls}`}>
+        {fmtRub(cell.margin_rub)}
+      </td>
+      <td className={`px-2 py-1 text-right border-r border-soft ${cls}`}>
+        {fmtPct(cell.margin_pct)}
+      </td>
+    </>
   );
 }

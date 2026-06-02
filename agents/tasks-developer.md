@@ -638,6 +638,30 @@
 
 ---
 
+### TASK-DEV-030: /promo-calculator-wb — матрица сравнения «текущие продажи vs N акций» (per-unit маржа)
+
+- **Исполнитель:** Developer (main session)
+- **Приоритет:** P2 (запрос пользователя 2026-06-02, скрин-макет таблицы)
+- **Оценка:** M (backend endpoint + service + frontend матрица)
+- **Источник:** пользователь хочет таблицу: строки = SKU, столбцы-группы =
+  «Текущие продажи» + Акция 1/2/3, в каждой группе 3 метрики: цена продажи
+  (без СПП) / маржа ₽ / маржа %. Per-unit (без объёма/буста — это НЕ симуляция).
+- **Решения (из вопросов):** цена акции = WB discountedPrice по SKU + ручной
+  override % на акцию; строки = объединение всех SKU выбранных акций.
+- **Дизайн:**
+  - Backend `POST /api/promo-calculator/compare` {promotion_ids[], overrides{promo_id:disc_pct}, baseline_period_days} → собирает nomenclatures по каждой акции, union SKU, reuse `_load_baselines`, per-unit маржа `_margin_at_price(baseline, price)`.
+  - Baseline цена = `avg_price` (без СПП из продаж). Акционная цена = override ? avg_price×(1−disc) : WB discountedPrice. SKU без baseline-продаж пропускаются (нет commission/logistics — маржа была бы недостоверной) + счётчик.
+  - Frontend: режим «Сравнение акций» на /promo-calculator-wb — multi-select акций, per-column override %, матрица как в макете.
+- **Критерии готовности:**
+  - [x] Backend endpoint `POST /api/promo-calculator/compare` + service `compare_promos_for_skus` + `_margin_at_price`
+  - [x] AST + frontend tsc 0 ошибок
+  - [x] Матрица рендерится: baseline + столбцы акций × (цена/маржа₽/маржа%), режим-тоггл, per-promo override %
+  - [ ] Smoke на проде (за юзером после deploy)
+- **Зависимости:** BUG-DEV-020 ✅ (nomenclatures теперь грузятся)
+- **Статус:** Выполнено — 2026-06-02 (нужен prod-deploy + smoke)
+
+---
+
 ### TASK-DEV-029: TransitCalculator — compare-склады тоже только из реальных направлений + свернуть manual-блок тарифа при auto-fill
 
 - **Исполнитель:** Developer (main session)

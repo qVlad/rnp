@@ -2687,6 +2687,22 @@ paymentOrderDelete: (payment_order_id: string) =>
       nomenclatures: Array<Record<string, unknown>>;
     }>(`/api/promo-calculator/wb-promotions/${promotionId}`),
 
+  // TASK-DEV-030: матрица сравнения «текущие продажи vs N акций».
+  promoCalculatorCompare: (body: {
+    promotions: Array<{
+      id: number;
+      name?: string | null;
+      start?: string | null;
+      end?: string | null;
+      discount_override_pct?: number | null;
+    }>;
+    baseline_period_days?: number;
+  }) =>
+    request<PromoCompareResult>("/api/promo-calculator/compare", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
   // Leak-report «найдено N₽» (TASK-LEAD-140) — аудит-артефакт кабинета.
   leakReport: (params: { from?: string; to?: string } = {}) => {
     const qs = new URLSearchParams();
@@ -2697,6 +2713,33 @@ paymentOrderDelete: (payment_order_id: string) =>
     );
   },
 };
+
+// TASK-DEV-030: результат матрицы сравнения акций.
+export interface PromoCompareCell {
+  price: number;
+  margin_rub: number;
+  margin_pct: number;
+  discount_pct?: number | null;
+}
+export interface PromoCompareRow {
+  nm_id: number;
+  vendor_code: string | null;
+  brand: string | null;
+  photo_url: string | null;
+  baseline: PromoCompareCell;
+  cells: Record<string, PromoCompareCell | null>;
+}
+export interface PromoCompareResult {
+  promotions: Array<{
+    id: number;
+    name: string;
+    start: string | null;
+    end: string | null;
+  }>;
+  rows: PromoCompareRow[];
+  skipped_no_baseline: number;
+  baseline_period_days: number;
+}
 
 // Leak-report «найдено ₽» (TASK-LEAD-140/142). 4 честные группы:
 //   found  — вернуть (оспоримые штрафы/коррекции) + дёшево остановить
