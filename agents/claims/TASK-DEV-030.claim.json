@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-DEV-030",
-  "agent": "Claude Opus 4.8 — main session",
-  "started_at": "2026-06-02T05:32:17Z",
-  "expected_minutes": 90,
-  "notes": "promo compare matrix backend+frontend"
-}
