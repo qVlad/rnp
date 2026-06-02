@@ -1,7 +1,0 @@
-{
-  "task_id": "BUG-DEV-020",
-  "agent": "Claude Opus 4.8 — main session",
-  "started_at": "2026-06-02T13:12:30Z",
-  "expected_minutes": 20,
-  "notes": "regular promo 0-products empty-state message"
-}
