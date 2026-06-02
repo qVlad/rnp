@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-DEV-031",
-  "agent": "Claude Opus 4.8 — main session",
-  "started_at": "2026-06-02T14:49:53Z",
-  "expected_minutes": 20,
-  "notes": "show real WB price->planPrice in results"
-}
