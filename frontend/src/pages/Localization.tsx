@@ -53,13 +53,6 @@ function WoWPpCell({ value }: { value: number | null }) {
   );
 }
 
-function cellBg(pct: number): string {
-  // Inline-стиль вместо tailwind — нужны промежуточные оттенки для heatmap.
-  if (pct >= 70) return "bg-success/20";
-  if (pct >= 30) return "bg-warning/20";
-  return "bg-danger-subtle";
-}
-
 export default function Localization() {
   const { user } = useAuth();
   const { range, setPeriod } = usePeriod();
@@ -249,9 +242,12 @@ export default function Localization() {
           Heatmap: склад × кластер покупателя
         </h2>
         <div className="text-xs text-muted mb-3">
-          Числа — кол-во заказов. Цвет — % локализации (зелёный 70+%, жёлтый
-          30-70%, красный &lt; 30%). Диагональ (склад_кластер = покупатель_кластер)
-          = локализованные. Top-25 складов по объёму.
+          Числа — кол-во заказов. Цвет:{" "}
+          <span className="text-success">зелёный</span> = локализованные (склад в
+          том же округе, что и покупатель — диагональ склад_кластер =
+          покупатель_кластер),{" "}
+          <span className="text-danger">красный</span> = заказ ушёл в другой
+          округ. Top-25 складов по объёму.
         </div>
         {!heatmap ? (
           <div className="text-muted text-sm">
@@ -287,19 +283,20 @@ export default function Localization() {
                       w.cluster !== "OTHER" &&
                       bc.code !== "OTHER" &&
                       w.cluster === bc.code;
-                    const totalOrders = w.total;
-                    const cellPct =
-                      totalOrders > 0 && isLocalized
-                        ? 100
-                        : orders > 0 && !isLocalized
-                        ? 0
-                        : 100;
+                    // BUG-DEV-021: цвет = локализована ли ячейка (диагональ).
+                    // inline-rgba — надёжнее tailwind-opacity классов, которые
+                    // не рендерились (раньше всё было красным).
+                    const bg =
+                      orders > 0
+                        ? isLocalized
+                          ? "rgba(16,185,129,0.22)"
+                          : "rgba(239,68,68,0.16)"
+                        : undefined;
                     return (
                       <td
                         key={bc.code}
-                        className={`p-2 text-center ${
-                          orders > 0 ? cellBg(cellPct) : ""
-                        }`}
+                        className="p-2 text-center"
+                        style={bg ? { backgroundColor: bg } : undefined}
                       >
                         {orders > 0 ? fmtNum(orders) : ""}
                       </td>
@@ -328,14 +325,12 @@ export default function Localization() {
               value={worstLimit}
               onChange={(e) => setWorstLimit(Number(e.target.value))}
             >
+              {/* BUG-DEV-021: WB не отдаёт >100 SKU локализации — backend
+                  капит worst_sku_limit ≤ 100, опции выше давали 422. */}
               <option value={10}>10</option>
               <option value={25}>25</option>
               <option value={50}>50</option>
               <option value={100}>100</option>
-              <option value={200}>200</option>
-              <option value={300}>300</option>
-              <option value={400}>400</option>
-              <option value={500}>500</option>
             </select>
           </label>
         </div>

@@ -107,16 +107,20 @@ export default function SupplyCalculator() {
     });
   };
 
-  const whQ = useQuery({
-    queryKey: ["supply-warehouses"],
-    queryFn: () => api.tariffWarehouses(),
-  });
   const tariffsQ = useQuery({
     queryKey: ["supply-tariffs-box"],
     queryFn: () => api.tariffCurrent("box"),
   });
 
-  const warehouses = whQ.data?.items ?? [];
+  // BUG-DEV-021: показываем ТОЛЬКО склады, у которых есть box-тариф —
+  // иначе юзер выбирал склад без тарифа и получал «тариф не найден».
+  const warehouses = useMemo(() => {
+    const items = tariffsQ.data?.items ?? [];
+    const names = items
+      .map((t) => t.warehouse_name)
+      .filter((w): w is string => !!w);
+    return Array.from(new Set(names)).sort((a, b) => a.localeCompare(b, "ru"));
+  }, [tariffsQ.data]);
   const tariff = useMemo<TariffTimelineRow | null>(() => {
     if (!params.warehouse) return null;
     const items = tariffsQ.data?.items ?? [];
@@ -164,7 +168,7 @@ export default function SupplyCalculator() {
               className="input"
               value={params.warehouse}
               onChange={(e: any) => update({ warehouse: e.target.value })}
-              disabled={whQ.isLoading}
+              disabled={tariffsQ.isLoading}
             >
               <option value="">— выбери склад —</option>
               {warehouses.map((w) => (
