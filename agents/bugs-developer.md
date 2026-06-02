@@ -97,7 +97,15 @@
   товар: `{id, inAction, price, currencyCode, planPrice, discount, planDiscount}`.
   Парсер: nmID←`id`, акционная цена←`planPrice`, текущая←`price`. (Доки
   dev.wildberries.ru за бот-защитой 498 — на будущее читать через Claude-in-Chrome.)
-- **Статус:** Исправлено — 2026-06-02 (limit≤100 + planPrice; нужен prod-smoke)
+- **2026-06-02 ОКОНЧАТЕЛЬНО (по офиц. доке WB, прочитана через Claude-in-Chrome):**
+  endpoint nomenclatures — **«Not applicable for auto promotions»**. promo 2503 =
+  `type:"auto"` → WB всегда 422. probe подтвердил: наши параметры верны
+  (`promotionID`+`inAction`+`limit`; неверные имена дают 400, не 422). Это
+  ограничение WB, не наш баг. Фикс: для `type:"auto"` НЕ дёргаем nomenclatures
+  (флаг `auto_promo` в ответе), фронт показывает баннер «WB не отдаёт товары
+  автоакций» + агрегаты (in/notIn + бустинг из ranging) + **ручной ввод nm_id**
+  для расчёта. Для обычных акций — как раньше (planPrice).
+- **Статус:** Исправлено — 2026-06-02 (автоакции: ручной fallback; обычные акции: planPrice. Нужен prod-smoke)
 
 ---
 

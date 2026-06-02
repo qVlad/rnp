@@ -146,23 +146,32 @@ async def get_wb_promotion(
     """
     token = await _resolve_wb_token(session, user.tenant_id)
     details = await get_promotion_details(token, [promotion_id])
+    details_obj = details[0] if details else None
 
-    # BUG-DEV-020: WB требует обязательный `inAction` — зовём дважды
-    # (предложенные + участвующие) и тегируем каждый nm, т.к. WB не отдаёт
-    # флаг inAction внутри item'а.
-    suggested = await get_promotion_nomenclatures(
-        token, promotion_id, in_action=False
-    )
-    participating = await get_promotion_nomenclatures(
-        token, promotion_id, in_action=True
-    )
-    nomenclatures = _normalize_nomenclatures(suggested, False) + _normalize_nomenclatures(
-        participating, True
-    )
+    # BUG-DEV-020: по офиц. доке WB endpoint nomenclatures «Not applicable for
+    # auto promotions» — для автоакций он всегда отдаёт 422. Поэтому для
+    # `type:"auto"` НЕ дёргаем его (экономим вызовы + не мусорим в логи), а
+    # отдаём флаг `auto_promo` — фронт показывает manual-ввод SKU.
+    is_auto = isinstance(details_obj, dict) and details_obj.get("type") == "auto"
+    if is_auto:
+        nomenclatures: list[dict[str, Any]] = []
+    else:
+        # WB требует обязательный `inAction` — зовём дважды (предложенные +
+        # участвующие) и тегируем каждый nm (WB не кладёт inAction в item).
+        suggested = await get_promotion_nomenclatures(
+            token, promotion_id, in_action=False
+        )
+        participating = await get_promotion_nomenclatures(
+            token, promotion_id, in_action=True
+        )
+        nomenclatures = _normalize_nomenclatures(
+            suggested, False
+        ) + _normalize_nomenclatures(participating, True)
     out: dict[str, Any] = {
         "promotion_id": promotion_id,
-        "details": details[0] if details else None,
+        "details": details_obj,
         "nomenclatures": nomenclatures,
+        "auto_promo": is_auto,
     }
     if debug >= 1:
         # BUG-DEV-020: сырой ответ WB (debug=1) + probe перебора (debug=2, медленнее).

@@ -63,6 +63,8 @@ export default function PromoCalculatorWb() {
   const [boostPct, setBoostPct] = useState<number>(80);
   const [baselinePeriod, setBaselinePeriod] = useState<number>(14);
   const [overrideDiscount, setOverrideDiscount] = useState<number | null>(null);
+  // BUG-DEV-020: ручной ввод nm_id для автоакций.
+  const [manualSkuInput, setManualSkuInput] = useState("");
 
   // TASK-DEV-030: режим «сравнение нескольких акций» (матрица per-unit маржи).
   const [mode, setMode] = useState<"simulate" | "compare">("simulate");
@@ -92,6 +94,17 @@ export default function PromoCalculatorWb() {
   const promo = promoQ.data;
   const details = (promo?.details ?? {}) as Record<string, unknown>;
   const nomenclatures = promo?.nomenclatures ?? [];
+  // BUG-DEV-020: автоакция — WB не отдаёт список товаров через API
+  // («Not applicable for auto promotions»). Фронт даёт ручной ввод SKU.
+  const isAuto =
+    Boolean((promo as { auto_promo?: boolean } | null)?.auto_promo) ||
+    details.type === "auto";
+  // Максимальный бустинг из ranging (для автоакций) — подсказка для boost%.
+  const autoBoostPct = useMemo(() => {
+    const ranging = (details.ranging ?? []) as Array<{ boost?: number }>;
+    const boosts = ranging.map((r) => Number(r?.boost ?? 0)).filter((b) => b > 0);
+    return boosts.length ? Math.max(...boosts) : null;
+  }, [details]);
 
   // Достаём nm_id / inAction / цены из произвольной WB-схемы (camelCase).
   const items = useMemo(() => {
@@ -135,12 +148,23 @@ export default function PromoCalculatorWb() {
     return d ?? 7;
   }, [details]);
 
-  // Список SKU для симуляции — отфильтрованные минус exclude'нутые.
+  // BUG-DEV-020: ручной ввод nm_id для автоакций (WB не отдаёт список).
+  const manualNmIds = useMemo(() => {
+    return Array.from(
+      new Set(
+        (manualSkuInput.match(/\d{5,}/g) ?? []).map((s) => Number(s)),
+      ),
+    ).filter((n) => n > 0);
+  }, [manualSkuInput]);
+
+  // Список SKU для симуляции — для автоакций ручной список, иначе
+  // отфильтрованные товары минус exclude'нутые.
   const skusToSimulate = useMemo(() => {
+    if (isAuto) return manualNmIds;
     return filteredItems
       .map((x) => x.nmId)
       .filter((nm) => !excluded.has(nm));
-  }, [filteredItems, excluded]);
+  }, [isAuto, manualNmIds, filteredItems, excluded]);
 
   const simMut = useMutation({
     mutationFn: () =>
@@ -350,6 +374,43 @@ export default function PromoCalculatorWb() {
                 </div>
               </div>
 
+              {isAuto ? (
+                <div className="mb-3">
+                  <div
+                    className="text-sm mb-2 px-3 py-2 rounded"
+                    style={{ background: "rgba(255,193,7,0.10)" }}
+                  >
+                    ⚠️ <b>Автоакция.</b> WB не отдаёт список товаров через API
+                    (по документации nomenclatures «Not applicable for auto
+                    promotions»). По данным акции:{" "}
+                    <b>{String(details.inPromoActionTotal ?? "—")}</b> участвуют,{" "}
+                    <b>{String(details.notInPromoActionTotal ?? "—")}</b>{" "}
+                    предложены
+                    {autoBoostPct != null && (
+                      <>
+                        {" "}
+                        · бустинг до <b>{autoBoostPct}%</b>
+                      </>
+                    )}
+                    . Введи nm_id вручную — посчитаем рентабельность (скидку и
+                    boost задаёшь сам ниже).
+                  </div>
+                  <label className="text-xs text-muted flex flex-col gap-1">
+                    nm_id через запятую или пробел
+                    <textarea
+                      className="input"
+                      rows={2}
+                      placeholder="напр. 386557925, 411967888 …"
+                      value={manualSkuInput}
+                      onChange={(e) => setManualSkuInput(e.target.value)}
+                    />
+                  </label>
+                  <div className="text-xs text-muted mt-1">
+                    Распознано SKU: {manualNmIds.length}
+                  </div>
+                </div>
+              ) : (
+              <>
               {/* Фильтр товаров */}
               <div className="flex items-center gap-2 mb-3 text-sm">
                 <span className="text-muted">Показывать:</span>
@@ -426,6 +487,8 @@ export default function PromoCalculatorWb() {
                   </tbody>
                 </table>
               </div>
+              </>
+              )}
 
               <button
                 className="btn-primary mt-4"
