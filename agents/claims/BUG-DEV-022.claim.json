@@ -1,0 +1,7 @@
+{
+  "task_id": "BUG-DEV-022",
+  "agent": "Claude Opus 4.8 — main session",
+  "started_at": "2026-06-02T09:23:01Z",
+  "expected_minutes": 20,
+  "notes": "localization <5 orders notice"
+}
