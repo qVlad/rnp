@@ -2679,6 +2679,9 @@ paymentOrderDelete: (payment_order_id: string) =>
       end_date_time: string | null;
       type: string | null;
       in_promo_action: boolean | null;
+      products_count: number | null;
+      in_promo_count: number | null;
+      not_in_promo_count: number | null;
     }>>(`/api/promo-calculator/wb-promotions${qs.toString() ? `?${qs}` : ""}`);
   },
 

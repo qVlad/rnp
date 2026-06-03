@@ -638,6 +638,19 @@
 
 ---
 
+### TASK-DEV-033: /promo-calculator-wb — кол-во товаров по акции прямо в выборе
+
+- **Исполнитель:** Developer (main session) · P2 · 2026-06-03 (запрос пользователя)
+- **Сделано:** в списке акций (и dropdown одиночной, и чеклист сравнения) сразу
+  видно «N тов. / нет товаров» + сортировка «с товарами вперёд». Источник —
+  bulk `details` (inPromoActionTotal+notInPromoActionTotal, до 50 promotionIDs
+  за запрос → 1-2 вызова на весь список) в `list_wb_promotions`. Backend отдаёт
+  `products_count`/`in_promo_count`/`not_in_promo_count`.
+- **Критерии:** [x] AST+tsc 0 ошибок · [ ] prod-smoke
+- **Статус:** Выполнено — 2026-06-03 (нужен deploy)
+
+---
+
 ### TASK-DEV-032: /promo-calculator-wb — UX-ясность (fallback-скидка, baseline, матрица)
 
 - **Исполнитель:** Developer (main session) · P2 · 2026-06-03 (вопросы пользователя)

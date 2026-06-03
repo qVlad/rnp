@@ -146,6 +146,31 @@ async def list_wb_promotions(
     promos = await list_active_promotions(
         token, start_date=sd, end_date=ed, include_all=True
     )
+
+    # TASK-DEV-033: подтягиваем кол-во товаров по каждой акции, чтобы фронт
+    # сразу показывал «N тов. / нет товаров» в выборе (не выбирать вслепую).
+    # `details` отдаёт inPromoActionTotal+notInPromoActionTotal и принимает
+    # много promotionIDs за раз → 1-2 запроса на весь список.
+    ids = [int(p["id"]) for p in promos if p.get("id")]
+    counts: dict[int, dict[str, int]] = {}
+    CHUNK = 50
+    for i in range(0, len(ids), CHUNK):
+        chunk = ids[i : i + CHUNK]
+        details = await get_promotion_details(token, chunk)
+        for d in details:
+            if not isinstance(d, dict):
+                continue
+            did = d.get("id") or d.get("ID")
+            if did is None:
+                continue
+            in_t = int(d.get("inPromoActionTotal") or 0)
+            not_t = int(d.get("notInPromoActionTotal") or 0)
+            counts[int(did)] = {"in": in_t, "not_in": not_t, "total": in_t + not_t}
+    for p in promos:
+        c = counts.get(int(p["id"])) if p.get("id") else None
+        p["products_count"] = c["total"] if c else None
+        p["in_promo_count"] = c["in"] if c else None
+        p["not_in_promo_count"] = c["not_in"] if c else None
     return promos
 
 

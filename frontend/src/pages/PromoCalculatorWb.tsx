@@ -81,6 +81,15 @@ export default function PromoCalculatorWb() {
     staleTime: 5 * 60_000,
   });
 
+  // TASK-DEV-033: сортируем акции «с твоими товарами вперёд» (products_count>0),
+  // затем неизвестные (null), затем пустые (0). Чтобы не выбирать вслепую.
+  const promosSorted = useMemo(() => {
+    const rank = (c: number | null) => (c && c > 0 ? 2 : c === 0 ? 0 : 1);
+    return [...(promosQ.data ?? [])].sort(
+      (a, b) => rank(b.products_count) - rank(a.products_count),
+    );
+  }, [promosQ.data]);
+
   // 2. Детали + товары выбранной акции.
   const promoQ = useQuery({
     queryKey: ["wb-promotion", selectedPromoId],
@@ -347,9 +356,14 @@ export default function PromoCalculatorWb() {
               }}
             >
               <option value="">— выбрать акцию —</option>
-              {promosQ.data.map((p) => (
+              {promosSorted.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name} ({fmtDate(p.start_date_time)} — {fmtDate(p.end_date_time)})
+                  {p.products_count != null
+                    ? p.products_count > 0
+                      ? ` · ${p.products_count} тов.`
+                      : " · нет товаров"
+                    : ""}
                   {p.in_promo_action ? " · ✓ участвую" : ""}
                 </option>
               ))}
@@ -762,8 +776,9 @@ export default function PromoCalculatorWb() {
             )}
             {promosQ.data && promosQ.data.length > 0 && (
               <div className="flex flex-col gap-1 max-h-72 overflow-y-auto">
-                {promosQ.data.map((p) => {
+                {promosSorted.map((p) => {
                   const checked = comparePromoIds.includes(p.id);
+                  const hasProducts = (p.products_count ?? 0) > 0;
                   return (
                     <div
                       key={p.id}
@@ -774,12 +789,21 @@ export default function PromoCalculatorWb() {
                         checked={checked}
                         onChange={() => toggleComparePromo(p.id)}
                       />
-                      <span className="flex-1">
+                      <span className={`flex-1 ${!hasProducts && p.products_count === 0 ? "text-muted" : ""}`}>
                         {p.name}{" "}
                         <span className="text-xs text-muted">
                           ({fmtDate(p.start_date_time)} —{" "}
                           {fmtDate(p.end_date_time)})
                         </span>
+                        {p.products_count != null && (
+                          <span
+                            className={`text-xs ml-1 ${
+                              hasProducts ? "text-success" : "text-danger"
+                            }`}
+                          >
+                            · {hasProducts ? `${p.products_count} тов.` : "нет товаров"}
+                          </span>
+                        )}
                       </span>
                       {checked && (
                         <label className="text-xs text-muted flex items-center gap-1">
