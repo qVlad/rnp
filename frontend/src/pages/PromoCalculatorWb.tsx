@@ -326,6 +326,54 @@ export default function PromoCalculatorWb() {
     return d ?? 7;
   }, [details]);
 
+  // TASK-DEV-036: «лестница бустинга» из публичного API (ranging). Формат
+  // публичного API — массив {participationRate(%), boost(%)}; ЛК-формат
+  // {levels:[{nomenclatures, coefficient}]} поддержан как fallback. Считаем
+  // текущий уровень и сколько товаров (≈) добавить до следующего.
+  const boostLadder = useMemo(() => {
+    const r = details.ranging as
+      | Array<{ participationRate?: number; boost?: number }>
+      | { levels?: Array<{ nomenclatures?: number; coefficient?: number }> }
+      | undefined;
+    const inTotal = Number(details.inPromoActionTotal ?? 0);
+    const notInTotal = Number(details.notInPromoActionTotal ?? 0);
+    const total = inTotal + notInTotal;
+    const curPct = Number(details.participationPercentage ?? 0);
+    type Lvl = { boost: number; rateLabel: string; achieved: boolean; needGoods: number | null };
+    let levels: Lvl[] = [];
+    if (Array.isArray(r)) {
+      levels = r
+        .map((l) => {
+          const rate = Number(l.participationRate ?? 0);
+          const boost = Number(l.boost ?? 0);
+          const achieved = curPct >= rate;
+          const needGoods =
+            total > 0 ? Math.max(0, Math.ceil((rate / 100) * total) - inTotal) : null;
+          return { boost, rateLabel: `от ${rate}% товаров`, achieved, needGoods };
+        })
+        .filter((l) => l.boost > 0);
+    } else if (r && Array.isArray(r.levels)) {
+      // ЛК-формат (точные счётчики) — на случай если когда-то прокинем.
+      levels = r.levels
+        .map((l) => {
+          const cnt = Number(l.nomenclatures ?? 0);
+          const boost = Number(l.coefficient ?? 0);
+          return {
+            boost,
+            rateLabel: `от ${cnt} тов.`,
+            achieved: inTotal >= cnt,
+            needGoods: Math.max(0, cnt - inTotal),
+          };
+        })
+        .filter((l) => l.boost > 0);
+    }
+    levels.sort((a, b) => a.boost - b.boost);
+    if (levels.length < 1) return null;
+    const currentBoost = Math.max(0, ...levels.filter((l) => l.achieved).map((l) => l.boost));
+    const next = levels.find((l) => !l.achieved) ?? null;
+    return { levels, currentBoost, next, curPct, inTotal, total };
+  }, [details]);
+
   // BUG-DEV-020 / TASK-DEV-034: ручной ввод nm_id для автоакций — объединяем
   // выбранные через пикер + вставленные списком в textarea.
   const manualNmIds = useMemo(() => {
@@ -635,6 +683,46 @@ export default function PromoCalculatorWb() {
                   </label>
                 </div>
               </div>
+
+              {/* TASK-DEV-036: лестница бустинга WB (из ranging, % участия). */}
+              {boostLadder && (
+                <div
+                  className="text-xs mb-3 px-3 py-2 rounded"
+                  style={{ background: "rgba(130,125,189,0.10)" }}
+                >
+                  <b>🚀 Бустинг WB (поднятие в поиске) по уровням участия:</b>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1">
+                    {boostLadder.levels.map((l, i) => (
+                      <span
+                        key={i}
+                        className={l.achieved ? "text-success" : "text-muted"}
+                      >
+                        {l.rateLabel} → <b>+{l.boost}%</b>
+                        {l.achieved
+                          ? " ✓"
+                          : l.needGoods != null
+                          ? ` (≈+${l.needGoods} тов.)`
+                          : ""}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="mt-1 text-muted">
+                    Сейчас: участвует {boostLadder.inTotal}
+                    {boostLadder.total > 0 ? ` из ${boostLadder.total}` : ""} (
+                    {boostLadder.curPct}%) → бустинг{" "}
+                    <b>+{boostLadder.currentBoost}%</b>.
+                    {boostLadder.next
+                      ? ` До +${boostLadder.next.boost}% — добавь ${
+                          boostLadder.next.needGoods != null
+                            ? `≈${boostLadder.next.needGoods}`
+                            : ""
+                        } тов.`
+                      : " Максимальный уровень достигнут."}{" "}
+                    Это поднятие в поиске, не рост продаж — ожидаемый рост задаёшь
+                    в «Boost %».
+                  </div>
+                </div>
+              )}
 
               {isAuto ? (
                 <div className="mb-3">
