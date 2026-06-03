@@ -14,10 +14,132 @@
  * UI показывает hint «WB не отдаёт акции; используй ручной калькулятор».
  */
 import { Link } from "react-router-dom";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import PageHeader from "@/components/PageHeader";
+
+// TASK-DEV-034: выбранный товар (для пикера ручного ввода автоакций).
+type ProductPick = {
+  nm_id: number;
+  vendor_code: string | null;
+  photo_url: string | null;
+};
+
+/** Мультивыбор товаров кабинета с фото — для ручного ввода SKU (автоакции).
+ *  Поиск по nm_id / артикулу / бренду, чипы с миниатюрой. */
+function MultiSkuPicker({
+  value,
+  onChange,
+}: {
+  value: ProductPick[];
+  onChange: (v: ProductPick[]) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [debounced, setDebounced] = useState("");
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(query), 200);
+    return () => clearTimeout(id);
+  }, [query]);
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node))
+        setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  const searchQ = useQuery({
+    queryKey: ["promo-sku-search", debounced],
+    queryFn: async () => {
+      const data = await api.listProducts({ search: debounced || undefined });
+      return ((data.items as ProductPick[]) || []).slice(0, 40);
+    },
+    enabled: open,
+  });
+  const selectedIds = new Set(value.map((v) => v.nm_id));
+  const results = (searchQ.data || []).filter((p) => !selectedIds.has(p.nm_id));
+
+  const photoOf = (p: ProductPick) =>
+    p.photo_url || `/api/products/${p.nm_id}/photo`;
+
+  return (
+    <div ref={wrapRef} className="relative">
+      {value.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-2">
+          {value.map((p) => (
+            <span
+              key={p.nm_id}
+              className="flex items-center gap-1 bg-soft rounded pl-1 pr-1.5 py-0.5 text-xs"
+            >
+              <img
+                src={photoOf(p)}
+                alt=""
+                className="w-5 h-6 object-cover rounded-sm"
+                onError={(e) => ((e.target as HTMLImageElement).style.visibility = "hidden")}
+              />
+              <span className="font-mono">{p.nm_id}</span>
+              <button
+                type="button"
+                className="text-muted hover:text-danger"
+                onClick={() => onChange(value.filter((x) => x.nm_id !== p.nm_id))}
+              >
+                ✕
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <input
+        type="text"
+        className="input"
+        placeholder="Найти товар: nm_id, артикул, бренд…"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onFocus={() => setOpen(true)}
+      />
+      {open && (
+        <div className="absolute z-20 mt-1 w-full max-h-72 overflow-y-auto bg-bg border border-soft rounded shadow-lg">
+          {searchQ.isLoading && (
+            <div className="p-2 text-xs text-muted">Поиск…</div>
+          )}
+          {!searchQ.isLoading && results.length === 0 && (
+            <div className="p-2 text-xs text-muted">Ничего не найдено</div>
+          )}
+          {results.map((p) => (
+            <button
+              type="button"
+              key={p.nm_id}
+              className="flex items-center gap-2 w-full text-left px-2 py-1 hover:bg-soft text-sm"
+              onClick={() => {
+                onChange([...value, p]);
+                setQuery("");
+              }}
+            >
+              <img
+                src={photoOf(p)}
+                alt=""
+                className="w-7 h-9 object-cover rounded-sm shrink-0"
+                onError={(e) => ((e.target as HTMLImageElement).style.visibility = "hidden")}
+              />
+              <span className="flex-1 min-w-0">
+                <span className="font-mono text-xs">{p.nm_id}</span>{" "}
+                <span className="text-xs text-muted truncate">
+                  {(p as { brand?: string }).brand ?? ""}{" "}
+                  {p.vendor_code ?? ""}
+                </span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function fmtRub(n: number | null | undefined): string {
   if (n == null) return "—";
@@ -65,6 +187,8 @@ export default function PromoCalculatorWb() {
   const [overrideDiscount, setOverrideDiscount] = useState<number | null>(null);
   // BUG-DEV-020: ручной ввод nm_id для автоакций.
   const [manualSkuInput, setManualSkuInput] = useState("");
+  // TASK-DEV-034: выбранные товары через пикер (с фото).
+  const [manualPicks, setManualPicks] = useState<ProductPick[]>([]);
 
   // TASK-DEV-030: режим «сравнение нескольких акций» (матрица per-unit маржи).
   const [mode, setMode] = useState<"simulate" | "compare">("simulate");
@@ -170,14 +294,13 @@ export default function PromoCalculatorWb() {
     return d ?? 7;
   }, [details]);
 
-  // BUG-DEV-020: ручной ввод nm_id для автоакций (WB не отдаёт список).
+  // BUG-DEV-020 / TASK-DEV-034: ручной ввод nm_id для автоакций — объединяем
+  // выбранные через пикер + вставленные списком в textarea.
   const manualNmIds = useMemo(() => {
-    return Array.from(
-      new Set(
-        (manualSkuInput.match(/\d{5,}/g) ?? []).map((s) => Number(s)),
-      ),
-    ).filter((n) => n > 0);
-  }, [manualSkuInput]);
+    const fromText = (manualSkuInput.match(/\d{5,}/g) ?? []).map((s) => Number(s));
+    const fromPicks = manualPicks.map((p) => p.nm_id);
+    return Array.from(new Set([...fromPicks, ...fromText])).filter((n) => n > 0);
+  }, [manualSkuInput, manualPicks]);
 
   // Список SKU для симуляции — для автоакций ручной список, иначе
   // отфильтрованные товары минус exclude'нутые.
@@ -473,18 +596,25 @@ export default function PromoCalculatorWb() {
                     . Введи nm_id вручную — посчитаем рентабельность (скидку и
                     boost задаёшь сам ниже).
                   </div>
-                  <label className="text-xs text-muted flex flex-col gap-1">
-                    nm_id через запятую или пробел
+                  {/* TASK-DEV-034: пикер товаров кабинета с фото. */}
+                  <div className="text-xs text-muted mb-1">
+                    Выбери товары из кабинета:
+                  </div>
+                  <MultiSkuPicker value={manualPicks} onChange={setManualPicks} />
+                  <details className="mt-2">
+                    <summary className="text-xs text-muted cursor-pointer hover:text-fg">
+                      …или вставить список nm_id
+                    </summary>
                     <textarea
-                      className="input"
+                      className="input mt-1"
                       rows={2}
                       placeholder="напр. 386557925, 411967888 …"
                       value={manualSkuInput}
                       onChange={(e) => setManualSkuInput(e.target.value)}
                     />
-                  </label>
+                  </details>
                   <div className="text-xs text-muted mt-1">
-                    Распознано SKU: {manualNmIds.length}
+                    Выбрано SKU: {manualNmIds.length}
                   </div>
                 </div>
               ) : items.length === 0 ? (
