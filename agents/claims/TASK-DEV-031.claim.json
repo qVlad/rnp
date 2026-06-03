@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-DEV-031",
-  "agent": "Claude Opus 4.8 — main session",
-  "started_at": "2026-06-03T14:23:17Z",
-  "expected_minutes": 20,
-  "notes": "autopromo: show simulated current/promo prices in columns"
-}
