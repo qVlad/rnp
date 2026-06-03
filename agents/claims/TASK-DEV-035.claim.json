@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-DEV-035",
-  "agent": "Claude Opus 4.8 — main session",
-  "started_at": "2026-06-03T14:57:53Z",
-  "expected_minutes": 60,
-  "notes": "upload WB promo Excel -> parse nm/plan/current price -> prefill calc"
-}
