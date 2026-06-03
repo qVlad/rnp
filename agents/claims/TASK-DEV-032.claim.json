@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-DEV-032",
-  "agent": "Claude Opus 4.8 — main session",
-  "started_at": "2026-06-03T08:11:36Z",
-  "expected_minutes": 40,
-  "notes": "promo-calc UX: hide fallback discount, baseline tooltip, matrix counts+help"
-}
