@@ -81,13 +81,15 @@ export default function PromoCalculatorWb() {
     staleTime: 5 * 60_000,
   });
 
-  // TASK-DEV-033: сортируем акции «с твоими товарами вперёд» (products_count>0),
-  // затем неизвестные (null), затем пустые (0). Чтобы не выбирать вслепую.
+  // TASK-DEV-033: сортируем акции по полезности: обычные с товарами (3) →
+  // автоакции с товарами (2, в матрице будет «—») → неизвестные (1) → пустые (0).
   const promosSorted = useMemo(() => {
-    const rank = (c: number | null) => (c && c > 0 ? 2 : c === 0 ? 0 : 1);
-    return [...(promosQ.data ?? [])].sort(
-      (a, b) => rank(b.products_count) - rank(a.products_count),
-    );
+    const rank = (p: { products_count: number | null; type: string | null }) => {
+      const c = p.products_count;
+      if (c && c > 0) return p.type === "auto" ? 2 : 3;
+      return c === 0 ? 0 : 1;
+    };
+    return [...(promosQ.data ?? [])].sort((a, b) => rank(b) - rank(a));
   }, [promosQ.data]);
 
   // 2. Детали + товары выбранной акции.
@@ -361,7 +363,9 @@ export default function PromoCalculatorWb() {
                   {p.name} ({fmtDate(p.start_date_time)} — {fmtDate(p.end_date_time)})
                   {p.products_count != null
                     ? p.products_count > 0
-                      ? ` · ${p.products_count} тов.`
+                      ? p.type === "auto"
+                        ? ` · ${p.products_count} тов. (авто — ручной ввод)`
+                        : ` · ${p.products_count} тов.`
                       : " · нет товаров"
                     : ""}
                   {p.in_promo_action ? " · ✓ участвую" : ""}
@@ -798,10 +802,24 @@ export default function PromoCalculatorWb() {
                         {p.products_count != null && (
                           <span
                             className={`text-xs ml-1 ${
-                              hasProducts ? "text-success" : "text-danger"
+                              p.type === "auto"
+                                ? "text-warn"
+                                : hasProducts
+                                ? "text-success"
+                                : "text-danger"
                             }`}
+                            title={
+                              p.type === "auto"
+                                ? "Автоакция: товары есть, но WB не отдаёт их по API — в матрице сравнения будет «—». Считай во вкладке «Симуляция одной акции» (ручной ввод SKU)."
+                                : undefined
+                            }
                           >
-                            · {hasProducts ? `${p.products_count} тов.` : "нет товаров"}
+                            ·{" "}
+                            {p.type === "auto"
+                              ? `${p.products_count} тов. (авто, нет в матрице)`
+                              : hasProducts
+                              ? `${p.products_count} тов.`
+                              : "нет товаров"}
                           </span>
                         )}
                       </span>
