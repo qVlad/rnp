@@ -381,29 +381,31 @@ export default function PromoCalculatorWb() {
                   </div>
                 </div>
                 <div className="flex gap-4">
+                  {/* TASK-DEV-032: поле «Скидка» нужно только для автоакций (у них
+                      нет реальных per-SKU цен WB). Для обычных акций цена берётся
+                      из WB по каждому товару — поле скрыто, чтобы не путало. */}
+                  {isAuto && (
+                    <label
+                      className="text-sm flex flex-col gap-1"
+                      title="Автоакция: WB не отдаёт цены товаров — скидка применяется ко всем введённым SKU единой ставкой для оценки."
+                    >
+                      <span className="text-muted text-xs uppercase">Скидка %</span>
+                      <input
+                        type="number"
+                        className="input w-24"
+                        value={promoDiscount}
+                        min={0}
+                        max={99}
+                        onChange={(e) =>
+                          setOverrideDiscount(Number(e.target.value) || 0)
+                        }
+                      />
+                    </label>
+                  )}
                   <label
                     className="text-sm flex flex-col gap-1"
-                    title={
-                      isAuto
-                        ? "Автоакция: реальных цен WB нет — скидка применяется ко всем SKU единой ставкой."
-                        : "Fallback-скидка. Для товаров с реальной акционной ценой WB (колонка «Со скидкой») расчёт идёт по ней per-SKU; это поле используется только если у SKU нет цены WB."
-                    }
+                    title="Ожидаемый рост числа продаж в дни акции (например +50%). Влияет ТОЛЬКО на прогноз «целиком» (Маржа/Выручка после = за штуку × объём). На маржу за штуку не влияет."
                   >
-                    <span className="text-muted text-xs uppercase">
-                      Скидка{!isAuto && " (fallback)"}
-                    </span>
-                    <input
-                      type="number"
-                      className="input w-24"
-                      value={promoDiscount}
-                      min={0}
-                      max={99}
-                      onChange={(e) =>
-                        setOverrideDiscount(Number(e.target.value) || 0)
-                      }
-                    />
-                  </label>
-                  <label className="text-sm flex flex-col gap-1">
                     <span className="text-muted text-xs uppercase">Boost %</span>
                     <input
                       type="number"
@@ -414,7 +416,10 @@ export default function PromoCalculatorWb() {
                       onChange={(e) => setBoostPct(Number(e.target.value) || 0)}
                     />
                   </label>
-                  <label className="text-sm flex flex-col gap-1">
+                  <label
+                    className="text-sm flex flex-col gap-1"
+                    title="Период, по которому считается средняя скорость продаж (шт/день) и текущая маржа. Влияет на прогноз объёма «целиком»: больше окно — стабильнее средняя. На цену/маржу за штуку из WB не влияет."
+                  >
                     <span className="text-muted text-xs uppercase">Baseline</span>
                     <select
                       className="input w-24"
@@ -743,9 +748,15 @@ export default function PromoCalculatorWb() {
       {mode === "compare" && (
         <>
           <div className="card">
-            <h2 className="font-medium mb-3">
+            <h2 className="font-medium mb-1">
               1. Выбери акции для сравнения (до 6)
             </h2>
+            <div className="text-xs text-muted mb-3">
+              Отметь 2-6 акций → «Сравнить». Матрица ниже покажет по каждому
+              твоему товару маржу за штуку в каждой акции рядом — видно, где
+              выгоднее. Это сравнение <b>за единицу</b> (без прогноза объёма;
+              для него — вкладка «Симуляция одной акции»).
+            </div>
             {promosQ.isLoading && (
               <div className="text-muted text-sm">Загружаю акции из WB…</div>
             )}
@@ -833,7 +844,12 @@ export default function PromoCalculatorWb() {
                 2. Матрица: текущие продажи vs акции
               </h2>
               <div className="text-xs text-muted mb-3">
-                Маржа per-unit на цене продажи (без СПП). Baseline за{" "}
+                Сравнение <b>маржи за штуку</b> одного товара в разных акциях:
+                «Текущие продажи» (твоя цена сейчас) vs цена и маржа в каждой
+                акции. Столбец <b>«—»</b> = у этой акции нет твоих товаров.
+                Boost и объём здесь <b>не учитываются</b> (это сравнение за
+                единицу) — для прогноза продаж целиком используй вкладку
+                «Симуляция одной акции». Baseline за{" "}
                 {compareData.baseline_period_days} дн.
                 {compareData.skipped_no_baseline > 0 &&
                   ` · Пропущено ${compareData.skipped_no_baseline} SKU без продаж за период (нет baseline).`}
@@ -859,16 +875,28 @@ export default function PromoCalculatorWb() {
                         >
                           Текущие продажи
                         </th>
-                        {compareData.promotions.map((p) => (
-                          <th
-                            key={p.id}
-                            colSpan={3}
-                            className="px-2 py-1 text-center border-r border-soft"
-                            title={`${fmtDate(p.start)} — ${fmtDate(p.end)}`}
-                          >
-                            {p.name}
-                          </th>
-                        ))}
+                        {compareData.promotions.map((p) => {
+                          const cnt = compareData.rows.filter(
+                            (r) => r.cells[String(p.id)],
+                          ).length;
+                          return (
+                            <th
+                              key={p.id}
+                              colSpan={3}
+                              className="px-2 py-1 text-center border-r border-soft"
+                              title={`${fmtDate(p.start)} — ${fmtDate(p.end)}`}
+                            >
+                              {p.name}
+                              <div
+                                className={`text-xs font-normal ${
+                                  cnt > 0 ? "text-muted" : "text-danger"
+                                }`}
+                              >
+                                {cnt > 0 ? `${cnt} тов.` : "нет товаров"}
+                              </div>
+                            </th>
+                          );
+                        })}
                       </tr>
                       <tr className="text-muted text-xs">
                         {Array.from({
