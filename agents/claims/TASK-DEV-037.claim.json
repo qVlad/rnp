@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-DEV-037",
-  "agent": "Claude Opus 4.8 — main session",
-  "started_at": "2026-06-03T16:52:04Z",
-  "expected_minutes": 120,
-  "notes": "promo DB cache (0068) + sync + endpoints + excel persist + compare + SPP + WB UI"
-}
