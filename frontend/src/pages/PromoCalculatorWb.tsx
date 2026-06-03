@@ -815,32 +815,39 @@ export default function PromoCalculatorWb() {
                       )}
                     </td>
                     <td className="px-2 py-1">{item.brand ?? "—"}</td>
-                    <td className="px-2 py-1 text-right">
-                      {fmtRub(wbPriceByNm[item.nm_id]?.current)}
-                      {(() => {
-                        const w = wbPriceByNm[item.nm_id];
-                        if (!w || !w.discountPct) return null;
-                        return (
-                          <div className="text-xs text-muted">
-                            тек. −{Math.round(w.discountPct)}%
-                          </div>
-                        );
-                      })()}
-                    </td>
-                    <td className="px-2 py-1 text-right">
-                      {fmtRub(wbPriceByNm[item.nm_id]?.promo)}
-                      {(() => {
-                        const w = wbPriceByNm[item.nm_id];
-                        if (!w || !w.current || !w.promo) return null;
-                        const pct = Math.round((1 - w.promo / w.current) * 100);
-                        return (
-                          <div className="text-xs text-muted">
-                            к тек. {pct >= 0 ? "−" : "+"}
-                            {Math.abs(pct)}%
-                          </div>
-                        );
-                      })()}
-                    </td>
+                    {(() => {
+                      // TASK-DEV-031: для обычных акций — реальные цены WB; для
+                      // автоакций цен WB нет → показываем те, что реально
+                      // использованы в расчёте (avg_price → avg×(1−скидка)).
+                      const w = wbPriceByNm[item.nm_id];
+                      const cur = w?.current ?? item.baseline.avg_price;
+                      const promo = w?.promo ?? item.with_promo.avg_price;
+                      const pct =
+                        cur > 0 ? Math.round((1 - promo / cur) * 100) : null;
+                      return (
+                        <>
+                          <td className="px-2 py-1 text-right">
+                            {fmtRub(cur)}
+                            {w?.discountPct ? (
+                              <div className="text-xs text-muted">
+                                тек. −{Math.round(w.discountPct)}%
+                              </div>
+                            ) : isAuto ? (
+                              <div className="text-xs text-muted">ср. продажи</div>
+                            ) : null}
+                          </td>
+                          <td className="px-2 py-1 text-right">
+                            {fmtRub(promo)}
+                            {pct != null && (
+                              <div className="text-xs text-muted">
+                                к тек. {pct >= 0 ? "−" : "+"}
+                                {Math.abs(pct)}%
+                              </div>
+                            )}
+                          </td>
+                        </>
+                      );
+                    })()}
                     <td className="px-2 py-1 text-right">
                       {fmtRub(item.baseline.margin_total)}
                       <div className="text-xs text-muted">
