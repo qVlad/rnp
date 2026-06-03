@@ -178,6 +178,198 @@ function daysBetween(fromIso: string | null, toIso: string | null): number | nul
   }
 }
 
+// TASK-DEV-037 ph4: тип элемента списка акций (как в client.ts).
+type PromoItem = {
+  id: number;
+  name: string;
+  start_date_time: string | null;
+  end_date_time: string | null;
+  type: string | null;
+  in_promo_action: boolean | null;
+  products_count: number | null;
+  in_promo_count: number | null;
+  not_in_promo_count: number | null;
+};
+
+const DAY_MS = 86400000;
+const MONTHS_RU = [
+  "янв", "фев", "мар", "апр", "май", "июн",
+  "июл", "авг", "сен", "окт", "ноя", "дек",
+];
+
+/** WB-подобная «Лента» акций — горизонтальный таймлайн (Gantt).
+ *  Каждая акция = полоса по своим датам; клик → выбрать акцию для симуляции. */
+function PromoCalendar({
+  promos,
+  selectedId,
+  onSelect,
+}: {
+  promos: PromoItem[];
+  selectedId: number | null;
+  onSelect: (id: number) => void;
+}) {
+  const model = useMemo(() => {
+    const withDates = promos.filter((p) => p.start_date_time && p.end_date_time);
+    if (withDates.length === 0) return null;
+    const starts = withDates.map((p) => new Date(p.start_date_time!).getTime());
+    const ends = withDates.map((p) => new Date(p.end_date_time!).getTime());
+    const now = Date.now();
+    // Нижняя граница окна: не раньше чем «сегодня − 14 дней», но и не позже min(start).
+    let lo = Math.min(...starts, now);
+    lo = Math.max(lo, now - 14 * DAY_MS);
+    lo = Math.min(lo, ...starts);
+    let hi = Math.max(...ends, now + 7 * DAY_MS);
+    // Нормализуем lo на полночь дня.
+    const loD = new Date(lo);
+    loD.setHours(0, 0, 0, 0);
+    lo = loD.getTime();
+    const total = Math.max(hi - lo, DAY_MS);
+
+    // Месячные деления для шапки.
+    const months: { label: string; leftPct: number; widthPct: number }[] = [];
+    const cur = new Date(lo);
+    cur.setDate(1);
+    while (cur.getTime() < hi) {
+      const mStart = Math.max(cur.getTime(), lo);
+      const next = new Date(cur);
+      next.setMonth(next.getMonth() + 1);
+      const mEnd = Math.min(next.getTime(), hi);
+      months.push({
+        label: `${MONTHS_RU[cur.getMonth()]} ${String(cur.getFullYear()).slice(2)}`,
+        leftPct: ((mStart - lo) / total) * 100,
+        widthPct: ((mEnd - mStart) / total) * 100,
+      });
+      cur.setMonth(cur.getMonth() + 1);
+    }
+
+    const rows = [...withDates]
+      .sort(
+        (a, b) =>
+          new Date(a.start_date_time!).getTime() -
+          new Date(b.start_date_time!).getTime(),
+      )
+      .map((p) => {
+        const s = new Date(p.start_date_time!).getTime();
+        const e = new Date(p.end_date_time!).getTime();
+        return {
+          p,
+          leftPct: (Math.max(s - lo, 0) / total) * 100,
+          widthPct: (Math.max(e - Math.max(s, lo), DAY_MS) / total) * 100,
+          isPast: e < now,
+          isLive: s <= now && now <= e,
+        };
+      });
+
+    const todayPct = ((now - lo) / total) * 100;
+    return { months, rows, todayPct };
+  }, [promos]);
+
+  if (!model) {
+    return (
+      <div className="text-muted text-sm">
+        У акций нет дат — лента недоступна. Обнови список из WB.
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <div className="min-w-[760px]">
+        {/* Шапка с месяцами */}
+        <div className="relative h-6 ml-[260px] border-b border-soft mb-1">
+          {model.months.map((m, i) => (
+            <div
+              key={i}
+              className="absolute top-0 h-6 text-[11px] text-muted border-l border-soft pl-1 leading-6 overflow-hidden whitespace-nowrap"
+              style={{ left: `${m.leftPct}%`, width: `${m.widthPct}%` }}
+            >
+              {m.label}
+            </div>
+          ))}
+          {/* Линия «сегодня» */}
+          {model.todayPct >= 0 && model.todayPct <= 100 && (
+            <div
+              className="absolute top-0 bottom-[-1000px] w-px bg-danger/60 z-10"
+              style={{ left: `${model.todayPct}%` }}
+              title="сегодня"
+            />
+          )}
+        </div>
+
+        {/* Строки акций */}
+        <div className="flex flex-col gap-1">
+          {model.rows.map(({ p, leftPct, widthPct, isPast, isLive }) => {
+            const isAuto = p.type === "auto";
+            const selected = p.id === selectedId;
+            const barColor = isPast
+              ? "bg-soft text-muted"
+              : isAuto
+                ? "bg-amber-500/80 text-white"
+                : "bg-accent text-white";
+            return (
+              <div key={p.id} className="relative flex items-center h-8">
+                {/* Лейбл слева */}
+                <button
+                  className={`w-[260px] shrink-0 pr-2 text-left text-xs truncate ${
+                    selected ? "font-semibold text-accent" : "hover:text-accent"
+                  }`}
+                  onClick={() => onSelect(p.id)}
+                  title={p.name}
+                >
+                  {p.in_promo_action ? "✓ " : ""}
+                  {p.name}
+                </button>
+                {/* Полоса */}
+                <div className="relative flex-1 h-full">
+                  <button
+                    className={`absolute top-1 h-6 rounded px-1.5 text-[11px] leading-6 truncate text-left ${barColor} ${
+                      selected ? "ring-2 ring-accent ring-offset-1" : ""
+                    } ${isLive ? "" : "opacity-90"}`}
+                    style={{
+                      left: `${leftPct}%`,
+                      width: `${Math.max(widthPct, 2)}%`,
+                      minWidth: "44px",
+                    }}
+                    onClick={() => onSelect(p.id)}
+                    title={`${p.name}\n${fmtDate(p.start_date_time)} — ${fmtDate(
+                      p.end_date_time,
+                    )}${
+                      p.products_count != null ? `\nтоваров: ${p.products_count}` : ""
+                    }${isAuto ? "\nавтоакция" : ""}`}
+                  >
+                    {isAuto ? "авто · " : ""}
+                    {p.products_count != null && p.products_count > 0
+                      ? `${p.products_count} тов.`
+                      : fmtDate(p.start_date_time)}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Легенда */}
+        <div className="flex gap-4 mt-3 text-[11px] text-muted items-center flex-wrap">
+          <span className="flex items-center gap-1">
+            <span className="inline-block w-3 h-3 rounded bg-accent" /> обычная
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block w-3 h-3 rounded bg-amber-500/80" /> авто
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block w-3 h-3 rounded bg-soft" /> завершена
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block w-px h-3 bg-danger/60" /> сегодня
+          </span>
+          <span>✓ — участвую</span>
+          <span className="ml-auto">Клик по акции → расчёт рентабельности</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function PromoCalculatorWb() {
   const [selectedPromoId, setSelectedPromoId] = useState<number | null>(null);
   const [showAll, setShowAll] = useState<"all" | "suggested" | "active">("all");
@@ -224,7 +416,9 @@ export default function PromoCalculatorWb() {
   });
 
   // TASK-DEV-030: режим «сравнение нескольких акций» (матрица per-unit маржи).
-  const [mode, setMode] = useState<"simulate" | "compare">("simulate");
+  const [mode, setMode] = useState<"calendar" | "simulate" | "compare">(
+    "calendar",
+  );
   const [comparePromoIds, setComparePromoIds] = useState<number[]>([]);
   // override скидки % на акцию (пусто = реальная цена WB).
   const [compareOverrides, setCompareOverrides] = useState<
@@ -548,7 +742,7 @@ export default function PromoCalculatorWb() {
 
       {/* Переключатель режима (TASK-DEV-030) */}
       <div className="flex gap-2 text-sm">
-        {(["simulate", "compare"] as const).map((m) => (
+        {(["calendar", "simulate", "compare"] as const).map((m) => (
           <button
             key={m}
             className={`px-3 py-1.5 rounded ${
@@ -556,12 +750,57 @@ export default function PromoCalculatorWb() {
             }`}
             onClick={() => setMode(m)}
           >
-            {m === "simulate"
-              ? "Симуляция одной акции"
-              : "Сравнение акций (матрица)"}
+            {m === "calendar"
+              ? "📅 Лента акций"
+              : m === "simulate"
+                ? "Симуляция одной акции"
+                : "Сравнение акций (матрица)"}
           </button>
         ))}
       </div>
+
+      {mode === "calendar" && (
+        <div className="card">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-medium">Календарь акций WB</h2>
+            <button
+              type="button"
+              className="text-xs underline hover:text-accent"
+              disabled={refreshMut.isPending}
+              onClick={() => refreshMut.mutate()}
+            >
+              {refreshMut.isPending ? "Обновляю…" : "↻ обновить из WB"}
+            </button>
+          </div>
+          {promosQ.isLoading && (
+            <div className="text-muted text-sm">Загружаю акции…</div>
+          )}
+          {promosQ.data && promosQ.data.length === 0 && (
+            <div className="text-muted text-sm">
+              WB не вернул акций.{" "}
+              <Link to="/promo-calculator" className="underline">
+                ручной калькулятор →
+              </Link>
+            </div>
+          )}
+          {promosQ.data && promosQ.data.length > 0 && (
+            <PromoCalendar
+              promos={promosQ.data as PromoItem[]}
+              selectedId={selectedPromoId}
+              onSelect={(id) => {
+                setSelectedPromoId(id);
+                setExcluded(new Set());
+                setOverrideDiscount(null);
+                setMode("simulate");
+              }}
+            />
+          )}
+          <div className="text-xs text-muted mt-3">
+            Кэш обновляется раз в день (sync 08:30 МСК). Клик по акции открывает
+            расчёт рентабельности.
+          </div>
+        </div>
+      )}
 
       {mode === "simulate" && (
       <>
