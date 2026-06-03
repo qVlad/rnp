@@ -20,17 +20,20 @@ from typing import Any
 import io
 
 import openpyxl
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field, conint, condecimal
+from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Tenant
+from app.db.models import Tenant, WbPromotion, WbPromotionNomenclature
 from app.db.session import get_db  # noqa: F401  (used by get_db_tenant_scoped)
 from app.integrations.wb.promotions import (
     debug_nomenclatures_raw,
     get_promotion_details,
     get_promotion_nomenclatures,
     list_active_promotions,
+    normalize_nomenclatures as _normalize_nomenclatures,
     probe_nomenclatures_params,
 )
 from app.services.auth import (
@@ -58,76 +61,105 @@ async def _resolve_wb_token(session: AsyncSession, tenant_id: int) -> str:
     return token
 
 
-def _normalize_nomenclatures(
-    items: list[dict[str, Any]], in_action: bool
+# ── TASK-DEV-037: чтение акций из кэша БД (вместо live-обращений к WB) ──
+
+
+async def _db_list_promotions(
+    session: AsyncSession, tenant_id: int
 ) -> list[dict[str, Any]]:
-    """Нормализует WB nomenclature-item'ы для фронта.
-
-    TASK-DEV-031: WB-item = `{id, inAction, price, discount, planPrice,
-    planDiscount}`, где `price` — номинал, `discount` — ТЕКУЩАЯ скидка
-    (установлена до акции), `planDiscount` — скидка акции, `planPrice` —
-    акционная цена. Реальная текущая цена (по которой реально продаётся) =
-    `price × (1 − discount/100)`, НЕ номинал. Отдаём:
-    `{nmID, inAction, base_price, discount_pct, current_price, promo_price,
-    plan_discount_pct}` (+ legacy `price`/`discountedPrice`).
-
-    BUG-DEV-020: WB не кладёт `inAction` в item — тегируем по запросу.
-    """
-
-    def _num(v: Any) -> float:
-        try:
-            n = float(v)
-            return n if n >= 0 else 0.0
-        except (TypeError, ValueError):
-            return 0.0
-
-    out: list[dict[str, Any]] = []
-    for n in items or []:
-        if not isinstance(n, dict):
-            continue
-        nm = n.get("id") or n.get("nmID") or n.get("nmId") or n.get("nmid") or 0
-        base_price = _num(n.get("price"))
-        disc_pct = _num(n.get("discount"))  # текущая скидка %
-        plan_disc_pct = _num(n.get("planDiscount"))  # скидка акции %
-        promo_price = n.get("planPrice")
-        if promo_price is None:
-            promo_price = n.get("discountedPrice")
-        promo_price = _num(promo_price)
-        # fallback из sizes[]
-        if (base_price <= 0 or promo_price <= 0) and isinstance(n.get("sizes"), list):
-            for sz in n["sizes"]:
-                if not isinstance(sz, dict):
-                    continue
-                if base_price <= 0:
-                    base_price = _num(sz.get("price"))
-                if promo_price <= 0:
-                    promo_price = _num(sz.get("planPrice") or sz.get("discountedPrice"))
-                if base_price > 0 and promo_price > 0:
-                    break
-        # текущая цена = номинал × (1 − текущая скидка)
-        current_price = (
-            round(base_price * (1.0 - disc_pct / 100.0), 2)
-            if base_price > 0
-            else 0.0
+    rows = (
+        (
+            await session.execute(
+                select(WbPromotion)
+                .where(WbPromotion.tenant_id == tenant_id)
+                .order_by(WbPromotion.start_dt.desc().nullslast())
+            )
         )
-        # если planPrice не пришёл — считаем из planDiscount
-        if promo_price <= 0 and base_price > 0 and plan_disc_pct > 0:
-            promo_price = round(base_price * (1.0 - plan_disc_pct / 100.0), 2)
-        out.append(
-            {
-                "nmID": int(nm) if nm else 0,
-                "inAction": in_action,
-                "base_price": base_price,
-                "discount_pct": disc_pct,
-                "current_price": current_price or base_price,
-                "promo_price": promo_price,
-                "plan_discount_pct": plan_disc_pct,
-                # legacy-поля
-                "price": base_price,
-                "discountedPrice": promo_price,
-            }
+        .scalars()
+        .all()
+    )
+    return [
+        {
+            "id": r.promotion_id,
+            "name": r.name,
+            "start_date_time": r.start_dt.isoformat() if r.start_dt else None,
+            "end_date_time": r.end_dt.isoformat() if r.end_dt else None,
+            "type": r.promo_type,
+            "in_promo_action": r.in_promo_action,
+            "products_count": r.products_count,
+            "in_promo_count": r.in_promo_count,
+            "not_in_promo_count": r.not_in_promo_count,
+        }
+        for r in rows
+    ]
+
+
+async def _db_promotion(
+    session: AsyncSession, tenant_id: int, promotion_id: int
+) -> WbPromotion | None:
+    return (
+        await session.execute(
+            select(WbPromotion).where(
+                WbPromotion.tenant_id == tenant_id,
+                WbPromotion.promotion_id == promotion_id,
+            )
         )
-    return out
+    ).scalar_one_or_none()
+
+
+async def _db_nomenclatures(
+    session: AsyncSession, tenant_id: int, promotion_id: int
+) -> tuple[list[dict[str, Any]], bool]:
+    """(нормализованные товары, есть_ли_excel). Excel приоритетнее (для
+    автоакций — единственный источник)."""
+    rows = (
+        (
+            await session.execute(
+                select(WbPromotionNomenclature).where(
+                    WbPromotionNomenclature.tenant_id == tenant_id,
+                    WbPromotionNomenclature.promotion_id == promotion_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    has_excel = any(r.source == "excel" for r in rows)
+    use = [r for r in rows if r.source == ("excel" if has_excel else "wb")]
+
+    def _f(v: Any) -> float:
+        return float(v) if v is not None else 0.0
+
+    out = [
+        {
+            "nmID": r.nm_id,
+            "inAction": r.in_action,
+            "base_price": _f(r.base_price),
+            "discount_pct": _f(r.discount_pct),
+            "current_price": _f(r.current_price),
+            "promo_price": _f(r.promo_price),
+            "plan_discount_pct": _f(r.plan_discount_pct),
+            "price": _f(r.base_price),
+            "discountedPrice": _f(r.promo_price),
+        }
+        for r in use
+    ]
+    return out, has_excel
+
+
+@router.post("/refresh")
+async def refresh_promotions(
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    user=Depends(get_current_user),
+) -> dict[str, Any]:
+    """Ad-hoc запуск синка акций WB → БД (кнопка «↻ обновить акции»)."""
+    await _resolve_wb_token(session, user.tenant_id)  # 400 если нет токена
+    from app.sync.tasks_promotions import sync_promotions  # noqa: WPS433
+
+    sync_promotions.delay(user.tenant_id)
+    return {"status": "scheduled"}
+
+
 
 
 @router.get("/wb-promotions")
@@ -143,24 +175,22 @@ async def list_wb_promotions(
     По умолчанию — текущий день .. +90 дней. WB иногда возвращает 401/404 —
     тогда отдаём пустой список (graceful fallback).
     """
+    # TASK-DEV-037: читаем из кэша БД. Если пусто (ещё не синкалось) — один
+    # live-fallback + запускаем фоновый sync, чтобы дальше брать из БД.
+    cached = await _db_list_promotions(session, user.tenant_id)
+    if cached:
+        return cached
+
     token = await _resolve_wb_token(session, user.tenant_id)
     sd = start_date or date.today()
     ed = end_date or (sd + timedelta(days=90))
     promos = await list_active_promotions(
         token, start_date=sd, end_date=ed, include_all=True
     )
-
-    # TASK-DEV-033: подтягиваем кол-во товаров по каждой акции, чтобы фронт
-    # сразу показывал «N тов. / нет товаров» в выборе (не выбирать вслепую).
-    # `details` отдаёт inPromoActionTotal+notInPromoActionTotal и принимает
-    # много promotionIDs за раз → 1-2 запроса на весь список.
     ids = [int(p["id"]) for p in promos if p.get("id")]
     counts: dict[int, dict[str, int]] = {}
-    CHUNK = 50
-    for i in range(0, len(ids), CHUNK):
-        chunk = ids[i : i + CHUNK]
-        details = await get_promotion_details(token, chunk)
-        for d in details:
+    for i in range(0, len(ids), 50):
+        for d in await get_promotion_details(token, ids[i : i + 50]):
             if not isinstance(d, dict):
                 continue
             did = d.get("id") or d.get("ID")
@@ -174,6 +204,13 @@ async def list_wb_promotions(
         p["products_count"] = c["total"] if c else None
         p["in_promo_count"] = c["in"] if c else None
         p["not_in_promo_count"] = c["not_in"] if c else None
+    # фоновый sync для последующих заходов
+    try:
+        from app.sync.tasks_promotions import sync_promotions  # noqa: WPS433
+
+        sync_promotions.delay(user.tenant_id)
+    except Exception:  # noqa: BLE001
+        pass
     return promos
 
 
@@ -190,6 +227,32 @@ async def get_wb_promotion(
     WB предлагает участвовать, — это поле `inAction=false`; уже участвующие —
     `inAction=true`. UI сам разделит/покажет toggle.
     """
+    # TASK-DEV-037: DB-first. Для debug — всегда live (нужен сырой ответ WB).
+    if debug < 1:
+        promo = await _db_promotion(session, user.tenant_id, promotion_id)
+        if promo is not None:
+            is_auto = promo.promo_type == "auto"
+            nomen, _has_excel = await _db_nomenclatures(
+                session, user.tenant_id, promotion_id
+            )
+            # отдаём из кэша, кроме случая «обычная акция с товарами, но кэш
+            # номенклатур ещё пуст» — тогда падаем в live ниже.
+            if nomen or is_auto or (promo.products_count or 0) == 0:
+                details_obj = promo.raw or {
+                    "id": promotion_id,
+                    "name": promo.name,
+                    "type": promo.promo_type,
+                    "inPromoActionTotal": promo.in_promo_count,
+                    "notInPromoActionTotal": promo.not_in_promo_count,
+                    "ranging": promo.ranging,
+                }
+                return {
+                    "promotion_id": promotion_id,
+                    "details": details_obj,
+                    "nomenclatures": nomen,
+                    "auto_promo": is_auto,
+                }
+
     token = await _resolve_wb_token(session, user.tenant_id)
     details = await get_promotion_details(token, [promotion_id])
     details_obj = details[0] if details else None
@@ -239,6 +302,8 @@ async def get_wb_promotion(
 @router.post("/parse-promo-file")
 async def parse_promo_file(
     file: UploadFile = File(...),
+    promotion_id: int | None = Form(default=None),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
     user=Depends(get_current_user),
 ) -> dict[str, Any]:
     """TASK-DEV-035: парсинг Excel-файла акции из ЛК WB.
@@ -317,7 +382,41 @@ async def parse_promo_file(
                 "participating": part_raw in ("да", "yes", "true", "1"),
             }
         )
-    return {"items": items, "total": len(items)}
+
+    # TASK-DEV-037: если указан promotion_id — сохраняем товары акции в БД
+    # (source='excel'), чтобы при выборе акции они подставлялись сами и
+    # работало сравнение автоакций. Пересобираем excel-строки этой акции.
+    if promotion_id and items:
+        await session.execute(
+            delete(WbPromotionNomenclature).where(
+                WbPromotionNomenclature.tenant_id == user.tenant_id,
+                WbPromotionNomenclature.promotion_id == promotion_id,
+                WbPromotionNomenclature.source == "excel",
+            )
+        )
+        rows = [
+            {
+                "tenant_id": user.tenant_id,
+                "promotion_id": promotion_id,
+                "nm_id": it["nm_id"],
+                "in_action": bool(it["participating"]),
+                "base_price": it["nominal_price"],
+                "discount_pct": it["current_discount_pct"],
+                "current_price": it["current_price"],
+                "promo_price": it["promo_price"],
+                "plan_discount_pct": None,
+                "source": "excel",
+            }
+            for it in items
+            if it["nm_id"]
+        ]
+        for i in range(0, len(rows), 1000):
+            await session.execute(
+                pg_insert(WbPromotionNomenclature).values(rows[i : i + 1000])
+            )
+        await session.commit()
+
+    return {"items": items, "total": len(items), "saved": bool(promotion_id)}
 
 
 class ComparePromoMeta(BaseModel):
@@ -350,23 +449,16 @@ async def compare_promotions_endpoint(
     SKU = WB discountedPrice (или baseline×(1−override) если задан override %).
     Строки = объединение всех SKU акций (с baseline-продажами).
     """
-    token = await _resolve_wb_token(session, user.tenant_id)
+    # TASK-DEV-037: цены берём из кэша БД (включая Excel автоакций) — больше не
+    # дёргаем WB на каждое сравнение, и автоакции работают (из Excel).
     promotions: list[dict[str, Any]] = []
     for meta in body.promotions:
-        suggested = await get_promotion_nomenclatures(token, meta.id, in_action=False)
-        participating = await get_promotion_nomenclatures(
-            token, meta.id, in_action=True
-        )
-        norm = _normalize_nomenclatures(suggested, False) + _normalize_nomenclatures(
-            participating, True
-        )
+        norm, _has_excel = await _db_nomenclatures(session, user.tenant_id, meta.id)
         sku_price: dict[int, float] = {}
         for n in norm:
             nm = int(n.get("nmID") or 0)
-            dp = n.get("discountedPrice") or n.get("price") or 0
+            dp = n.get("promo_price") or n.get("discountedPrice") or 0
             if nm and dp:
-                # если nm встречается и как предложенный, и как участвующий —
-                # берём первую (обычно совпадают по цене).
                 sku_price.setdefault(nm, float(dp))
         promotions.append(
             {

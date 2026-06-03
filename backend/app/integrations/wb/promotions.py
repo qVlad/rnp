@@ -386,10 +386,73 @@ async def probe_nomenclatures_params(
     return out
 
 
+def normalize_nomenclatures(
+    items: list[dict[str, Any]], in_action: bool
+) -> list[dict[str, Any]]:
+    """Нормализует WB nomenclature-item'ы (TASK-DEV-031/037).
+
+    WB-item: `{id, inAction, price(номинал), discount(тек.скидка%), planPrice,
+    planDiscount}`. Возвращает `{nmID, inAction, base_price, discount_pct,
+    current_price, promo_price, plan_discount_pct}`. current_price =
+    price×(1−discount/100) (реальная текущая цена), promo_price = planPrice.
+    Используется в `api/promo_calculator` и `sync/tasks_promotions`.
+    """
+
+    def _num(v: Any) -> float:
+        try:
+            n = float(v)
+            return n if n >= 0 else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
+    out: list[dict[str, Any]] = []
+    for n in items or []:
+        if not isinstance(n, dict):
+            continue
+        nm = n.get("id") or n.get("nmID") or n.get("nmId") or n.get("nmid") or 0
+        base_price = _num(n.get("price"))
+        disc_pct = _num(n.get("discount"))
+        plan_disc_pct = _num(n.get("planDiscount"))
+        promo_price = n.get("planPrice")
+        if promo_price is None:
+            promo_price = n.get("discountedPrice")
+        promo_price = _num(promo_price)
+        if (base_price <= 0 or promo_price <= 0) and isinstance(n.get("sizes"), list):
+            for sz in n["sizes"]:
+                if not isinstance(sz, dict):
+                    continue
+                if base_price <= 0:
+                    base_price = _num(sz.get("price"))
+                if promo_price <= 0:
+                    promo_price = _num(sz.get("planPrice") or sz.get("discountedPrice"))
+                if base_price > 0 and promo_price > 0:
+                    break
+        current_price = (
+            round(base_price * (1.0 - disc_pct / 100.0), 2) if base_price > 0 else 0.0
+        )
+        if promo_price <= 0 and base_price > 0 and plan_disc_pct > 0:
+            promo_price = round(base_price * (1.0 - plan_disc_pct / 100.0), 2)
+        out.append(
+            {
+                "nmID": int(nm) if nm else 0,
+                "inAction": in_action,
+                "base_price": base_price,
+                "discount_pct": disc_pct,
+                "current_price": current_price or base_price,
+                "promo_price": promo_price,
+                "plan_discount_pct": plan_disc_pct,
+                "price": base_price,
+                "discountedPrice": promo_price,
+            }
+        )
+    return out
+
+
 __all__ = [
     "list_active_promotions",
     "get_promotion_details",
     "get_promotion_nomenclatures",
+    "normalize_nomenclatures",
     "debug_nomenclatures_raw",
     "probe_nomenclatures_params",
 ]

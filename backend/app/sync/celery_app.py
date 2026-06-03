@@ -12,6 +12,7 @@ celery_app = Celery(
         "app.sync.tasks_abtest",
         "app.sync.tasks_tariffs",
         "app.sync.tasks_prices",
+        "app.sync.tasks_promotions",
         "app.sync.tasks_funnel",
         "app.sync.tasks_product_volume",
         "app.sync.tasks_scoreboard",
@@ -322,6 +323,14 @@ celery_app.conf.update(
         "sync-prices-30m": {
             "task": "sync.prices",
             "schedule": crontab(minute="*/30"),
+        },
+        # --- WB Promo Calendar cache (TASK-DEV-037) ---
+        # Ежедневно 08:30 МСК (после tariffs 08:00) — кэшируем акции WB
+        # (wb_promotion + wb_promotion_nomenclature), чтобы /promo-calculator-wb
+        # читал из БД, а не дёргал WB при каждом заходе. См. tasks_promotions.py.
+        "sync-promotions-daily": {
+            "task": "sync.promotions",
+            "schedule": crontab(hour=8, minute=30),
         },
         # --- WB Funnel Daily (TASK-LEAD-153) ---
         # Ежедневно 06:00 МСК (после orders/sales sync) — тянет per-day

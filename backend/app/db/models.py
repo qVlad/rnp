@@ -2640,6 +2640,82 @@ class WbTransitTariff(Base, TenantScopedMixin):
     )
 
 
+class WbPromotion(Base, TenantScopedMixin):
+    """Кэш акций WB-календаря (TASK-DEV-037, миграция 0068).
+
+    Раньше `/promo-calculator-wb` дёргал WB при каждом заходе (list + details
+    по каждой акции) — главный источник лишних обращений к WB. Теперь акции
+    синкаются раз в день (`sync/tasks_promotions.py`, beat 08:30) и UI читает
+    из БД. `raw` хранит полный details для гибкости. `ranging` — лестница
+    бустинга. UNIQUE `(tenant, promotion_id)`.
+    """
+
+    __tablename__ = "wb_promotion"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    promotion_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    name: Mapped[str | None] = mapped_column(String(512))
+    start_dt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    end_dt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    promo_type: Mapped[str | None] = mapped_column(String(32))  # auto | regular
+    in_promo_count: Mapped[int | None] = mapped_column(Integer)
+    not_in_promo_count: Mapped[int | None] = mapped_column(Integer)
+    products_count: Mapped[int | None] = mapped_column(Integer)
+    in_promo_action: Mapped[bool | None] = mapped_column(Boolean)
+    ranging: Mapped[dict | list | None] = mapped_column(JSONB)
+    raw: Mapped[dict | None] = mapped_column(JSONB)
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "promotion_id", name="uq_wb_promotion_tenant_promo"
+        ),
+    )
+
+
+class WbPromotionNomenclature(Base, TenantScopedMixin):
+    """Товары акции WB с ценами (TASK-DEV-037, миграция 0068).
+
+    `source='wb'` — из публичного API nomenclatures (обычные акции).
+    `source='excel'` — из загруженного Excel акции (для автоакций, у которых
+    WB не отдаёт товары по API — см. TASK-DEV-035). current_price = реальная
+    текущая цена (с текущей скидкой), promo_price = акционная (planPrice).
+    UNIQUE `(tenant, promotion_id, nm_id, source)`.
+    """
+
+    __tablename__ = "wb_promotion_nomenclature"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    promotion_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    nm_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    in_action: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    base_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    discount_pct: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    current_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    promo_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    plan_discount_pct: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    source: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'wb'")
+    )
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "promotion_id",
+            "nm_id",
+            "source",
+            name="uq_wb_promo_nomenclature",
+        ),
+    )
+
+
 class ExtensionReconUpload(Base, TenantScopedMixin):
     """Авто-загрузка финотчёта WB из ЛК через Chrome-extension (TASK-LEAD-138).
 

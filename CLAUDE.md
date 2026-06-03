@@ -135,6 +135,8 @@ docker-compose.yml · .env(.example) · .claude/settings.json (permissions)
 | 0058 | weekly_report_comment — серверный комментарий в /weekly-report (brand=NULL = общий) |
 | 0059 | **wb_transit_tariff** — тарифы транзита из ЛК WB (поставляет Chrome-расширение) |
 | 0063 | **wb_product_dimensions_history** + products.length/width/height_cm — tracking перемерок WB (TG-alert при diff) |
+| 0064-0067 | extension_recon_uploads (+per_report/extra) / wb_funnel_daily (Воронка из Analytics API) |
+| 0068 | **wb_promotion** + **wb_promotion_nomenclature** — кэш акций WB-календаря (sync 08:30, source=wb/excel). /promo-calculator-wb читает из БД, не дёргает WB каждый заход |
 
 ## Роли и RBAC
 
