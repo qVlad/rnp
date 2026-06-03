@@ -15,7 +15,7 @@
  */
 import { Link } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import PageHeader from "@/components/PageHeader";
 
@@ -196,7 +196,8 @@ export default function PromoCalculatorWb() {
   const [uploadInfo, setUploadInfo] = useState<string | null>(null);
 
   const uploadFileMut = useMutation({
-    mutationFn: (file: File) => api.promoCalculatorParsePromoFile(file),
+    mutationFn: (file: File) =>
+      api.promoCalculatorParsePromoFile(file, selectedPromoId ?? undefined),
     onSuccess: (data) => {
       const picks: ProductPick[] = data.items.map((it) => ({
         nm_id: it.nm_id,
@@ -230,11 +231,22 @@ export default function PromoCalculatorWb() {
     Record<number, string>
   >({});
 
+  const queryClient = useQueryClient();
   // 1. Список акций (90 дней вперёд).
   const promosQ = useQuery({
     queryKey: ["wb-promotions"],
     queryFn: () => api.promoCalculatorListWbPromotions(),
     staleTime: 5 * 60_000,
+  });
+  // TASK-DEV-037: ad-hoc обновление кэша акций из WB.
+  const refreshMut = useMutation({
+    mutationFn: () => api.promoCalculatorRefresh(),
+    onSuccess: () => {
+      setTimeout(
+        () => queryClient.invalidateQueries({ queryKey: ["wb-promotions"] }),
+        60_000,
+      );
+    },
   });
 
   // TASK-DEV-033: сортируем акции по полезности: обычные с товарами (3) →
@@ -385,10 +397,12 @@ export default function PromoCalculatorWb() {
   // Список SKU для симуляции — для автоакций ручной список, иначе
   // отфильтрованные товары минус exclude'нутые.
   const skusToSimulate = useMemo(() => {
-    if (isAuto) return manualNmIds;
-    return filteredItems
+    const fromItems = filteredItems
       .map((x) => x.nmId)
       .filter((nm) => !excluded.has(nm));
+    // авто: товары из сохранённого Excel (items) + введённые вручную.
+    if (isAuto) return Array.from(new Set([...fromItems, ...manualNmIds]));
+    return fromItems;
   }, [isAuto, manualNmIds, filteredItems, excluded]);
 
   // TASK-DEV-031: реальные цены WB по каждому SKU. current — текущая (с текущей
@@ -406,23 +420,17 @@ export default function PromoCalculatorWb() {
 
   // TASK-DEV-035: если загружен Excel акции — реальные цены берём из него
   // (работает и для автоакций). Иначе — цены WB-номенклатур (обычные акции).
-  const hasUploaded = Object.keys(uploadedPrices).length > 0;
+  // Реальные цены: из товаров акции (DB/excel) + свежезагруженные (override).
   const effPromoPrices = useMemo(() => {
-    if (hasUploaded) {
-      const m: Record<number, number> = {};
-      for (const [nm, v] of Object.entries(uploadedPrices)) m[Number(nm)] = v.promo;
-      return m;
-    }
-    return isAuto ? undefined : promoPrices;
-  }, [hasUploaded, uploadedPrices, isAuto, promoPrices]);
+    const m: Record<number, number> = { ...promoPrices };
+    for (const [nm, v] of Object.entries(uploadedPrices)) m[Number(nm)] = v.promo;
+    return Object.keys(m).length ? m : undefined;
+  }, [uploadedPrices, promoPrices]);
   const effCurrentPrices = useMemo(() => {
-    if (hasUploaded) {
-      const m: Record<number, number> = {};
-      for (const [nm, v] of Object.entries(uploadedPrices)) m[Number(nm)] = v.current;
-      return m;
-    }
-    return isAuto ? undefined : currentPrices;
-  }, [hasUploaded, uploadedPrices, isAuto, currentPrices]);
+    const m: Record<number, number> = { ...currentPrices };
+    for (const [nm, v] of Object.entries(uploadedPrices)) m[Number(nm)] = v.current;
+    return Object.keys(m).length ? m : undefined;
+  }, [uploadedPrices, currentPrices]);
 
   const simMut = useMutation({
     mutationFn: () =>
@@ -604,8 +612,23 @@ export default function PromoCalculatorWb() {
                 </option>
               ))}
             </select>
-            <div className="text-xs text-muted">
-              Найдено акций: {promosQ.data.length}. Период по умолчанию — следующие 90 дней.
+            <div className="text-xs text-muted flex items-center gap-2 flex-wrap">
+              <span>
+                Найдено акций: {promosQ.data.length}. Кэш обновляется раз в день.
+              </span>
+              <button
+                type="button"
+                className="underline hover:text-accent"
+                disabled={refreshMut.isPending}
+                onClick={() => refreshMut.mutate()}
+              >
+                {refreshMut.isPending ? "Обновляю…" : "↻ обновить из WB"}
+              </button>
+              {refreshMut.isSuccess && (
+                <span className="text-success">
+                  запущено — обновится через ~минуту, нажми ↻ или перезагрузи
+                </span>
+              )}
             </div>
           </div>
         )}
@@ -724,7 +747,7 @@ export default function PromoCalculatorWb() {
                 </div>
               )}
 
-              {isAuto ? (
+              {isAuto && (
                 <div className="mb-3">
                   <div
                     className="text-sm mb-2 px-3 py-2 rounded"
@@ -796,17 +819,9 @@ export default function PromoCalculatorWb() {
                     Выбрано SKU: {manualNmIds.length}
                   </div>
                 </div>
-              ) : items.length === 0 ? (
-                <div
-                  className="text-sm mb-2 px-3 py-3 rounded"
-                  style={{ background: "rgba(148,163,184,0.10)" }}
-                >
-                  В этой акции <b>нет ваших товаров</b> — WB вернул пустой список
-                  (ваши SKU не входят в эту акцию; участие во всех акциях не
-                  обязательно). Выберите другую акцию — например ту, где вы уже
-                  участвуете или куда WB предлагает товары.
-                </div>
-              ) : (
+              )}
+
+              {items.length > 0 ? (
               <>
               {/* Фильтр товаров */}
               <div className="flex items-center gap-2 mb-3 text-sm">
@@ -892,7 +907,15 @@ export default function PromoCalculatorWb() {
                 </table>
               </div>
               </>
-              )}
+              ) : !isAuto ? (
+                <div
+                  className="text-sm mb-2 px-3 py-3 rounded"
+                  style={{ background: "rgba(148,163,184,0.10)" }}
+                >
+                  В этой акции <b>нет ваших товаров</b> — WB вернул пустой список
+                  (ваши SKU не входят в эту акцию). Выберите другую акцию.
+                </div>
+              ) : null}
 
               <button
                 className="btn-primary mt-4"

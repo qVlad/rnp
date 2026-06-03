@@ -2692,10 +2692,17 @@ paymentOrderDelete: (payment_order_id: string) =>
       nomenclatures: Array<Record<string, unknown>>;
     }>(`/api/promo-calculator/wb-promotions/${promotionId}`),
 
+  // TASK-DEV-037: ad-hoc синк акций WB → БД (кнопка «↻ обновить»).
+  promoCalculatorRefresh: () =>
+    request<{ status: string }>("/api/promo-calculator/refresh", {
+      method: "POST",
+    }),
+
   // TASK-DEV-035: парсинг Excel акции из ЛК WB (товары + плановые цены).
-  promoCalculatorParsePromoFile: async (file: File) => {
+  promoCalculatorParsePromoFile: async (file: File, promotionId?: number) => {
     const fd = new FormData();
     fd.append("file", file);
+    if (promotionId) fd.append("promotion_id", String(promotionId));
     const resp = await fetch("/api/promo-calculator/parse-promo-file", {
       method: "POST",
       body: fd,
