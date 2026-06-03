@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings as cfg
-from app.db.models import Product
+from app.db.models import Product, WbFunnelDaily
 from app.db.session import get_db
 from app.services.audit import audit_log
 from app.services.auth import CurrentUser, get_current_user, get_db_tenant_scoped
@@ -167,6 +167,31 @@ async def traffic_estimate(
     if brands is not None and (prod.brand or "") not in brands:
         raise HTTPException(403, "not in your brands")
 
+    today = date.today()
+    week_ago = today - timedelta(days=7)
+
+    # DB-first: WbFunnelDaily синкает тот же nm-report (open_count) каждые 6ч —
+    # не дёргаем WB live на каждый заход. Live-fallback ниже, если кэш пуст.
+    funnel_rows = (
+        await session.execute(
+            select(WbFunnelDaily.open_count).where(
+                WbFunnelDaily.tenant_id == prod.tenant_id,
+                WbFunnelDaily.nm_id == nm_id,
+                WbFunnelDaily.dt >= week_ago,
+                WbFunnelDaily.open_count.isnot(None),
+            )
+        )
+    ).scalars().all()
+    if funnel_rows:
+        days = len(funnel_rows)
+        avg = int(sum(int(x) for x in funnel_rows) / days) if days else None
+        return {
+            "avg_daily_impressions": avg,
+            "days_observed": days,
+            "source": "funnel-cache",
+            "http_status": 200,
+        }
+
     try:
         wb_client = await wb_client_for_tenant(session, prod.tenant_id)
     except RuntimeError:
@@ -177,8 +202,6 @@ async def traffic_estimate(
             "http_status": None,
         }
 
-    today = date.today()
-    week_ago = today - timedelta(days=7)
     try:
         async with wb_client as wb:
             cards = await fetch_nm_report_history(
