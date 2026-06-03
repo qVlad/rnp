@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-DEV-033",
-  "agent": "Claude Opus 4.8 — main session",
-  "started_at": "2026-06-03T08:22:42Z",
-  "expected_minutes": 40,
-  "notes": "show product counts in promo selection (bulk details)"
-}
