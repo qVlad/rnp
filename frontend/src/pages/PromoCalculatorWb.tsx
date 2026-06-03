@@ -189,6 +189,34 @@ export default function PromoCalculatorWb() {
   const [manualSkuInput, setManualSkuInput] = useState("");
   // TASK-DEV-034: выбранные товары через пикер (с фото).
   const [manualPicks, setManualPicks] = useState<ProductPick[]>([]);
+  // TASK-DEV-035: реальные цены из загруженного Excel акции {nm: {current, promo}}.
+  const [uploadedPrices, setUploadedPrices] = useState<
+    Record<number, { current: number; promo: number }>
+  >({});
+  const [uploadInfo, setUploadInfo] = useState<string | null>(null);
+
+  const uploadFileMut = useMutation({
+    mutationFn: (file: File) => api.promoCalculatorParsePromoFile(file),
+    onSuccess: (data) => {
+      const picks: ProductPick[] = data.items.map((it) => ({
+        nm_id: it.nm_id,
+        vendor_code: it.vendor_code,
+        photo_url: null, // фото подтянется прокси по nm_id
+      }));
+      const prices: Record<number, { current: number; promo: number }> = {};
+      for (const it of data.items) {
+        if (it.promo_price > 0)
+          prices[it.nm_id] = {
+            current: it.current_price || it.nominal_price,
+            promo: it.promo_price,
+          };
+      }
+      setManualPicks(picks);
+      setUploadedPrices(prices);
+      setUploadInfo(`Загружено ${data.total} товаров из файла WB`);
+    },
+    onError: (e) => setUploadInfo(`Ошибка чтения файла: ${String(e)}`),
+  });
 
   // TASK-DEV-030: режим «сравнение нескольких акций» (матрица per-unit маржи).
   const [mode, setMode] = useState<"simulate" | "compare">("simulate");
@@ -324,6 +352,26 @@ export default function PromoCalculatorWb() {
     return { currentPrices: cur, promoPrices: promo };
   }, [items]);
 
+  // TASK-DEV-035: если загружен Excel акции — реальные цены берём из него
+  // (работает и для автоакций). Иначе — цены WB-номенклатур (обычные акции).
+  const hasUploaded = Object.keys(uploadedPrices).length > 0;
+  const effPromoPrices = useMemo(() => {
+    if (hasUploaded) {
+      const m: Record<number, number> = {};
+      for (const [nm, v] of Object.entries(uploadedPrices)) m[Number(nm)] = v.promo;
+      return m;
+    }
+    return isAuto ? undefined : promoPrices;
+  }, [hasUploaded, uploadedPrices, isAuto, promoPrices]);
+  const effCurrentPrices = useMemo(() => {
+    if (hasUploaded) {
+      const m: Record<number, number> = {};
+      for (const [nm, v] of Object.entries(uploadedPrices)) m[Number(nm)] = v.current;
+      return m;
+    }
+    return isAuto ? undefined : currentPrices;
+  }, [hasUploaded, uploadedPrices, isAuto, currentPrices]);
+
   const simMut = useMutation({
     mutationFn: () =>
       api.promoCalculatorSimulate({
@@ -332,9 +380,8 @@ export default function PromoCalculatorWb() {
         duration_days: durationDays,
         expected_velocity_boost_pct: boostPct,
         baseline_period_days: baselinePeriod,
-        // для автоакций per-SKU цен нет (ручной ввод) → пусто, идёт discount_pct
-        promo_prices: isAuto ? undefined : promoPrices,
-        current_prices: isAuto ? undefined : currentPrices,
+        promo_prices: effPromoPrices,
+        current_prices: effCurrentPrices,
       }),
   });
 
@@ -356,8 +403,18 @@ export default function PromoCalculatorWb() {
           planDiscountPct: x.planDiscountPct,
         };
     }
+    // TASK-DEV-035: цены из загруженного Excel (для автоакций — единственный
+    // источник реальных цен).
+    for (const [nm, v] of Object.entries(uploadedPrices)) {
+      m[Number(nm)] = {
+        current: v.current,
+        promo: v.promo,
+        discountPct: v.current > 0 ? 0 : 0,
+        planDiscountPct: 0,
+      };
+    }
     return m;
-  }, [items]);
+  }, [items, uploadedPrices]);
 
   // TASK-DEV-030: мутация сравнения выбранных акций.
   const compareMut = useMutation({
@@ -596,9 +653,39 @@ export default function PromoCalculatorWb() {
                     . Введи nm_id вручную — посчитаем рентабельность (скидку и
                     boost задаёшь сам ниже).
                   </div>
-                  {/* TASK-DEV-034: пикер товаров кабинета с фото. */}
+                  {/* TASK-DEV-035: загрузка Excel акции из ЛК WB — реальные
+                      товары + плановые цены (для автоакций единственный путь). */}
+                  <div
+                    className="text-sm mb-3 px-3 py-2 rounded"
+                    style={{ background: "rgba(16,185,129,0.10)" }}
+                  >
+                    <b>📄 Лучший способ:</b> в ЛК WB на странице этой акции жми
+                    «Сформировать файл» → «Скачать файл» и загрузи Excel сюда —
+                    подставим реальных участников и их акционные цены:
+                    <div className="mt-2 flex items-center gap-3">
+                      <label className="btn text-xs cursor-pointer">
+                        {uploadFileMut.isPending
+                          ? "Читаю…"
+                          : "Загрузить Excel акции"}
+                        <input
+                          type="file"
+                          accept=".xlsx,.xls"
+                          className="hidden"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) uploadFileMut.mutate(f);
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                      {uploadInfo && (
+                        <span className="text-xs text-muted">{uploadInfo}</span>
+                      )}
+                    </div>
+                  </div>
+                  {/* TASK-DEV-034: пикер товаров кабинета с фото (ручной выбор). */}
                   <div className="text-xs text-muted mb-1">
-                    Выбери товары из кабинета:
+                    …или выбери товары из кабинета вручную:
                   </div>
                   <MultiSkuPicker value={manualPicks} onChange={setManualPicks} />
                   <details className="mt-2">

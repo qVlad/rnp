@@ -2692,6 +2692,31 @@ paymentOrderDelete: (payment_order_id: string) =>
       nomenclatures: Array<Record<string, unknown>>;
     }>(`/api/promo-calculator/wb-promotions/${promotionId}`),
 
+  // TASK-DEV-035: парсинг Excel акции из ЛК WB (товары + плановые цены).
+  promoCalculatorParsePromoFile: async (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const resp = await fetch("/api/promo-calculator/parse-promo-file", {
+      method: "POST",
+      body: fd,
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    return resp.json() as Promise<{
+      items: Array<{
+        nm_id: number;
+        name: string | null;
+        vendor_code: string | null;
+        brand: string | null;
+        nominal_price: number;
+        current_discount_pct: number;
+        current_price: number;
+        promo_price: number;
+        participating: boolean;
+      }>;
+      total: number;
+    }>;
+  },
+
   // TASK-DEV-030: матрица сравнения «текущие продажи vs N акций».
   promoCalculatorCompare: (body: {
     promotions: Array<{

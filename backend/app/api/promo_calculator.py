@@ -17,7 +17,10 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import io
+
+import openpyxl
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field, conint, condecimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -231,6 +234,90 @@ async def get_wb_promotion(
                 token, promotion_id
             )
     return out
+
+
+@router.post("/parse-promo-file")
+async def parse_promo_file(
+    file: UploadFile = File(...),
+    user=Depends(get_current_user),
+) -> dict[str, Any]:
+    """TASK-DEV-035: парсинг Excel-файла акции из ЛК WB.
+
+    Для автоакций (и обычных) WB отдаёт товары + плановые цены ТОЛЬКО в Excel
+    («Сформировать файл» → «Скачать файл» в ЛК). Колонки (рус):
+      «Артикул WB», «Плановая цена для акции», «Текущая розничная цена»,
+      «Текущая скидка на сайте, %», «Товар уже участвует в акции»,
+      «Наименование», «Артикул поставщика», «Бренд».
+    Возвращает список товаров с реальными ценами для авто-подстановки в
+    калькулятор: current_price = розничная × (1 − текущая_скидка),
+    promo_price = плановая цена для акции.
+    """
+    content = await file.read()
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Не удалось прочитать Excel: {e}")
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        return {"items": [], "total": 0}
+    header = [str(c).strip().lower() if c is not None else "" for c in rows[0]]
+
+    def col(*subs: str) -> int | None:
+        for i, h in enumerate(header):
+            if all(s in h for s in subs):
+                return i
+        return None
+
+    i_nm = col("артикул", "wb")
+    i_plan = col("плановая цена")
+    i_cur = col("текущая розничная")
+    i_disc = col("текущая скидка")
+    i_part = col("уже участвует")
+    i_name = col("наименование")
+    i_vendor = col("артикул поставщика")
+    i_brand = col("бренд")
+    if i_nm is None or i_plan is None:
+        raise HTTPException(
+            400,
+            "Не похоже на файл акции WB: нет колонок «Артикул WB» / «Плановая цена для акции».",
+        )
+
+    def _num(v: Any) -> float:
+        if v is None:
+            return 0.0
+        try:
+            return float(str(v).replace(",", ".").replace(" ", ""))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _cell(r: tuple, i: int | None) -> Any:
+        return r[i] if i is not None and i < len(r) else None
+
+    items: list[dict[str, Any]] = []
+    for r in rows[1:]:
+        nm = int(_num(_cell(r, i_nm)))
+        if not nm:
+            continue
+        nominal = _num(_cell(r, i_cur))
+        disc = _num(_cell(r, i_disc))
+        plan = _num(_cell(r, i_plan))
+        current_price = round(nominal * (1.0 - disc / 100.0), 2) if nominal > 0 else 0.0
+        part_raw = str(_cell(r, i_part) or "").strip().lower()
+        items.append(
+            {
+                "nm_id": nm,
+                "name": _cell(r, i_name),
+                "vendor_code": _cell(r, i_vendor),
+                "brand": _cell(r, i_brand),
+                "nominal_price": nominal,
+                "current_discount_pct": disc,
+                "current_price": current_price or nominal,
+                "promo_price": plan,
+                "participating": part_raw in ("да", "yes", "true", "1"),
+            }
+        )
+    return {"items": items, "total": len(items)}
 
 
 class ComparePromoMeta(BaseModel):
