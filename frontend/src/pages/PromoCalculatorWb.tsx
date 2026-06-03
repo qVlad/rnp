@@ -191,7 +191,7 @@ export default function PromoCalculatorWb() {
   const [manualPicks, setManualPicks] = useState<ProductPick[]>([]);
   // TASK-DEV-035: реальные цены из загруженного Excel акции {nm: {current, promo}}.
   const [uploadedPrices, setUploadedPrices] = useState<
-    Record<number, { current: number; promo: number }>
+    Record<number, { current: number; promo: number; discountPct: number }>
   >({});
   const [uploadInfo, setUploadInfo] = useState<string | null>(null);
 
@@ -203,12 +203,16 @@ export default function PromoCalculatorWb() {
         vendor_code: it.vendor_code,
         photo_url: null, // фото подтянется прокси по nm_id
       }));
-      const prices: Record<number, { current: number; promo: number }> = {};
+      const prices: Record<
+        number,
+        { current: number; promo: number; discountPct: number }
+      > = {};
       for (const it of data.items) {
         if (it.promo_price > 0)
           prices[it.nm_id] = {
             current: it.current_price || it.nominal_price,
             promo: it.promo_price,
+            discountPct: it.current_discount_pct,
           };
       }
       setManualPicks(picks);
@@ -409,7 +413,7 @@ export default function PromoCalculatorWb() {
       m[Number(nm)] = {
         current: v.current,
         promo: v.promo,
-        discountPct: v.current > 0 ? 0 : 0,
+        discountPct: v.discountPct,
         planDiscountPct: 0,
       };
     }
