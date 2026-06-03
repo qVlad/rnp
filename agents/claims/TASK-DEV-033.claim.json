@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-DEV-033",
-  "agent": "Claude Opus 4.8 — main session",
-  "started_at": "2026-06-03T08:33:14Z",
-  "expected_minutes": 20,
-  "notes": "mark autopromo in counts + rank regular first"
-}
