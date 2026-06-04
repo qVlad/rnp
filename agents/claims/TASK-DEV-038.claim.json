@@ -1,0 +1,7 @@
+{
+  "task_id": "TASK-DEV-038",
+  "agent": "Claude Opus 4.8 — main session",
+  "started_at": "2026-06-04T13:36:25Z",
+  "expected_minutes": 40,
+  "notes": "IA под TrueStats: меню + задачи на пробелы"
+}
