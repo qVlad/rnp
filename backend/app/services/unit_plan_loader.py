@@ -20,6 +20,7 @@ marketing_pct, tax_pct, vat_pct, buyout_fallback_pct`, а также к кажд
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Iterable
@@ -32,6 +33,7 @@ from app.db.models import (
     Product,
     UnitPlanGlobalConfig,
     UnitPlanOverride,
+    WbCardPrice,
     WbFunnelDaily,
     WbOrder,
     WbPrice,
@@ -274,8 +276,28 @@ async def load_global_config(
         .limit(1)
     )
     row = (await session.execute(stmt)).scalar_one_or_none()
+
+    # TASK-DEV-037 ph3: реальный СПП с витрины (card.wb.ru → wb_card_price).
+    # Доля 0-1 per-nm. Берём только осмысленный (>0) — иначе fallback на subject/default.
+    spp_observed: dict[int, Decimal] = {}
+    card_rows = (
+        await session.execute(
+            select(WbCardPrice.nm_id, WbCardPrice.observed_spp_pct).where(
+                WbCardPrice.tenant_id == tenant_id,
+                WbCardPrice.observed_spp_pct.isnot(None),
+                WbCardPrice.observed_spp_pct > 0,
+            )
+        )
+    ).all()
+    for nm, spp in card_rows:
+        try:
+            spp_observed[int(nm)] = _pct_to_share(spp)
+        except Exception:  # noqa: BLE001
+            continue
+
     if row is None:
-        return _default_global_config()
+        cfg = _default_global_config()
+        return replace(cfg, spp_observed=spp_observed) if spp_observed else cfg
 
     # spp_by_subject — JSONB, значения 0-100 → доли.
     spp_map_raw = row.spp_by_subject or {}
@@ -313,6 +335,7 @@ async def load_global_config(
             if row.reverse_logistics_mode in ("tariff", "flat_50")
             else "tariff"
         ),
+        spp_observed=spp_observed,
     )
 
 

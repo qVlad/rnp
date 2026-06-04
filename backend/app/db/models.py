@@ -2716,6 +2716,35 @@ class WbPromotionNomenclature(Base, TenantScopedMixin):
     )
 
 
+class WbCardPrice(Base):
+    """Реальная витринная цена покупателя с СПП (TASK-DEV-037, миграция 0069).
+
+    Источник — публичный card.wb.ru/cards/v4 (СПП в seller-API нет). basic =
+    номинал, buyer_price = цена покупателя (с СПП), observed_spp_pct =
+    (1−buyer/basic)×100. Региональна (dest, по умолчанию Москва). Sync daily.
+    Используется в /unit-plan вместо ручного spp_default_pct.
+    Composite PK (tenant_id, nm_id) — как WbPrice, без TenantScopedMixin.
+    """
+
+    __tablename__ = "wb_card_price"
+
+    tenant_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    nm_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    basic_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    buyer_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    observed_spp_pct: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    dest: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("123585712")
+    )
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class ExtensionReconUpload(Base, TenantScopedMixin):
     """Авто-загрузка финотчёта WB из ЛК через Chrome-extension (TASK-LEAD-138).
 

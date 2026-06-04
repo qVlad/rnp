@@ -13,7 +13,7 @@ plain dataclasses (snapshots) и возвращает UnitPlanRowDTO. Все в�
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -186,6 +186,9 @@ class GlobalConfig:
     #   'tariff'  — AG из WB-тарифа короба (методически правильно, default)
     #   'flat_50' — фиксированная 50 ₽ (как в большинстве rows Excel-эталона)
     reverse_logistics_mode: str = "tariff"
+    # TASK-DEV-037 ph3: реальный СПП из card.wb.ru per-nm (доля 0-1).
+    # Приоритет ниже per-row override, но выше per-subject / default.
+    spp_observed: dict[int, Decimal] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -300,14 +303,21 @@ def _reverse_logistics_for_volume(
 
 
 def _resolve_spp_pct(
-    *, override: OverrideSnapshot, subject: str | None, config: GlobalConfig
+    *,
+    override: OverrideSnapshot,
+    subject: str | None,
+    nm_id: int | None,
+    config: GlobalConfig,
 ) -> Decimal:
-    """СПП приоритет: per-row override → per-subject map → global default.
+    """СПП приоритет: per-row override → observed (card.wb.ru) → per-subject → default.
 
-    Все значения уже в долях (0-1).
+    Все значения уже в долях (0-1). `observed` — реально наблюдаемый на витрине
+    СПП из wb_card_price (TASK-DEV-037 ph3); точнее ручных допущений по предмету.
     """
     if override.spp_pct is not None:
         return override.spp_pct
+    if nm_id is not None and nm_id in config.spp_observed:
+        return config.spp_observed[nm_id]
     if subject and subject in config.spp_by_subject:
         return config.spp_by_subject[subject]
     return config.spp_default_pct
@@ -503,8 +513,13 @@ def compute_row(
     # P → Q: ВБ Клуб
     wb_club_pct = config.wb_club_pct
     price_q = price_o * (D1 - wb_club_pct)
-    # R → S: СПП (override → per-subject → default)
-    spp_pct = _resolve_spp_pct(override=override, subject=product.subject, config=config)
+    # R → S: СПП (override → observed → per-subject → default)
+    spp_pct = _resolve_spp_pct(
+        override=override,
+        subject=product.subject,
+        nm_id=product.nm_id,
+        config=config,
+    )
     price_s = price_q * (D1 - spp_pct)
     # T: WB Wallet
     wb_wallet_pct = config.wb_wallet_pct
