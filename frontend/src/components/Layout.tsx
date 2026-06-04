@@ -59,6 +59,7 @@ const GROUPS: Group[] = [
       { to: "/cash-flow", label: "ДДС", directorOrHead: true },
       { to: "/operations", label: "Операции", directorOrHead: true },
       { to: "/payment-calendar", label: "Платёжный календарь", directorOrHead: true, bookkeeperOk: true },
+      { to: "/finance-extras", label: "Дополнительно", directorOrHead: true },
       { to: "/off-platform", label: "Внеплатформенные движения", directorOrHead: true },
       { to: "/revenue-corrections", label: "Корректировки", directorOrHead: true },
       { to: "/opex", label: "OPEX", directorOrHead: true },

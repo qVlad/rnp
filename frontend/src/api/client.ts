@@ -1295,6 +1295,18 @@ paymentOrderDelete: (payment_order_id: string) =>
     );
   },
 
+  financeRefList: (ref_type?: string) =>
+    request<{ items: Array<{ id: number; ref_type: string; name: string; extra: Record<string, unknown> }> }>(
+      `/api/finance-reference${ref_type ? `?ref_type=${ref_type}` : ""}`,
+    ),
+  financeRefCreate: (ref_type: string, name: string, extra?: Record<string, unknown>) =>
+    request<{ id: number }>(`/api/finance-reference`, {
+      method: "POST",
+      body: JSON.stringify({ ref_type, name, extra }),
+    }),
+  financeRefDelete: (id: number) =>
+    request<{ status: string }>(`/api/finance-reference/${id}`, { method: "DELETE" }),
+
   businessSummary: (start: string, end: string, reporting_mode = "financial") =>
     request<{ reporting_mode: string; totals: { realisation: number; sales: number; to_transfer: number; sold: number };
       items: Array<{ tenant_id: number; name: string; realisation: number; sales: number; to_transfer: number; sold: number }> }>(

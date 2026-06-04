@@ -2745,6 +2745,27 @@ class WbCardPrice(Base):
     )
 
 
+class FinanceReference(Base, TenantScopedMixin):
+    """Справочники для модуля операций/ДДС (TASK-DEV-043, миграция 0070).
+
+    Аналог TrueStats «Финансы → Дополнительно»: пользователь заводит свои
+    статьи расходов, частых контрагентов и счета, чтобы быстро выбирать их
+    при внесении операций.
+      ref_type ∈ expense_category | counterparty | account
+      extra — JSONB (ИНН контрагента, тип счёта bank/cash, направление и т.п.)
+    """
+
+    __tablename__ = "finance_reference"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ref_type: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    extra: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class ExtensionReconUpload(Base, TenantScopedMixin):
     """Авто-загрузка финотчёта WB из ЛК через Chrome-extension (TASK-LEAD-138).
 

@@ -15,19 +15,22 @@ from __future__ import annotations
 from datetime import date
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.auth import get_current_user
 
 from app.db.models import (
+    FinanceReference,
     Product,
     WbAdCampaign,
     WbAdStatsDaily,
     WbReportDetail,
     WbStockSnapshot,
 )
+from app.services.tenant_context import get_tenant
 from app.services.auth import get_db_tenant_scoped, require_director_or_head
 
 router = APIRouter(tags=["finance-extra"])
@@ -38,6 +41,60 @@ _SALE_RETURN = ("Продажа", "Возврат")
 
 def _date_col(reporting_mode: str):
     return WbReportDetail.rr_dt if reporting_mode == "financial" else WbReportDetail.sale_dt
+
+
+_REF_TYPES = {"expense_category", "counterparty", "account"}
+
+
+@router.get("/api/finance-reference", dependencies=[Depends(require_director_or_head)])
+async def list_finance_reference(
+    ref_type: Annotated[str | None, Query()] = None,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Справочники операций (TASK-DEV-043): статьи расходов / контрагенты / счета."""
+    stmt = select(FinanceReference).order_by(FinanceReference.ref_type, FinanceReference.name)
+    if ref_type:
+        stmt = stmt.where(FinanceReference.ref_type == ref_type)
+    rows = (await session.execute(stmt)).scalars().all()
+    return {
+        "items": [
+            {"id": r.id, "ref_type": r.ref_type, "name": r.name, "extra": r.extra or {}}
+            for r in rows
+        ]
+    }
+
+
+@router.post("/api/finance-reference", dependencies=[Depends(require_director_or_head)])
+async def create_finance_reference(
+    payload: dict[str, Any] = Body(...),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    ref_type = str(payload.get("ref_type") or "")
+    name = str(payload.get("name") or "").strip()
+    if ref_type not in _REF_TYPES:
+        raise HTTPException(400, f"ref_type должен быть из {_REF_TYPES}")
+    if not name:
+        raise HTTPException(400, "name обязателен")
+    obj = FinanceReference(
+        tenant_id=get_tenant(session),
+        ref_type=ref_type,
+        name=name,
+        extra=payload.get("extra") or None,
+    )
+    session.add(obj)
+    await session.commit()
+    await session.refresh(obj)
+    return {"id": obj.id, "ref_type": obj.ref_type, "name": obj.name, "extra": obj.extra or {}}
+
+
+@router.delete("/api/finance-reference/{ref_id}", dependencies=[Depends(require_director_or_head)])
+async def delete_finance_reference(
+    ref_id: int,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    await session.execute(sa_delete(FinanceReference).where(FinanceReference.id == ref_id))
+    await session.commit()
+    return {"status": "deleted", "id": ref_id}
 
 
 @router.get("/api/business-summary", dependencies=[Depends(require_director_or_head)])
