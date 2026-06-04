@@ -44,8 +44,10 @@ const GROUPS: Group[] = [
     label: "Оцифровка",
     items: [
       { to: "/", label: "Дашборд", end: true, icon: "layers" },
-      // ≈ TrueStats «Сводный отчёт» (наш ОПиУ; per-SKU вид — TASK-DEV-039)
-      { to: "/pnl", label: "Сводный отчёт", icon: "list" },
+      // TASK-DEV-039: «Сводный отчёт» (плитки + таблица по SKU, как TrueStats)
+      { to: "/summary-report", label: "Сводный отчёт", icon: "layers" },
+      { to: "/pnl", label: "P&L (ОПиУ)", icon: "list" },
+      { to: "/deductions", label: "Прочие удержания", directorOrHead: true },
       { to: "/plans", label: "План-факт" },
     ],
   },
@@ -54,6 +56,7 @@ const GROUPS: Group[] = [
     label: "Финансы",
     items: [
       { to: "/cash-flow", label: "ДДС", directorOrHead: true },
+      { to: "/operations", label: "Операции", directorOrHead: true },
       { to: "/payment-calendar", label: "Платёжный календарь", directorOrHead: true, bookkeeperOk: true },
       { to: "/off-platform", label: "Внеплатформенные движения", directorOrHead: true },
       { to: "/revenue-corrections", label: "Корректировки", directorOrHead: true },
@@ -69,7 +72,7 @@ const GROUPS: Group[] = [
     items: [
       { to: "/cost-history", label: "Себестоимость" },
       { to: "/product-groups", label: "Группы товаров" },
-      // ≈ TrueStats «Склады» (остатки по складам — TASK-DEV-044)
+      { to: "/stocks", label: "Склады", directorOrHead: true },
       { to: "/inventory", label: "Капитализация WB" },
       { to: "/supply", label: "Поставки" },
       { to: "/supplies", label: "Закупки", directorOrHead: true },

@@ -1277,6 +1277,31 @@ paymentOrderDelete: (payment_order_id: string) =>
     return request(`/api/units?${qs}`);
   },
 
+  // TASK-DEV-041/042/044: доп. отчёты под TrueStats.
+  deductions: (start: string, end: string, reporting_mode = "financial") =>
+    request<{ reporting_mode: string; total: number; items: Array<{
+      operation: string; count: number; delivery: number; storage: number;
+      penalty: number; deduction: number; acquiring: number; total: number;
+    }> }>(`/api/deductions?start_date=${start}&end_date=${end}&reporting_mode=${reporting_mode}`),
+
+  operations: (params: { start: string; end: string; reporting_mode?: string; operation?: string; limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams({ start_date: params.start, end_date: params.end });
+    qs.set("reporting_mode", params.reporting_mode ?? "financial");
+    if (params.operation) qs.set("operation", params.operation);
+    if (params.limit) qs.set("limit", String(params.limit));
+    if (params.offset) qs.set("offset", String(params.offset));
+    return request<{ total: number; limit: number; offset: number; items: Array<Record<string, unknown>> }>(
+      `/api/operations?${qs}`,
+    );
+  },
+
+  stocksByWarehouse: () =>
+    request<{ snapshot_dt: string | null; warehouses: Array<{ warehouse: string; qty: number }>;
+      items: Array<{ warehouse: string; nm_id: number; vendor_code: string | null; brand: string | null;
+        qty: number; in_way_to_client: number; in_way_from_client: number }> }>(
+      `/api/stocks/by-warehouse`,
+    ),
+
   unitSizes: (
     nm_id: number,
     range: { period: "day" | "week" | "month" } | { start: string; end: string },

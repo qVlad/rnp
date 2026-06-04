@@ -22,6 +22,7 @@ from app.api import (
     dashboard,
     dashboard_compare,
     excel,
+    finance_extra,
     extension,
     extension_lk_jobs,
     external_ad_costs,
@@ -218,6 +219,7 @@ app.include_router(dashboard.router)
 app.include_router(dashboard_compare.router)
 app.include_router(pnl.router)
 app.include_router(units.router)
+app.include_router(finance_extra.router)
 app.include_router(unit_plan.router)
 app.include_router(ads.router)
 app.include_router(view_presets.router)

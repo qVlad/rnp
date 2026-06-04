@@ -60,6 +60,10 @@ import ManagersKpi from "./pages/ManagersKpi";
 import PromoCalculator from "./pages/PromoCalculator";
 import PromoCalculatorWb from "./pages/PromoCalculatorWb";
 import LeakReport from "./pages/LeakReport";
+import SummaryReport from "./pages/SummaryReport";
+import Stocks from "./pages/Stocks";
+import Deductions from "./pages/Deductions";
+import Operations from "./pages/Operations";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, needsBootstrap } = useAuth();
@@ -126,6 +130,10 @@ export default function App() {
         >
           <Route index element={<Dashboard />} />
           <Route path="pnl" element={<PnL />} />
+          <Route path="summary-report" element={<SummaryReport />} />
+          <Route path="deductions" element={<DirectorOrHead><Deductions /></DirectorOrHead>} />
+          <Route path="operations" element={<DirectorOrHead><Operations /></DirectorOrHead>} />
+          <Route path="stocks" element={<DirectorOrHead><Stocks /></DirectorOrHead>} />
           <Route path="pnl-reconciliation" element={<PnLReconciliation />} />
           <Route
             path="reconciliation-4way"
