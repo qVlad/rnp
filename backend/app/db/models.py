@@ -2766,6 +2766,30 @@ class FinanceReference(Base, TenantScopedMixin):
     )
 
 
+class ManualOperation(Base, TenantScopedMixin):
+    """Ручная финоперация (TASK-DEV-048, миграция 0071).
+
+    Аналог TrueStats «Финансы → Операции» (ручной ввод). Доход/расход с датой,
+    суммой, статьёй/контрагентом/счётом (ссылки на FinanceReference по имени —
+    свободный текст, чтобы не ломаться при удалении справочника).
+    direction ∈ income | expense.
+    """
+
+    __tablename__ = "manual_operation"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    op_date: Mapped[date] = mapped_column(Date, index=True)
+    direction: Mapped[str] = mapped_column(String(16))  # income | expense
+    amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
+    category: Mapped[str | None] = mapped_column(String(255))
+    counterparty: Mapped[str | None] = mapped_column(String(255))
+    account: Mapped[str | None] = mapped_column(String(255))
+    comment: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class ExtensionReconUpload(Base, TenantScopedMixin):
     """Авто-загрузка финотчёта WB из ЛК через Chrome-extension (TASK-LEAD-138).
 

@@ -24,6 +24,7 @@ from app.services.auth import get_current_user
 
 from app.db.models import (
     FinanceReference,
+    ManualOperation,
     Product,
     WbAdCampaign,
     WbAdStatsDaily,
@@ -95,6 +96,80 @@ async def delete_finance_reference(
     await session.execute(sa_delete(FinanceReference).where(FinanceReference.id == ref_id))
     await session.commit()
     return {"status": "deleted", "id": ref_id}
+
+
+@router.get("/api/manual-operations", dependencies=[Depends(require_director_or_head)])
+async def list_manual_operations(
+    start_date: Annotated[date, Query()],
+    end_date: Annotated[date, Query()],
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Ручные операции (TASK-DEV-048) за период."""
+    rows = (
+        await session.execute(
+            select(ManualOperation)
+            .where(ManualOperation.op_date >= start_date, ManualOperation.op_date <= end_date)
+            .order_by(ManualOperation.op_date.desc(), ManualOperation.id.desc())
+        )
+    ).scalars().all()
+    items = [
+        {
+            "id": r.id,
+            "op_date": r.op_date.isoformat(),
+            "direction": r.direction,
+            "amount": float(r.amount or 0),
+            "category": r.category,
+            "counterparty": r.counterparty,
+            "account": r.account,
+            "comment": r.comment,
+        }
+        for r in rows
+    ]
+    income = sum(x["amount"] for x in items if x["direction"] == "income")
+    expense = sum(x["amount"] for x in items if x["direction"] == "expense")
+    return {"items": items, "totals": {"income": round(income, 2), "expense": round(expense, 2), "net": round(income - expense, 2)}}
+
+
+@router.post("/api/manual-operations", dependencies=[Depends(require_director_or_head)])
+async def create_manual_operation(
+    payload: dict[str, Any] = Body(...),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    direction = str(payload.get("direction") or "")
+    if direction not in {"income", "expense"}:
+        raise HTTPException(400, "direction ∈ income|expense")
+    try:
+        op_date = date.fromisoformat(str(payload.get("op_date")))
+    except Exception:
+        raise HTTPException(400, "op_date YYYY-MM-DD обязателен")
+    try:
+        amount = float(payload.get("amount") or 0)
+    except Exception:
+        raise HTTPException(400, "amount должен быть числом")
+    obj = ManualOperation(
+        tenant_id=get_tenant(session),
+        op_date=op_date,
+        direction=direction,
+        amount=amount,
+        category=(payload.get("category") or None),
+        counterparty=(payload.get("counterparty") or None),
+        account=(payload.get("account") or None),
+        comment=(payload.get("comment") or None),
+    )
+    session.add(obj)
+    await session.commit()
+    await session.refresh(obj)
+    return {"id": obj.id}
+
+
+@router.delete("/api/manual-operations/{op_id}", dependencies=[Depends(require_director_or_head)])
+async def delete_manual_operation(
+    op_id: int,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    await session.execute(sa_delete(ManualOperation).where(ManualOperation.id == op_id))
+    await session.commit()
+    return {"status": "deleted", "id": op_id}
 
 
 @router.get("/api/business-summary", dependencies=[Depends(require_director_or_head)])

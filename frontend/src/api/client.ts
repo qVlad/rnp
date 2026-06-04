@@ -1295,6 +1295,17 @@ paymentOrderDelete: (payment_order_id: string) =>
     );
   },
 
+  manualOpsList: (start: string, end: string) =>
+    request<{ totals: { income: number; expense: number; net: number };
+      items: Array<{ id: number; op_date: string; direction: string; amount: number;
+        category: string | null; counterparty: string | null; account: string | null; comment: string | null }> }>(
+      `/api/manual-operations?start_date=${start}&end_date=${end}`,
+    ),
+  manualOpsCreate: (body: Record<string, unknown>) =>
+    request<{ id: number }>(`/api/manual-operations`, { method: "POST", body: JSON.stringify(body) }),
+  manualOpsDelete: (id: number) =>
+    request<{ status: string }>(`/api/manual-operations/${id}`, { method: "DELETE" }),
+
   financeRefList: (ref_type?: string) =>
     request<{ items: Array<{ id: number; ref_type: string; name: string; extra: Record<string, unknown> }> }>(
       `/api/finance-reference${ref_type ? `?ref_type=${ref_type}` : ""}`,
