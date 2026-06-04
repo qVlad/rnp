@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-DEV-048",
-  "agent": "Claude Opus 4.8 — main session",
-  "started_at": "2026-06-04T14:49:30Z",
-  "expected_minutes": 30,
-  "notes": "Ручной реестр операций (миграция 0071) + wiring справочников"
-}
