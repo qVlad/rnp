@@ -2682,6 +2682,11 @@ paymentOrderDelete: (payment_order_id: string) =>
       products_count: number | null;
       in_promo_count: number | null;
       not_in_promo_count: number | null;
+      participation_pct?: number | null;
+      advantages?: string[];
+      description?: string | null;
+      boost_max?: number | null;
+      boost_current?: number | null;
     }>>(`/api/promo-calculator/wb-promotions${qs.toString() ? `?${qs}` : ""}`);
   },
 

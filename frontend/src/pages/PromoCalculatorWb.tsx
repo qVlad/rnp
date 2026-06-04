@@ -189,183 +189,387 @@ type PromoItem = {
   products_count: number | null;
   in_promo_count: number | null;
   not_in_promo_count: number | null;
+  participation_pct?: number | null;
+  advantages?: string[];
+  description?: string | null;
+  boost_max?: number | null;
+  boost_current?: number | null;
 };
 
 const DAY_MS = 86400000;
-const MONTHS_RU = [
-  "янв", "фев", "мар", "апр", "май", "июн",
-  "июл", "авг", "сен", "окт", "ноя", "дек",
+const DAY_W = 116; // ширина дня в пикселях
+const LANE_H = 92; // высота дорожки
+const WD = ["ВС", "ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ"];
+const MON_NOM = [
+  "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+  "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+];
+const MON_GEN = [
+  "января", "февраля", "марта", "апреля", "мая", "июня",
+  "июля", "августа", "сентября", "октября", "ноября", "декабря",
 ];
 
-/** WB-подобная «Лента» акций — горизонтальный таймлайн (Gantt).
- *  Каждая акция = полоса по своим датам; клик → выбрать акцию для симуляции. */
+const startOfDay = (d: Date) => {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+};
+const dayDiff = (a: Date, b: Date) =>
+  Math.round((startOfDay(a).getTime() - startOfDay(b).getTime()) / DAY_MS);
+const fmtRange = (s: string, e: string) => {
+  const a = new Date(s), b = new Date(e);
+  if (a.getMonth() === b.getMonth())
+    return `${String(a.getDate()).padStart(2, "0")} - ${String(b.getDate()).padStart(2, "0")} ${MON_GEN[b.getMonth()]}`;
+  return `${a.getDate()} ${MON_GEN[a.getMonth()]} - ${b.getDate()} ${MON_GEN[b.getMonth()]}`;
+};
+const fmtDateTime = (iso: string) => {
+  const d = new Date(iso);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${d.getDate()} ${MON_GEN[d.getMonth()]} ${hh}:${mm}`;
+};
+
+type PromoStatus = {
+  key: "participating" | "will" | "skip" | "ended" | "none";
+  label: string;
+  cls: string; // классы бейджа
+};
+function promoStatus(p: PromoItem, now: number): PromoStatus {
+  const s = p.start_date_time ? new Date(p.start_date_time).getTime() : 0;
+  const e = p.end_date_time ? new Date(p.end_date_time).getTime() : 0;
+  const ended = e > 0 && e < now;
+  const live = s <= now && now <= e;
+  if (p.in_promo_action) {
+    if (ended) return { key: "ended", label: "Участвовал", cls: "bg-soft text-muted" };
+    if (live) return { key: "participating", label: "Участвую", cls: "bg-emerald-600 text-white" };
+    return { key: "will", label: "Буду участвовать", cls: "bg-emerald-600 text-white" };
+  }
+  if (ended) return { key: "ended", label: "Не участвовал", cls: "bg-soft text-muted" };
+  if ((p.products_count ?? 0) > 0)
+    return { key: "skip", label: "Пропускаю", cls: "bg-rose-500 text-white" };
+  return { key: "none", label: "Не участвую", cls: "bg-soft text-muted" };
+}
+const isAutoPromo = (p: PromoItem) =>
+  p.type === "auto" || /автоматическ/i.test(p.name || "");
+
+type TabKey = "available" | "participating" | "not";
+function promoTab(p: PromoItem, now: number): TabKey {
+  const e = p.end_date_time ? new Date(p.end_date_time).getTime() : 0;
+  const ended = e > 0 && e < now;
+  if (p.in_promo_action) return "participating";
+  if (!ended && (p.products_count ?? 0) > 0) return "available";
+  return "not";
+}
+
+/** WB-подобная «Лента» акций — дневной таймлайн с дорожками, фильтрами,
+ *  статусами и тултипами. Клик по карточке → расчёт рентабельности. */
 function PromoCalendar({
   promos,
   selectedId,
   onSelect,
+  onRefresh,
+  refreshing,
 }: {
   promos: PromoItem[];
   selectedId: number | null;
   onSelect: (id: number) => void;
+  onRefresh: () => void;
+  refreshing: boolean;
 }) {
+  const now = Date.now();
+  const todayKey = startOfDay(new Date(now)).getTime();
+  const [tab, setTab] = useState<TabKey>("available");
+  const [hover, setHover] = useState<{ p: PromoItem; x: number; y: number } | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const counts = useMemo(() => {
+    const c = { available: 0, participating: 0, not: 0 };
+    for (const p of promos) c[promoTab(p, now)]++;
+    return c;
+  }, [promos, now]);
+
   const model = useMemo(() => {
-    const withDates = promos.filter((p) => p.start_date_time && p.end_date_time);
-    if (withDates.length === 0) return null;
-    const starts = withDates.map((p) => new Date(p.start_date_time!).getTime());
-    const ends = withDates.map((p) => new Date(p.end_date_time!).getTime());
-    const now = Date.now();
-    // Нижняя граница окна: не раньше чем «сегодня − 14 дней», но и не позже min(start).
-    let lo = Math.min(...starts, now);
-    lo = Math.max(lo, now - 14 * DAY_MS);
-    lo = Math.min(lo, ...starts);
-    let hi = Math.max(...ends, now + 7 * DAY_MS);
-    // Нормализуем lo на полночь дня.
-    const loD = new Date(lo);
-    loD.setHours(0, 0, 0, 0);
-    lo = loD.getTime();
-    const total = Math.max(hi - lo, DAY_MS);
-
-    // Месячные деления для шапки.
-    const months: { label: string; leftPct: number; widthPct: number }[] = [];
-    const cur = new Date(lo);
-    cur.setDate(1);
-    while (cur.getTime() < hi) {
-      const mStart = Math.max(cur.getTime(), lo);
-      const next = new Date(cur);
-      next.setMonth(next.getMonth() + 1);
-      const mEnd = Math.min(next.getTime(), hi);
-      months.push({
-        label: `${MONTHS_RU[cur.getMonth()]} ${String(cur.getFullYear()).slice(2)}`,
-        leftPct: ((mStart - lo) / total) * 100,
-        widthPct: ((mEnd - mStart) / total) * 100,
-      });
-      cur.setMonth(cur.getMonth() + 1);
-    }
-
-    const rows = [...withDates]
-      .sort(
-        (a, b) =>
-          new Date(a.start_date_time!).getTime() -
-          new Date(b.start_date_time!).getTime(),
-      )
-      .map((p) => {
-        const s = new Date(p.start_date_time!).getTime();
-        const e = new Date(p.end_date_time!).getTime();
-        return {
-          p,
-          leftPct: (Math.max(s - lo, 0) / total) * 100,
-          widthPct: (Math.max(e - Math.max(s, lo), DAY_MS) / total) * 100,
-          isPast: e < now,
-          isLive: s <= now && now <= e,
-        };
-      });
-
-    const todayPct = ((now - lo) / total) * 100;
-    return { months, rows, todayPct };
-  }, [promos]);
-
-  if (!model) {
-    return (
-      <div className="text-muted text-sm">
-        У акций нет дат — лента недоступна. Обнови список из WB.
-      </div>
+    const withDates = promos.filter(
+      (p) => p.start_date_time && p.end_date_time && promoTab(p, now) === tab,
     );
-  }
+    if (withDates.length === 0) return null;
+    const starts = withDates.map((p) => new Date(p.start_date_time!));
+    const ends = withDates.map((p) => new Date(p.end_date_time!));
+    let lo = startOfDay(new Date(Math.min(...starts.map((d) => d.getTime()), now)));
+    const hi = startOfDay(new Date(Math.max(...ends.map((d) => d.getTime()), now)));
+    const totalDays = Math.max(dayDiff(hi, lo) + 2, 14);
+
+    // дни шапки
+    const days = Array.from({ length: totalDays }, (_, i) => {
+      const d = new Date(lo);
+      d.setDate(d.getDate() + i);
+      return d;
+    });
+    // месяцы (для центрированной подписи)
+    const months: { label: string; startIdx: number; span: number }[] = [];
+    days.forEach((d, i) => {
+      const last = months[months.length - 1];
+      const lbl = MON_NOM[d.getMonth()];
+      if (last && last.label === lbl) last.span++;
+      else months.push({ label: lbl, startIdx: i, span: 1 });
+    });
+
+    // дорожки (greedy interval scheduling)
+    const sorted = [...withDates].sort(
+      (a, b) => new Date(a.start_date_time!).getTime() - new Date(b.start_date_time!).getTime(),
+    );
+    const laneEnds: number[] = [];
+    const placed = sorted.map((p) => {
+      const s = new Date(p.start_date_time!);
+      const e = new Date(p.end_date_time!);
+      const startIdx = Math.max(dayDiff(s, lo), 0);
+      const endIdx = dayDiff(e, lo);
+      const span = Math.max(endIdx - startIdx + 1, 1);
+      let lane = laneEnds.findIndex((le) => le < startIdx);
+      if (lane === -1) {
+        lane = laneEnds.length;
+        laneEnds.push(endIdx);
+      } else laneEnds[lane] = endIdx;
+      return { p, startIdx, span, lane };
+    });
+    const lanes = laneEnds.length || 1;
+    const todayIdx = dayDiff(new Date(now), lo);
+    return { lo, days, months, placed, lanes, totalDays, todayIdx };
+  }, [promos, tab, now]);
+
+  const scrollBy = (days: number) => {
+    scrollRef.current?.scrollBy({ left: days * DAY_W, behavior: "smooth" });
+  };
+  const scrollToToday = () => {
+    if (!scrollRef.current || !model) return;
+    scrollRef.current.scrollTo({
+      left: Math.max((model.todayIdx - 2) * DAY_W, 0),
+      behavior: "smooth",
+    });
+  };
+
+  const tabs: { key: TabKey; label: string; n: number }[] = [
+    { key: "available", label: "Доступные", n: counts.available },
+    { key: "participating", label: "Участвую", n: counts.participating },
+    { key: "not", label: "Не участвую", n: counts.not },
+  ];
 
   return (
-    <div className="overflow-x-auto">
-      <div className="min-w-[760px]">
-        {/* Шапка с месяцами */}
-        <div className="relative h-6 ml-[260px] border-b border-soft mb-1">
-          {model.months.map((m, i) => (
-            <div
-              key={i}
-              className="absolute top-0 h-6 text-[11px] text-muted border-l border-soft pl-1 leading-6 overflow-hidden whitespace-nowrap"
-              style={{ left: `${m.leftPct}%`, width: `${m.widthPct}%` }}
+    <div className="flex flex-col gap-3">
+      {/* Шапка: фильтры + навигация */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="inline-flex rounded-lg bg-soft p-1 text-sm">
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              className={`px-3 py-1.5 rounded-md flex items-center gap-1.5 ${
+                tab === t.key ? "bg-white shadow-sm font-medium" : "text-muted"
+              }`}
+              onClick={() => setTab(t.key)}
             >
-              {m.label}
-            </div>
+              {t.label}
+              <span
+                className={`text-xs px-1.5 rounded-full ${
+                  tab === t.key ? "bg-soft" : "bg-white/60"
+                }`}
+              >
+                {t.n}
+              </span>
+            </button>
           ))}
-          {/* Линия «сегодня» */}
-          {model.todayPct >= 0 && model.todayPct <= 100 && (
-            <div
-              className="absolute top-0 bottom-[-1000px] w-px bg-danger/60 z-10"
-              style={{ left: `${model.todayPct}%` }}
-              title="сегодня"
-            />
-          )}
         </div>
-
-        {/* Строки акций */}
-        <div className="flex flex-col gap-1">
-          {model.rows.map(({ p, leftPct, widthPct, isPast, isLive }) => {
-            const isAuto = p.type === "auto";
-            const selected = p.id === selectedId;
-            const barColor = isPast
-              ? "bg-soft text-muted"
-              : isAuto
-                ? "bg-amber-500/80 text-white"
-                : "bg-accent text-white";
-            return (
-              <div key={p.id} className="relative flex items-center h-8">
-                {/* Лейбл слева */}
-                <button
-                  className={`w-[260px] shrink-0 pr-2 text-left text-xs truncate ${
-                    selected ? "font-semibold text-accent" : "hover:text-accent"
-                  }`}
-                  onClick={() => onSelect(p.id)}
-                  title={p.name}
-                >
-                  {p.in_promo_action ? "✓ " : ""}
-                  {p.name}
-                </button>
-                {/* Полоса */}
-                <div className="relative flex-1 h-full">
-                  <button
-                    className={`absolute top-1 h-6 rounded px-1.5 text-[11px] leading-6 truncate text-left ${barColor} ${
-                      selected ? "ring-2 ring-accent ring-offset-1" : ""
-                    } ${isLive ? "" : "opacity-90"}`}
-                    style={{
-                      left: `${leftPct}%`,
-                      width: `${Math.max(widthPct, 2)}%`,
-                      minWidth: "44px",
-                    }}
-                    onClick={() => onSelect(p.id)}
-                    title={`${p.name}\n${fmtDate(p.start_date_time)} — ${fmtDate(
-                      p.end_date_time,
-                    )}${
-                      p.products_count != null ? `\nтоваров: ${p.products_count}` : ""
-                    }${isAuto ? "\nавтоакция" : ""}`}
-                  >
-                    {isAuto ? "авто · " : ""}
-                    {p.products_count != null && p.products_count > 0
-                      ? `${p.products_count} тов.`
-                      : fmtDate(p.start_date_time)}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Легенда */}
-        <div className="flex gap-4 mt-3 text-[11px] text-muted items-center flex-wrap">
-          <span className="flex items-center gap-1">
-            <span className="inline-block w-3 h-3 rounded bg-accent" /> обычная
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="inline-block w-3 h-3 rounded bg-amber-500/80" /> авто
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="inline-block w-3 h-3 rounded bg-soft" /> завершена
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="inline-block w-px h-3 bg-danger/60" /> сегодня
-          </span>
-          <span>✓ — участвую</span>
-          <span className="ml-auto">Клик по акции → расчёт рентабельности</span>
+        <div className="flex items-center gap-2">
+          <button className="btn px-2 py-1" onClick={() => scrollBy(-7)} title="Назад">
+            ‹
+          </button>
+          <button className="btn px-2 py-1" onClick={() => scrollBy(7)} title="Вперёд">
+            ›
+          </button>
+          <button className="btn px-3 py-1 text-sm" onClick={scrollToToday}>
+            Сегодня: {new Date(now).getDate()} {MON_GEN[new Date(now).getMonth()]}
+          </button>
+          <button
+            className="text-xs underline text-muted hover:text-accent ml-1"
+            disabled={refreshing}
+            onClick={onRefresh}
+          >
+            {refreshing ? "Обновляю…" : "↻ обновить из WB"}
+          </button>
         </div>
       </div>
+
+      {!model ? (
+        <div className="text-muted text-sm py-8 text-center">
+          Нет акций в этом фильтре.
+        </div>
+      ) : (
+        <div ref={scrollRef} className="overflow-x-auto pb-2">
+          <div
+            className="relative"
+            style={{ width: model.totalDays * DAY_W, minWidth: "100%" }}
+          >
+            {/* Месяц */}
+            <div className="relative h-6">
+              {model.months.map((m, i) => (
+                <div
+                  key={i}
+                  className="absolute text-center text-sm font-medium text-fg"
+                  style={{ left: m.startIdx * DAY_W, width: m.span * DAY_W }}
+                >
+                  {m.label}
+                </div>
+              ))}
+            </div>
+            {/* Дни */}
+            <div className="relative h-12 border-b border-soft">
+              {model.days.map((d, i) => {
+                const isToday = startOfDay(d).getTime() === todayKey;
+                const weekend = d.getDay() === 0 || d.getDay() === 6;
+                const past = startOfDay(d).getTime() < todayKey;
+                return (
+                  <div
+                    key={i}
+                    className={`absolute top-0 bottom-0 flex flex-col items-center justify-center border-l border-soft/60 ${
+                      past ? "bg-soft/30" : weekend ? "bg-soft/20" : ""
+                    }`}
+                    style={{ left: i * DAY_W, width: DAY_W }}
+                  >
+                    <div
+                      className={`text-sm leading-none ${
+                        isToday
+                          ? "bg-accent text-white rounded px-1.5 py-0.5 font-semibold"
+                          : "text-fg"
+                      }`}
+                    >
+                      {d.getDate()}
+                    </div>
+                    <div className="text-[10px] text-muted mt-0.5">{WD[d.getDay()]}</div>
+                  </div>
+                );
+              })}
+            </div>
+            {/* Тело: дорожки с карточками */}
+            <div
+              className="relative"
+              style={{ height: model.lanes * LANE_H + 8 }}
+            >
+              {/* линия «сегодня» */}
+              {model.todayIdx >= 0 && model.todayIdx < model.totalDays && (
+                <div
+                  className="absolute top-0 bottom-0 w-px bg-accent/50 z-0"
+                  style={{ left: model.todayIdx * DAY_W + DAY_W / 2 }}
+                />
+              )}
+              {model.placed.map(({ p, startIdx, span, lane }) => {
+                const st = promoStatus(p, now);
+                const auto = isAutoPromo(p);
+                const selected = p.id === selectedId;
+                const ended = st.key === "ended";
+                const adv = p.advantages ?? [];
+                const partLine =
+                  p.in_promo_action && p.in_promo_count != null
+                    ? `Добавлено ${p.in_promo_count} из ${p.products_count ?? 0} товаров`
+                    : (p.products_count ?? 0) > 0
+                      ? `Подходит ${p.products_count} товаров`
+                      : "";
+                return (
+                  <button
+                    key={p.id}
+                    className={`absolute text-left rounded-xl border px-3 py-2 overflow-hidden transition ${
+                      ended
+                        ? "bg-soft/40 border-soft text-muted"
+                        : auto
+                          ? "bg-orange-50 border-orange-200"
+                          : "bg-violet-50 border-violet-200"
+                    } ${
+                      selected ? "ring-2 ring-accent" : "hover:shadow-md"
+                    }`}
+                    style={{
+                      left: startIdx * DAY_W + 4,
+                      width: span * DAY_W - 8,
+                      top: lane * LANE_H + 4,
+                      height: LANE_H - 12,
+                    }}
+                    onClick={() => onSelect(p.id)}
+                    onMouseEnter={(ev) => {
+                      const r = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+                      setHover({ p, x: r.left, y: r.bottom + 6 });
+                    }}
+                    onMouseLeave={() => setHover(null)}
+                  >
+                    <div className="text-sm font-medium truncate">
+                      {auto && <span className="text-orange-600">Автоакция. </span>}
+                      <span className={ended ? "" : "text-fg"}>{p.name}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${st.cls}`}>
+                        {st.key === "participating" || st.key === "will" ? "✓ " : ""}
+                        {st.label}
+                      </span>
+                      {p.boost_max != null && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-white border border-soft whitespace-nowrap">
+                          ⌃ {p.boost_current ?? 0} из {p.boost_max}%
+                        </span>
+                      )}
+                      {adv.length > 0 && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-white border border-soft">
+                          +{adv.length}
+                        </span>
+                      )}
+                    </div>
+                    {p.start_date_time && p.end_date_time && (
+                      <div className="text-[11px] text-muted mt-1 truncate">
+                        {fmtRange(p.start_date_time, p.end_date_time)}
+                        {partLine ? ` · ${partLine}` : ""}
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Тултип */}
+      {hover && (
+        <div
+          className="fixed z-50 w-80 rounded-xl bg-gray-800 text-white p-4 shadow-2xl pointer-events-none"
+          style={{
+            left: Math.min(hover.x, window.innerWidth - 340),
+            top: Math.min(hover.y, window.innerHeight - 260),
+          }}
+        >
+          <div className="text-sm text-gray-300">{promoStatus(hover.p, now).label}</div>
+          <div className="border-t border-white/15 my-2" />
+          <div className="font-semibold leading-snug">
+            {isAutoPromo(hover.p) && <span className="text-orange-400">Автоакция. </span>}
+            {hover.p.name}
+          </div>
+          {hover.p.start_date_time && hover.p.end_date_time && (
+            <div className="text-sm text-gray-300 mt-1">
+              {fmtDateTime(hover.p.start_date_time)} - {fmtDateTime(hover.p.end_date_time)}
+            </div>
+          )}
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {hover.p.boost_max != null && (
+              <span className="text-xs px-1.5 py-0.5 rounded bg-white/15">
+                ⌃ {hover.p.boost_current ?? 0} из {hover.p.boost_max}%
+              </span>
+            )}
+            {(hover.p.advantages ?? []).map((a, i) => (
+              <span key={i} className="text-xs px-1.5 py-0.5 rounded bg-white/15">
+                {a}
+              </span>
+            ))}
+          </div>
+          {hover.p.in_promo_action && hover.p.in_promo_count != null && (
+            <div className="text-sm text-gray-300 mt-2">
+              Добавлено {hover.p.in_promo_count} из {hover.p.products_count ?? 0} товаров
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -761,17 +965,6 @@ export default function PromoCalculatorWb() {
 
       {mode === "calendar" && (
         <div className="card">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-medium">Календарь акций WB</h2>
-            <button
-              type="button"
-              className="text-xs underline hover:text-accent"
-              disabled={refreshMut.isPending}
-              onClick={() => refreshMut.mutate()}
-            >
-              {refreshMut.isPending ? "Обновляю…" : "↻ обновить из WB"}
-            </button>
-          </div>
           {promosQ.isLoading && (
             <div className="text-muted text-sm">Загружаю акции…</div>
           )}
@@ -793,11 +986,15 @@ export default function PromoCalculatorWb() {
                 setOverrideDiscount(null);
                 setMode("simulate");
               }}
+              onRefresh={() => refreshMut.mutate()}
+              refreshing={refreshMut.isPending}
             />
           )}
           <div className="text-xs text-muted mt-3">
             Кэш обновляется раз в день (sync 08:30 МСК). Клик по акции открывает
-            расчёт рентабельности.
+            расчёт рентабельности. Статусы: <b>Доступные</b> — есть подходящие
+            товары; <b>Участвую</b> — уже добавлены; <b>Не участвую</b> — нет
+            товаров или акция прошла.
           </div>
         </div>
       )}

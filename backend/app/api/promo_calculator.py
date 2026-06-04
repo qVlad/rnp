@@ -78,20 +78,53 @@ async def _db_list_promotions(
         .scalars()
         .all()
     )
-    return [
-        {
-            "id": r.promotion_id,
-            "name": r.name,
-            "start_date_time": r.start_dt.isoformat() if r.start_dt else None,
-            "end_date_time": r.end_dt.isoformat() if r.end_dt else None,
-            "type": r.promo_type,
-            "in_promo_action": r.in_promo_action,
-            "products_count": r.products_count,
-            "in_promo_count": r.in_promo_count,
-            "not_in_promo_count": r.not_in_promo_count,
-        }
-        for r in rows
-    ]
+
+    def _boost(ranging: Any, participation_pct: float) -> dict[str, Any]:
+        """Лестница бустинга из ranging: [{boost, participationRate}].
+
+        boost_max — максимально достижимый %, boost_current — ступень,
+        достигнутая при текущем участии (participationPercentage)."""
+        if not isinstance(ranging, list) or not ranging:
+            return {"boost_max": None, "boost_current": None}
+        tiers = sorted(
+            (
+                (float(t.get("participationRate") or 0), float(t.get("boost") or 0))
+                for t in ranging
+                if isinstance(t, dict)
+            ),
+            key=lambda x: x[0],
+        )
+        if not tiers:
+            return {"boost_max": None, "boost_current": None}
+        boost_max = max(b for _, b in tiers)
+        cur = 0.0
+        for rate, boost in tiers:
+            if participation_pct >= rate:
+                cur = boost
+        return {"boost_max": boost_max, "boost_current": cur}
+
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        raw = r.raw or {}
+        part_pct = float(raw.get("participationPercentage") or 0)
+        out.append(
+            {
+                "id": r.promotion_id,
+                "name": r.name,
+                "start_date_time": r.start_dt.isoformat() if r.start_dt else None,
+                "end_date_time": r.end_dt.isoformat() if r.end_dt else None,
+                "type": r.promo_type,
+                "in_promo_action": r.in_promo_action,
+                "products_count": r.products_count,
+                "in_promo_count": r.in_promo_count,
+                "not_in_promo_count": r.not_in_promo_count,
+                "participation_pct": part_pct,
+                "advantages": raw.get("advantages") or [],
+                "description": raw.get("description") or None,
+                **_boost(r.ranging, part_pct),
+            }
+        )
+    return out
 
 
 async def _db_promotion(
