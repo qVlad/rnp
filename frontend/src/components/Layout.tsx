@@ -47,6 +47,7 @@ const GROUPS: Group[] = [
       // TASK-DEV-039: «Сводный отчёт» (плитки + таблица по SKU, как TrueStats)
       { to: "/summary-report", label: "Сводный отчёт", icon: "layers" },
       { to: "/pnl", label: "P&L (ОПиУ)", icon: "list" },
+      { to: "/business-summary", label: "Сводный по бизнесу", directorOrHead: true },
       { to: "/deductions", label: "Прочие удержания", directorOrHead: true },
       { to: "/plans", label: "План-факт" },
     ],
@@ -121,6 +122,7 @@ const GROUPS: Group[] = [
     // Настройки РНП — TASK-DEV-046.
     label: "Реклама / РНП",
     items: [
+      { to: "/ad-campaigns", label: "Аналитика РК", directorOrHead: true },
       { to: "/ads-heatmap", label: "Тепловая карта" },
       { to: "/abtest", label: "A/B тесты" },
       { to: "/external-marketing", label: "Внеш. маркетинг", directorOrHead: true },

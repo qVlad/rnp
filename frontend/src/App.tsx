@@ -64,6 +64,8 @@ import SummaryReport from "./pages/SummaryReport";
 import Stocks from "./pages/Stocks";
 import Deductions from "./pages/Deductions";
 import Operations from "./pages/Operations";
+import AdCampaignsAnalytics from "./pages/AdCampaignsAnalytics";
+import BusinessSummary from "./pages/BusinessSummary";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, needsBootstrap } = useAuth();
@@ -134,6 +136,8 @@ export default function App() {
           <Route path="deductions" element={<DirectorOrHead><Deductions /></DirectorOrHead>} />
           <Route path="operations" element={<DirectorOrHead><Operations /></DirectorOrHead>} />
           <Route path="stocks" element={<DirectorOrHead><Stocks /></DirectorOrHead>} />
+          <Route path="ad-campaigns" element={<DirectorOrHead><AdCampaignsAnalytics /></DirectorOrHead>} />
+          <Route path="business-summary" element={<DirectorOrHead><BusinessSummary /></DirectorOrHead>} />
           <Route path="pnl-reconciliation" element={<PnLReconciliation />} />
           <Route
             path="reconciliation-4way"

@@ -16,10 +16,18 @@ from datetime import date
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Product, WbReportDetail, WbStockSnapshot
+from app.services.auth import get_current_user
+
+from app.db.models import (
+    Product,
+    WbAdCampaign,
+    WbAdStatsDaily,
+    WbReportDetail,
+    WbStockSnapshot,
+)
 from app.services.auth import get_db_tenant_scoped, require_director_or_head
 
 router = APIRouter(tags=["finance-extra"])
@@ -30,6 +38,78 @@ _SALE_RETURN = ("Продажа", "Возврат")
 
 def _date_col(reporting_mode: str):
     return WbReportDetail.rr_dt if reporting_mode == "financial" else WbReportDetail.sale_dt
+
+
+@router.get("/api/business-summary", dependencies=[Depends(require_director_or_head)])
+async def business_summary(
+    start_date: Annotated[date, Query()],
+    end_date: Annotated[date, Query()],
+    reporting_mode: Annotated[str, Query()] = "financial",
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    user=Depends(get_current_user),
+) -> dict[str, Any]:
+    """Сводный по бизнесу (TASK-DEV-040): свод по всем доступным пользователю
+    кабинетам. Raw SQL обходит per-tenant ORM-фильтр, но ограничен tenant'ами
+    из user_tenant_access (безопасно)."""
+    dcol = "rr_dt" if reporting_mode == "financial" else "sale_dt"
+    acc = (
+        await session.execute(
+            text("select tenant_id from user_tenant_access where user_id = :u"),
+            {"u": user.id},
+        )
+    ).all()
+    tids = [r[0] for r in acc] or [user.tenant_id]
+    names = {
+        r[0]: r[1]
+        for r in (
+            await session.execute(
+                text("select id, name from tenants where id = any(:ids)"),
+                {"ids": tids},
+            )
+        ).all()
+    }
+    agg = (
+        await session.execute(
+            text(
+                f"""
+            select tenant_id,
+              coalesce(sum(case when supplier_oper_name='Продажа' then retail_price else 0 end)
+                      -sum(case when supplier_oper_name='Возврат' then retail_price else 0 end),0) realisation,
+              coalesce(sum(case when supplier_oper_name='Продажа' then retail_amount else 0 end)
+                      -sum(case when supplier_oper_name='Возврат' then retail_amount else 0 end),0) sales,
+              coalesce(sum(case when supplier_oper_name='Продажа' then ppvz_for_pay else 0 end)
+                      -sum(case when supplier_oper_name='Возврат' then ppvz_for_pay else 0 end),0) to_transfer,
+              coalesce(sum(case when supplier_oper_name='Продажа' then quantity else 0 end),0) sold
+            from wb_report_detail
+            where tenant_id = any(:ids) and {dcol}::date between :lo and :hi
+            group by tenant_id
+            """  # noqa: S608 — dcol из whitelist (rr_dt|sale_dt), не польз. ввод
+            ),
+            {"ids": tids, "lo": start_date, "hi": end_date},
+        )
+    ).all()
+    by_tid = {r.tenant_id: r for r in agg}
+    items = []
+    for tid in tids:
+        r = by_tid.get(tid)
+        items.append(
+            {
+                "tenant_id": tid,
+                "name": names.get(tid, f"Кабинет {tid}"),
+                "realisation": float(r.realisation) if r else 0.0,
+                "sales": float(r.sales) if r else 0.0,
+                "to_transfer": float(r.to_transfer) if r else 0.0,
+                "sold": int(r.sold) if r else 0,
+            }
+        )
+    items.sort(key=lambda x: x["realisation"], reverse=True)
+    totals = {
+        "realisation": round(sum(x["realisation"] for x in items), 2),
+        "sales": round(sum(x["sales"] for x in items), 2),
+        "to_transfer": round(sum(x["to_transfer"] for x in items), 2),
+        "sold": sum(x["sold"] for x in items),
+    }
+    return {"reporting_mode": reporting_mode, "items": items, "totals": totals}
 
 
 @router.get("/api/deductions", dependencies=[Depends(require_director_or_head)])
@@ -131,6 +211,79 @@ async def get_operations(
         for r in rows
     ]
     return {"total": int(total), "limit": limit, "offset": offset, "items": items}
+
+
+_ADV_TYPE = {4: "Каталог", 5: "Карточка", 6: "Поиск", 7: "Рекоменд.", 8: "Автомат.", 9: "Поиск+каталог"}
+_ADV_STATUS = {4: "Готова", 7: "Завершена", 9: "Активна", 11: "Пауза"}
+
+
+@router.get("/api/ad-campaigns/analytics", dependencies=[Depends(require_director_or_head)])
+async def ad_campaigns_analytics(
+    start_date: Annotated[date, Query()],
+    end_date: Annotated[date, Query()],
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Аналитика РК (TASK-DEV-046): свод по кампаниям из WbAdStatsDaily за период."""
+    rows = (
+        await session.execute(
+            select(
+                WbAdStatsDaily.advert_id,
+                func.coalesce(func.sum(WbAdStatsDaily.views), 0).label("views"),
+                func.coalesce(func.sum(WbAdStatsDaily.clicks), 0).label("clicks"),
+                func.coalesce(func.sum(WbAdStatsDaily.sum_spent), 0).label("spent"),
+                func.coalesce(func.sum(WbAdStatsDaily.atbs), 0).label("atbs"),
+                func.coalesce(func.sum(WbAdStatsDaily.orders), 0).label("orders"),
+                func.coalesce(func.sum(WbAdStatsDaily.sum_price), 0).label("revenue"),
+            )
+            .where(
+                WbAdStatsDaily.stat_date >= start_date,
+                WbAdStatsDaily.stat_date <= end_date,
+            )
+            .group_by(WbAdStatsDaily.advert_id)
+        )
+    ).all()
+
+    camps = {
+        c.advert_id: c
+        for c in (await session.execute(select(WbAdCampaign))).scalars().all()
+    }
+
+    def _f(v: Any) -> float:
+        return float(v or 0)
+
+    items = []
+    for r in rows:
+        views, clicks, spent = int(r.views), int(r.clicks), _f(r.spent)
+        orders, revenue = int(r.orders), _f(r.revenue)
+        c = camps.get(r.advert_id)
+        items.append(
+            {
+                "advert_id": r.advert_id,
+                "name": (c.name if c else None) or f"РК {r.advert_id}",
+                "type": _ADV_TYPE.get(c.type if c else None, "—"),
+                "status": _ADV_STATUS.get(c.status if c else None, "—"),
+                "views": views,
+                "clicks": clicks,
+                "ctr": round(clicks / views * 100, 2) if views else 0.0,
+                "cpc": round(spent / clicks, 2) if clicks else 0.0,
+                "spent": round(spent, 2),
+                "atbs": int(r.atbs),
+                "orders": orders,
+                "cr": round(orders / clicks * 100, 2) if clicks else 0.0,
+                "revenue": round(revenue, 2),
+                "drr": round(spent / revenue * 100, 2) if revenue else 0.0,
+            }
+        )
+    items.sort(key=lambda x: x["spent"], reverse=True)
+    tot = {
+        "spent": round(sum(x["spent"] for x in items), 2),
+        "revenue": round(sum(x["revenue"] for x in items), 2),
+        "orders": sum(x["orders"] for x in items),
+        "clicks": sum(x["clicks"] for x in items),
+        "views": sum(x["views"] for x in items),
+    }
+    tot["drr"] = round(tot["spent"] / tot["revenue"] * 100, 2) if tot["revenue"] else 0.0
+    return {"items": items, "totals": tot}
 
 
 @router.get("/api/stocks/by-warehouse", dependencies=[Depends(require_director_or_head)])

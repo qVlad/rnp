@@ -1295,6 +1295,19 @@ paymentOrderDelete: (payment_order_id: string) =>
     );
   },
 
+  businessSummary: (start: string, end: string, reporting_mode = "financial") =>
+    request<{ reporting_mode: string; totals: { realisation: number; sales: number; to_transfer: number; sold: number };
+      items: Array<{ tenant_id: number; name: string; realisation: number; sales: number; to_transfer: number; sold: number }> }>(
+      `/api/business-summary?start_date=${start}&end_date=${end}&reporting_mode=${reporting_mode}`,
+    ),
+
+  adCampaignsAnalytics: (start: string, end: string) =>
+    request<{ totals: Record<string, number>; items: Array<{
+      advert_id: number; name: string; type: string; status: string;
+      views: number; clicks: number; ctr: number; cpc: number; spent: number;
+      atbs: number; orders: number; cr: number; revenue: number; drr: number;
+    }> }>(`/api/ad-campaigns/analytics?start_date=${start}&end_date=${end}`),
+
   stocksByWarehouse: () =>
     request<{ snapshot_dt: string | null; warehouses: Array<{ warehouse: string; qty: number }>;
       items: Array<{ warehouse: string; nm_id: number; vendor_code: string | null; brand: string | null;
