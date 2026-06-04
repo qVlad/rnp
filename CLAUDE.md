@@ -183,6 +183,10 @@ fallback (первый по `last_active_at DESC NULLS LAST`). Forbidden tenant 
 
 > Полные описания каждого эндпоинта — в [`FEATURES.md`](FEATURES.md). Видимость
 > меню — `frontend/src/components/Layout.tsx` (`directorOnly` / `directorOrHead`).
+> **Группы меню (2026-06-04, IA под TrueStats):** Оцифровка / Финансы / Товары /
+> Сверки и аудит / SKU-аналитика / Калькуляторы / Реклама-РНП / Контроль / Справка /
+> Админка. Фильтрация и UX-профили — по путям `to`, не по названиям групп. Пробелы
+> TrueStats — задачи TASK-DEV-039…047 в `agents/tasks-developer.md`.
 
 | Prefix | Guard | Что делает |
 |---|---|---|

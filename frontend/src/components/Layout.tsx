@@ -31,12 +31,55 @@ type Link = {
 
 type Group = { label: string; items: Link[] };
 
+// TASK-DEV-038 (2026-06-04): навигация перегруппирована под разделы TrueStats
+// (Оцифровка / Финансы / Товары / Реклама-РНП), наши уникальные модули вынесены
+// в собственные группы (Сверки и аудит, SKU-аналитика, Калькуляторы, Контроль).
+// Пути и RBAC-флаги сохранены 1:1 — фильтрация и профили работают по `to`.
+// Пробелы TrueStats (Сводный по бизнесу, Прочие удержания, Операции, Дополнительно,
+// Склады, Модуль РНП, Аналитика РК) — задачами в agents/tasks-developer.md, в меню
+// появятся после реализации.
 const GROUPS: Group[] = [
   {
-    label: "Обзор",
+    // TrueStats «Оцифровка»
+    label: "Оцифровка",
     items: [
       { to: "/", label: "Дашборд", end: true, icon: "layers" },
-      { to: "/pnl", label: "P&L", icon: "list" },
+      // ≈ TrueStats «Сводный отчёт» (наш ОПиУ; per-SKU вид — TASK-DEV-039)
+      { to: "/pnl", label: "Сводный отчёт", icon: "list" },
+      { to: "/plans", label: "План-факт" },
+    ],
+  },
+  {
+    // TrueStats «Финансы»
+    label: "Финансы",
+    items: [
+      { to: "/cash-flow", label: "ДДС", directorOrHead: true },
+      { to: "/payment-calendar", label: "Платёжный календарь", directorOrHead: true, bookkeeperOk: true },
+      { to: "/off-platform", label: "Внеплатформенные движения", directorOrHead: true },
+      { to: "/revenue-corrections", label: "Корректировки", directorOrHead: true },
+      { to: "/opex", label: "OPEX", directorOrHead: true },
+      { to: "/chargebacks", label: "Чарджбэки WB" },
+      // TASK-LEAD-041: 5 налоговых страниц объединены в одну `/taxes` с табами.
+      { to: "/taxes", label: "Налоги", directorOrHead: true, bookkeeperOk: true },
+    ],
+  },
+  {
+    // TrueStats «Товары»
+    label: "Товары",
+    items: [
+      { to: "/cost-history", label: "Себестоимость" },
+      { to: "/product-groups", label: "Группы товаров" },
+      // ≈ TrueStats «Склады» (остатки по складам — TASK-DEV-044)
+      { to: "/inventory", label: "Капитализация WB" },
+      { to: "/supply", label: "Поставки" },
+      { to: "/supplies", label: "Закупки", directorOrHead: true },
+      { to: "/dimensions-history", label: "Перемерки WB" },
+    ],
+  },
+  {
+    // Наш уникальный блок — сверка с WB-кабинетом (у TrueStats нет)
+    label: "Сверки и аудит",
+    items: [
       { to: "/pnl-reconciliation", label: "Сверка с WB", icon: "check" },
       { to: "/reconciliation-4way", label: "4-way Сверка", icon: "check", directorOrHead: true },
       { to: "/reconciliation-auto", label: "Автосверка с WB ЛК", icon: "check" },
@@ -45,36 +88,24 @@ const GROUPS: Group[] = [
     ],
   },
   {
-    label: "Налоги и деньги",
-    items: [
-      // TASK-LEAD-041: 5 налоговых страниц объединены в одну `/taxes` с табами.
-      // Старые URL делают redirect → bookmark'и работают.
-      { to: "/taxes", label: "Налоги", directorOrHead: true, bookkeeperOk: true },
-      { to: "/cash-flow", label: "ДДС", directorOrHead: true },
-      { to: "/payment-calendar", label: "Платёжный календарь", directorOrHead: true, bookkeeperOk: true },
-      { to: "/inventory", label: "Капитализация WB" },
-      { to: "/off-platform", label: "Внеплатформенные движения", directorOrHead: true },
-      { to: "/tariffs", label: "Тарифы WB" },
-      { to: "/dimensions-history", label: "Перемерки WB" },
-    ],
-  },
-  {
-    label: "SKU и продажи",
+    // Наш блок — глубокая SKU-аналитика
+    label: "SKU-аналитика",
     items: [
       { to: "/units", label: "Юнит-экономика" },
       { to: "/funnel", label: "Воронка" },
       { to: "/unit-plan", label: "Плановая юнит-эк." },
       { to: "/abc", label: "ABC-анализ" },
-      { to: "/plans", label: "План-Факт" },
       { to: "/season-plan", label: "План сезона", directorOrHead: true },
-      { to: "/supply", label: "Поставки" },
       { to: "/localization", label: "Локализация" },
       { to: "/redistribution", label: "Перераспределение" },
-      { to: "/supplies", label: "Закупки", directorOrHead: true },
-      { to: "/product-groups", label: "Группы" },
-      { to: "/cost-history", label: "Себестоимость" },
       { to: "/new-products", label: "Новинки", directorOrHead: true },
       { to: "/jam", label: "Джем" },
+      { to: "/tariffs", label: "Тарифы WB" },
+    ],
+  },
+  {
+    label: "Калькуляторы",
+    items: [
       { to: "/calc", label: "Калькулятор" },
       { to: "/supply-calculator", label: "Калькулятор поставки" },
       { to: "/transit-calculator", label: "Калькулятор транзита" },
@@ -83,20 +114,13 @@ const GROUPS: Group[] = [
     ],
   },
   {
-    label: "Маркетинг",
+    // TrueStats «РНП» (реклама/продвижение). Модуль РНП / Аналитика РК /
+    // Настройки РНП — TASK-DEV-046.
+    label: "Реклама / РНП",
     items: [
-      { to: "/external-marketing", label: "Внеш. маркетинг", directorOrHead: true },
-      { to: "/ads-heatmap", label: "Реклама heatmap" },
+      { to: "/ads-heatmap", label: "Тепловая карта" },
       { to: "/abtest", label: "A/B тесты" },
-    ],
-  },
-  {
-    label: "Расходы",
-    items: [
-      { to: "/opex", label: "OPEX", directorOrHead: true },
-      { to: "/revenue-corrections", label: "Корректировки", directorOrHead: true },
-      { to: "/chargebacks", label: "Чарджбэки WB" },
-      { to: "/brands", label: "Бренды", directorOrHead: true },
+      { to: "/external-marketing", label: "Внеш. маркетинг", directorOrHead: true },
     ],
   },
   {
@@ -106,6 +130,7 @@ const GROUPS: Group[] = [
       { to: "/weekly-report", label: "Еженедельный отчёт" },
       { to: "/notifications", label: "Уведомления", directorOrHead: true },
       { to: "/checklist", label: "Чек-лист" },
+      { to: "/brands", label: "Бренды", directorOrHead: true },
     ],
   },
   {
