@@ -13,6 +13,7 @@ celery_app = Celery(
         "app.sync.tasks_tariffs",
         "app.sync.tasks_prices",
         "app.sync.tasks_promotions",
+        "app.sync.tasks_card_prices",
         "app.sync.tasks_funnel",
         "app.sync.tasks_product_volume",
         "app.sync.tasks_scoreboard",
@@ -131,10 +132,12 @@ celery_app.conf.update(
             "task": "app.sync.tasks.sync_stocks",
             "schedule": crontab(hour="6,18", minute=30),
         },
-        # report_detail: once daily at 04:15 MSK (covers yesterday's closed rows)
-        "sync-report-detail-daily": {
+        # report_detail: каждые 3 часа (covers recent closed rows). WB публикует
+        # недельный фин-отчёт с лагом — частый sync подхватывает свежие rr_dt
+        # быстрее (раньше был 1×/день 04:15 → отставали от ЛК на 2-3 дня).
+        "sync-report-detail-3h": {
             "task": "app.sync.tasks.sync_report_detail",
-            "schedule": crontab(hour=4, minute=15),
+            "schedule": crontab(hour="0,3,6,9,12,15,18,21", minute=15),
         },
         # Weekly safety net for the reconciliation page: the daily task only
         # refreshes recent rows, while this keeps the 12-week history populated
@@ -331,6 +334,13 @@ celery_app.conf.update(
         "sync-promotions-daily": {
             "task": "sync.promotions",
             "schedule": crontab(hour=8, minute=30),
+        },
+        # --- WB card prices / СПП (TASK-DEV-037 ph3) ---
+        # Ежедневно 05:15 МСК — реальная цена покупателя с СПП из card.wb.ru
+        # (публичный, без токена). Источник для реального СПП в /unit-plan.
+        "sync-card-prices-daily": {
+            "task": "sync.card_prices",
+            "schedule": crontab(hour=5, minute=15),
         },
         # --- WB Funnel Daily (TASK-LEAD-153) ---
         # Ежедневно 06:00 МСК (после orders/sales sync) — тянет per-day

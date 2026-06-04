@@ -97,7 +97,14 @@ DEFAULT_THRESHOLDS = {
 
 
 async def _thresholds(session: AsyncSession) -> dict[str, float]:
-    rows = (await session.execute(select(AppSetting))).scalars().all()
+    # AppSetting не tenant-scoped миксином → фильтруем по активному тенанту.
+    from app.services.tenant_context import get_tenant  # noqa: WPS433
+
+    stmt = select(AppSetting)
+    tid = get_tenant(session)
+    if tid is not None:
+        stmt = stmt.where(AppSetting.tenant_id == tid)
+    rows = (await session.execute(stmt)).scalars().all()
     cfg = {r.key: r.value or "" for r in rows}
     out = dict(DEFAULT_THRESHOLDS)
     for k in DEFAULT_THRESHOLDS:

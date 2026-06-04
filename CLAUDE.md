@@ -102,7 +102,7 @@ frontend/src/      api/client.ts, contexts/AuthContext, components/Layout, pages
 docker-compose.yml · .env(.example) · .claude/settings.json (permissions)
 ```
 
-## Миграции БД (63 шт., 0001-0063)
+## Миграции БД (69 шт., 0001-0069)
 
 > **Полный список с деталями — [`FEATURES.md`](FEATURES.md) → «Миграции».** Здесь
 > — одна строка на миграцию. Новую миграцию добавляй и сюда (1 строка), и в FEATURES (детали).
@@ -137,6 +137,7 @@ docker-compose.yml · .env(.example) · .claude/settings.json (permissions)
 | 0063 | **wb_product_dimensions_history** + products.length/width/height_cm — tracking перемерок WB (TG-alert при diff) |
 | 0064-0067 | extension_recon_uploads (+per_report/extra) / wb_funnel_daily (Воронка из Analytics API) |
 | 0068 | **wb_promotion** + **wb_promotion_nomenclature** — кэш акций WB-календаря (sync 08:30, source=wb/excel). /promo-calculator-wb читает из БД, не дёргает WB каждый заход |
+| 0069 | **wb_card_price** — реальная витринная цена покупателя с СПП из публичного card.wb.ru/cards/v4 (без токена, sync 05:15, composite PK tenant+nm). observed_spp_pct=(1−buyer/basic)×100 → /unit-plan СПП авто-подтяжка (override>observed>subject>default) |
 
 ## Роли и RBAC
 
@@ -341,7 +342,8 @@ Multi-recipient broadcast — `services/tg_broadcast.broadcast_to_directors`
 13. **WB CDN мигрировал на `wbbasket.ru`** (2026-04..05). `_wb_photo_urls` пробует новый, потом старый `wb.ru`.
 14. **`WbSale.commission_percent` пустой** — реальную комиссию считаем из `wb_report_detail`: `(retail_with_disc − ppvz)/retail × 100` (`unit_economics.py:commission_by_nm`).
 15. **`sync_ad_stats` default `days_back=60`** — иначе дыра в рекламе для периодов >30 дней назад.
-16. **Self-recovery после reboot**: все 9 сервисов `restart: unless-stopped`; pgdata/redisdata (AOF+RDB, критично для Celery queue)/abtest_photos — named volumes; acks_late+reject_on_worker_lost; WB-токены Fernet в `tenants.wb_token`; sync state в Postgres; release-lock в git-ветке (не зависит от сервера).
+16. **`AppSetting` (`settings`) — НЕ `TenantScopedMixin`** (composite PK tenant_id+key). Глобальный tenant-фильтр `do_orm_execute` на неё НЕ распространяется → `select(AppSetting)` без явного `.where(tenant_id==...)` тянет настройки ВСЕХ кабинетов, dict схлопывается по key (выигрывает произвольный tenant). Был баг: чужой `tax_rate=1.0`/`usn_income` перетирал Onyx `8.0`/`ausn_income` → налог занижен ×8, прибыль завышена. Загрузчики (`pnl_builder._settings`, `settings_timeline.load_static_settings`, `anomaly._thresholds`, `calc`, `excel_io`) фильтруют по `get_tenant(session)`. Новые читатели AppSetting — тоже ОБЯЗАНЫ фильтровать по tenant.
+17. **Self-recovery после reboot**: все 9 сервисов `restart: unless-stopped`; pgdata/redisdata (AOF+RDB, критично для Celery queue)/abtest_photos — named volumes; acks_late+reject_on_worker_lost; WB-токены Fernet в `tenants.wb_token`; sync state в Postgres; release-lock в git-ветке (не зависит от сервера).
 
 ## Release-цикл (после каждой фичи, без отдельного запроса)
 

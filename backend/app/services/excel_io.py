@@ -576,9 +576,13 @@ async def _import_tariffs(
 
 
 async def _export_settings(session: AsyncSession) -> list[list[Any]]:
-    rows = (await session.execute(
-        select(AppSetting).order_by(AppSetting.key)
-    )).scalars().all()
+    # AppSetting не tenant-scoped миксином → фильтруем по активному тенанту,
+    # иначе экспорт смешает настройки разных кабинетов.
+    stmt = select(AppSetting).order_by(AppSetting.key)
+    tid = get_tenant(session)
+    if tid is not None:
+        stmt = stmt.where(AppSetting.tenant_id == tid)
+    rows = (await session.execute(stmt)).scalars().all()
     return [[r.key, r.value] for r in rows]
 
 

@@ -101,7 +101,17 @@ def make_lookup(
 
 
 async def load_static_settings(session: AsyncSession) -> dict[str, str]:
-    rows = (await session.execute(select(AppSetting))).scalars().all()
+    # AppSetting НЕ TenantScopedMixin → глобальный tenant-фильтр (do_orm_execute)
+    # на неё НЕ распространяется. Без явного фильтра `select(AppSetting)` тянет
+    # настройки ВСЕХ кабинетов, и dict схлопывается по key (выигрывает
+    # произвольный tenant) — так чужой tax_rate/tax_system перетирал наш.
+    from app.services.tenant_context import get_tenant  # noqa: WPS433
+
+    stmt = select(AppSetting)
+    tid = get_tenant(session)
+    if tid is not None:
+        stmt = stmt.where(AppSetting.tenant_id == tid)
+    rows = (await session.execute(stmt)).scalars().all()
     return {r.key: (r.value or "") for r in rows}
 
 

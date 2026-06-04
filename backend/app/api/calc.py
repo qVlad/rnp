@@ -44,7 +44,13 @@ async def list_categories(session: AsyncSession = Depends(get_db_tenant_scoped))
 @router.get("/defaults")
 async def calc_defaults(session: AsyncSession = Depends(get_db_tenant_scoped)) -> dict[str, Any]:
     """Return the user's tax/VAT settings so the calculator can pre-fill them."""
-    rows = (await session.execute(select(AppSetting))).scalars().all()
+    from app.services.tenant_context import get_tenant  # noqa: WPS433
+
+    stmt = select(AppSetting)
+    tid = get_tenant(session)
+    if tid is not None:
+        stmt = stmt.where(AppSetting.tenant_id == tid)
+    rows = (await session.execute(stmt)).scalars().all()
     cfg = {r.key: r.value or "" for r in rows}
 
     def _f(v: Any, d: float = 0) -> float:

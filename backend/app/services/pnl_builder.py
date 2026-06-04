@@ -226,7 +226,15 @@ def _bucket_key(d: date, granularity: Granularity) -> tuple[date, date]:
 
 
 async def _settings(session: AsyncSession) -> dict[str, str]:
-    rows = (await session.execute(select(AppSetting))).scalars().all()
+    # AppSetting НЕ tenant-scoped миксином → фильтруем по активному тенанту явно
+    # (иначе настройки чужих кабинетов перетирают наши — баг занижения налога).
+    from app.services.tenant_context import get_tenant  # noqa: WPS433
+
+    stmt = select(AppSetting)
+    tid = get_tenant(session)
+    if tid is not None:
+        stmt = stmt.where(AppSetting.tenant_id == tid)
+    rows = (await session.execute(stmt)).scalars().all()
     return {r.key: r.value or "" for r in rows}
 
 
