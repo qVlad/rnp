@@ -102,7 +102,7 @@ frontend/src/      api/client.ts, contexts/AuthContext, components/Layout, pages
 docker-compose.yml · .env(.example) · .claude/settings.json (permissions)
 ```
 
-## Миграции БД (69 шт., 0001-0069)
+## Миграции БД (70 шт., 0001-0070)
 
 > **Полный список с деталями — [`FEATURES.md`](FEATURES.md) → «Миграции».** Здесь
 > — одна строка на миграцию. Новую миграцию добавляй и сюда (1 строка), и в FEATURES (детали).
@@ -138,6 +138,7 @@ docker-compose.yml · .env(.example) · .claude/settings.json (permissions)
 | 0064-0067 | extension_recon_uploads (+per_report/extra) / wb_funnel_daily (Воронка из Analytics API) |
 | 0068 | **wb_promotion** + **wb_promotion_nomenclature** — кэш акций WB-календаря (sync 08:30, source=wb/excel). /promo-calculator-wb читает из БД, не дёргает WB каждый заход |
 | 0069 | **wb_card_price** — реальная витринная цена покупателя с СПП из публичного card.wb.ru/cards/v4 (без токена, sync 05:15, composite PK tenant+nm). observed_spp_pct=(1−buyer/basic)×100 → /unit-plan СПП авто-подтяжка (override>observed>subject>default) |
+| 0070 | **finance_reference** — справочники операций (TASK-DEV-043): свои статьи расходов / контрагенты / счета (ref_type+name+extra JSONB). UI `/finance-extras`, CRUD `/api/finance-reference` |
 
 ## Роли и RBAC
 
@@ -216,6 +217,7 @@ fallback (первый по `last_active_at DESC NULLS LAST`). Forbidden tenant 
 | `/api/transit-tariffs/*` | tenant (list/lookup), director_or_head (upload) | Тарифы транзита из ЛК (миграция 0059, поставляет extension) |
 | `/api/promo-calculator/simulate` | brands-filter | Калькулятор рентабельности WB-акций (baseline из wb_report_detail) |
 | `/api/leak-report` | director_or_head | Аудит-артефакт «найдено N₽» (5 источников + recon trust-badge) |
+| `/api/deductions`, `/operations`, `/stocks/by-warehouse`, `/ad-campaigns/analytics`, `/business-summary`, `/finance-reference` | director_or_head | TrueStats-разделы (TASK-DEV-039..046): Прочие удержания / Операции / Склады / Аналитика РК / Сводный по бизнесу / справочники. `api/finance_extra.py` |
 | `/api/version`, `/whoami`, `/health` | публ. | служебные |
 
 ## Инварианты корректности (НЕ нарушать)
