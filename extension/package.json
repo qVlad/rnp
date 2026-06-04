@@ -1,6 +1,6 @@
 {
   "name": "rnp-extension",
-  "version": "0.61.0",
+  "version": "0.62.0",
   "private": true,
   "description": "Browser extension for РНП — A/B testing of Wildberries product cards (companion to rnp service)",
   "type": "module",

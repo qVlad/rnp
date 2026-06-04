@@ -123,6 +123,7 @@ const GROUPS: Group[] = [
     // Настройки РНП — TASK-DEV-046.
     label: "Реклама / РНП",
     items: [
+      { to: "/rnp-module", label: "Модуль РНП" },
       { to: "/ad-campaigns", label: "Аналитика РК", directorOrHead: true },
       { to: "/ads-heatmap", label: "Тепловая карта" },
       { to: "/abtest", label: "A/B тесты" },
