@@ -263,7 +263,9 @@ async def summary_report(
     for r in rows:
         nm = int(r.nm_id)
         sales = _f(r.sales)
-        cogs = cogs_map.get(nm, 0.0) * int(r.sold)
+        # net-выкупы (Продажа − Возврат) — как TS totalSales; COGS на них же.
+        net_sold = int(r.sold) - int(r.ret)
+        cogs = cogs_map.get(nm, 0.0) * net_sold
         ad = ad_map.get(nm, 0.0)
         tax = sales * tax_rate / 100.0
         # прибыль = к перечислению − логистика − хранение − COGS − налог − реклама
@@ -285,7 +287,7 @@ async def summary_report(
             "cogs": round(cogs, 2),
             "ad": round(ad, 2),
             "tax": round(tax, 2),
-            "sold": int(r.sold),
+            "sold": net_sold,
             "returned": int(r.ret),
             "profit": round(profit, 2),
             "margin_pct": round(profit / sales * 100, 2) if sales > 0 else 0.0,
