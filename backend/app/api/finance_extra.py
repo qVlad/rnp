@@ -38,6 +38,9 @@ router = APIRouter(tags=["finance-extra"])
 
 # Типы операций report_detail, которые НЕ продажа/возврат — «прочие удержания».
 _SALE_RETURN = ("Продажа", "Возврат")
+# Core-операции, которые в TrueStats идут отдельными строками P&L и НЕ входят
+# в «Прочие удержания» (логистика/хранение — отдельно, комиссия — в Продаже).
+_CORE_OPS = ("Продажа", "Возврат", "Логистика", "Хранение")
 
 
 def _date_col(reporting_mode: str):
@@ -251,20 +254,26 @@ async def get_deductions(
     reporting_mode: Annotated[str, Query()] = "financial",
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
-    """Разбивка удержаний WB по типам операций за период."""
+    """«Прочие удержания» — ТОЛЬКО non-core удержания/доплаты (штрафы, удержания,
+    приёмка, доплаты/возмещения, Джем/транзит). По доке TrueStats сюда НЕ входят
+    логистика / хранение / комиссия — они отдельными строками P&L. Поэтому
+    исключаем операции Продажа/Возврат/Логистика/Хранение."""
     dcol = _date_col(reporting_mode)
     rows = (
         await session.execute(
             select(
                 WbReportDetail.supplier_oper_name.label("op"),
                 func.count().label("n"),
-                func.coalesce(func.sum(WbReportDetail.delivery_rub), 0).label("delivery"),
-                func.coalesce(func.sum(WbReportDetail.storage_fee), 0).label("storage"),
                 func.coalesce(func.sum(WbReportDetail.penalty), 0).label("penalty"),
                 func.coalesce(func.sum(WbReportDetail.deduction), 0).label("deduction"),
-                func.coalesce(func.sum(WbReportDetail.acquiring_fee), 0).label("acquiring"),
+                func.coalesce(func.sum(WbReportDetail.paid_acceptance), 0).label("acceptance"),
+                func.coalesce(func.sum(WbReportDetail.additional_payment), 0).label("additional"),
             )
-            .where(func.date(dcol) >= start_date, func.date(dcol) <= end_date)
+            .where(
+                func.date(dcol) >= start_date,
+                func.date(dcol) <= end_date,
+                WbReportDetail.supplier_oper_name.notin_(_CORE_OPS),
+            )
             .group_by(WbReportDetail.supplier_oper_name)
         )
     ).all()
@@ -274,18 +283,18 @@ async def get_deductions(
 
     items = []
     for r in rows:
-        amount = _f(r.delivery) + _f(r.storage) + _f(r.penalty) + _f(r.deduction) + _f(r.acquiring)
-        # Для продажи/возврата суммы удержаний считаем по их компонентам, но в
-        # «прочие удержания» показываем не-торговые операции отдельно.
+        # net-удержание: штраф + удержание + приёмка − доплаты/возмещения от WB.
+        amount = _f(r.penalty) + _f(r.deduction) + _f(r.acceptance) - _f(r.additional)
+        if abs(amount) < 0.005 and int(r.n) == 0:
+            continue
         items.append(
             {
                 "operation": r.op,
                 "count": int(r.n),
-                "delivery": _f(r.delivery),
-                "storage": _f(r.storage),
                 "penalty": _f(r.penalty),
                 "deduction": _f(r.deduction),
-                "acquiring": _f(r.acquiring),
+                "acceptance": _f(r.acceptance),
+                "additional": _f(r.additional),
                 "total": round(amount, 2),
             }
         )

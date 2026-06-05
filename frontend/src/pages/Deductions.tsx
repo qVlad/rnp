@@ -20,7 +20,7 @@ export default function Deductions() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Прочие удержания"
-        subtitle="Удержания WB по типам операций за период (логистика, хранение, штрафы, удержания, эквайринг). По дате отчёта (rr_dt)."
+        subtitle="Non-core удержания WB: штрафы, удержания, платная приёмка, доплаты/возмещения (Джем, транзит). Логистика/хранение/комиссия — отдельными строками, сюда НЕ входят. По дате отчёта (rr_dt)."
       />
       <DateRangePicker
         from={range.from}
@@ -35,11 +35,10 @@ export default function Deductions() {
               <tr className="text-left text-muted border-b border-border">
                 <th className="p-2">Операция</th>
                 <th className="p-2 text-right">Кол-во</th>
-                <th className="p-2 text-right">Логистика</th>
-                <th className="p-2 text-right">Хранение</th>
                 <th className="p-2 text-right">Штраф</th>
                 <th className="p-2 text-right">Удержание</th>
-                <th className="p-2 text-right">Эквайринг</th>
+                <th className="p-2 text-right">Приёмка</th>
+                <th className="p-2 text-right">Доплаты/возмещ.</th>
                 <th className="p-2 text-right">Итого</th>
               </tr>
             </thead>
@@ -48,18 +47,20 @@ export default function Deductions() {
                 <tr key={x.operation} className="border-b border-border/50 hover:bg-soft/40">
                   <td className="p-2">{x.operation}</td>
                   <td className="p-2 text-right">{fmtNum(x.count)}</td>
-                  <td className="p-2 text-right">{fmtRub(x.delivery)}</td>
-                  <td className="p-2 text-right">{fmtRub(x.storage)}</td>
                   <td className="p-2 text-right">{fmtRub(x.penalty)}</td>
                   <td className="p-2 text-right">{fmtRub(x.deduction)}</td>
-                  <td className="p-2 text-right">{fmtRub(x.acquiring)}</td>
+                  <td className="p-2 text-right">{fmtRub(x.acceptance)}</td>
+                  <td className="p-2 text-right">{fmtRub(x.additional)}</td>
                   <td className="p-2 text-right font-medium">{fmtRub(x.total)}</td>
                 </tr>
               ))}
+              {q.data.items.length === 0 && (
+                <tr><td colSpan={7} className="p-4 text-center text-muted">Прочих удержаний за период нет.</td></tr>
+              )}
             </tbody>
             <tfoot>
               <tr className="border-t border-border font-semibold">
-                <td className="p-2" colSpan={7}>Всего удержаний</td>
+                <td className="p-2" colSpan={6}>Всего прочих удержаний</td>
                 <td className="p-2 text-right">{fmtRub(q.data.total)}</td>
               </tr>
             </tfoot>
