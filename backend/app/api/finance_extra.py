@@ -349,11 +349,18 @@ _PLAN_METRICS = {
 
 
 async def _plan_fact_values(session: AsyncSession, started: date, finished: date) -> dict[str, float]:
-    """KPI-значения (факт) за период плана — через dashboard-движок (final/financial)."""
-    d = await compute_dashboard(
-        session, period_from_range(started, finished), mode="final", reporting_mode="financial"
-    )
-    return {k["key"]: k.get("value") for k in d.get("kpis", [])}
+    """KPI-факт за период плана. Заказы/выручка-заказов/выкуп% — preliminary (по
+    order_dt, как TS «Заказы»=ordersCount); прибыль/маржа/ДРР/возвраты — final
+    (financial/rr_dt). DEV-053."""
+    period = period_from_range(started, finished)
+    fin = await compute_dashboard(session, period, mode="final", reporting_mode="financial")
+    pre = await compute_dashboard(session, period, mode="preliminary")
+    fmap = {k["key"]: k.get("value") for k in fin.get("kpis", [])}
+    pmap = {k["key"]: k.get("value") for k in pre.get("kpis", [])}
+    for k in ("orders", "revenue_gross", "buyout_pct"):
+        if pmap.get(k) is not None:
+            fmap[k] = pmap[k]
+    return fmap
 
 
 @router.get("/api/metric-plans", dependencies=[Depends(require_director_or_head)])
