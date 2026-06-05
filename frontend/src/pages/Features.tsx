@@ -112,6 +112,27 @@ export default function Features() {
     return () => window.removeEventListener("scroll", onScroll);
   }, [headings]);
 
+  // Deep-link: при загрузке (или смене hash) прокручиваем к якорю из URL —
+  // чтобы ссылка /features#<раздел> вела прямо в нужную функцию.
+  useEffect(() => {
+    if (!data) return;
+    const scrollToHash = () => {
+      const hash = decodeURIComponent(window.location.hash.replace(/^#/, ""));
+      if (!hash) return;
+      const el = document.getElementById(hash);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+        setActiveId(hash);
+      }
+    };
+    const t = setTimeout(scrollToHash, 150);
+    window.addEventListener("hashchange", scrollToHash);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("hashchange", scrollToHash);
+    };
+  }, [data]);
+
   return (
     <div className="flex flex-col lg:flex-row gap-4">
       <aside className="lg:w-72 flex-shrink-0">

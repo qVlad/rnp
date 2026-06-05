@@ -334,8 +334,18 @@ export default function MarkdownLite({ source }: { source: string }) {
                     : "text-base font-semibold mt-2 mb-0.5";
             const Tag = `h${b.level}` as keyof JSX.IntrinsicElements;
             return (
-              <Tag key={idx} id={b.id} className={sizeCls}>
+              <Tag key={idx} id={b.id} className={`group scroll-mt-20 ${sizeCls}`}>
                 {renderInline(b.text, `h${idx}`)}
+                {b.level >= 2 && b.id && (
+                  <a
+                    href={`#${b.id}`}
+                    className="ml-2 align-middle opacity-0 group-hover:opacity-60 hover:!opacity-100 text-accent text-sm no-underline"
+                    title="Прямая ссылка на этот раздел"
+                    aria-label="Ссылка на раздел"
+                  >
+                    #
+                  </a>
+                )}
               </Tag>
             );
           }
