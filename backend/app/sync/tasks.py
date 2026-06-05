@@ -1585,15 +1585,16 @@ async def _sync_ad_stats_async(tenant_id: int, days_back: int = 60) -> int:
         values = deduped
 
         if values:
-            # Replace rows in (advert_id, date) range to keep idempotency.
-            # Only delete when we have new data — an empty values list means
-            # every chunk was rejected (cooldown or WB error), and we don't
-            # want to wipe yesterday's good data on today's failed sync.
+            # Replace rows ТОЛЬКО за даты, которые реально перезагрузили. Раньше
+            # удаляли весь [start, end] и вставляли успешные чанки — при WB 429 на
+            # свежем чанке его данные стирались навсегда (регрессия данных рекламы).
+            # Теперь удаляем только fetched-даты → даты упавшего чанка сохраняют
+            # прежние данные. (TASK-DEV-056)
+            fetched_dates = sorted({v["stat_date"] for v in values})
             try:
                 await session.execute(
                     delete(WbAdStatsDaily).where(
-                        WbAdStatsDaily.stat_date >= start,
-                        WbAdStatsDaily.stat_date <= end,
+                        WbAdStatsDaily.stat_date.in_(fetched_dates),
                     )
                 )
                 await _bulk_insert(session, WbAdStatsDaily, values)

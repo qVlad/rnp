@@ -27,8 +27,8 @@ export default function SummaryReport() {
         { label: "Продажи (после СПП)", value: fmtRub(t.sales) },
         { label: "К перечислению", value: fmtRub(t.to_transfer) },
         { label: "Себестоимость", value: fmtRub(t.cogs) },
-        { label: "Реклама / Налог", value: `${fmtRub(t.ad)} / ${fmtRub(t.tax)}` },
-        { label: "Прибыль", value: fmtRub(t.profit), sub: "до OPEX" },
+        { label: "Реклама / Налог / OPEX", value: `${fmtRub(t.ad)} / ${fmtRub(t.tax)} / ${fmtRub(t.opex)}` },
+        { label: "Прибыль", value: fmtRub(t.profit), sub: "после OPEX (аллок.)" },
       ]
     : [];
 

@@ -29,6 +29,8 @@ from app.db.models import (
     ManualOperation,
     MetricPlan,
     MetricPlanTarget,
+    OpexCategory,
+    OpexEntry,
     Product,
     WbAdCampaign,
     WbAdStatsDaily,
@@ -260,6 +262,25 @@ async def summary_report(
         tr_stmt = tr_stmt.where(AppSetting.tenant_id == tid)
     tax_rate = float((await session.execute(tr_stmt)).scalar() or 0)
 
+    # Компанейский OPEX (операционный) за период → аллокация по SKU пропорц.
+    # реализации (как TS распределяет expense на товары). DEV-052.
+    opex_total = float(
+        (
+            await session.execute(
+                select(func.coalesce(func.sum(OpexEntry.amount), 0))
+                .join(OpexCategory, OpexEntry.category_id == OpexCategory.id)
+                .where(
+                    OpexEntry.entry_date >= start_date,
+                    OpexEntry.entry_date <= end_date,
+                    OpexCategory.kind == "expense",
+                    OpexCategory.in_operating.is_(True),
+                )
+            )
+        ).scalar()
+        or 0
+    )
+    total_realisation = sum(float(r.realisation or 0) for r in rows) or 1.0
+
     def _f(v: Any) -> float:
         return float(v or 0)
 
@@ -272,8 +293,9 @@ async def summary_report(
         cogs = cogs_map.get(nm, 0.0) * net_sold
         ad = ad_map.get(nm, 0.0)
         tax = sales * tax_rate / 100.0
-        # прибыль = к перечислению − логистика − хранение − COGS − налог − реклама
-        profit = _f(r.to_transfer) - _f(r.logistics) - _f(r.storage) - cogs - tax - ad
+        opex = opex_total * (_f(r.realisation) / total_realisation)
+        # прибыль = к перечислению − логистика − хранение − COGS − налог − реклама − OPEX
+        profit = _f(r.to_transfer) - _f(r.logistics) - _f(r.storage) - cogs - tax - ad - opex
         p = prod_map.get(nm)
         items.append({
             "nm_id": nm,
@@ -291,6 +313,7 @@ async def summary_report(
             "cogs": round(cogs, 2),
             "ad": round(ad, 2),
             "tax": round(tax, 2),
+            "opex": round(opex, 2),
             "sold": net_sold,
             "returned": int(r.ret),
             "profit": round(profit, 2),
@@ -305,6 +328,7 @@ async def summary_report(
         "cogs": round(sum(x["cogs"] for x in items), 2),
         "ad": round(sum(x["ad"] for x in items), 2),
         "tax": round(sum(x["tax"] for x in items), 2),
+        "opex": round(sum(x["opex"] for x in items), 2),
         "profit": round(sum(x["profit"] for x in items), 2),
         "sold": sum(x["sold"] for x in items),
     }
