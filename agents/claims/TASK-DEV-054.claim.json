@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-DEV-054",
-  "agent": "Claude Opus 4.8 — main session",
-  "started_at": "2026-06-05T10:15:13Z",
-  "expected_minutes": 25,
-  "notes": "ДДС-обязательства: is_planned на ManualOperation (миграция 0073)"
-}
