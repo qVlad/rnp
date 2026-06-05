@@ -1,0 +1,7 @@
+{
+  "task_id": "TASK-DEV-050",
+  "agent": "Claude Opus 4.8 — main session",
+  "started_at": "2026-06-05T08:47:44Z",
+  "expected_minutes": 30,
+  "notes": "План-факт TS-копия (метрики, миграция 0072)"
+}
