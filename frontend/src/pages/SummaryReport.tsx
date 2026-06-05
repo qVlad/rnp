@@ -34,6 +34,7 @@ export default function SummaryReport() {
         { label: "Реклама / ДРР", value: `${fmtRub(t.ad)} / ${fmtPct(t.drr_pct)}` },
         { label: "Хранение", value: fmtRub(t.storage) },
         { label: "Прочие удержания", value: fmtRub(t.deductions) },
+        { label: "Штрафы", value: fmtRub(t.fines) },
         { label: "ROI", value: fmtPct(t.roi_pct) },
         { label: "Себестоимость продаж", value: fmtRub(t.cogs) },
         { label: "Операционные расходы", value: fmtRub(t.opex) },
@@ -115,7 +116,7 @@ export default function SummaryReport() {
             </table>
           </div>
           <div className="text-xs text-muted">
-            Прибыль — до операционных расходов (OPEX). Реклама из WB advert API.
+            Прибыль = к перечислению − логистика − хранение − COGS − налог − реклама − OPEX − прочие удержания (как TrueStats; штрафы вычитаются отдельной строкой, не входят в прибыль). «Прибыль без опер. расх.» — без OPEX. Реклама из WB advert API. Заказы/% выкупа — по дате заказа (полный wb_orders при неполном funnel).
           </div>
         </>
       )}

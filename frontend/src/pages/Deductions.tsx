@@ -20,7 +20,7 @@ export default function Deductions() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Прочие удержания"
-        subtitle="Non-core удержания WB: штрафы, удержания, платная приёмка, доплаты/возмещения (Джем, транзит). Логистика/хранение/комиссия — отдельными строками, сюда НЕ входят. По дате отчёта (rr_dt)."
+        subtitle="Non-core удержания WB: удержания, платная приёмка, доплаты/возмещения (Джем, транзит). Штрафы выделены отдельно и НЕ входят в «Прочие удержания» (как в TrueStats). Логистика/хранение/комиссия — отдельными строками. По дате отчёта (rr_dt)."
       />
       <DateRangePicker
         from={range.from}
@@ -28,6 +28,22 @@ export default function Deductions() {
         onChange={(r) => setPeriod({ kind: "custom", from: r.from, to: r.to })}
       />
       {q.isLoading && <div className="text-muted text-sm">Загружаю…</div>}
+      {q.data && (
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <div className="card p-3">
+            <div className="text-xs text-muted">Прочие удержания (без штрафов)</div>
+            <div className="text-base font-semibold mt-1">{fmtRub(q.data.total)}</div>
+          </div>
+          <div className="card p-3">
+            <div className="text-xs text-muted">Штрафы</div>
+            <div className="text-base font-semibold mt-1">{fmtRub(q.data.fines_total)}</div>
+          </div>
+          <div className="card p-3">
+            <div className="text-xs text-muted">Итого (с штрафами)</div>
+            <div className="text-base font-semibold mt-1">{fmtRub(q.data.total + q.data.fines_total)}</div>
+          </div>
+        </div>
+      )}
       {q.data && (
         <div className="card overflow-x-auto">
           <table className="w-full text-sm">
@@ -39,7 +55,7 @@ export default function Deductions() {
                 <th className="p-2 text-right">Удержание</th>
                 <th className="p-2 text-right">Приёмка</th>
                 <th className="p-2 text-right">Доплаты/возмещ.</th>
-                <th className="p-2 text-right">Итого</th>
+                <th className="p-2 text-right">Прочие (без штрафа)</th>
               </tr>
             </thead>
             <tbody>
@@ -60,7 +76,9 @@ export default function Deductions() {
             </tbody>
             <tfoot>
               <tr className="border-t border-border font-semibold">
-                <td className="p-2" colSpan={6}>Всего прочих удержаний</td>
+                <td className="p-2" colSpan={2}>Всего</td>
+                <td className="p-2 text-right">{fmtRub(q.data.fines_total)}</td>
+                <td className="p-2" colSpan={3} />
                 <td className="p-2 text-right">{fmtRub(q.data.total)}</td>
               </tr>
             </tfoot>

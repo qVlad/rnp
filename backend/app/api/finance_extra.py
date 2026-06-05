@@ -34,6 +34,7 @@ from app.db.models import (
     Product,
     WbAdCampaign,
     WbAdStatsDaily,
+    WbOrder,
     WbReportDetail,
     WbStockSnapshot,
 )
@@ -289,6 +290,27 @@ async def summary_report(
     )
     total_realisation = sum(float(r.realisation or 0) for r in rows) or 1.0
 
+    # «Прочие удержания» (операционные, БЕЗ штрафов) и «Штрафы» (penalty) за
+    # период — DEV-058. TS вычитает из прибыли операционные удержания
+    # (deduction/приёмка/доплаты), штрафы показывает отдельной строкой и в
+    # прибыль НЕ включает. Делим, аллоцируем prochie по SKU как OPEX.
+    ded_row = (
+        await session.execute(
+            select(
+                func.coalesce(func.sum(WbReportDetail.deduction), 0).label("deduction"),
+                func.coalesce(func.sum(WbReportDetail.paid_acceptance), 0).label("acceptance"),
+                func.coalesce(func.sum(WbReportDetail.additional_payment), 0).label("additional"),
+                func.coalesce(func.sum(WbReportDetail.penalty), 0).label("penalty"),
+            ).where(
+                func.date(dcol) >= start_date,
+                func.date(dcol) <= end_date,
+                WbReportDetail.supplier_oper_name.notin_(_CORE_OPS),
+            )
+        )
+    ).one()
+    prochie_total = float(ded_row.deduction or 0) + float(ded_row.acceptance or 0) + float(ded_row.additional or 0)
+    fines_total = float(ded_row.penalty or 0)
+
     def _f(v: Any) -> float:
         return float(v or 0)
 
@@ -301,9 +323,12 @@ async def summary_report(
         cogs = cogs_map.get(nm, 0.0) * net_sold
         ad = ad_map.get(nm, 0.0)
         tax = sales * tax_rate / 100.0
-        opex = opex_total * (_f(r.realisation) / total_realisation)
-        # прибыль = к перечислению − логистика − хранение − COGS − налог − реклама − OPEX
-        profit = _f(r.to_transfer) - _f(r.logistics) - _f(r.storage) - cogs - tax - ad - opex
+        share = _f(r.realisation) / total_realisation
+        opex = opex_total * share
+        prochie = prochie_total * share
+        # прибыль = к перечислению − логистика − хранение − COGS − налог −
+        # реклама − OPEX − прочие удержания (операционные, БЕЗ штрафов — как TS)
+        profit = _f(r.to_transfer) - _f(r.logistics) - _f(r.storage) - cogs - tax - ad - opex - prochie
         p = prod_map.get(nm)
         items.append({
             "nm_id": nm,
@@ -322,6 +347,7 @@ async def summary_report(
             "ad": round(ad, 2),
             "tax": round(tax, 2),
             "opex": round(opex, 2),
+            "deductions": round(prochie, 2),
             "sold": net_sold,
             "returned": int(r.ret),
             "profit": round(profit, 2),
@@ -330,26 +356,10 @@ async def summary_report(
         })
     items.sort(key=lambda x: x["realisation"], reverse=True)
     # Заказы / % выкупа — preliminary (по order_dt, как TS «Заказы»=ordersCount).
+    # DEV-058: при частичном покрытии funnel compute_dashboard теперь сам
+    # делает fallback на полный wb_orders (фикс _funnel_covers_period).
     pre = await compute_dashboard(session, period_from_range(start_date, end_date), mode="preliminary")
     pmap = {k["key"]: k.get("value") for k in pre.get("kpis", [])}
-    # Прочие удержания (non-core) за период.
-    prochie = float(
-        (
-            await session.execute(
-                select(
-                    func.coalesce(func.sum(WbReportDetail.penalty), 0)
-                    + func.coalesce(func.sum(WbReportDetail.deduction), 0)
-                    + func.coalesce(func.sum(WbReportDetail.paid_acceptance), 0)
-                    + func.coalesce(func.sum(WbReportDetail.additional_payment), 0)
-                ).where(
-                    func.date(dcol) >= start_date,
-                    func.date(dcol) <= end_date,
-                    WbReportDetail.supplier_oper_name.notin_(_CORE_OPS),
-                )
-            )
-        ).scalar()
-        or 0
-    )
 
     def _s(f: str) -> float:
         return round(sum(x[f] for x in items), 2)
@@ -379,7 +389,10 @@ async def summary_report(
         "commission": round(commission_t + acquiring_t, 2),
         "acquiring": acquiring_t,
         "roi_pct": round(profit_t / cogs_t * 100, 2) if cogs_t else 0.0,
-        "deductions": round(prochie, 2),
+        # «Прочие удержания» — операционные (БЕЗ штрафов, вычитаются из прибыли);
+        # «Штрафы» — penalty, отдельной строкой (DEV-058).
+        "deductions": round(prochie_total, 2),
+        "fines": round(fines_total, 2),
         "orders_count": pmap.get("orders"),
         "orders_sum": round(rev_gross, 2),
         "buyout_pct": pmap.get("buyout_pct"),
@@ -635,10 +648,12 @@ async def get_deductions(
     reporting_mode: Annotated[str, Query()] = "financial",
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
-    """«Прочие удержания» — ТОЛЬКО non-core удержания/доплаты (штрафы, удержания,
-    приёмка, доплаты/возмещения, Джем/транзит). По доке TrueStats сюда НЕ входят
-    логистика / хранение / комиссия — они отдельными строками P&L. Поэтому
-    исключаем операции Продажа/Возврат/Логистика/Хранение."""
+    """«Прочие удержания» — non-core удержания/доплаты (удержания, приёмка,
+    доплаты/возмещения, Джем/транзит). По доке TrueStats сюда НЕ входят логистика
+    / хранение / комиссия — отдельными строками P&L. DEV-058: штрафы (penalty)
+    выделены отдельно (`fines`/`fines_total`) и НЕ входят в headline `total` —
+    как в TS, где «Прочие удержания» = операционные удержания без штрафов, а
+    штрафы показываются отдельной строкой и не вычитаются из прибыли с прочими."""
     dcol = _date_col(reporting_mode)
     rows = (
         await session.execute(
@@ -664,24 +679,29 @@ async def get_deductions(
 
     items = []
     for r in rows:
-        # net-удержание: штраф + удержание + приёмка − доплаты/возмещения от WB.
-        amount = _f(r.penalty) + _f(r.deduction) + _f(r.acceptance) - _f(r.additional)
-        if abs(amount) < 0.005 and int(r.n) == 0:
+        # Операционное удержание (БЕЗ штрафов): удержание + приёмка − доплаты.
+        amount = _f(r.deduction) + _f(r.acceptance) - _f(r.additional)
+        fines = _f(r.penalty)
+        if abs(amount) < 0.005 and abs(fines) < 0.005 and int(r.n) == 0:
             continue
         items.append(
             {
                 "operation": r.op,
                 "count": int(r.n),
-                "penalty": _f(r.penalty),
+                "penalty": fines,
                 "deduction": _f(r.deduction),
                 "acceptance": _f(r.acceptance),
                 "additional": _f(r.additional),
+                # «total» — операционное удержание без штрафа (headline TS);
+                # «fines» — штраф отдельно.
                 "total": round(amount, 2),
+                "fines": round(fines, 2),
             }
         )
-    items.sort(key=lambda x: abs(x["total"]), reverse=True)
+    items.sort(key=lambda x: abs(x["total"]) + abs(x["fines"]), reverse=True)
     total = round(sum(x["total"] for x in items), 2)
-    return {"reporting_mode": reporting_mode, "items": items, "total": total}
+    fines_total = round(sum(x["fines"] for x in items), 2)
+    return {"reporting_mode": reporting_mode, "items": items, "total": total, "fines_total": fines_total}
 
 
 @router.get("/api/operations", dependencies=[Depends(require_director_or_head)])

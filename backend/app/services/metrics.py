@@ -135,21 +135,26 @@ class KPI:
 async def _funnel_covers_period(
     session: AsyncSession, period_from: date, period_to: date
 ) -> bool:
-    """Tenant has any `wb_funnel_daily` rows in [from, to] inclusive?
+    """Funnel ПОЛНОСТЬЮ покрывает [from, to] (есть строка на каждый день)?
 
     Используется для решения: брать orders/revenue/buyouts из funnel
     (Analytics API, ВКЛЮЧАЕТ рассрочку — parity с Воронкой ЛК) или fallback
     на wb_orders/wb_sales (Statistics API, без рассрочки). TASK-LEAD-153.
-    Сессия уже tenant-scoped — auto-фильтр через TenantScopedMixin.
+
+    DEV-058: раньше проверяли «есть хоть одна строка» — но funnel синкается
+    только ~14 дней назад (DAYS_BACK), поэтому для периода вроде 18-24.05,
+    где есть лишь 22-24, funnel-сумма теряла 18-21 → заказы 314 вместо 871.
+    Теперь требуем покрытие КАЖДОГО дня; частичное покрытие → fallback на
+    полный wb_orders. Сессия уже tenant-scoped (auto-фильтр через mixin).
     """
     stmt = (
-        select(func.count())
+        select(func.count(func.distinct(func.date(WbFunnelDaily.dt))))
         .select_from(WbFunnelDaily)
         .where(WbFunnelDaily.dt >= period_from, WbFunnelDaily.dt <= period_to)
-        .limit(1)
     )
-    cnt = (await session.execute(stmt)).scalar() or 0
-    return int(cnt) > 0
+    days_present = int((await session.execute(stmt)).scalar() or 0)
+    days_expected = (period_to - period_from).days + 1
+    return days_present >= days_expected
 
 
 async def _orders_aggregate(
