@@ -369,14 +369,15 @@ async def summary_report(
         "opex": opex_t,
         "profit": profit_t,
         "profit_wo_opex": round(profit_t + opex_t, 2),
-        "margin_pct": round(profit_t / sales_t * 100, 2) if sales_t else 0.0,
+        # Маржа = прибыль / реализация (как TS marginality), НЕ /продажи.
+        "margin_pct": round(profit_t / realisation_t * 100, 2) if realisation_t else 0.0,
         "sold": sum(x["sold"] for x in items),
         "returned": sum(x["returned"] for x in items),
         "logistics": logistics_t,
         "storage": storage_t,
-        "commission": commission_t,
+        # «Комиссия» у TS = комиссия WB + эквайринг (подтверждено сверкой).
+        "commission": round(commission_t + acquiring_t, 2),
         "acquiring": acquiring_t,
-        "wb_reward": round(commission_t + acquiring_t + logistics_t + storage_t, 2),
         "roi_pct": round(profit_t / cogs_t * 100, 2) if cogs_t else 0.0,
         "deductions": round(prochie, 2),
         "orders_count": pmap.get("orders"),

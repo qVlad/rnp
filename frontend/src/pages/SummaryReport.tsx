@@ -27,7 +27,7 @@ export default function SummaryReport() {
         { label: "Прибыль без опер. расх.", value: fmtRub(t.profit_wo_opex) },
         { label: "Продажи", value: `${fmtRub(t.sales)} / ${fmtNum(t.sold)} шт` },
         { label: "Реализация", value: fmtRub(t.realisation) },
-        { label: "Итоговое вознаграждение ВБ", value: fmtRub(t.wb_reward) },
+        { label: "К перечислению", value: fmtRub(t.to_transfer) },
         { label: "Заказы", value: `${fmtRub(t.orders_sum)} / ${fmtNum(t.orders_count)} шт` },
         { label: "Процент выкупа", value: fmtPct(t.buyout_pct) },
         { label: "Логистика", value: fmtRub(t.logistics) },
