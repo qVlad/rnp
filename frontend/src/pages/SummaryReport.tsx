@@ -23,12 +23,22 @@ export default function SummaryReport() {
 
   const tiles = t
     ? [
-        { label: "Реализация (до СПП)", value: fmtRub(t.realisation) },
-        { label: "Продажи (после СПП)", value: fmtRub(t.sales) },
-        { label: "К перечислению", value: fmtRub(t.to_transfer) },
-        { label: "Себестоимость", value: fmtRub(t.cogs) },
-        { label: "Реклама / Налог / OPEX", value: `${fmtRub(t.ad)} / ${fmtRub(t.tax)} / ${fmtRub(t.opex)}` },
-        { label: "Прибыль", value: fmtRub(t.profit), sub: "после OPEX (аллок.)" },
+        { label: "Прибыль / Маржа", value: `${fmtRub(t.profit)} / ${fmtPct(t.margin_pct)}` },
+        { label: "Прибыль без опер. расх.", value: fmtRub(t.profit_wo_opex) },
+        { label: "Продажи", value: `${fmtRub(t.sales)} / ${fmtNum(t.sold)} шт` },
+        { label: "Реализация", value: fmtRub(t.realisation) },
+        { label: "Итоговое вознаграждение ВБ", value: fmtRub(t.wb_reward) },
+        { label: "Заказы", value: `${fmtRub(t.orders_sum)} / ${fmtNum(t.orders_count)} шт` },
+        { label: "Процент выкупа", value: fmtPct(t.buyout_pct) },
+        { label: "Логистика", value: fmtRub(t.logistics) },
+        { label: "Реклама / ДРР", value: `${fmtRub(t.ad)} / ${fmtPct(t.drr_pct)}` },
+        { label: "Хранение", value: fmtRub(t.storage) },
+        { label: "Прочие удержания", value: fmtRub(t.deductions) },
+        { label: "ROI", value: fmtPct(t.roi_pct) },
+        { label: "Себестоимость продаж", value: fmtRub(t.cogs) },
+        { label: "Операционные расходы", value: fmtRub(t.opex) },
+        { label: "Налоги", value: fmtRub(t.tax) },
+        { label: "Комиссия", value: fmtRub(t.commission) },
       ]
     : [];
 
@@ -48,12 +58,11 @@ export default function SummaryReport() {
 
       {q.data && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {tiles.map((tile) => (
               <div key={tile.label} className="card p-3">
                 <div className="text-xs text-muted">{tile.label}</div>
-                <div className="text-lg font-semibold mt-1">{tile.value}</div>
-                {tile.sub && <div className="text-[11px] text-muted mt-0.5">{tile.sub}</div>}
+                <div className="text-base font-semibold mt-1">{tile.value}</div>
               </div>
             ))}
           </div>

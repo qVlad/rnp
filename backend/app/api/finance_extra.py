@@ -329,16 +329,60 @@ async def summary_report(
             "roi_pct": round(profit / cogs * 100, 2) if cogs > 0 else 0.0,
         })
     items.sort(key=lambda x: x["realisation"], reverse=True)
+    # Заказы / % выкупа — preliminary (по order_dt, как TS «Заказы»=ordersCount).
+    pre = await compute_dashboard(session, period_from_range(start_date, end_date), mode="preliminary")
+    pmap = {k["key"]: k.get("value") for k in pre.get("kpis", [])}
+    # Прочие удержания (non-core) за период.
+    prochie = float(
+        (
+            await session.execute(
+                select(
+                    func.coalesce(func.sum(WbReportDetail.penalty), 0)
+                    + func.coalesce(func.sum(WbReportDetail.deduction), 0)
+                    + func.coalesce(func.sum(WbReportDetail.paid_acceptance), 0)
+                    + func.coalesce(func.sum(WbReportDetail.additional_payment), 0)
+                ).where(
+                    func.date(dcol) >= start_date,
+                    func.date(dcol) <= end_date,
+                    WbReportDetail.supplier_oper_name.notin_(_CORE_OPS),
+                )
+            )
+        ).scalar()
+        or 0
+    )
+
+    def _s(f: str) -> float:
+        return round(sum(x[f] for x in items), 2)
+
+    realisation_t, sales_t, cogs_t = _s("realisation"), _s("sales"), _s("cogs")
+    logistics_t, storage_t = _s("logistics"), _s("storage")
+    commission_t, acquiring_t = _s("commission"), _s("acquiring")
+    profit_t, opex_t = _s("profit"), _s("opex")
+    rev_gross = pmap.get("revenue_gross") or 0
     tot = {
-        "realisation": round(sum(x["realisation"] for x in items), 2),
-        "sales": round(sum(x["sales"] for x in items), 2),
-        "to_transfer": round(sum(x["to_transfer"] for x in items), 2),
-        "cogs": round(sum(x["cogs"] for x in items), 2),
-        "ad": round(sum(x["ad"] for x in items), 2),
-        "tax": round(sum(x["tax"] for x in items), 2),
-        "opex": round(sum(x["opex"] for x in items), 2),
-        "profit": round(sum(x["profit"] for x in items), 2),
+        "realisation": realisation_t,
+        "sales": sales_t,
+        "to_transfer": _s("to_transfer"),
+        "cogs": cogs_t,
+        "ad": _s("ad"),
+        "tax": _s("tax"),
+        "opex": opex_t,
+        "profit": profit_t,
+        "profit_wo_opex": round(profit_t + opex_t, 2),
+        "margin_pct": round(profit_t / sales_t * 100, 2) if sales_t else 0.0,
         "sold": sum(x["sold"] for x in items),
+        "returned": sum(x["returned"] for x in items),
+        "logistics": logistics_t,
+        "storage": storage_t,
+        "commission": commission_t,
+        "acquiring": acquiring_t,
+        "wb_reward": round(commission_t + acquiring_t + logistics_t + storage_t, 2),
+        "roi_pct": round(profit_t / cogs_t * 100, 2) if cogs_t else 0.0,
+        "deductions": round(prochie, 2),
+        "orders_count": pmap.get("orders"),
+        "orders_sum": round(rev_gross, 2),
+        "buyout_pct": pmap.get("buyout_pct"),
+        "drr_pct": round(_s("ad") / rev_gross * 100, 2) if rev_gross else 0.0,
     }
     return {"reporting_mode": reporting_mode, "tax_rate": tax_rate, "items": items, "totals": tot}
 
