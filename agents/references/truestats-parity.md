@@ -1,0 +1,112 @@
+# TrueStats ↔ РНП — паритет данных (рабочие заметки)
+
+> Цель: сверить наш сервис с TrueStats цифра-к-цифре по кабинету **Onyx** и
+> устранить расхождения. Сессия 2026-06-04…05. Этот файл — чтобы вернуться к
+> незакрытым пунктам (налоговая база, ДДС/План-факт, ad-bonus и т.п.).
+
+## Доступ к TrueStats API (важно)
+
+- Основной `api.truestats.ru` и `api3` — **мертвы/блокируют** датацентровый IP хоста.
+- **Рабочий хост: `api2.truestats.ru`** (его использует зеркало). С хоста доступен.
+- Фронт-зеркало: **`https://mirror-app.truestats.ru`** (когда `app.truestats.ru` лежит).
+- Авторизация: заголовок `x-auth-token` (хранится в localStorage фронта, 120-hex).
+  Креды для логина в зеркало: `altecomllc@yandex.ru` / `p3v-g46-4dD-Tgd`.
+- Кабинет **Onyx = account id 25143**. Фильтр в теле: `filters:{accounts:[25143]}`.
+- Ключевые эндпоинты:
+  - `POST /reporting/main/stats` — плитки Оцифровки/Сводного (realisation, sales,
+    toTransfer, commission, acquiring, logistics, storage, tax, taxBase,
+    wbFinalReward, profit, profitWithoutExpense, advertisingExpenseSum, expense …).
+  - `POST /reporting/main/products` — per-SKU (article, realisation, sales,
+    cost, costOfSales, totalSales, profit, expense, advertisingExpenseSum …).
+  - `POST /reporting/facets` — справочник accounts/brands/categories.
+  - `POST /v1/operation/list` — реестр финопераций (доходы/расходы, OPEX).
+  - `POST /v1/operation/filter-values`, `GET /v1/operation/bill/balance`.
+  - `POST /v1/cashflow/payment-calendar` — ДДС/платёжный календарь.
+  - `POST /plan-fact/list` — План-факт.
+
+## Карта разделов (TS route → наш)
+
+| TS раздел | TS route | Наш |
+|---|---|---|
+| Дашборд | / | / |
+| Сводный отчёт | /week | /summary-report |
+| Сводный по бизнесу | /pnl | /business-summary |
+| Прочие удержания | /other-deductions | /deductions |
+| План-факт | /plan-fact | /plans (TS-копия — TODO) |
+| ДДС | /cash-flow | /cash-flow (TS-копия — TODO) |
+| Операции | /operations-list | /operations |
+| Дополнительно | /operations/category | /finance-extras |
+| Себестоимость | /cost | /cost-history |
+| Группы товаров | /groups | /product-groups |
+| Склады | /warehouses | /stocks |
+| Модуль РНП | /rnp | /rnp-module |
+| Аналитика РК | /rk-efficiency | /ad-campaigns |
+| Тепловая карта | /rnp/heat-map | /ads-heatmap |
+| Настройки РНП | /rnp-settings | Excel-импорт Себестоимости + /settings |
+
+## Результаты сверки (закрытая неделя 12–18.05, режим rr_dt)
+
+**Сходится копейка-в-копейку:** реализация 2 254 937.08, продажи (после СПП)
+1 739 796.19, возвраты 207 129.91, COGS 309 578, эквайринг 70 340.08,
+логистика 304 178.17, хранение 27 138.05, штрафы 50; per-SKU (после фикса)
+реализация/продажи/COGS/выкупы — тоже 1:1.
+
+**Методика-ключ:** TS считает Реализацию/Продажи по **`rr_dt`** (дата отчёта),
+реализация = `retail_price` (до СПП), продажи = `retail_amount` (после СПП).
+
+## Исправленные ошибки (наши)
+- `/deductions` «Прочие удержания» — был scope «все удержания» (441k), стал
+  только non-core (штрафы/удержания/приёмка/доплаты) — как TS (v0.62.1).
+- `/stocks` Склады — протух снапшот (20.05), перезапустил sync (→05.06). ⚠️ beat
+  сток-синка не обновлял ~2 нед при живых orders/sales — **проверить расписание
+  worker-stats** (TODO).
+- `/summary-report` per-SKU — брал из /units (sale_dt) → расход +5%. Сделал
+  отдельный `/api/summary-report` (rr_dt, retail_price, net-COGS) — 1:1 (v0.62.2-3).
+
+## ⏳ Налоговая база (НЕ закрыто — решено оставить нашу)
+
+- TS `taxBase` 1 735 304.31 vs наш `retail_amt_net` 1 739 796.19. **Δ 4 491.88 (0.26%)**.
+- Ни одно поле TS Δ не объясняет. Гипотеза: TS считает базу по **sale_dt**
+  (наш sale_dt-after-СПП = 1 735 018.87 ≈ taxBase, Δ 285). Не подтверждено.
+- `compensation` 1 729.21 = наш зазор по «К перечислению» (TS добавляет
+  компенсацию в `toTransfer`/ppvz; у нас её нет — мелочь, на страницах не видно).
+- **Решение пользователя (2026-06-05): оставить нашу базу** (after-СПП, net по
+  rr_dt — методически верна для АУСН «Доходы»). Вернуться, если понадобится 0.00.
+- Где менять, если решим: `pnl_builder._compute_tax` (`cash_income=retail_amt_net`).
+
+## OPEX из TS (заводим)
+
+TS distribution: по **account (кабинет)** или **brand**, метод `equal`/`proportional`.
+За май у Onyx (account 25143) targeted ровно 2 записи (`/v1/operation/list`):
+- id 514049: **12 000**, «Аренда склада», 15.05, account→Onyx.
+- id 514050: **75 000**, «ФОТ сотрудникам», 15.05, account→Onyx.
+- Σ = **87 000** = TS `expense` Onyx ✅. Остальные 10 записей (419 440 всего) — на
+  другие кабинеты/бренды (INCANTINA/Нетапки/LeymanKids/LeymanDress), к Onyx не относятся.
+- Реклама у TS — **отдельное** поле (`advertisingExpenseSum`, не в `expense`).
+  TS ad Onyx: 24 000 (нед) / 99 108 (май). Наша реальная WB-реклама 25 722/нед
+  (в P&L уже как `ad_cost`). TS ad — ручная (ровные числа), отличается от WB-API.
+- Заводим в наш `/opex`: «Аренда склада» (id 4) 12 000 + «Заработная плата»
+  (id 1, = ФОТ) 75 000, дата 15.05. После этого прибыль Onyx сойдётся (−87 000).
+
+## Остаточные расхождения прибыли (после OPEX) — ВАЖНО, не закрыто
+
+OPEX заведён (2026-06-05): opex_operating Onyx 12-18.05 = 87 000, наша прибыль
+стала **504 704.70**, TS profit **534 515.90** → **наша ниже на 29 811**.
+- До OPEX наша прибыль была 591 705 (выше TS на 57 189). После −87 000 OPEX —
+  ниже на 29 811. Значит **до-OPEX прибыль TS на ~29 811 ВЫШЕ нашей** при том,
+  что реализация/продажи/COGS/комиссия(номинал)/эквайринг/логистика/хранение
+  совпадают копейка-в-копейку. Источник Δ29 811 НЕ найден.
+- Кандидаты на Δ29 811 (проверить): (а) СПП-компенсация (mpDiscount/
+  wbCompensationAmount 515 141) — TS может частично возвращать в прибыль;
+  (б) tax в profitWithoutExpense (включает/нет); (в) commission net vs nominal
+  в формуле прибыли; (г) ad 24 000 vs 25 722.
+- Реклама: TS ручная 24 000 vs наша WB-API 25 722 (Δ~1 722).
+- Налог: Δ 0.26% (база, см. выше).
+- **TODO: разобрать формулу profit/profitWithoutExpense TS (Δ29 811).**
+
+## TODO
+- [ ] ДДС — TS-копия 1:1 (`/v1/cashflow/payment-calendar`).
+- [ ] План-факт — TS-копия 1:1 (`/plan-fact/list`).
+- [ ] Налоговая база (опц.) — выяснить точную формулу TS `taxBase`.
+- [ ] Beat сток-синка — почему не обновлял ~2 недели.
+- [ ] Реклама — выверить ad-bonus / источник (WB-API vs ручной TS).

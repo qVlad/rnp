@@ -307,6 +307,65 @@ async def summary_report(
     return {"reporting_mode": reporting_mode, "tax_rate": tax_rate, "items": items, "totals": tot}
 
 
+@router.get("/api/cashflow-calendar", dependencies=[Depends(require_director_or_head)])
+async def cashflow_calendar(
+    start_date: Annotated[date, Query()],
+    end_date: Annotated[date, Query()],
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """ДДС-копия TrueStats (TASK-DEV-049): дневной календарь движения денег из
+    ручных операций (ManualOperation). Структура как у TS /v1/cashflow/
+    payment-calendar: per-day income/expense/balance/обязательства. Обязательства
+    (planned) пока 0 — у нас нет флага планируемых операций."""
+    rows = (
+        await session.execute(
+            select(
+                ManualOperation.op_date,
+                ManualOperation.direction,
+                func.coalesce(func.sum(ManualOperation.amount), 0).label("amt"),
+            )
+            .where(ManualOperation.op_date >= start_date, ManualOperation.op_date <= end_date)
+            .group_by(ManualOperation.op_date, ManualOperation.direction)
+        )
+    ).all()
+    by_day: dict[str, dict[str, float]] = {}
+    for r in rows:
+        d = r.op_date.isoformat()
+        slot = by_day.setdefault(d, {"income": 0.0, "expense": 0.0})
+        if r.direction == "income":
+            slot["income"] += float(r.amt or 0)
+        else:
+            slot["expense"] += float(r.amt or 0)
+
+    # Полный список дней с накопительным балансом.
+    out = []
+    balance = 0.0
+    cur = start_date
+    from datetime import timedelta as _td
+
+    while cur <= end_date:
+        d = cur.isoformat()
+        slot = by_day.get(d, {"income": 0.0, "expense": 0.0})
+        balance += slot["income"] - slot["expense"]
+        out.append(
+            {
+                "date": d,
+                "income": round(slot["income"], 2),
+                "expense": round(slot["expense"], 2),
+                "balance": round(balance, 2),
+                "obligation_receivable": 0.0,
+                "obligation_payable": 0.0,
+            }
+        )
+        cur = cur + _td(days=1)
+    totals = {
+        "income": round(sum(x["income"] for x in out), 2),
+        "expense": round(sum(x["expense"] for x in out), 2),
+        "balance": round(balance, 2),
+    }
+    return {"data": out, "totals": totals}
+
+
 @router.get("/api/business-summary", dependencies=[Depends(require_director_or_head)])
 async def business_summary(
     start_date: Annotated[date, Query()],

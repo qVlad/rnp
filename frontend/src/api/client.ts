@@ -1295,6 +1295,13 @@ paymentOrderDelete: (payment_order_id: string) =>
     );
   },
 
+  cashflowCalendar: (start: string, end: string) =>
+    request<{ totals: { income: number; expense: number; balance: number };
+      data: Array<{ date: string; income: number; expense: number; balance: number;
+        obligation_receivable: number; obligation_payable: number }> }>(
+      `/api/cashflow-calendar?start_date=${start}&end_date=${end}`,
+    ),
+
   summaryReport: (start: string, end: string, reporting_mode = "financial") =>
     request<{ tax_rate: number; totals: Record<string, number>; items: Array<{
       nm_id: number; vendor_code: string | null; brand: string | null; subject: string | null; photo_url: string | null;
