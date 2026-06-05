@@ -17,12 +17,14 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import func, select, text
+from sqlalchemy import case, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.auth import get_current_user
 
 from app.db.models import (
+    AppSetting,
+    Cogs,
     FinanceReference,
     ManualOperation,
     Product,
@@ -173,6 +175,134 @@ async def delete_manual_operation(
     await session.execute(sa_delete(ManualOperation).where(ManualOperation.id == op_id))
     await session.commit()
     return {"status": "deleted", "id": op_id}
+
+
+@router.get("/api/summary-report", dependencies=[Depends(require_director_or_head)])
+async def summary_report(
+    start_date: Annotated[date, Query()],
+    end_date: Annotated[date, Query()],
+    reporting_mode: Annotated[str, Query()] = "financial",
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Сводный отчёт per-SKU 1:1 с TrueStats (TASK-DEV-039/047): реализация=retail_price
+    (до СПП), продажи=retail_amount (после СПП) по rr_dt, COGS, логистика, прибыль.
+    Раньше брали из /units (sale_dt) — расходилось с TS на per-SKU."""
+    dcol = _date_col(reporting_mode)
+    is_sale = WbReportDetail.supplier_oper_name == "Продажа"
+    is_ret = WbReportDetail.supplier_oper_name == "Возврат"
+
+    def net(col):
+        return func.coalesce(
+            func.sum(case((is_sale, col), else_=0)) - func.sum(case((is_ret, col), else_=0)),
+            0,
+        )
+
+    rows = (
+        await session.execute(
+            select(
+                WbReportDetail.nm_id,
+                net(WbReportDetail.retail_price).label("realisation"),
+                net(WbReportDetail.retail_amount).label("sales"),
+                net(WbReportDetail.ppvz_for_pay).label("to_transfer"),
+                net(WbReportDetail.acquiring_fee).label("acquiring"),
+                func.coalesce(func.sum(case((is_sale, WbReportDetail.quantity), else_=0)), 0).label("sold"),
+                func.coalesce(func.sum(case((is_ret, WbReportDetail.quantity), else_=0)), 0).label("ret"),
+                func.coalesce(func.sum(WbReportDetail.delivery_rub), 0).label("logistics"),
+                func.coalesce(func.sum(WbReportDetail.storage_fee), 0).label("storage"),
+            )
+            .where(func.date(dcol) >= start_date, func.date(dcol) <= end_date, WbReportDetail.nm_id.isnot(None))
+            .group_by(WbReportDetail.nm_id)
+        )
+    ).all()
+
+    nm_ids = [int(r.nm_id) for r in rows]
+    # COGS (последняя себестоимость per nm — после переноса TS она плоская).
+    cogs_map: dict[int, float] = {}
+    if nm_ids:
+        crows = (
+            await session.execute(
+                select(Cogs.nm_id, Cogs.cost_rub, Cogs.packaging_rub, Cogs.fulfillment_rub, Cogs.valid_from)
+                .where(Cogs.nm_id.in_(nm_ids))
+                .order_by(Cogs.nm_id, Cogs.valid_from.desc())
+            )
+        ).all()
+        for c in crows:
+            if int(c.nm_id) not in cogs_map:
+                cogs_map[int(c.nm_id)] = float(c.cost_rub or 0) + float(c.packaging_rub or 0) + float(c.fulfillment_rub or 0)
+    # Реклама per nm.
+    ad_map: dict[int, float] = {}
+    if nm_ids:
+        arows = (
+            await session.execute(
+                select(WbAdStatsDaily.nm_id, func.coalesce(func.sum(WbAdStatsDaily.sum_spent), 0))
+                .where(WbAdStatsDaily.stat_date >= start_date, WbAdStatsDaily.stat_date <= end_date, WbAdStatsDaily.nm_id.isnot(None))
+                .group_by(WbAdStatsDaily.nm_id)
+            )
+        ).all()
+        ad_map = {int(n): float(s or 0) for n, s in arows}
+    # Товары (имена/фото).
+    prod_map: dict[int, Any] = {}
+    if nm_ids:
+        prows = (
+            await session.execute(
+                select(Product.nm_id, Product.vendor_code, Product.brand, Product.subject, Product.photo_url).where(Product.nm_id.in_(nm_ids))
+            )
+        ).all()
+        prod_map = {int(p.nm_id): p for p in prows}
+    # Ставка налога (АУСН доход) из настроек tenant.
+    tid = get_tenant(session)
+    tr_stmt = select(AppSetting.value).where(AppSetting.key == "tax_rate")
+    if tid is not None:
+        tr_stmt = tr_stmt.where(AppSetting.tenant_id == tid)
+    tax_rate = float((await session.execute(tr_stmt)).scalar() or 0)
+
+    def _f(v: Any) -> float:
+        return float(v or 0)
+
+    items = []
+    for r in rows:
+        nm = int(r.nm_id)
+        sales = _f(r.sales)
+        cogs = cogs_map.get(nm, 0.0) * int(r.sold)
+        ad = ad_map.get(nm, 0.0)
+        tax = sales * tax_rate / 100.0
+        # прибыль = к перечислению − логистика − хранение − COGS − налог − реклама
+        profit = _f(r.to_transfer) - _f(r.logistics) - _f(r.storage) - cogs - tax - ad
+        p = prod_map.get(nm)
+        items.append({
+            "nm_id": nm,
+            "vendor_code": p.vendor_code if p else None,
+            "brand": p.brand if p else None,
+            "subject": p.subject if p else None,
+            "photo_url": p.photo_url if p else None,
+            "realisation": round(_f(r.realisation), 2),
+            "sales": round(sales, 2),
+            "to_transfer": round(_f(r.to_transfer), 2),
+            "commission": round(sales - _f(r.to_transfer) - _f(r.acquiring), 2),
+            "acquiring": round(_f(r.acquiring), 2),
+            "logistics": round(_f(r.logistics), 2),
+            "storage": round(_f(r.storage), 2),
+            "cogs": round(cogs, 2),
+            "ad": round(ad, 2),
+            "tax": round(tax, 2),
+            "sold": int(r.sold),
+            "returned": int(r.ret),
+            "profit": round(profit, 2),
+            "margin_pct": round(profit / sales * 100, 2) if sales > 0 else 0.0,
+            "roi_pct": round(profit / cogs * 100, 2) if cogs > 0 else 0.0,
+        })
+    items.sort(key=lambda x: x["realisation"], reverse=True)
+    tot = {
+        "realisation": round(sum(x["realisation"] for x in items), 2),
+        "sales": round(sum(x["sales"] for x in items), 2),
+        "to_transfer": round(sum(x["to_transfer"] for x in items), 2),
+        "cogs": round(sum(x["cogs"] for x in items), 2),
+        "ad": round(sum(x["ad"] for x in items), 2),
+        "tax": round(sum(x["tax"] for x in items), 2),
+        "profit": round(sum(x["profit"] for x in items), 2),
+        "sold": sum(x["sold"] for x in items),
+    }
+    return {"reporting_mode": reporting_mode, "tax_rate": tax_rate, "items": items, "totals": tot}
 
 
 @router.get("/api/business-summary", dependencies=[Depends(require_director_or_head)])

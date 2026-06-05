@@ -1295,6 +1295,14 @@ paymentOrderDelete: (payment_order_id: string) =>
     );
   },
 
+  summaryReport: (start: string, end: string, reporting_mode = "financial") =>
+    request<{ tax_rate: number; totals: Record<string, number>; items: Array<{
+      nm_id: number; vendor_code: string | null; brand: string | null; subject: string | null; photo_url: string | null;
+      realisation: number; sales: number; to_transfer: number; commission: number; acquiring: number;
+      logistics: number; storage: number; cogs: number; ad: number; tax: number; sold: number; returned: number;
+      profit: number; margin_pct: number; roi_pct: number;
+    }> }>(`/api/summary-report?start_date=${start}&end_date=${end}&reporting_mode=${reporting_mode}`),
+
   manualOpsList: (start: string, end: string) =>
     request<{ totals: { income: number; expense: number; net: number };
       items: Array<{ id: number; op_date: string; direction: string; amount: number;
