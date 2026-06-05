@@ -27,12 +27,16 @@ from app.db.models import (
     Cogs,
     FinanceReference,
     ManualOperation,
+    MetricPlan,
+    MetricPlanTarget,
     Product,
     WbAdCampaign,
     WbAdStatsDaily,
     WbReportDetail,
     WbStockSnapshot,
 )
+from app.services.metrics import compute_dashboard
+from app.services.periods import period_from_range
 from app.services.tenant_context import get_tenant
 from app.services.auth import get_db_tenant_scoped, require_director_or_head
 
@@ -305,6 +309,103 @@ async def summary_report(
         "sold": sum(x["sold"] for x in items),
     }
     return {"reporting_mode": reporting_mode, "tax_rate": tax_rate, "items": items, "totals": tot}
+
+
+# Метрики, доступные для план-факта (slug = ключ KPI дашборда → человекочит. label).
+_PLAN_METRICS = {
+    "revenue_gross": "Выручка (заказы)",
+    "orders": "Заказы",
+    "returns": "Возвраты",
+    "buyout_pct": "Выкуп %",
+    "net_profit": "Чистая прибыль",
+    "margin_pct": "Маржа %",
+    "drr_pct": "ДРР %",
+    "ad_cost": "Реклама",
+}
+
+
+async def _plan_fact_values(session: AsyncSession, started: date, finished: date) -> dict[str, float]:
+    """KPI-значения (факт) за период плана — через dashboard-движок (final/financial)."""
+    d = await compute_dashboard(
+        session, period_from_range(started, finished), mode="final", reporting_mode="financial"
+    )
+    return {k["key"]: k.get("value") for k in d.get("kpis", [])}
+
+
+@router.get("/api/metric-plans", dependencies=[Depends(require_director_or_head)])
+async def list_metric_plans(
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """План-факт по метрикам (TASK-DEV-050) — копия TrueStats «План-факт»."""
+    plans = (
+        await session.execute(select(MetricPlan).order_by(MetricPlan.started_at.desc()))
+    ).scalars().all()
+    targets_all = (await session.execute(select(MetricPlanTarget))).scalars().all()
+    by_plan: dict[int, list[Any]] = {}
+    for t in targets_all:
+        by_plan.setdefault(t.plan_id, []).append(t)
+
+    items = []
+    for p in plans:
+        fact = await _plan_fact_values(session, p.started_at, p.finished_at)
+        metrics = []
+        for t in by_plan.get(p.id, []):
+            f = fact.get(t.metric_slug)
+            pv = float(t.plan_value or 0)
+            metrics.append({
+                "metric_slug": t.metric_slug,
+                "label": _PLAN_METRICS.get(t.metric_slug, t.metric_slug),
+                "plan": pv,
+                "fact": round(float(f), 2) if f is not None else None,
+                "done_pct": round(float(f) / pv * 100, 1) if (f is not None and pv) else None,
+            })
+        items.append({
+            "id": p.id,
+            "title": p.title,
+            "started_at": p.started_at.isoformat(),
+            "finished_at": p.finished_at.isoformat(),
+            "metrics": metrics,
+        })
+    return {"available_metrics": _PLAN_METRICS, "items": items}
+
+
+@router.post("/api/metric-plans", dependencies=[Depends(require_director_or_head)])
+async def create_metric_plan(
+    payload: dict[str, Any] = Body(...),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    title = str(payload.get("title") or "").strip()
+    if not title:
+        raise HTTPException(400, "title обязателен")
+    try:
+        started = date.fromisoformat(str(payload.get("started_at")))
+        finished = date.fromisoformat(str(payload.get("finished_at")))
+    except Exception:
+        raise HTTPException(400, "started_at/finished_at YYYY-MM-DD обязательны")
+    tid = get_tenant(session)
+    plan = MetricPlan(tenant_id=tid, title=title, started_at=started, finished_at=finished)
+    session.add(plan)
+    await session.flush()
+    for t in payload.get("targets") or []:
+        slug = str(t.get("metric_slug") or "")
+        if slug not in _PLAN_METRICS:
+            continue
+        session.add(MetricPlanTarget(
+            tenant_id=tid, plan_id=plan.id, metric_slug=slug, plan_value=float(t.get("plan_value") or 0),
+        ))
+    await session.commit()
+    return {"id": plan.id}
+
+
+@router.delete("/api/metric-plans/{plan_id}", dependencies=[Depends(require_director_or_head)])
+async def delete_metric_plan(
+    plan_id: int,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    await session.execute(sa_delete(MetricPlanTarget).where(MetricPlanTarget.plan_id == plan_id))
+    await session.execute(sa_delete(MetricPlan).where(MetricPlan.id == plan_id))
+    await session.commit()
+    return {"status": "deleted", "id": plan_id}
 
 
 @router.get("/api/cashflow-calendar", dependencies=[Depends(require_director_or_head)])

@@ -2790,6 +2790,35 @@ class ManualOperation(Base, TenantScopedMixin):
     )
 
 
+class MetricPlan(Base, TenantScopedMixin):
+    """План-факт по метрикам (TASK-DEV-050, миграция 0072) — копия TrueStats
+    «План-факт»: период + набор целевых метрик, факт считается из наших данных.
+    """
+
+    __tablename__ = "metric_plan"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(255))
+    started_at: Mapped[date] = mapped_column(Date)
+    finished_at: Mapped[date] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class MetricPlanTarget(Base, TenantScopedMixin):
+    """Целевая метрика плана (slug + плановое значение). Факт — на лету."""
+
+    __tablename__ = "metric_plan_target"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    plan_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("metric_plan.id", ondelete="CASCADE"), index=True
+    )
+    metric_slug: Mapped[str] = mapped_column(String(64))
+    plan_value: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=0)
+
+
 class ExtensionReconUpload(Base, TenantScopedMixin):
     """Авто-загрузка финотчёта WB из ЛК через Chrome-extension (TASK-LEAD-138).
 

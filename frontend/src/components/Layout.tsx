@@ -48,6 +48,7 @@ const GROUPS: Group[] = [
       { to: "/summary-report", label: "Сводный отчёт", icon: "layers" },
       { to: "/pnl", label: "P&L (ОПиУ)", icon: "list" },
       { to: "/business-summary", label: "Сводный по бизнесу", directorOrHead: true },
+      { to: "/metric-plan-fact", label: "План-факт (метрики)", directorOrHead: true },
       { to: "/deductions", label: "Прочие удержания", directorOrHead: true },
       { to: "/plans", label: "План-факт" },
     ],

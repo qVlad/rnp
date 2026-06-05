@@ -69,6 +69,7 @@ import BusinessSummary from "./pages/BusinessSummary";
 import FinanceExtras from "./pages/FinanceExtras";
 import RnpModule from "./pages/RnpModule";
 import CashflowCalendar from "./pages/CashflowCalendar";
+import MetricPlanFact from "./pages/MetricPlanFact";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, needsBootstrap } = useAuth();
@@ -144,6 +145,7 @@ export default function App() {
           <Route path="finance-extras" element={<DirectorOrHead><FinanceExtras /></DirectorOrHead>} />
           <Route path="rnp-module" element={<RnpModule />} />
           <Route path="cashflow-calendar" element={<DirectorOrHead><CashflowCalendar /></DirectorOrHead>} />
+          <Route path="metric-plan-fact" element={<DirectorOrHead><MetricPlanFact /></DirectorOrHead>} />
           <Route path="pnl-reconciliation" element={<PnLReconciliation />} />
           <Route
             path="reconciliation-4way"

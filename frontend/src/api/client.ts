@@ -1295,6 +1295,16 @@ paymentOrderDelete: (payment_order_id: string) =>
     );
   },
 
+  metricPlansList: () =>
+    request<{ available_metrics: Record<string, string>; items: Array<{
+      id: number; title: string; started_at: string; finished_at: string;
+      metrics: Array<{ metric_slug: string; label: string; plan: number; fact: number | null; done_pct: number | null }>;
+    }> }>(`/api/metric-plans`),
+  metricPlanCreate: (body: Record<string, unknown>) =>
+    request<{ id: number }>(`/api/metric-plans`, { method: "POST", body: JSON.stringify(body) }),
+  metricPlanDelete: (id: number) =>
+    request<{ status: string }>(`/api/metric-plans/${id}`, { method: "DELETE" }),
+
   cashflowCalendar: (start: string, end: string) =>
     request<{ totals: { income: number; expense: number; balance: number };
       data: Array<{ date: string; income: number; expense: number; balance: number;
