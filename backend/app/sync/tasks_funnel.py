@@ -11,15 +11,23 @@ Schedule (см. `celery_app.beat_schedule['sync-funnel-daily']`):
 Логика:
   1) Для каждого tenant'а с непустым wb_token.
   2) Берём active nm_id из `products` (всё что есть в каталоге).
-  3) Rolling-окно последние 90 дней (`DAYS_BACK = 90`).
-  4) Chunk date-range по 30 дней (WB v3 sales-funnel практически принимает
-     длинные периоды, но 30-дн куски снижают payload и риск таймаута).
-  5) Chunk nm_ids по 1000 (лимит WB с декабря 2025).
-  6) UPSERT в `wb_funnel_daily` по (tenant_id, nm_id, dt).
+  3) Rolling-окно последние `DAYS_BACK = 7` дней (ЖЁСТКИЙ лимит WB, см. ниже).
+  4) Chunk date-range по 7 дней (WB v3 sales-funnel: период ≤ 7 дней).
+  5) Chunk nm_ids по 20 (реальный лимит WB, не 1000 как в доках).
+  6) UPSERT в `wb_funnel_daily` по (tenant_id, nm_id, dt) — история КОПИТСЯ в БД.
+
+⚠️ ИСТОРИЧЕСКИЙ BACKFILL НЕВОЗМОЖЕН (DEV-058, подтверждено сверкой с TS
+2026-06-05): WB v3 sales-funnel принимает только rolling-7 дней (start_date >
+today-7 → 400). Старые v2 nm-report/grouped и detail/history, которые умели
+длинную историю, WB отключил в 2025. Поэтому Воронку нельзя «дотянуть» назад —
+её надо КОПИТЬ ежедневно. Эта фича добавлена 2026-05-28, значит дней до ~05-22
+funnel-данных НЕТ и не будет → для старых периодов /dashboard и /summary-report
+падают на fallback wb_orders (Statistics API, БЕЗ рассрочки и отменённых → цифра
+заказов ниже Воронки TS). Где funnel есть (с ~05-22) — сходимся с TS «в рубль»
+(пример: 22-24.05 заказы 314 = TS 314, сумма 1 787 788 = TS 1 787 788).
 
 Rate limit Analytics API: 3/min, min_interval 20s — учитывается в
-WbApiClient через limiter категории `analytics`. Для 29 SKU + 3 чанка
-по 30 дней — ~60с на тенант.
+WbApiClient через limiter категории `analytics`.
 
 Error handling: WbCooldownActive/401 → skip; прочие → retry 15 мин.
 """

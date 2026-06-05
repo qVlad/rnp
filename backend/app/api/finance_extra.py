@@ -290,10 +290,13 @@ async def summary_report(
     )
     total_realisation = sum(float(r.realisation or 0) for r in rows) or 1.0
 
-    # «Прочие удержания» (операционные, БЕЗ штрафов) и «Штрафы» (penalty) за
-    # период — DEV-058. TS вычитает из прибыли операционные удержания
-    # (deduction/приёмка/доплаты), штрафы показывает отдельной строкой и в
-    # прибыль НЕ включает. Делим, аллоцируем prochie по SKU как OPEX.
+    # «Прочие удержания» (deduction/приёмка/доплаты, БЕЗ штрафов) и «Штрафы»
+    # (penalty) за период — DEV-058. Прочие удержания вычитаются из прибыли
+    # (TS-parity: TS otherDeduction входит в profit), аллокация по SKU пропорц.
+    # реализации (как OPEX). Штрафы — отдельной плиткой, в прибыль НЕ входят.
+    # ⚠️ Остаток: WB-операция «Удержание» иногда содержит строки, которые TS НЕ
+    # относит к otherDeduction (напр. 6 902 на 05-24 — TS дал 0). Различие — по
+    # bonus_type_name (теперь отдаётся в /operations для диагностики).
     ded_row = (
         await session.execute(
             select(
@@ -327,7 +330,11 @@ async def summary_report(
         opex = opex_total * share
         prochie = prochie_total * share
         # прибыль = к перечислению − логистика − хранение − COGS − налог −
-        # реклама − OPEX − прочие удержания (операционные, БЕЗ штрафов — как TS)
+        # реклама − OPEX − прочие удержания. Подтверждено сверкой с ЖИВЫМ TS
+        # (account 25143, 18-24.05): TS profit = toTransfer − logistics − storage
+        # − costOfSales − tax − advertising − otherDeduction = 482 206.32 (точно).
+        # Штрафы (penalty) — отдельно, в прибыль НЕ входят (как TS). См.
+        # truestats-parity.md.
         profit = _f(r.to_transfer) - _f(r.logistics) - _f(r.storage) - cogs - tax - ad - opex - prochie
         p = prod_map.get(nm)
         items.append({
@@ -741,6 +748,8 @@ async def get_operations(
             "nm_id": r.nm_id,
             "sa_name": r.sa_name,
             "operation": r.supplier_oper_name,
+            "bonus_type_name": r.bonus_type_name,
+            "doc_type_name": r.doc_type_name,
             "quantity": r.quantity,
             "retail_price": _f(r.retail_price),
             "retail_amount": _f(r.retail_amount),
