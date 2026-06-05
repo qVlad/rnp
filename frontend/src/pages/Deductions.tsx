@@ -20,7 +20,7 @@ export default function Deductions() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Прочие удержания"
-        subtitle="Non-core удержания WB: удержания, платная приёмка, доплаты/возмещения (Джем, транзит). Штрафы выделены отдельно и НЕ входят в «Прочие удержания» (как в TrueStats). Логистика/хранение/комиссия — отдельными строками. По дате отчёта (rr_dt)."
+        subtitle="Non-core удержания WB: удержания, платная приёмка, доплаты/возмещения (Джем, транзит). Штрафы и «WB Продвижение» (реклама через финотчёт) выделены отдельно и НЕ входят в «Прочие удержания» — как в TrueStats. Логистика/хранение/комиссия — отдельными строками. По дате отчёта (rr_dt)."
       />
       <DateRangePicker
         from={range.from}
@@ -29,9 +29,9 @@ export default function Deductions() {
       />
       {q.isLoading && <div className="text-muted text-sm">Загружаю…</div>}
       {q.data && (
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div className="card p-3">
-            <div className="text-xs text-muted">Прочие удержания (без штрафов)</div>
+            <div className="text-xs text-muted">Прочие удержания (как TS)</div>
             <div className="text-base font-semibold mt-1">{fmtRub(q.data.total)}</div>
           </div>
           <div className="card p-3">
@@ -39,8 +39,12 @@ export default function Deductions() {
             <div className="text-base font-semibold mt-1">{fmtRub(q.data.fines_total)}</div>
           </div>
           <div className="card p-3">
-            <div className="text-xs text-muted">Итого (с штрафами)</div>
-            <div className="text-base font-semibold mt-1">{fmtRub(q.data.total + q.data.fines_total)}</div>
+            <div className="text-xs text-muted">WB Продвижение (реклама)</div>
+            <div className="text-base font-semibold mt-1">{fmtRub(q.data.promo_total)}</div>
+          </div>
+          <div className="card p-3">
+            <div className="text-xs text-muted">Итого удержаний WB</div>
+            <div className="text-base font-semibold mt-1">{fmtRub(q.data.total + q.data.fines_total + q.data.promo_total)}</div>
           </div>
         </div>
       )}
@@ -55,7 +59,8 @@ export default function Deductions() {
                 <th className="p-2 text-right">Удержание</th>
                 <th className="p-2 text-right">Приёмка</th>
                 <th className="p-2 text-right">Доплаты/возмещ.</th>
-                <th className="p-2 text-right">Прочие (без штрафа)</th>
+                <th className="p-2 text-right">WB Продвижение</th>
+                <th className="p-2 text-right">Прочие (как TS)</th>
               </tr>
             </thead>
             <tbody>
@@ -67,11 +72,12 @@ export default function Deductions() {
                   <td className="p-2 text-right">{fmtRub(x.deduction)}</td>
                   <td className="p-2 text-right">{fmtRub(x.acceptance)}</td>
                   <td className="p-2 text-right">{fmtRub(x.additional)}</td>
+                  <td className="p-2 text-right">{fmtRub(x.promo)}</td>
                   <td className="p-2 text-right font-medium">{fmtRub(x.total)}</td>
                 </tr>
               ))}
               {q.data.items.length === 0 && (
-                <tr><td colSpan={7} className="p-4 text-center text-muted">Прочих удержаний за период нет.</td></tr>
+                <tr><td colSpan={8} className="p-4 text-center text-muted">Прочих удержаний за период нет.</td></tr>
               )}
             </tbody>
             <tfoot>
@@ -79,6 +85,7 @@ export default function Deductions() {
                 <td className="p-2" colSpan={2}>Всего</td>
                 <td className="p-2 text-right">{fmtRub(q.data.fines_total)}</td>
                 <td className="p-2" colSpan={3} />
+                <td className="p-2 text-right">{fmtRub(q.data.promo_total)}</td>
                 <td className="p-2 text-right">{fmtRub(q.data.total)}</td>
               </tr>
             </tfoot>

@@ -50,6 +50,11 @@ _SALE_RETURN = ("Продажа", "Возврат")
 # Core-операции, которые в TrueStats идут отдельными строками P&L и НЕ входят
 # в «Прочие удержания» (логистика/хранение — отдельно, комиссия — в Продаже).
 _CORE_OPS = ("Продажа", "Возврат", "Логистика", "Хранение")
+# DEV-058: операция «Удержание» с обоснованием «WB Продвижение» — это РЕКЛАМА
+# через финотчёт, НЕ «прочее удержание». TS не относит её к otherDeduction
+# (подтверждено: строка 6 902 «WB Продвижение» → TS otherDeduction +0). Фильтруем
+# по bonus_type_name ILIKE этому паттерну, чтобы «Прочие удержания» сходились с TS.
+_PROMO_BONUS_LIKE = "%продвиж%"
 
 
 def _date_col(reporting_mode: str):
@@ -290,20 +295,21 @@ async def summary_report(
     )
     total_realisation = sum(float(r.realisation or 0) for r in rows) or 1.0
 
-    # «Прочие удержания» (deduction/приёмка/доплаты, БЕЗ штрафов) и «Штрафы»
-    # (penalty) за период — DEV-058. Прочие удержания вычитаются из прибыли
-    # (TS-parity: TS otherDeduction входит в profit), аллокация по SKU пропорц.
-    # реализации (как OPEX). Штрафы — отдельной плиткой, в прибыль НЕ входят.
-    # ⚠️ Остаток: WB-операция «Удержание» иногда содержит строки, которые TS НЕ
-    # относит к otherDeduction (напр. 6 902 на 05-24 — TS дал 0). Различие — по
-    # bonus_type_name (теперь отдаётся в /operations для диагностики).
+    # «Прочие удержания» (deduction/приёмка/доплаты, БЕЗ штрафов), «Штрафы»
+    # (penalty) и «Реклама из финотчёта» (WB Продвижение) за период — DEV-058.
+    # Прочие удержания вычитаются из прибыли (TS-parity: TS otherDeduction входит
+    # в profit), аллокация по SKU пропорц. реализации (как OPEX). Штрафы — отдельной
+    # плиткой, в прибыль НЕ входят. «WB Продвижение» исключаем из прочих удержаний
+    # (TS относит её к рекламе, не к otherDeduction) — see _PROMO_BONUS_LIKE.
+    is_promo = func.coalesce(WbReportDetail.bonus_type_name, "").ilike(_PROMO_BONUS_LIKE)
     ded_row = (
         await session.execute(
             select(
-                func.coalesce(func.sum(WbReportDetail.deduction), 0).label("deduction"),
+                func.coalesce(func.sum(case((~is_promo, WbReportDetail.deduction), else_=0)), 0).label("deduction"),
                 func.coalesce(func.sum(WbReportDetail.paid_acceptance), 0).label("acceptance"),
                 func.coalesce(func.sum(WbReportDetail.additional_payment), 0).label("additional"),
                 func.coalesce(func.sum(WbReportDetail.penalty), 0).label("penalty"),
+                func.coalesce(func.sum(case((is_promo, WbReportDetail.deduction), else_=0)), 0).label("promo_ad"),
             ).where(
                 func.date(dcol) >= start_date,
                 func.date(dcol) <= end_date,
@@ -313,6 +319,7 @@ async def summary_report(
     ).one()
     prochie_total = float(ded_row.deduction or 0) + float(ded_row.acceptance or 0) + float(ded_row.additional or 0)
     fines_total = float(ded_row.penalty or 0)
+    promo_ad_total = float(ded_row.promo_ad or 0)  # WB Продвижение из финотчёта (как TS — не в прибыль здесь)
 
     def _f(v: Any) -> float:
         return float(v or 0)
@@ -400,6 +407,7 @@ async def summary_report(
         # «Штрафы» — penalty, отдельной строкой (DEV-058).
         "deductions": round(prochie_total, 2),
         "fines": round(fines_total, 2),
+        "promo_ad": round(promo_ad_total, 2),  # WB Продвижение из финотчёта (справочно)
         "orders_count": pmap.get("orders"),
         "orders_sum": round(rev_gross, 2),
         "buyout_pct": pmap.get("buyout_pct"),
@@ -660,17 +668,21 @@ async def get_deductions(
     / хранение / комиссия — отдельными строками P&L. DEV-058: штрафы (penalty)
     выделены отдельно (`fines`/`fines_total`) и НЕ входят в headline `total` —
     как в TS, где «Прочие удержания» = операционные удержания без штрафов, а
-    штрафы показываются отдельной строкой и не вычитаются из прибыли с прочими."""
+    штрафы показываются отдельной строкой и не вычитаются из прибыли с прочими.
+    DEV-058: «WB Продвижение» (реклама через финотчёт) выделена в `promo` и НЕ
+    входит в headline `total` — TS относит её к рекламе, не к otherDeduction."""
     dcol = _date_col(reporting_mode)
+    is_promo = func.coalesce(WbReportDetail.bonus_type_name, "").ilike(_PROMO_BONUS_LIKE)
     rows = (
         await session.execute(
             select(
                 WbReportDetail.supplier_oper_name.label("op"),
                 func.count().label("n"),
                 func.coalesce(func.sum(WbReportDetail.penalty), 0).label("penalty"),
-                func.coalesce(func.sum(WbReportDetail.deduction), 0).label("deduction"),
+                func.coalesce(func.sum(case((~is_promo, WbReportDetail.deduction), else_=0)), 0).label("deduction"),
                 func.coalesce(func.sum(WbReportDetail.paid_acceptance), 0).label("acceptance"),
                 func.coalesce(func.sum(WbReportDetail.additional_payment), 0).label("additional"),
+                func.coalesce(func.sum(case((is_promo, WbReportDetail.deduction), else_=0)), 0).label("promo"),
             )
             .where(
                 func.date(dcol) >= start_date,
@@ -686,10 +698,12 @@ async def get_deductions(
 
     items = []
     for r in rows:
-        # Операционное удержание (БЕЗ штрафов): удержание + приёмка − доплаты.
+        # Операционное удержание (БЕЗ штрафов и БЕЗ WB Продвижения): удержание +
+        # приёмка − доплаты.
         amount = _f(r.deduction) + _f(r.acceptance) - _f(r.additional)
         fines = _f(r.penalty)
-        if abs(amount) < 0.005 and abs(fines) < 0.005 and int(r.n) == 0:
+        promo = _f(r.promo)
+        if abs(amount) < 0.005 and abs(fines) < 0.005 and abs(promo) < 0.005 and int(r.n) == 0:
             continue
         items.append(
             {
@@ -699,16 +713,18 @@ async def get_deductions(
                 "deduction": _f(r.deduction),
                 "acceptance": _f(r.acceptance),
                 "additional": _f(r.additional),
-                # «total» — операционное удержание без штрафа (headline TS);
-                # «fines» — штраф отдельно.
+                # «total» — операционное удержание без штрафа и без WB Продвижения
+                # (headline TS); «fines» — штраф; «promo» — WB Продвижение (реклама).
                 "total": round(amount, 2),
                 "fines": round(fines, 2),
+                "promo": round(promo, 2),
             }
         )
-    items.sort(key=lambda x: abs(x["total"]) + abs(x["fines"]), reverse=True)
+    items.sort(key=lambda x: abs(x["total"]) + abs(x["fines"]) + abs(x["promo"]), reverse=True)
     total = round(sum(x["total"] for x in items), 2)
     fines_total = round(sum(x["fines"] for x in items), 2)
-    return {"reporting_mode": reporting_mode, "items": items, "total": total, "fines_total": fines_total}
+    promo_total = round(sum(x["promo"] for x in items), 2)
+    return {"reporting_mode": reporting_mode, "items": items, "total": total, "fines_total": fines_total, "promo_total": promo_total}
 
 
 @router.get("/api/operations", dependencies=[Depends(require_director_or_head)])
