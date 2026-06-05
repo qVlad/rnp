@@ -2772,7 +2772,9 @@ class ManualOperation(Base, TenantScopedMixin):
     Аналог TrueStats «Финансы → Операции» (ручной ввод). Доход/расход с датой,
     суммой, статьёй/контрагентом/счётом (ссылки на FinanceReference по имени —
     свободный текст, чтобы не ломаться при удалении справочника).
-    direction ∈ income | expense.
+    direction ∈ income | expense. is_planned=True → обязательство (planned, как
+    TS obligationReceivable/Payable): не входит в баланс, показывается отдельно
+    (TASK-DEV-054, миграция 0073).
     """
 
     __tablename__ = "manual_operation"
@@ -2785,6 +2787,7 @@ class ManualOperation(Base, TenantScopedMixin):
     counterparty: Mapped[str | None] = mapped_column(String(255))
     account: Mapped[str | None] = mapped_column(String(255))
     comment: Mapped[str | None] = mapped_column(Text)
+    is_planned: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

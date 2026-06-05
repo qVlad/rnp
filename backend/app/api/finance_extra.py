@@ -133,12 +133,19 @@ async def list_manual_operations(
             "counterparty": r.counterparty,
             "account": r.account,
             "comment": r.comment,
+            "is_planned": bool(r.is_planned),
         }
         for r in rows
     ]
-    income = sum(x["amount"] for x in items if x["direction"] == "income")
-    expense = sum(x["amount"] for x in items if x["direction"] == "expense")
-    return {"items": items, "totals": {"income": round(income, 2), "expense": round(expense, 2), "net": round(income - expense, 2)}}
+    # Факт (не planned) — в доход/расход; planned — в обязательства.
+    income = sum(x["amount"] for x in items if x["direction"] == "income" and not x["is_planned"])
+    expense = sum(x["amount"] for x in items if x["direction"] == "expense" and not x["is_planned"])
+    planned_in = sum(x["amount"] for x in items if x["direction"] == "income" and x["is_planned"])
+    planned_out = sum(x["amount"] for x in items if x["direction"] == "expense" and x["is_planned"])
+    return {"items": items, "totals": {
+        "income": round(income, 2), "expense": round(expense, 2), "net": round(income - expense, 2),
+        "planned_in": round(planned_in, 2), "planned_out": round(planned_out, 2),
+    }}
 
 
 @router.post("/api/manual-operations", dependencies=[Depends(require_director_or_head)])
@@ -166,6 +173,7 @@ async def create_manual_operation(
         counterparty=(payload.get("counterparty") or None),
         account=(payload.get("account") or None),
         comment=(payload.get("comment") or None),
+        is_planned=bool(payload.get("is_planned")),
     )
     session.add(obj)
     await session.commit()
@@ -454,22 +462,25 @@ async def cashflow_calendar(
             select(
                 ManualOperation.op_date,
                 ManualOperation.direction,
+                ManualOperation.is_planned,
                 func.coalesce(func.sum(ManualOperation.amount), 0).label("amt"),
             )
             .where(ManualOperation.op_date >= start_date, ManualOperation.op_date <= end_date)
-            .group_by(ManualOperation.op_date, ManualOperation.direction)
+            .group_by(ManualOperation.op_date, ManualOperation.direction, ManualOperation.is_planned)
         )
     ).all()
     by_day: dict[str, dict[str, float]] = {}
     for r in rows:
         d = r.op_date.isoformat()
-        slot = by_day.setdefault(d, {"income": 0.0, "expense": 0.0})
-        if r.direction == "income":
-            slot["income"] += float(r.amt or 0)
+        slot = by_day.setdefault(d, {"income": 0.0, "expense": 0.0, "obl_in": 0.0, "obl_out": 0.0})
+        amt = float(r.amt or 0)
+        if r.is_planned:
+            # planned → обязательство (как TS obligationReceivable/Payable), вне баланса
+            slot["obl_in" if r.direction == "income" else "obl_out"] += amt
         else:
-            slot["expense"] += float(r.amt or 0)
+            slot["income" if r.direction == "income" else "expense"] += amt
 
-    # Полный список дней с накопительным балансом.
+    # Полный список дней с накопительным балансом (только факт, planned — отдельно).
     out = []
     balance = 0.0
     cur = start_date
@@ -477,7 +488,7 @@ async def cashflow_calendar(
 
     while cur <= end_date:
         d = cur.isoformat()
-        slot = by_day.get(d, {"income": 0.0, "expense": 0.0})
+        slot = by_day.get(d, {"income": 0.0, "expense": 0.0, "obl_in": 0.0, "obl_out": 0.0})
         balance += slot["income"] - slot["expense"]
         out.append(
             {
@@ -485,8 +496,8 @@ async def cashflow_calendar(
                 "income": round(slot["income"], 2),
                 "expense": round(slot["expense"], 2),
                 "balance": round(balance, 2),
-                "obligation_receivable": 0.0,
-                "obligation_payable": 0.0,
+                "obligation_receivable": round(slot["obl_in"], 2),
+                "obligation_payable": round(slot["obl_out"], 2),
             }
         )
         cur = cur + _td(days=1)
@@ -494,6 +505,8 @@ async def cashflow_calendar(
         "income": round(sum(x["income"] for x in out), 2),
         "expense": round(sum(x["expense"] for x in out), 2),
         "balance": round(balance, 2),
+        "obligation_receivable": round(sum(x["obligation_receivable"] for x in out), 2),
+        "obligation_payable": round(sum(x["obligation_payable"] for x in out), 2),
     }
     return {"data": out, "totals": totals}
 

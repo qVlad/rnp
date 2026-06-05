@@ -75,6 +75,7 @@ function ManualOperations() {
   const qc = useQueryClient();
   const today = new Date().toISOString().slice(0, 10);
   const [form, setForm] = useState({ op_date: today, direction: "expense", amount: "", category: "", counterparty: "", account: "", comment: "" });
+  const [planned, setPlanned] = useState(false);
 
   const q = useQuery({ queryKey: ["manual-ops", range.from, range.to], queryFn: () => api.manualOpsList(range.from, range.to) });
   const cats = useQuery({ queryKey: ["finance-ref", "expense_category"], queryFn: () => api.financeRefList("expense_category") });
@@ -82,7 +83,7 @@ function ManualOperations() {
   const accs = useQuery({ queryKey: ["finance-ref", "account"], queryFn: () => api.financeRefList("account") });
 
   const create = useMutation({
-    mutationFn: () => api.manualOpsCreate({ ...form, amount: Number(form.amount) }),
+    mutationFn: () => api.manualOpsCreate({ ...form, amount: Number(form.amount), is_planned: planned }),
     onSuccess: () => { setForm({ ...form, amount: "", comment: "" }); qc.invalidateQueries({ queryKey: ["manual-ops"] }); },
   });
   const del = useMutation({
@@ -114,6 +115,10 @@ function ManualOperations() {
           <input className="input" list="dl-cp" placeholder="Контрагент" value={form.counterparty} onChange={(e) => setForm({ ...form, counterparty: e.target.value })} />
           <input className="input" list="dl-acc" placeholder="Счёт" value={form.account} onChange={(e) => setForm({ ...form, account: e.target.value })} />
           <input className="input md:col-span-1" placeholder="Комментарий" value={form.comment} onChange={(e) => setForm({ ...form, comment: e.target.value })} />
+          <label className="flex items-center gap-1.5 text-sm">
+            <input type="checkbox" checked={planned} onChange={(e) => setPlanned(e.target.checked)} />
+            Запланировано (обязательство)
+          </label>
           <button className="btn" disabled={!form.amount || create.isPending} onClick={() => create.mutate()}>+ Добавить</button>
         </div>
         {datalist("dl-cat", cats.data?.items)}
@@ -142,7 +147,7 @@ function ManualOperations() {
             {(q.data?.items ?? []).map((x) => (
               <tr key={x.id} className="border-b border-border/50 hover:bg-soft/40">
                 <td className="p-2">{x.op_date}</td>
-                <td className="p-2">{x.direction === "income" ? "Доход" : "Расход"}</td>
+                <td className="p-2">{x.direction === "income" ? "Доход" : "Расход"}{x.is_planned && <span className="ml-1 text-[10px] px-1 rounded bg-amber-100 text-amber-700">план</span>}</td>
                 <td className={`p-2 text-right font-medium ${x.direction === "income" ? "text-success" : "text-danger"}`}>{fmtRub(x.amount)}</td>
                 <td className="p-2">{x.category}</td>
                 <td className="p-2">{x.counterparty}</td>

@@ -19,8 +19,8 @@ export default function CashflowCalendar() {
     queryFn: () => api.cashflowCalendar(range.from, range.to),
   });
   const t = q.data?.totals;
-  // Показываем только дни с движением + итог (как TS — пустые дни сворачиваем).
-  const rows = (q.data?.data ?? []).filter((d) => d.income || d.expense);
+  // Дни с движением или обязательствами (пустые сворачиваем, как TS).
+  const rows = (q.data?.data ?? []).filter((d) => d.income || d.expense || d.obligation_receivable || d.obligation_payable);
 
   return (
     <div className="flex flex-col gap-4">
@@ -37,10 +37,12 @@ export default function CashflowCalendar() {
       {q.data && (
         <>
           {t && (
-            <div className="grid grid-cols-3 gap-3">
-              <div className="card p-3"><div className="text-xs text-muted">Доходы</div><div className="text-lg font-semibold text-success">{fmtRub(t.income)}</div></div>
-              <div className="card p-3"><div className="text-xs text-muted">Расходы</div><div className="text-lg font-semibold text-danger">{fmtRub(t.expense)}</div></div>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <div className="card p-3"><div className="text-xs text-muted">Доходы (факт)</div><div className="text-lg font-semibold text-success">{fmtRub(t.income)}</div></div>
+              <div className="card p-3"><div className="text-xs text-muted">Расходы (факт)</div><div className="text-lg font-semibold text-danger">{fmtRub(t.expense)}</div></div>
               <div className="card p-3"><div className="text-xs text-muted">Баланс за период</div><div className="text-lg font-semibold">{fmtRub(t.balance)}</div></div>
+              <div className="card p-3"><div className="text-xs text-muted">Ожидается (получить)</div><div className="text-lg font-semibold text-muted">{fmtRub(t.obligation_receivable)}</div></div>
+              <div className="card p-3"><div className="text-xs text-muted">Ожидается (оплатить)</div><div className="text-lg font-semibold text-muted">{fmtRub(t.obligation_payable)}</div></div>
             </div>
           )}
           <div className="card overflow-x-auto">
@@ -62,8 +64,8 @@ export default function CashflowCalendar() {
                     <td className="p-2 text-right text-success">{d.income ? fmtRub(d.income) : "—"}</td>
                     <td className="p-2 text-right text-danger">{d.expense ? fmtRub(d.expense) : "—"}</td>
                     <td className="p-2 text-right font-medium">{fmtRub(d.balance)}</td>
-                    <td className="p-2 text-right text-muted">{fmtRub(d.obligation_receivable)}</td>
-                    <td className="p-2 text-right text-muted">{fmtRub(d.obligation_payable)}</td>
+                    <td className="p-2 text-right text-muted">{d.obligation_receivable ? fmtRub(d.obligation_receivable) : "—"}</td>
+                    <td className="p-2 text-right text-muted">{d.obligation_payable ? fmtRub(d.obligation_payable) : "—"}</td>
                   </tr>
                 ))}
                 {rows.length === 0 && (

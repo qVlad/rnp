@@ -1306,7 +1306,7 @@ paymentOrderDelete: (payment_order_id: string) =>
     request<{ status: string }>(`/api/metric-plans/${id}`, { method: "DELETE" }),
 
   cashflowCalendar: (start: string, end: string) =>
-    request<{ totals: { income: number; expense: number; balance: number };
+    request<{ totals: { income: number; expense: number; balance: number; obligation_receivable: number; obligation_payable: number };
       data: Array<{ date: string; income: number; expense: number; balance: number;
         obligation_receivable: number; obligation_payable: number }> }>(
       `/api/cashflow-calendar?start_date=${start}&end_date=${end}`,
@@ -1321,9 +1321,9 @@ paymentOrderDelete: (payment_order_id: string) =>
     }> }>(`/api/summary-report?start_date=${start}&end_date=${end}&reporting_mode=${reporting_mode}`),
 
   manualOpsList: (start: string, end: string) =>
-    request<{ totals: { income: number; expense: number; net: number };
+    request<{ totals: { income: number; expense: number; net: number; planned_in: number; planned_out: number };
       items: Array<{ id: number; op_date: string; direction: string; amount: number;
-        category: string | null; counterparty: string | null; account: string | null; comment: string | null }> }>(
+        category: string | null; counterparty: string | null; account: string | null; comment: string | null; is_planned: boolean }> }>(
       `/api/manual-operations?start_date=${start}&end_date=${end}`,
     ),
   manualOpsCreate: (body: Record<string, unknown>) =>
