@@ -1591,14 +1591,58 @@ async def _sync_ad_stats_async(tenant_id: int, days_back: int = 60) -> int:
             # Теперь удаляем только fetched-даты → даты упавшего чанка сохраняют
             # прежние данные. (TASK-DEV-056)
             fetched_dates = sorted({v["stat_date"] for v in values})
-            try:
+            # FREEZE (TASK-DEV-058): WB fullstats для throttled-продавца иногда
+            # отдаёт дату с НУЛЕВЫМ/заниженным spend (кампания «исчезла») — раньше
+            # это стирало ненулевую историю рекламы (18-24.05: 19 705 → 0 за ночь).
+            # TS фиксирует рекламу при первом захвате. Повторяем: перезаписываем
+            # дату ТОЛЬКО если новая Σspent ≥ уже сохранённой; иначе НЕ понижаем
+            # (freeze) — историческая реклама/прибыль/ДРР стабильны.
+            new_spent_by_date: dict[date, float] = {}
+            for v in values:
+                d = v["stat_date"]
+                new_spent_by_date[d] = new_spent_by_date.get(d, 0.0) + float(v.get("sum_spent", 0) or 0)
+            existing_rows = (
                 await session.execute(
-                    delete(WbAdStatsDaily).where(
-                        WbAdStatsDaily.stat_date.in_(fetched_dates),
+                    select(
+                        WbAdStatsDaily.stat_date,
+                        func.coalesce(func.sum(WbAdStatsDaily.sum_spent), 0),
                     )
+                    .where(WbAdStatsDaily.stat_date.in_(fetched_dates))
+                    .group_by(WbAdStatsDaily.stat_date)
                 )
-                await _bulk_insert(session, WbAdStatsDaily, values)
-                await update_checkpoint(session, "ad_stats", rows_processed=len(values))
+            ).all()
+            existing_spent_by_date = {d: float(s or 0) for d, s in existing_rows}
+            replace_dates = [
+                d for d in fetched_dates
+                if new_spent_by_date.get(d, 0.0) >= existing_spent_by_date.get(d, 0.0)
+            ]
+            frozen_dates = [d for d in fetched_dates if d not in set(replace_dates)]
+            if frozen_dates:
+                log.warning(
+                    "ad_stats: FREEZE — не понижаю spend за %d дат (WB вернул меньше): %s",
+                    len(frozen_dates),
+                    ", ".join(d.isoformat() for d in frozen_dates[:10]),
+                )
+            replace_set = set(replace_dates)
+            values = [v for v in values if v["stat_date"] in replace_set]
+            try:
+                if replace_dates:
+                    await session.execute(
+                        delete(WbAdStatsDaily).where(
+                            WbAdStatsDaily.stat_date.in_(replace_dates),
+                        )
+                    )
+                    await _bulk_insert(session, WbAdStatsDaily, values)
+                await update_checkpoint(
+                    session,
+                    "ad_stats",
+                    rows_processed=len(values),
+                    status="ok",
+                    error=(
+                        f"freeze: {len(frozen_dates)} дат не понижены (WB вернул меньше)"
+                        if frozen_dates else None
+                    ),
+                )
             except Exception as e:
                 # Roll back so the *checkpoint* update can succeed in a fresh
                 # transaction. Without rollback, asyncpg raises
