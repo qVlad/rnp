@@ -268,7 +268,11 @@ async def summary_report(
             await session.execute(
                 select(
                     WbSale.nm_id,
-                    func.coalesce(func.sum(case((~sret, WbSale.total_price), else_=0)), 0).label("realisation"),
+                    # realisation (до СПП) = price_with_disc (после скидки продавца,
+                    # до СПП), НЕ total_price (полная розница). sales (после СПП) =
+                    # finished_price. to_transfer = for_pay. Совпадает с маппингом
+                    # фин-отчёта (retail_price→realisation) по величине.
+                    func.coalesce(func.sum(case((~sret, WbSale.price_with_disc), else_=0)), 0).label("realisation"),
                     func.coalesce(func.sum(case((~sret, WbSale.finished_price), else_=0)), 0).label("sales"),
                     func.coalesce(func.sum(case((~sret, WbSale.for_pay), else_=0)), 0).label("to_transfer"),
                     func.coalesce(func.sum(case((~sret, 1), else_=0)), 0).label("sold"),
