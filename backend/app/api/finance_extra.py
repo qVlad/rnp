@@ -12,7 +12,8 @@ operations через period_aggregates.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
+from types import SimpleNamespace
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -36,6 +37,7 @@ from app.db.models import (
     WbAdStatsDaily,
     WbOrder,
     WbReportDetail,
+    WbSale,
     WbStockSnapshot,
 )
 from app.services.metrics import compute_dashboard
@@ -217,7 +219,7 @@ async def summary_report(
             0,
         )
 
-    rows = (
+    rd_rows = (
         await session.execute(
             select(
                 WbReportDetail.nm_id,
@@ -235,7 +237,64 @@ async def summary_report(
         )
     ).all()
 
-    nm_ids = [int(r.nm_id) for r in rows]
+    # Per-nm аккумулятор (фин-отчёт WB). SimpleNamespace → существующий items-loop
+    # читает .realisation/.sales/... без изменений.
+    acc: dict[int, Any] = {}
+    for r in rd_rows:
+        acc[int(r.nm_id)] = SimpleNamespace(
+            nm_id=int(r.nm_id),
+            realisation=float(r.realisation or 0), sales=float(r.sales or 0),
+            to_transfer=float(r.to_transfer or 0), acquiring=float(r.acquiring or 0),
+            sold=int(r.sold), ret=int(r.ret),
+            logistics=float(r.logistics or 0), storage=float(r.storage or 0),
+        )
+
+    # DEV-058: «живой хвост» — дни периода, за которые WB ещё НЕ опубликовал
+    # фин-отчёт. TS заполняет их операционной оценкой; повторяем по wb_sales
+    # (подтверждённые выкупы). Закрытые/опубликованные периоды НЕ затрагиваются
+    # (estimated_from=None) → байт-в-байт прежнее поведение. Помечаем `estimated`.
+    published_max = (
+        await session.execute(
+            select(func.max(func.date(dcol))).where(
+                func.date(dcol) >= start_date, func.date(dcol) <= end_date
+            )
+        )
+    ).scalar()
+    est_start = (published_max + timedelta(days=1)) if published_max else start_date
+    estimated_from = est_start if est_start <= end_date else None
+    if estimated_from is not None:
+        sret = WbSale.is_return
+        srows = (
+            await session.execute(
+                select(
+                    WbSale.nm_id,
+                    func.coalesce(func.sum(case((~sret, WbSale.total_price), else_=0)), 0).label("realisation"),
+                    func.coalesce(func.sum(case((~sret, WbSale.finished_price), else_=0)), 0).label("sales"),
+                    func.coalesce(func.sum(case((~sret, WbSale.for_pay), else_=0)), 0).label("to_transfer"),
+                    func.coalesce(func.sum(case((~sret, 1), else_=0)), 0).label("sold"),
+                    func.coalesce(func.sum(case((sret, 1), else_=0)), 0).label("ret"),
+                )
+                .where(func.date(WbSale.sale_dt) >= est_start, func.date(WbSale.sale_dt) <= end_date, WbSale.nm_id.isnot(None))
+                .group_by(WbSale.nm_id)
+            )
+        ).all()
+        for e in srows:
+            nm = int(e.nm_id)
+            a = acc.get(nm)
+            if a is None:
+                a = SimpleNamespace(nm_id=nm, realisation=0.0, sales=0.0, to_transfer=0.0,
+                                    acquiring=0.0, sold=0, ret=0, logistics=0.0, storage=0.0)
+                acc[nm] = a
+            # Операционный хвост: реализация/продажи/к перечислению/выкупы.
+            # Логистика/хранение/эквайринг в выписке выкупов отсутствуют (0).
+            a.realisation += float(e.realisation or 0)
+            a.sales += float(e.sales or 0)
+            a.to_transfer += float(e.to_transfer or 0)
+            a.sold += int(e.sold)
+            a.ret += int(e.ret)
+
+    rows = list(acc.values())
+    nm_ids = list(acc.keys())
     # COGS (последняя себестоимость per nm — после переноса TS она плоская).
     cogs_map: dict[int, float] = {}
     if nm_ids:
@@ -413,7 +472,17 @@ async def summary_report(
         "buyout_pct": pmap.get("buyout_pct"),
         "drr_pct": round(_s("ad") / rev_gross * 100, 2) if rev_gross else 0.0,
     }
-    return {"reporting_mode": reporting_mode, "tax_rate": tax_rate, "items": items, "totals": tot}
+    return {
+        "reporting_mode": reporting_mode,
+        "tax_rate": tax_rate,
+        "items": items,
+        "totals": tot,
+        # Фин-отчёт WB опубликован по этот день включительно; дни после —
+        # операционная оценка по выкупам (estimated_from). None = весь период
+        # опубликован (закрытая неделя, без оценки).
+        "published_through": published_max.isoformat() if published_max else None,
+        "estimated_from": estimated_from.isoformat() if estimated_from else None,
+    }
 
 
 # Метрики, доступные для план-факта (slug = ключ KPI дашборда → человекочит. label).

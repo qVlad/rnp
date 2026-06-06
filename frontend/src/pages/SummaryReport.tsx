@@ -57,6 +57,15 @@ export default function SummaryReport() {
       {q.isLoading && <div className="text-muted text-sm">Загружаю…</div>}
       {q.error && <div className="text-danger text-sm">Ошибка: {String(q.error)}</div>}
 
+      {q.data?.estimated_from && (
+        <div className="card p-3 border-warning/40 bg-warning/5 text-sm">
+          ⚠️ Фин-отчёт WB опубликован по <b>{q.data.published_through}</b> включительно.
+          Дни с <b>{q.data.estimated_from}</b> — <b>оценка по выкупам</b> (как в TrueStats до публикации):
+          реализация/продажи/к перечислению по подтверждённым выкупам, без логистики/хранения/комиссии.
+          Итоги добьются автоматически, когда WB опубликует недельный отчёт.
+        </div>
+      )}
+
       {q.data && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
