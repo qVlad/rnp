@@ -31,6 +31,12 @@ export default function BusinessSummary() {
       {q.isLoading && <div className="text-muted text-sm">Загружаю…</div>}
       {q.data && (
         <>
+          {q.data.estimated_from && (
+            <div className="card p-3 border-warning/40 bg-warning/5 text-sm">
+              ⚠️ Фин-отчёт WB опубликован по <b>{q.data.published_through}</b> включительно.
+              Дни с <b>{q.data.estimated_from}</b> — <b>оценка по выкупам</b> (фин-отчёт ещё не опубликован), добьётся при публикации.
+            </div>
+          )}
           {t && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className="card p-3"><div className="text-xs text-muted">Реализация (все кабинеты)</div><div className="text-lg font-semibold">{fmtRub(t.realisation)}</div></div>

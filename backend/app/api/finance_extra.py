@@ -706,17 +706,54 @@ async def business_summary(
         )
     ).all()
     by_tid = {r.tenant_id: r for r in agg}
+
+    # DEV-058 «живой хвост»: дни, за которые WB ещё не опубликовал фин-отчёт,
+    # заполняем операционной оценкой по wb_sales (как /summary-report). Закрытые
+    # периоды → estimated_from=None, поведение не меняется.
+    published_max = (
+        await session.execute(
+            text(
+                f"select max({dcol}::date) from wb_report_detail "
+                f"where tenant_id = any(:ids) and {dcol}::date between :lo and :hi"  # noqa: S608
+            ),
+            {"ids": tids, "lo": start_date, "hi": end_date},
+        )
+    ).scalar()
+    est_start = (published_max + timedelta(days=1)) if published_max else start_date
+    estimated_from = est_start if est_start <= end_date else None
+    tail_by_tid: dict[int, Any] = {}
+    if estimated_from is not None:
+        tail = (
+            await session.execute(
+                text(
+                    """
+                select tenant_id,
+                  coalesce(sum(case when not is_return then price_with_disc else 0 end),0) realisation,
+                  coalesce(sum(case when not is_return then finished_price else 0 end),0) sales,
+                  coalesce(sum(case when not is_return then for_pay else 0 end),0) to_transfer,
+                  coalesce(sum(case when not is_return then 1 else 0 end),0) sold
+                from wb_sales
+                where tenant_id = any(:ids) and sale_dt::date between :est and :hi
+                group by tenant_id
+                """
+                ),
+                {"ids": tids, "est": est_start, "hi": end_date},
+            )
+        ).all()
+        tail_by_tid = {r.tenant_id: r for r in tail}
+
     items = []
     for tid in tids:
         r = by_tid.get(tid)
+        t = tail_by_tid.get(tid)
         items.append(
             {
                 "tenant_id": tid,
                 "name": names.get(tid, f"Кабинет {tid}"),
-                "realisation": float(r.realisation) if r else 0.0,
-                "sales": float(r.sales) if r else 0.0,
-                "to_transfer": float(r.to_transfer) if r else 0.0,
-                "sold": int(r.sold) if r else 0,
+                "realisation": (float(r.realisation) if r else 0.0) + (float(t.realisation) if t else 0.0),
+                "sales": (float(r.sales) if r else 0.0) + (float(t.sales) if t else 0.0),
+                "to_transfer": (float(r.to_transfer) if r else 0.0) + (float(t.to_transfer) if t else 0.0),
+                "sold": (int(r.sold) if r else 0) + (int(t.sold) if t else 0),
             }
         )
     items.sort(key=lambda x: x["realisation"], reverse=True)
@@ -726,7 +763,13 @@ async def business_summary(
         "to_transfer": round(sum(x["to_transfer"] for x in items), 2),
         "sold": sum(x["sold"] for x in items),
     }
-    return {"reporting_mode": reporting_mode, "items": items, "totals": totals}
+    return {
+        "reporting_mode": reporting_mode,
+        "items": items,
+        "totals": totals,
+        "published_through": published_max.isoformat() if published_max else None,
+        "estimated_from": estimated_from.isoformat() if estimated_from else None,
+    }
 
 
 @router.get("/api/deductions", dependencies=[Depends(require_director_or_head)])

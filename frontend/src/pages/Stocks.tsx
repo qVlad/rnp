@@ -3,14 +3,36 @@
  * Аналог TrueStats «Товары → Склады». Источник — wb_stocks.
  */
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import PageHeader from "@/components/PageHeader";
 import { fmtNum } from "@/lib/format";
 
 export default function Stocks() {
+  const qc = useQueryClient();
   const q = useQuery({ queryKey: ["stocks-by-wh"], queryFn: () => api.stocksByWarehouse() });
   const [wh, setWh] = useState<string>("");
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Возраст снапшота: >24ч → подсветка (WB троттлит сток-синк; лечится refresh).
+  const snapMs = q.data?.snapshot_dt ? Date.now() - new Date(q.data.snapshot_dt).getTime() : null;
+  const stale = snapMs !== null && snapMs > 24 * 3600 * 1000;
+  const ageStr = snapMs === null ? "—"
+    : snapMs < 3600 * 1000 ? `${Math.round(snapMs / 60000)} мин назад`
+    : snapMs < 24 * 3600 * 1000 ? `${Math.round(snapMs / 3600000)} ч назад`
+    : `${Math.round(snapMs / 86400000)} дн назад`;
+
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      await api.triggerSync("stocks");
+      // WB-фетч идёт асинхронно в воркере — подождём и перечитаем.
+      await new Promise((r) => setTimeout(r, 12000));
+      await qc.invalidateQueries({ queryKey: ["stocks-by-wh"] });
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const items = useMemo(
     () => (q.data?.items ?? []).filter((x) => !wh || x.warehouse === wh),
@@ -26,8 +48,18 @@ export default function Stocks() {
       {q.isLoading && <div className="text-muted text-sm">Загружаю…</div>}
       {q.data && (
         <>
-          <div className="text-xs text-muted">
-            Снапшот: {q.data.snapshot_dt ? new Date(q.data.snapshot_dt).toLocaleString("ru-RU") : "—"}
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className={`text-xs ${stale ? "text-warning font-medium" : "text-muted"}`}>
+              Снапшот: {q.data.snapshot_dt ? new Date(q.data.snapshot_dt).toLocaleString("ru-RU") : "—"} ({ageStr})
+              {stale && " ⚠️ устарел — WB троттлит сток-синк, нажми «Обновить»"}
+            </div>
+            <button
+              className="px-3 py-1 rounded text-sm bg-soft hover:bg-soft/70 disabled:opacity-50"
+              onClick={refresh}
+              disabled={refreshing}
+            >
+              {refreshing ? "Обновляю…" : "↻ Обновить"}
+            </button>
           </div>
           {/* Сводка по складам — чипы-фильтры */}
           <div className="flex gap-2 flex-wrap">

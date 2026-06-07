@@ -1344,7 +1344,8 @@ paymentOrderDelete: (payment_order_id: string) =>
     request<{ status: string }>(`/api/finance-reference/${id}`, { method: "DELETE" }),
 
   businessSummary: (start: string, end: string, reporting_mode = "financial") =>
-    request<{ reporting_mode: string; totals: { realisation: number; sales: number; to_transfer: number; sold: number };
+    request<{ reporting_mode: string; published_through: string | null; estimated_from: string | null;
+      totals: { realisation: number; sales: number; to_transfer: number; sold: number };
       items: Array<{ tenant_id: number; name: string; realisation: number; sales: number; to_transfer: number; sold: number }> }>(
       `/api/business-summary?start_date=${start}&end_date=${end}&reporting_mode=${reporting_mode}`,
     ),
