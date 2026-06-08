@@ -7,7 +7,7 @@
  * Поллит /api/sync/status каждые 10 сек (5 сек, если что-то активно).
  */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { api, SyncStatusResponse, SyncEntity } from "@/api/client";
 import { Icon } from "@/components/Icon";
@@ -329,11 +329,35 @@ function SyncStatusDrawer({
   );
 }
 
+// Сущности, для которых /api/settings/sync/trigger принимает per-tenant таск.
+const REFRESHABLE = new Set([
+  "orders", "sales", "stocks", "ad_campaigns", "ad_campaign_details",
+  "ad_stats", "report_detail", "paid_storage", "redeem_notifications", "offset_acts",
+]);
+
 function EntityRow({ e }: { e: SyncEntity }) {
   const [expanded, setExpanded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const qc = useQueryClient();
   const sb = statusBadge(e.status);
   const ageCls = ageColor(e.age_s, e.entity);
   const hasError = !!e.error;
+  const canRefresh = REFRESHABLE.has(e.entity);
+
+  const refresh = async (ev: MouseEvent) => {
+    ev.stopPropagation();
+    if (busy) return;
+    setBusy(true);
+    try {
+      await api.triggerSync(e.entity);
+      // WB-фетч идёт в воркере; подождём и перечитаем статус (увидим свежий «назад»).
+      setTimeout(() => qc.invalidateQueries({ queryKey: ["sync-status"] }), 9000);
+    } catch {
+      /* проглатываем — статус и так обновится поллингом */
+    } finally {
+      setTimeout(() => setBusy(false), 9000);
+    }
+  };
 
   return (
     <>
@@ -359,11 +383,24 @@ function EntityRow({ e }: { e: SyncEntity }) {
           {formatAgo(e.age_s)}
         </td>
         <td className="text-right py-1.5">
-          <span
-            className={`inline-block px-1.5 py-0.5 rounded text-tiny ${sb.color}`}
-          >
-            {sb.label}
-          </span>
+          <div className="flex items-center justify-end gap-1.5">
+            <span
+              className={`inline-block px-1.5 py-0.5 rounded text-tiny ${sb.color}`}
+            >
+              {sb.label}
+            </span>
+            {canRefresh && (
+              <button
+                onClick={refresh}
+                disabled={busy}
+                title="Обновить из WB"
+                aria-label={`Обновить ${e.label}`}
+                className="text-muted hover:text-fg p-0.5 rounded hover:bg-surface-2 disabled:opacity-50"
+              >
+                <Icon name="refresh" size={12} className={busy ? "animate-spin" : ""} />
+              </button>
+            )}
+          </div>
         </td>
       </tr>
       {expanded && hasError && (
