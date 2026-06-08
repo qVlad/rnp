@@ -373,6 +373,11 @@ async def summary_report(
                 func.coalesce(func.sum(WbReportDetail.additional_payment), 0).label("additional"),
                 func.coalesce(func.sum(WbReportDetail.penalty), 0).label("penalty"),
                 func.coalesce(func.sum(case((is_promo, WbReportDetail.deduction), else_=0)), 0).label("promo_ad"),
+                # Компенсации (TS `compensation`): деньги, которые WB доплачивает по
+                # non-core операциям («Добровольная компенсация», «Возмещение…») —
+                # сидят в ppvz_for_pay этих строк (не в Продаже/Возврате). ДОБАВЛЯЮТСЯ
+                # к прибыли. Сверено 25-31: 1905 = TS compensation 1904.72.
+                func.coalesce(func.sum(WbReportDetail.ppvz_for_pay), 0).label("comp_ppvz"),
             ).where(
                 func.date(dcol) >= start_date,
                 func.date(dcol) <= end_date,
@@ -380,9 +385,26 @@ async def summary_report(
             )
         )
     ).one()
-    prochie_total = float(ded_row.deduction or 0) + float(ded_row.acceptance or 0) + float(ded_row.additional or 0)
+    # «Прочие удержания» (otherDeduction TS) — вычитаются: удержание(без промо) + приёмка.
+    prochie_total = float(ded_row.deduction or 0) + float(ded_row.acceptance or 0)
+    acceptance_total = float(ded_row.acceptance or 0)  # «Плат. приемка» отдельной плиткой
     fines_total = float(ded_row.penalty or 0)
     promo_ad_total = float(ded_row.promo_ad or 0)  # WB Продвижение из финотчёта (как TS — не в прибыль здесь)
+    # Компенсации — добавляются к прибыли (доплаты + ppvz компенсационных операций).
+    compensation_total = float(ded_row.comp_ppvz or 0) + float(ded_row.additional or 0)
+    # Возвраты ₽ (gross retail возвратов) — для плитки «Возвраты».
+    returns_rub = float(
+        (
+            await session.execute(
+                select(func.coalesce(func.sum(WbReportDetail.retail_price), 0)).where(
+                    func.date(dcol) >= start_date,
+                    func.date(dcol) <= end_date,
+                    WbReportDetail.supplier_oper_name == "Возврат",
+                )
+            )
+        ).scalar()
+        or 0
+    )
 
     def _f(v: Any) -> float:
         return float(v or 0)
@@ -399,13 +421,11 @@ async def summary_report(
         share = _f(r.realisation) / total_realisation
         opex = opex_total * share
         prochie = prochie_total * share
+        compensation = compensation_total * share
         # прибыль = к перечислению − логистика − хранение − COGS − налог −
-        # реклама − OPEX − прочие удержания. Подтверждено сверкой с ЖИВЫМ TS
-        # (account 25143, 18-24.05): TS profit = toTransfer − logistics − storage
-        # − costOfSales − tax − advertising − otherDeduction = 482 206.32 (точно).
-        # Штрафы (penalty) — отдельно, в прибыль НЕ входят (как TS). См.
-        # truestats-parity.md.
-        profit = _f(r.to_transfer) - _f(r.logistics) - _f(r.storage) - cogs - tax - ad - opex - prochie
+        # реклама − OPEX − прочие удержания + компенсации (TS-parity, account 25143).
+        # Штрафы (penalty) — отдельно, в прибыль НЕ входят (как TS).
+        profit = _f(r.to_transfer) - _f(r.logistics) - _f(r.storage) - cogs - tax - ad - opex - prochie + compensation
         p = prod_map.get(nm)
         items.append({
             "nm_id": nm,
@@ -445,36 +465,66 @@ async def summary_report(
     logistics_t, storage_t = _s("logistics"), _s("storage")
     commission_t, acquiring_t = _s("commission"), _s("acquiring")
     profit_t, opex_t = _s("profit"), _s("opex")
+    ad_t = _s("ad")
+    sold_t = sum(x["sold"] for x in items)
     rev_gross = pmap.get("revenue_gross") or 0
+    profit_wo_opex_t = round(profit_t + opex_t, 2)
+    R = realisation_t or 1.0  # знаменатель долей = реализация (как TS *Share)
+
+    def _pct(v: float) -> float:
+        return round(v / R * 100, 2)
+
     tot = {
         "realisation": realisation_t,
         "sales": sales_t,
         "to_transfer": _s("to_transfer"),
         "cogs": cogs_t,
-        "ad": _s("ad"),
+        "cogs_pct": _pct(cogs_t),  # costOfSalesShare
+        "ad": ad_t,
         "tax": _s("tax"),
+        "tax_pct": _pct(_s("tax")),
+        "tax_base": sales_t,  # наша налоговая база = продажи (×ставку)
         "opex": opex_t,
+        "opex_pct": _pct(opex_t),
         "profit": profit_t,
-        "profit_wo_opex": round(profit_t + opex_t, 2),
+        "profit_wo_opex": profit_wo_opex_t,
         # Маржа = прибыль / реализация (как TS marginality), НЕ /продажи.
-        "margin_pct": round(profit_t / realisation_t * 100, 2) if realisation_t else 0.0,
-        "sold": sum(x["sold"] for x in items),
+        "margin_pct": round(profit_t / R * 100, 2),
+        "margin_wo_opex_pct": round(profit_wo_opex_t / R * 100, 2),
+        "sold": sold_t,
         "returned": sum(x["returned"] for x in items),
+        "returns_rub": round(returns_rub, 2),
         "logistics": logistics_t,
+        "logistics_pct": _pct(logistics_t),  # logisticsShare
         "storage": storage_t,
+        "storage_pct": _pct(storage_t),  # storageShare
         # «Комиссия» у TS = комиссия WB + эквайринг (подтверждено сверкой).
         "commission": round(commission_t + acquiring_t, 2),
+        "commission_pct": _pct(commission_t + acquiring_t),  # commissionShare
         "acquiring": acquiring_t,
         "roi_pct": round(profit_t / cogs_t * 100, 2) if cogs_t else 0.0,
         # «Прочие удержания» — операционные (БЕЗ штрафов, вычитаются из прибыли);
-        # «Штрафы» — penalty, отдельной строкой (DEV-058).
+        # «Штрафы» — penalty; «Плат. приемка»; «Компенсации» (+ к прибыли). DEV-060.
         "deductions": round(prochie_total, 2),
+        "deductions_pct": _pct(prochie_total),
         "fines": round(fines_total, 2),
+        "acceptance": round(acceptance_total, 2),
+        "acceptance_pct": _pct(acceptance_total),
+        "compensation": round(compensation_total, 2),
+        "compensation_pct": _pct(compensation_total),
         "promo_ad": round(promo_ad_total, 2),  # WB Продвижение из финотчёта (справочно)
         "orders_count": pmap.get("orders"),
         "orders_sum": round(rev_gross, 2),
-        "buyout_pct": pmap.get("buyout_pct"),
-        "drr_pct": round(_s("ad") / rev_gross * 100, 2) if rev_gross else 0.0,
+        # Выкуп% = выкуплено(₽)/заказано(₽) — как TS averageRedemption (НЕ funnel count).
+        "buyout_pct": round(sales_t / rev_gross * 100, 2) if rev_gross else 0.0,
+        # ДРР = реклама/реализация; ДРРз = реклама/заказы (как TS drr / drrz).
+        "drr_pct": _pct(ad_t),
+        "drrz_pct": round(ad_t / rev_gross * 100, 2) if rev_gross else 0.0,
+        # Средние (как TS averages).
+        "avg_price_sale": round(sales_t / sold_t, 2) if sold_t else 0.0,
+        "avg_price_before_spp": round(realisation_t / sold_t, 2) if sold_t else 0.0,
+        "avg_logistics_per_unit": round(logistics_t / sold_t, 2) if sold_t else 0.0,
+        "avg_profit_per_unit": round(profit_t / sold_t, 2) if sold_t else 0.0,
     }
     return {
         "reporting_mode": reporting_mode,
