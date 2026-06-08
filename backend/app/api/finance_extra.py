@@ -299,13 +299,16 @@ async def summary_report(
 
     rows = list(acc.values())
     nm_ids = list(acc.keys())
-    # COGS (последняя себестоимость per nm — после переноса TS она плоская).
+    # COGS — себестоимость, ДЕЙСТВОВАВШАЯ в периоде (valid_from <= end_date),
+    # последняя из таких. DEV-060: важно для versioning — TS меняет себестоимость
+    # датой (напр. −11₽/шт с 25.05); брать абсолютный latest ломало бы прошлые
+    # недели (18-24 должна остаться на старой цене). Берём версию as-of периода.
     cogs_map: dict[int, float] = {}
     if nm_ids:
         crows = (
             await session.execute(
                 select(Cogs.nm_id, Cogs.cost_rub, Cogs.packaging_rub, Cogs.fulfillment_rub, Cogs.valid_from)
-                .where(Cogs.nm_id.in_(nm_ids))
+                .where(Cogs.nm_id.in_(nm_ids), Cogs.valid_from <= end_date)
                 .order_by(Cogs.nm_id, Cogs.valid_from.desc())
             )
         ).all()
