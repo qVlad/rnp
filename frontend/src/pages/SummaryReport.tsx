@@ -30,7 +30,10 @@ export default function SummaryReport() {
         { label: "К перечислению", value: fmtRub(t.to_transfer) },
         { label: "Заказы", value: `${fmtRub(t.orders_sum)} / ${fmtNum(t.orders_count)} шт` },
         { label: "Процент выкупа", value: fmtPct(t.buyout_pct) },
-        { label: "Логистика", value: `${fmtRub(t.logistics)} / ${fmtPct(t.logistics_pct)}` },
+        { label: "Логистика", value: `${fmtRub(t.logistics)} / ${fmtPct(t.logistics_pct)}`,
+          detail: (q.data?.logistics_breakdown?.length
+            ? q.data.logistics_breakdown.map((b) => ({ k: b.category, v: `${fmtRub(b.amount)} / ${fmtPct(b.pct)}` }))
+            : undefined) },
         { label: "Реклама / ДРР", value: `${fmtRub(t.ad)} / ${fmtPct(t.drr_pct)}` },
         { label: "Реклама / ДРРз", value: `${fmtRub(t.ad)} / ${fmtPct(t.drrz_pct)}` },
         { label: "Хранение", value: `${fmtRub(t.storage)} / ${fmtPct(t.storage_pct)}` },

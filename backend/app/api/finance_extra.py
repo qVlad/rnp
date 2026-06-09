@@ -396,6 +396,29 @@ async def summary_report(
     promo_ad_total = float(ded_row.promo_ad or 0)  # WB Продвижение из финотчёта (как TS — не в прибыль здесь)
     # Компенсации — добавляются к прибыли (доплаты + ppvz компенсационных операций).
     compensation_total = float(ded_row.comp_ppvz or 0) + float(ded_row.additional or 0)
+    # Детализация логистики по 5 категориям WB (DEV-060): дискриминатор —
+    # bonus_type_name на строках «Логистика» (К клиенту при отмене/продаже,
+    # От клиента при отмене/возврате, Возврат брака). Сверено с TS «в рубль».
+    log_rows = (
+        await session.execute(
+            select(
+                func.coalesce(WbReportDetail.bonus_type_name, "—").label("cat"),
+                func.coalesce(func.sum(WbReportDetail.delivery_rub), 0).label("amt"),
+            )
+            .where(
+                func.date(dcol) >= start_date,
+                func.date(dcol) <= end_date,
+                WbReportDetail.supplier_oper_name == "Логистика",
+            )
+            .group_by(WbReportDetail.bonus_type_name)
+        )
+    ).all()
+    logistics_breakdown = [
+        {"category": r.cat, "amount": round(float(r.amt or 0), 2)}
+        for r in log_rows if abs(float(r.amt or 0)) >= 0.005
+    ]
+    logistics_breakdown.sort(key=lambda x: abs(x["amount"]), reverse=True)
+
     # Возвраты ₽ (gross retail возвратов) — для плитки «Возвраты».
     returns_rub = float(
         (
@@ -614,6 +637,10 @@ async def summary_report(
         "tax_rate": tax_rate,
         "items": items,
         "totals": tot,
+        # Детализация логистики (5 категорий WB) — для выпадашки на плитке.
+        "logistics_breakdown": [
+            {**b, "pct": _pct(b["amount"])} for b in logistics_breakdown
+        ],
         # Фин-отчёт WB опубликован по этот день включительно; дни после —
         # операционная оценка по выкупам (estimated_from). None = весь период
         # опубликован (закрытая неделя, без оценки).
