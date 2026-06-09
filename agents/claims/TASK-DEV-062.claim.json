@@ -1,0 +1,7 @@
+{
+  "task_id": "TASK-DEV-062",
+  "agent": "Claude Opus 4.8 — main session",
+  "started_at": "2026-06-09T19:49:18Z",
+  "expected_minutes": 90,
+  "notes": "Dashboard-фильтры + Phase B (pnl/abc/ad-campaigns) + Phase C мульти-магазин"
+}
