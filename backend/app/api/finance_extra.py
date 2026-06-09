@@ -461,6 +461,55 @@ async def summary_report(
     pre = await compute_dashboard(session, period_from_range(start_date, end_date), mode="preliminary")
     pmap = {k["key"]: k.get("value") for k in pre.get("kpis", [])}
 
+    # Остатки + капитализация (DEV-060 Phase 2): последний снапшот WbStockSnapshot.
+    # Остатки(шт) = склад + в пути к/от клиента (как TS stockBalance). Капитализация
+    # по себес = Σ qty×cogs_unit; по рознице = Σ qty×price(после скидки).
+    last_snap = (
+        await session.execute(select(func.max(WbStockSnapshot.snapshot_dt)))
+    ).scalar()
+    stock_wh = stock_to = stock_from = 0
+    cap_cost = cap_price = 0.0
+    if last_snap is not None:
+        srows = (
+            await session.execute(
+                select(
+                    WbStockSnapshot.nm_id,
+                    func.coalesce(func.sum(WbStockSnapshot.quantity), 0).label("qty"),
+                    func.coalesce(func.sum(WbStockSnapshot.in_way_to_client), 0).label("to_c"),
+                    func.coalesce(func.sum(WbStockSnapshot.in_way_from_client), 0).label("from_c"),
+                    func.coalesce(func.avg(WbStockSnapshot.price), 0).label("price"),
+                    func.coalesce(func.avg(WbStockSnapshot.discount), 0).label("disc"),
+                )
+                .where(WbStockSnapshot.snapshot_dt == last_snap)
+                .group_by(WbStockSnapshot.nm_id)
+            )
+        ).all()
+        # COGS as-of сегодня (для капитализации берём текущую себестоимость).
+        cogs_now: dict[int, float] = {}
+        snap_nm = [int(s.nm_id) for s in srows if s.nm_id]
+        if snap_nm:
+            ccur = (
+                await session.execute(
+                    select(Cogs.nm_id, Cogs.cost_rub, Cogs.packaging_rub, Cogs.fulfillment_rub)
+                    .where(Cogs.nm_id.in_(snap_nm), Cogs.valid_from <= end_date)
+                    .order_by(Cogs.nm_id, Cogs.valid_from.desc())
+                )
+            ).all()
+            for c in ccur:
+                if int(c.nm_id) not in cogs_now:
+                    cogs_now[int(c.nm_id)] = float(c.cost_rub or 0) + float(c.packaging_rub or 0) + float(c.fulfillment_rub or 0)
+        for s in srows:
+            qty = int(s.qty)
+            stock_wh += qty
+            stock_to += int(s.to_c)
+            stock_from += int(s.from_c)
+            total_units = qty + int(s.to_c) + int(s.from_c)
+            cap_cost += total_units * cogs_now.get(int(s.nm_id), 0.0)
+            price_net = float(s.price or 0) * (1 - float(s.disc or 0) / 100.0)
+            cap_price += total_units * price_net
+    stock_total = stock_wh + stock_to + stock_from
+    period_days = (end_date - start_date).days + 1
+
     def _s(f: str) -> float:
         return round(sum(x[f] for x in items), 2)
 
@@ -528,6 +577,23 @@ async def summary_report(
         "avg_price_before_spp": round(realisation_t / sold_t, 2) if sold_t else 0.0,
         "avg_logistics_per_unit": round(logistics_t / sold_t, 2) if sold_t else 0.0,
         "avg_profit_per_unit": round(profit_t / sold_t, 2) if sold_t else 0.0,
+        # Остатки + капитализация + оборачиваемость (DEV-060 Phase 2, как TS).
+        "stock_total": stock_total,
+        "stock_wh": stock_wh,           # На складах МП
+        "stock_to_client": stock_to,    # В пути к клиентам
+        "stock_from_client": stock_from,  # В пути от клиентов
+        "cap_by_cost": round(cap_cost, 2),    # Капитализация по себестоимости
+        "cap_by_price": round(cap_price, 2),  # Капитализация по рознице
+        # Оборачиваемость (дн.) = остаток / (продано|заказано в день).
+        "turnover_sales_days": round(stock_total / (sold_t / period_days), 2) if sold_t else None,
+        "turnover_orders_days": round(stock_total / ((pmap.get("orders") or 0) / period_days), 2) if pmap.get("orders") else None,
+        # GMROI у TS = null на недельном окне (нужен годовой расчёт) — отдаём null.
+        "gmroi": None,
+        # Итоговое вознаграждение ВБ = что WB удержал = реализация − к перечислению.
+        "wb_final_reward": round(realisation_t - _s("to_transfer"), 2),
+        # «Мои склады» (off-platform) — у этого продавца 0 (как TS).
+        "own_stock_units": 0,
+        "own_stock_cap": 0.0,
     }
     return {
         "reporting_mode": reporting_mode,

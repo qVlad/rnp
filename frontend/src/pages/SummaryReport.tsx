@@ -49,6 +49,21 @@ export default function SummaryReport() {
         { label: "Сред. цена до скидок МП", value: fmtRub(t.avg_price_before_spp) },
         { label: "Ср. логистика на 1 шт", value: fmtRub(t.avg_logistics_per_unit) },
         { label: "Средняя прибыль на 1 шт", value: fmtRub(t.avg_profit_per_unit) },
+        { label: "Итоговое вознаграждение ВБ", value: fmtRub(t.wb_final_reward) },
+        { label: "Остатки", value: `${fmtNum(t.stock_total)} шт`,
+          detail: [
+            { k: "На складах МП", v: `${fmtNum(t.stock_wh)} шт` },
+            { k: "В пути к клиентам", v: `${fmtNum(t.stock_to_client)} шт` },
+            { k: "В пути от клиентов", v: `${fmtNum(t.stock_from_client)} шт` },
+          ] },
+        { label: "Капитализация по себес.", value: fmtRub(t.cap_by_cost) },
+        { label: "Капитализация по розн.", value: fmtRub(t.cap_by_price) },
+        { label: "Остатки на моих складах", value: `${fmtNum(t.own_stock_units)} шт` },
+        { label: "Капитализ. на моих складах", value: fmtRub(t.own_stock_cap) },
+        { label: "GMROI", value: t.gmroi == null ? "— %" : fmtPct(t.gmroi) },
+        { label: "Годовой GMROI", value: t.gmroi == null ? "— %" : fmtPct(t.gmroi) },
+        { label: "Оборачиваемость по прод.", value: t.turnover_sales_days == null ? "—" : `${t.turnover_sales_days} дн.` },
+        { label: "Оборачиваемость по зак.", value: t.turnover_orders_days == null ? "—" : `${t.turnover_orders_days} дн.` },
       ]
     : [];
 
@@ -79,9 +94,23 @@ export default function SummaryReport() {
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {tiles.map((tile) => (
-              <div key={tile.label} className="card p-3">
-                <div className="text-xs text-muted">{tile.label}</div>
+              <div key={tile.label} className="card p-3 relative group">
+                <div className="text-xs text-muted flex items-center justify-between">
+                  <span>{tile.label}</span>
+                  {tile.detail && <span className="text-[10px] px-1 rounded bg-soft">{tile.detail.length}</span>}
+                </div>
                 <div className="text-base font-semibold mt-1">{tile.value}</div>
+                {tile.detail && (
+                  <div className="absolute left-0 top-full z-20 mt-1 w-64 hidden group-hover:block card p-3 shadow-lg border border-border">
+                    <div className="text-xs font-semibold mb-1">{tile.label}: {tile.detail.length}</div>
+                    {tile.detail.map((d) => (
+                      <div key={d.k} className="flex justify-between text-xs py-0.5 border-t border-border/40">
+                        <span className="text-muted">{d.k}</span>
+                        <span className="font-medium">{d.v}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>
