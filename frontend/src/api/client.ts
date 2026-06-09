@@ -1312,7 +1312,7 @@ paymentOrderDelete: (payment_order_id: string) =>
       `/api/cashflow-calendar?start_date=${start}&end_date=${end}`,
     ),
 
-  summaryReport: (start: string, end: string, reporting_mode = "financial") =>
+  summaryReport: (start: string, end: string, reporting_mode = "financial", filters?: Record<string, string>) =>
     request<{ tax_rate: number; published_through: string | null; estimated_from: string | null;
       logistics_breakdown: Array<{ category: string; amount: number; pct: number }>;
       fines_breakdown: Array<{ category: string; amount: number; pct: number }>;
@@ -1322,7 +1322,15 @@ paymentOrderDelete: (payment_order_id: string) =>
       realisation: number; sales: number; to_transfer: number; commission: number; acquiring: number;
       logistics: number; storage: number; cogs: number; ad: number; tax: number; opex: number; sold: number; returned: number;
       profit: number; margin_pct: number; roi_pct: number;
-    }> }>(`/api/summary-report?start_date=${start}&end_date=${end}&reporting_mode=${reporting_mode}`),
+    }> }>(`/api/summary-report?${new URLSearchParams({ start_date: start, end_date: end, reporting_mode, ...(filters || {}) })}`),
+
+  filterOptions: (filters?: Record<string, string>) =>
+    request<{
+      brands: Array<{ value: string; count: number }>;
+      categories: Array<{ value: string; count: number }>;
+      groups: Array<{ value: number; label: string; count: number }>;
+      articles: Array<{ value: number; label: string; brand: string | null }>;
+    }>(`/api/filters/options?${new URLSearchParams(filters || {})}`),
 
   manualOpsList: (start: string, end: string) =>
     request<{ totals: { income: number; expense: number; net: number; planned_in: number; planned_out: number };

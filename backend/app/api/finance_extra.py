@@ -41,6 +41,7 @@ from app.db.models import (
     WbSale,
     WbStockSnapshot,
 )
+from app.services.filter_scope import resolve_nm_scope
 from app.services.metrics import compute_dashboard
 from app.services.periods import period_from_range
 from app.services.tenant_context import get_tenant
@@ -205,11 +206,23 @@ async def summary_report(
     start_date: Annotated[date, Query()],
     end_date: Annotated[date, Query()],
     reporting_mode: Annotated[str, Query()] = "financial",
+    brands: Annotated[str | None, Query()] = None,
+    categories: Annotated[str | None, Query()] = None,
+    groups: Annotated[str | None, Query()] = None,
+    articles: Annotated[str | None, Query()] = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     """Сводный отчёт per-SKU 1:1 с TrueStats (TASK-DEV-039/047): реализация=retail_price
     (до СПП), продажи=retail_amount (после СПП) по rr_dt, COGS, логистика, прибыль.
-    Раньше брали из /units (sale_dt) — расходилось с TS на per-SKU."""
+    Раньше брали из /units (sale_dt) — расходилось с TS на per-SKU.
+
+    DEV-062: глобальные фильтры brands/categories/groups/articles → nm_scope.
+    Когда фильтр пуст — nm_scope=None, поведение прежнее (parity сохраняется)."""
+    nm_scope = await resolve_nm_scope(
+        session, brands=brands, categories=categories, groups=groups, articles=articles
+    )
+    # Предикат сужения по nm_id (пусто = без сужения). Пустой scope → нет данных.
+    nm_pred = [WbReportDetail.nm_id.in_(nm_scope)] if nm_scope is not None else []
     dcol = _date_col(reporting_mode)
     is_sale = WbReportDetail.supplier_oper_name == "Продажа"
     is_ret = WbReportDetail.supplier_oper_name == "Возврат"
@@ -233,7 +246,7 @@ async def summary_report(
                 func.coalesce(func.sum(WbReportDetail.delivery_rub), 0).label("logistics"),
                 func.coalesce(func.sum(WbReportDetail.storage_fee), 0).label("storage"),
             )
-            .where(func.date(dcol) >= start_date, func.date(dcol) <= end_date, WbReportDetail.nm_id.isnot(None))
+            .where(func.date(dcol) >= start_date, func.date(dcol) <= end_date, WbReportDetail.nm_id.isnot(None), *nm_pred)
             .group_by(WbReportDetail.nm_id)
         )
     ).all()
@@ -386,6 +399,7 @@ async def summary_report(
                 func.date(dcol) >= start_date,
                 func.date(dcol) <= end_date,
                 WbReportDetail.supplier_oper_name.notin_(_CORE_OPS),
+                *nm_pred,
             )
         )
     ).one()
@@ -409,6 +423,7 @@ async def summary_report(
                 func.date(dcol) >= start_date,
                 func.date(dcol) <= end_date,
                 WbReportDetail.supplier_oper_name == "Логистика",
+                *nm_pred,
             )
             .group_by(WbReportDetail.bonus_type_name)
         )
@@ -430,6 +445,7 @@ async def summary_report(
                 func.date(dcol) >= start_date,
                 func.date(dcol) <= end_date,
                 WbReportDetail.penalty != 0,
+                *nm_pred,
             )
             .group_by(WbReportDetail.bonus_type_name)
         )
@@ -452,6 +468,7 @@ async def summary_report(
                 func.date(dcol) <= end_date,
                 WbReportDetail.supplier_oper_name.notin_(_CORE_OPS),
                 WbReportDetail.ppvz_for_pay != 0,
+                *nm_pred,
             )
             .group_by(WbReportDetail.supplier_oper_name)
         )
@@ -470,6 +487,7 @@ async def summary_report(
                     func.date(dcol) >= start_date,
                     func.date(dcol) <= end_date,
                     WbReportDetail.supplier_oper_name == "Возврат",
+                    *nm_pred,
                 )
             )
         ).scalar()

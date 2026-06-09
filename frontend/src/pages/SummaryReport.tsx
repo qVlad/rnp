@@ -8,6 +8,8 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { usePeriod } from "@/contexts/PeriodContext";
 import { PeriodCompareCalendar } from "@/components/PeriodCompareCalendar";
+import { GlobalFilterBar } from "@/components/GlobalFilterBar";
+import { useFilters, filterKey } from "@/contexts/FilterContext";
 import PageHeader from "@/components/PageHeader";
 import { fmtRub, fmtNum, fmtPct } from "@/lib/format";
 
@@ -33,13 +35,15 @@ export default function SummaryReport() {
   const [cmpOverride, setCmpOverride] = useState<{ from: string; to: string } | null>(null);
   const cmp = cmpOverride ?? autoCmp;
 
+  const { filters, toParams } = useFilters();
+  const fk = filterKey(filters);
   const q = useQuery({
-    queryKey: ["summary-report", range.from, range.to],
-    queryFn: () => api.summaryReport(range.from, range.to, "financial"),
+    queryKey: ["summary-report", range.from, range.to, fk],
+    queryFn: () => api.summaryReport(range.from, range.to, "financial", toParams()),
   });
   const qp = useQuery({
-    queryKey: ["summary-report-cmp", cmp.from, cmp.to],
-    queryFn: () => api.summaryReport(cmp.from, cmp.to, "financial"),
+    queryKey: ["summary-report-cmp", cmp.from, cmp.to, fk],
+    queryFn: () => api.summaryReport(cmp.from, cmp.to, "financial", toParams()),
   });
 
   const t = q.data?.totals;
@@ -101,14 +105,17 @@ export default function SummaryReport() {
         title="Сводный отчёт"
         subtitle="Метрики и разрез по SKU за период. По дате отчёта (rr_dt) — как TrueStats. Цвет плитки — динамика к периоду сравнения."
       />
-      <PeriodCompareCalendar
-        main={{ from: range.from, to: range.to }}
-        compare={cmp}
-        onApply={(m, c) => {
-          setPeriod({ kind: "custom", from: m.from, to: m.to });
-          setCmpOverride(c);
-        }}
-      />
+      <div className="flex flex-wrap items-center gap-3">
+        <PeriodCompareCalendar
+          main={{ from: range.from, to: range.to }}
+          compare={cmp}
+          onApply={(m, c) => {
+            setPeriod({ kind: "custom", from: m.from, to: m.to });
+            setCmpOverride(c);
+          }}
+        />
+        <GlobalFilterBar />
+      </div>
       {q.isLoading && <div className="text-muted text-sm">Загружаю…</div>}
       {q.error && <div className="text-danger text-sm">Ошибка: {String(q.error)}</div>}
 

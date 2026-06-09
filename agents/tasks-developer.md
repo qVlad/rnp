@@ -52,6 +52,12 @@
 - **Риски:** (a) кросс-tenant ломает глобальный tenant-фильтр `do_orm_execute` —
   нужен явный мульти-tenant путь (как business-summary); (b) каскад options не должен
   бить БД на каждый клик (кэш/debounce); (c) RBAC manager — intersect, не override.
+- **Phase A СДЕЛАНО (v0.64.26):** `services/filter_scope.py` (резолвер brands×
+  categories×groups×articles → set[nm_id], INTERSECT + RBAC); `api/filters.py`
+  `GET /api/filters/options` (каскад по брендам); FilterContext + GlobalFilterBar
+  (5 дропдаунов, Магазины=заглушка); провод в /summary-report (nm_pred на rd_rows +
+  все breakdown-запросы, пустой фильтр→None→parity сохранён). Phase B: раскатка на
+  units/dashboard/pnl/abc/deductions/ad-campaigns. Phase C: мульти-магазин.
 
 ### TASK-DEV-061: «Итоговое вознаграждение ВБ» (wbFinalReward) — точная формула TS
 - **Тип:** parity · **P2** · открыта 2026-06-09 (вынесено из DEV-060).
@@ -68,6 +74,16 @@
   + хранение с НДС-флагом; (3) либо получить точную пофайловую формулу от TS-саппорта.
   Цель — wbFinalReward = TS «в рубль» на 25-31 и 18-24.
 - **Пока:** плитка показывает наш расчёт (прозрачно, ~404k), помечена как оценка.
+- **ИССЛЕДОВАНИЕ (агент, 2026-06-09):** wbFinalReward НЕ выводится из period-агрегатов
+  (перебор ± до 4 полей — лучшие кандидаты бьют одну неделю, мажут другую на 7-10%;
+  остаток непропорционален полям). Это ДОКУМЕНТНАЯ метрика: per-realization УПД/Акт
+  взаимозачёта. Рекомендуемая формула: Σ по строкам со знаком (Продажа:+ / Возврат:−)
+  ( ppvz_vw + ppvz_vw_nds + delivery_rub + storage_fee + paid_acceptance + penalty +
+  deduction ) − Σ компенсаций (ppvz_for_pay non-core), затем сверить с
+  Σ `WbOffsetAct.total_sum` (category=actprofit) — авторитетный документ-итог WB
+  (синкается `sync_offset_acts`, юзается в tax_report как income_offset, в summary НЕ
+  используется). RECON_GUIDE rules 14-17, `ppvz_vw`=вознагр.ВБ без НДС. Реализовать
+  per-row нетто + резерв на offset_act.
 
 ### TASK-DEV-060: Сводный отчёт → полный паритет плиток с TS «Оцифровка» (в работе 2026-06-08)
 - **Доп. правки (v0.64.22, 2026-06-09):** раскраска плиток (зелёный/красный/серый по

@@ -2,6 +2,7 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { PeriodProvider } from "@/contexts/PeriodContext";
 import { ReportingModeProvider } from "@/contexts/ReportingModeContext";
+import { FilterProvider } from "@/contexts/FilterContext";
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import Audit from "./pages/Audit";
@@ -123,6 +124,7 @@ export default function App() {
     <AuthProvider>
       <PeriodProvider>
       <ReportingModeProvider>
+      <FilterProvider>
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
@@ -353,6 +355,7 @@ export default function App() {
           />
         </Route>
       </Routes>
+      </FilterProvider>
       </ReportingModeProvider>
       </PeriodProvider>
     </AuthProvider>
