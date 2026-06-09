@@ -415,6 +415,7 @@ async def build_pnl(
     date_to: date,
     granularity: Granularity = "day",
     brands: set[str] | None = None,
+    nm_ids: set[int] | None = None,
     reporting_mode: "ReportingMode" = "operational",
 ) -> dict[str, Any]:
     """Per-period operating P&L.
@@ -434,12 +435,19 @@ async def build_pnl(
           Только wb_report_detail-источник переключается; ad/OPEX/COGS остаются
           на своих датах (для них rr_dt не применим).
     """
-    nm_filter = (
-        select(Product.nm_id).where(Product.brand.in_(list(brands)))
-        if brands is not None
-        else None
-    )
-    company_scope = brands is None  # keep OPEX/taxes/fixed only for org-wide view
+    # DEV-062: глобальные фильтры (brands×categories×groups×articles ∩ RBAC),
+    # уже сведённые к набору nm_id, имеют приоритет над brand-whitelist. Любой
+    # явный скоуп (manager brands ИЛИ глобальный фильтр) → contribution-margin:
+    # OPEX / налоги / fixed_costs не аллоцируются (как у TS при фильтрации).
+    if nm_ids is not None:
+        nm_filter = select(Product.nm_id).where(Product.nm_id.in_(nm_ids))
+        company_scope = False
+    elif brands is not None:
+        nm_filter = select(Product.nm_id).where(Product.brand.in_(list(brands)))
+        company_scope = False
+    else:
+        nm_filter = None
+        company_scope = True  # keep OPEX/taxes/fixed only for org-wide view
 
     # ── A) WB report-detail aggregations (source of truth for revenue/commissions) ──
     # Каноничные предикаты + дата (sale_dt / rr_dt) импортируются из period_aggregates,

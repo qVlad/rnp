@@ -12,6 +12,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { useReportingMode } from "@/contexts/ReportingModeContext";
+import { useFilters, filterKey } from "@/contexts/FilterContext";
 import { fmtPct, fmtRub } from "@/lib/format";
 import { Icon } from "./Icon";
 
@@ -55,6 +56,7 @@ function buildQs(
   range: Props["range"],
   limit: number,
   reportingMode: "operational" | "financial",
+  filters: Record<string, string>,
 ): string {
   const qs = new URLSearchParams({
     metric,
@@ -67,6 +69,7 @@ function buildQs(
     qs.set("start_date", range.start);
     qs.set("end_date", range.end);
   }
+  for (const [k, v] of Object.entries(filters)) qs.set(k, v);
   return qs.toString();
 }
 
@@ -88,16 +91,18 @@ export default function MetricBreakdownPopup({
   }, [open, onClose]);
 
   const { reportingMode } = useReportingMode();
+  const { filters, toParams } = useFilters();
   const q = useQuery<BreakdownResponse>({
     queryKey: [
       "kpi-breakdown",
       metric,
       "period" in range ? `p:${range.period}` : `c:${range.start}:${range.end}`,
       reportingMode,
+      filterKey(filters),
     ],
     queryFn: async () => {
       if (!metric) throw new Error("metric required");
-      const qs = buildQs(metric, range, 10, reportingMode);
+      const qs = buildQs(metric, range, 10, reportingMode, toParams());
       return (await (await fetch(`/api/dashboard/kpi-breakdown?${qs}`, {
         credentials: "include",
       })).json()) as BreakdownResponse;

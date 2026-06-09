@@ -83,6 +83,7 @@ async def compute_kpi_breakdown(
     brands: set[str] | None,
     limit: int = 10,
     reporting_mode: ReportingMode = "operational",
+    nm_ids: set[int] | None = None,
 ) -> BreakdownResult:
     """Top-N SKU breakdown за период для заданной KPI-метрики.
 
@@ -141,20 +142,27 @@ async def compute_kpi_breakdown(
         .order_by(sale_expr.desc())
     )
 
-    if brands is not None:
+    # DEV-062: глобальные фильтры (RBAC уже пересечён в resolve_nm_scope) имеют
+    # приоритет над brand-whitelist. Пустой набор → показать пусто.
+    scope_empty = (nm_ids is not None and not nm_ids) or (
+        nm_ids is None and brands is not None and not brands
+    )
+    if scope_empty:
+        return BreakdownResult(
+            metric=metric,
+            period_from=period.start.isoformat(),
+            period_to=period.end.isoformat(),
+            total=Decimal("0"),
+            items=[],
+            truncated=False,
+            total_items=0,
+            truncated_sum=Decimal("0"),
+        )
+    if nm_ids is not None:
+        stmt = stmt.where(WbReportDetail.nm_id.in_(nm_ids))
+    elif brands is not None:
         # Manager scope — фильтр по брендам через product subquery
         # (TenantScopedMixin event listener уже применит tenant_id filter)
-        if not brands:
-            return BreakdownResult(
-                metric=metric,
-                period_from=period.start.isoformat(),
-                period_to=period.end.isoformat(),
-                total=Decimal("0"),
-                items=[],
-                truncated=False,
-                total_items=0,
-                truncated_sum=Decimal("0"),
-            )
         stmt = stmt.where(Product.brand.in_(brands))
 
     # Сначала считаем total за период (без limit)

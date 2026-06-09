@@ -8,6 +8,13 @@ export function setOn401Handler(fn: () => void): void {
   on401Handler = fn;
 }
 
+/** DEV-062: префикс query-string из глобальных фильтров (`&k=v...`), пусто если фильтр не задан. */
+function filterSuffix(filters?: Record<string, string>): string {
+  if (!filters) return "";
+  const s = new URLSearchParams(filters).toString();
+  return s ? `&${s}` : "";
+}
+
 async function request<T>(
   path: string,
   init: RequestInit = {},
@@ -674,19 +681,21 @@ export const api = {
     range: { period: "day" | "week" | "month" } | { start: string; end: string },
     mode: "preliminary" | "final" | "hybrid" = "preliminary",
     reportingMode: "operational" | "financial" = "operational",
+    filters?: Record<string, string>,
   ) => {
     const qs =
       "period" in range
         ? `period=${range.period}`
         : `start_date=${range.start}&end_date=${range.end}`;
     return request(
-      `/api/dashboard?${qs}&mode=${mode}&reporting_mode=${reportingMode}`,
+      `/api/dashboard?${qs}&mode=${mode}&reporting_mode=${reportingMode}${filterSuffix(filters)}`,
     );
   },
   timeseries: (
     days: number,
     mode: "preliminary" | "final" | "hybrid" = "preliminary",
     reportingMode: "operational" | "financial" = "operational",
+    filters?: Record<string, string>,
   ) =>
     request<{
       days: number;
@@ -694,7 +703,7 @@ export const api = {
       reporting_mode?: "operational" | "financial";
       rows: { date: string; revenue: number; orders: number; ad_cost: number }[];
     }>(
-      `/api/dashboard/timeseries?days=${days}&mode=${mode}&reporting_mode=${reportingMode}`,
+      `/api/dashboard/timeseries?days=${days}&mode=${mode}&reporting_mode=${reportingMode}${filterSuffix(filters)}`,
     ),
   dashboardCompare: (
     aFrom: string,
@@ -720,13 +729,14 @@ export const api = {
     mode: "preliminary" | "final" | "hybrid" = "preliminary",
     order: "desc" | "asc" = "desc",
     reportingMode: "operational" | "financial" = "operational",
+    filters?: Record<string, string>,
   ) => {
     const qs =
       "period" in range
         ? `period=${range.period}`
         : `start_date=${range.start}&end_date=${range.end}`;
     return request(
-      `/api/dashboard/top-skus?${qs}&by=${by}&order=${order}&limit=${limit}&mode=${mode}&reporting_mode=${reportingMode}`,
+      `/api/dashboard/top-skus?${qs}&by=${by}&order=${order}&limit=${limit}&mode=${mode}&reporting_mode=${reportingMode}${filterSuffix(filters)}`,
     );
   },
   alerts: () =>
@@ -757,6 +767,7 @@ export const api = {
     compare: boolean = false,
     brands?: string[] | null,
     reportingMode: "operational" | "financial" = "operational",
+    filters?: Record<string, string>,
   ) => {
     const brandsQ = brands && brands.length > 0
       ? `&brands=${encodeURIComponent(brands.join(","))}`
@@ -764,7 +775,7 @@ export const api = {
     return request(
       `/api/pnl?from=${from}&to=${to}&granularity=${granularity}${
         compare ? "&compare=true" : ""
-      }${brandsQ}&reporting_mode=${reportingMode}`,
+      }${brandsQ}&reporting_mode=${reportingMode}${filterSuffix(filters)}`,
     );
   },
 
@@ -1364,12 +1375,12 @@ paymentOrderDelete: (payment_order_id: string) =>
       `/api/business-summary?start_date=${start}&end_date=${end}&reporting_mode=${reporting_mode}`,
     ),
 
-  adCampaignsAnalytics: (start: string, end: string) =>
+  adCampaignsAnalytics: (start: string, end: string, filters?: Record<string, string>) =>
     request<{ totals: Record<string, number>; items: Array<{
       advert_id: number; name: string; type: string; status: string;
       views: number; clicks: number; ctr: number; cpc: number; spent: number;
       atbs: number; orders: number; cr: number; revenue: number; drr: number;
-    }> }>(`/api/ad-campaigns/analytics?start_date=${start}&end_date=${end}`),
+    }> }>(`/api/ad-campaigns/analytics?start_date=${start}&end_date=${end}${filterSuffix(filters)}`),
 
   stocksByWarehouse: () =>
     request<{ snapshot_dt: string | null; warehouses: Array<{ warehouse: string; qty: number }>;
@@ -1599,6 +1610,7 @@ paymentOrderDelete: (payment_order_id: string) =>
     days = 90,
     metric: "revenue" | "profit" | "qty" | "margin" = "revenue",
     includeArchived = false,
+    filters?: Record<string, string>,
   ) =>
     request<{
       metric: string;
@@ -1608,7 +1620,7 @@ paymentOrderDelete: (payment_order_id: string) =>
       matrix: Record<string, number>;
       items: any[];
     }>(
-      `/api/abc-analysis?days=${days}&metric=${metric}&include_archived=${includeArchived}`,
+      `/api/abc-analysis?days=${days}&metric=${metric}&include_archived=${includeArchived}${filterSuffix(filters)}`,
     ),
 
   // ── Telegram bot ──
@@ -2319,9 +2331,10 @@ paymentOrderDelete: (payment_order_id: string) =>
   dashboardTodayVsYesterday: (
     mode: "preliminary" | "final" | "hybrid" = "preliminary",
     reportingMode: "operational" | "financial" = "operational",
+    filters?: Record<string, string>,
   ) =>
     request(
-      `/api/dashboard/today-vs-yesterday?mode=${mode}&reporting_mode=${reportingMode}`,
+      `/api/dashboard/today-vs-yesterday?mode=${mode}&reporting_mode=${reportingMode}${filterSuffix(filters)}`,
     ),
 
   // TASK-DEV-012: фид «что изменилось с прошлой недели». Кеш Redis 1ч на бекенде.

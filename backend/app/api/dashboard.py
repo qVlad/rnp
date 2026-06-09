@@ -27,6 +27,7 @@ from app.services.kpi_breakdown import (
     BreakdownMetric,
     compute_kpi_breakdown,
 )
+from app.services.filter_scope import resolve_nm_scope
 from app.services.metrics import compute_dashboard, revenue_timeseries, top_skus
 from app.services.periods import Period, get_period, period_from_range
 from app.services.weekly_changes import build_weekly_changes
@@ -34,6 +35,28 @@ from app.services.weekly_changes import build_weekly_changes
 log = get_logger(__name__)
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+
+
+async def _resolve_global_filter(
+    session: AsyncSession,
+    *,
+    glob_brands: str | None,
+    categories: str | None,
+    groups: str | None,
+    articles: str | None,
+    rbac_brands: set[str] | None,
+) -> set[int] | None:
+    """DEV-062: свести панель глобальных фильтров к набору nm_id (RBAC учтён).
+
+    None ⇒ панель фильтров пуста → callee применяет brand-scope (RBAC) как раньше.
+    Любой непустой выбор → set[int] (RBAC уже пересечён, возможно пустой = пусто).
+    """
+    if not any([glob_brands, categories, groups, articles]):
+        return None  # фильтр не задан — оставляем legacy brand-scope (RBAC)
+    return await resolve_nm_scope(
+        session, brands=glob_brands, categories=categories, groups=groups,
+        articles=articles, rbac_brands=rbac_brands,
+    )
 
 
 def _resolve_period(
@@ -63,13 +86,22 @@ async def get_dashboard(
     end_date: Annotated[date | None, Query()] = None,
     mode: Literal["preliminary", "final", "hybrid"] = "preliminary",
     reporting_mode: Literal["operational", "financial"] = "operational",
+    categories: Annotated[str | None, Query()] = None,
+    groups: Annotated[str | None, Query()] = None,
+    articles: Annotated[str | None, Query()] = None,
+    glob_brands: Annotated[str | None, Query(alias="brands")] = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
+    nm_ids = await _resolve_global_filter(
+        session, glob_brands=glob_brands, categories=categories, groups=groups,
+        articles=articles, rbac_brands=brands,
+    )
     return await compute_dashboard(
         session,
         _resolve_period(period, start_date, end_date),
-        brands=brands,
+        brands=None if nm_ids is not None else brands,
+        nm_ids=nm_ids,
         mode=mode,
         reporting_mode=reporting_mode,
     )
@@ -80,15 +112,24 @@ async def get_timeseries(
     days: Annotated[int, Query(ge=1, le=365)] = 30,
     mode: Literal["preliminary", "final", "hybrid"] = "preliminary",
     reporting_mode: Literal["operational", "financial"] = "operational",
+    categories: Annotated[str | None, Query()] = None,
+    groups: Annotated[str | None, Query()] = None,
+    articles: Annotated[str | None, Query()] = None,
+    glob_brands: Annotated[str | None, Query(alias="brands")] = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
+    nm_ids = await _resolve_global_filter(
+        session, glob_brands=glob_brands, categories=categories, groups=groups,
+        articles=articles, rbac_brands=brands,
+    )
     return {
         "days": days,
         "mode": mode,
         "reporting_mode": reporting_mode,
         "rows": await revenue_timeseries(
-            session, days=days, brands=brands, mode=mode, reporting_mode=reporting_mode,
+            session, days=days, brands=None if nm_ids is not None else brands,
+            nm_ids=nm_ids, mode=mode, reporting_mode=reporting_mode,
         ),
     }
 
@@ -103,17 +144,26 @@ async def get_top_skus(
     limit: Annotated[int, Query(ge=1, le=50)] = 5,
     mode: Literal["preliminary", "final", "hybrid"] = "preliminary",
     reporting_mode: Literal["operational", "financial"] = "operational",
+    categories: Annotated[str | None, Query()] = None,
+    groups: Annotated[str | None, Query()] = None,
+    articles: Annotated[str | None, Query()] = None,
+    glob_brands: Annotated[str | None, Query(alias="brands")] = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
     """Top SKUs. `order=asc` + `by=margin` даёт worst-margin SKUs (TASK-DEV
     quick-win 3): топ-5 проблемных карточек, которые теряют деньги."""
     p = _resolve_period(period, start_date, end_date)
+    nm_ids = await _resolve_global_filter(
+        session, glob_brands=glob_brands, categories=categories, groups=groups,
+        articles=articles, rbac_brands=brands,
+    )
     return {
         "mode": mode,
         "reporting_mode": reporting_mode,
         "items": await top_skus(
-            session, p, by=by, limit=limit, brands=brands, mode=mode, order=order,
+            session, p, by=by, limit=limit, brands=None if nm_ids is not None else brands,
+            nm_ids=nm_ids, mode=mode, order=order,
             reporting_mode=reporting_mode,
         ),
     }
@@ -129,6 +179,10 @@ async def get_kpi_breakdown(
     end_date: Annotated[date | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=50)] = 10,
     reporting_mode: Literal["operational", "financial"] = "operational",
+    categories: Annotated[str | None, Query()] = None,
+    groups: Annotated[str | None, Query()] = None,
+    articles: Annotated[str | None, Query()] = None,
+    glob_brands: Annotated[str | None, Query(alias="brands")] = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
@@ -141,9 +195,13 @@ async def get_kpi_breakdown(
     financial) — без этого Σ breakdown ≠ Dashboard KPI в financial-режиме.
     """
     p = _resolve_period(period, start_date, end_date)
+    nm_ids = await _resolve_global_filter(
+        session, glob_brands=glob_brands, categories=categories, groups=groups,
+        articles=articles, rbac_brands=brands,
+    )
     result = await compute_kpi_breakdown(
-        session, p, metric=metric, brands=brands, limit=limit,
-        reporting_mode=reporting_mode,
+        session, p, metric=metric, brands=None if nm_ids is not None else brands,
+        limit=limit, reporting_mode=reporting_mode, nm_ids=nm_ids,
     )
     return {
         "metric": result.metric,
@@ -236,6 +294,10 @@ async def unack_alert(
 async def get_today_vs_yesterday(
     mode: Literal["preliminary", "final", "hybrid"] = "preliminary",
     reporting_mode: Literal["operational", "financial"] = "operational",
+    categories: Annotated[str | None, Query()] = None,
+    groups: Annotated[str | None, Query()] = None,
+    articles: Annotated[str | None, Query()] = None,
+    glob_brands: Annotated[str | None, Query(alias="brands")] = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
@@ -251,11 +313,16 @@ async def get_today_vs_yesterday(
     p_today = period_from_range(today, today)
     p_yesterday = period_from_range(yesterday, yesterday)
 
+    nm_ids = await _resolve_global_filter(
+        session, glob_brands=glob_brands, categories=categories, groups=groups,
+        articles=articles, rbac_brands=brands,
+    )
+    eff_brands = None if nm_ids is not None else brands
     d_today = await compute_dashboard(
-        session, p_today, brands=brands, mode=mode, reporting_mode=reporting_mode,
+        session, p_today, brands=eff_brands, nm_ids=nm_ids, mode=mode, reporting_mode=reporting_mode,
     )
     d_yesterday = await compute_dashboard(
-        session, p_yesterday, brands=brands, mode=mode, reporting_mode=reporting_mode,
+        session, p_yesterday, brands=eff_brands, nm_ids=nm_ids, mode=mode, reporting_mode=reporting_mode,
     )
 
     # Build delta KPIs zip-aligned by `.key`

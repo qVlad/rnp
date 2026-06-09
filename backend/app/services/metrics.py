@@ -84,13 +84,20 @@ from app.services.period_aggregates import (  # noqa: E402
 D0 = Decimal("0")
 
 
-def _nm_id_subq(brands: set[str] | None):
-    """Sub-select of nm_ids belonging to the brand whitelist.
+def _nm_id_subq(brands: set[str] | None, nm_ids: set[int] | None = None):
+    """Sub-select of nm_ids to scope an aggregate.
 
-    `None` ⇒ caller should not apply any filter (unrestricted role).
-    Empty set ⇒ caller will produce zero rows by design (manager with no
-    assignments).
+    `nm_ids` (DEV-062 global filters) takes priority — it's the already-resolved
+    set of allowed nm_id (brands×categories×groups×articles ∩ RBAC). When given,
+    callers pass `brands=None` (RBAC уже учтён в resolve_nm_scope).
+
+    Otherwise falls back to brand-whitelist (manager RBAC scope):
+    `None` ⇒ caller applies no filter (unrestricted role).
+    Empty set ⇒ caller produces zero rows by design (manager w/o assignments,
+    or global filter that matched nothing).
     """
+    if nm_ids is not None:
+        return select(Product.nm_id).where(Product.nm_id.in_(nm_ids))
     if brands is None:
         return None
     return select(Product.nm_id).where(Product.brand.in_(list(brands)))
@@ -162,6 +169,7 @@ async def _orders_aggregate(
     start: datetime,
     end: datetime,
     brands: set[str] | None = None,
+    nm_ids: set[int] | None = None,
 ) -> dict[str, float]:
     """Preliminary KPI заказов.
 
@@ -174,7 +182,7 @@ async def _orders_aggregate(
 
     Fallback на wb_orders (без рассрочки): если funnel ещё не синканулся.
     """
-    sub = _nm_id_subq(brands)
+    sub = _nm_id_subq(brands, nm_ids)
     period_from = start.date()
     period_to = (end - timedelta(microseconds=1)).date()
 
@@ -242,6 +250,7 @@ async def _sales_aggregate(
     start: datetime,
     end: datetime,
     brands: set[str] | None = None,
+    nm_ids: set[int] | None = None,
 ) -> dict[str, float]:
     """Preliminary KPI выкупов.
 
@@ -250,7 +259,7 @@ async def _sales_aggregate(
     `for_pay_net`, `for_pay_returns` — из wb_sales (funnel не отдаёт payout).
     Fallback на wb_sales если funnel пуст.
     """
-    sub = _nm_id_subq(brands)
+    sub = _nm_id_subq(brands, nm_ids)
     period_from = start.date()
     period_to = (end - timedelta(microseconds=1)).date()
 
@@ -300,6 +309,7 @@ async def _final_orders_aggregate(
     start: datetime,
     end: datetime,
     brands: set[str] | None = None,
+    nm_ids: set[int] | None = None,
     reporting_mode: ReportingMode = "operational",
 ) -> dict[str, float]:
     """Final-mode orders: from wb_report_detail.
@@ -331,7 +341,7 @@ async def _final_orders_aggregate(
             0,
         ).label("revenue_gross"),
     ).where(*_rd_period_predicates(start, end, reporting_mode))
-    sub = _nm_id_subq(brands)
+    sub = _nm_id_subq(brands, nm_ids)
     if sub is not None:
         stmt = stmt.where(WbReportDetail.nm_id.in_(sub))
     row = (await session.execute(stmt)).one()
@@ -366,6 +376,7 @@ async def _final_sales_aggregate(
     start: datetime,
     end: datetime,
     brands: set[str] | None = None,
+    nm_ids: set[int] | None = None,
     reporting_mode: ReportingMode = "operational",
 ) -> dict[str, float]:
     """Final-mode sales: count and net payout from wb_report_detail.
@@ -388,7 +399,7 @@ async def _final_sales_aggregate(
             func.sum(case((is_return, WbReportDetail.ppvz_for_pay), else_=0)), 0
         ).label("for_pay_returns"),
     ).where(*_rd_period_predicates(start, end, reporting_mode))
-    sub = _nm_id_subq(brands)
+    sub = _nm_id_subq(brands, nm_ids)
     if sub is not None:
         stmt = stmt.where(WbReportDetail.nm_id.in_(sub))
     row = (await session.execute(stmt)).one()
@@ -405,6 +416,7 @@ async def _final_finance_aggregate(
     start: datetime,
     end: datetime,
     brands: set[str] | None = None,
+    nm_ids: set[int] | None = None,
     reporting_mode: ReportingMode = "operational",
 ) -> dict[str, float]:
     """WB-кабинет «Доходы и расходы» по карточкам — финансовые поля.
@@ -459,7 +471,7 @@ async def _final_finance_aggregate(
             0,
         ).label("ppvz_net"),
     ).where(*_rd_period_predicates(start, end, reporting_mode))
-    sub = _nm_id_subq(brands)
+    sub = _nm_id_subq(brands, nm_ids)
     if sub is not None:
         stmt = stmt.where(WbReportDetail.nm_id.in_(sub))
     row = (await session.execute(stmt)).one()
@@ -513,6 +525,7 @@ async def _final_sold_units_and_cogs(
     end: datetime,
     cogs_map: dict[int, float],
     brands: set[str] | None = None,
+    nm_ids: set[int] | None = None,
     reporting_mode: ReportingMode = "operational",
 ) -> tuple[float, float]:
     """Net sold quantity and COGS from wb_report_detail (sales − returns).
@@ -535,7 +548,7 @@ async def _final_sold_units_and_cogs(
         .where(*_rd_period_predicates(start, end, reporting_mode))
         .group_by(WbReportDetail.nm_id)
     )
-    sub = _nm_id_subq(brands)
+    sub = _nm_id_subq(brands, nm_ids)
     if sub is not None:
         stmt = stmt.where(WbReportDetail.nm_id.in_(sub))
     rows = (await session.execute(stmt)).all()
@@ -553,6 +566,7 @@ async def _ad_aggregate(
     start: datetime,
     end: datetime,
     brands: set[str] | None = None,
+    nm_ids: set[int] | None = None,
 ) -> dict[str, float]:
     # NB: period.end is exclusive (next day at 00:00). For Date columns we
     # want stat_date < end.date() — NOT end.date() + 1day, which used to
@@ -566,7 +580,7 @@ async def _ad_aggregate(
         WbAdStatsDaily.stat_date >= start.date(),
         WbAdStatsDaily.stat_date < end.date(),
     )
-    sub = _nm_id_subq(brands)
+    sub = _nm_id_subq(brands, nm_ids)
     if sub is not None:
         stmt = stmt.where(WbAdStatsDaily.nm_id.in_(sub))
     row = (await session.execute(stmt)).one()
@@ -608,7 +622,7 @@ async def _ad_aggregate(
 
 
 async def _stocks_aggregate(
-    session: AsyncSession, brands: set[str] | None = None
+    session: AsyncSession, brands: set[str] | None = None, nm_ids: set[int] | None = None
 ) -> dict[str, float]:
     """Latest snapshot — total units & total cost (using current COGS)."""
     latest_dt = select(func.max(WbStockSnapshot.snapshot_dt)).scalar_subquery()
@@ -620,14 +634,14 @@ async def _stocks_aggregate(
         .where(WbStockSnapshot.snapshot_dt == latest_dt)
         .group_by(WbStockSnapshot.nm_id)
     )
-    nm_sub = _nm_id_subq(brands)
+    nm_sub = _nm_id_subq(brands, nm_ids)
     if nm_sub is not None:
         stmt = stmt.where(WbStockSnapshot.nm_id.in_(nm_sub))
     rows = (await session.execute(stmt)).all()
 
     total_units = float(sum(_f(r.qty) for r in rows))
 
-    cogs_map = await _latest_cogs_map(session, brands=brands)
+    cogs_map = await _latest_cogs_map(session, brands=brands, nm_ids=nm_ids)
     total_value = float(
         sum(_f(r.qty) * cogs_map.get(int(r.nm_id), 0.0) for r in rows)
     )
@@ -635,7 +649,7 @@ async def _stocks_aggregate(
 
 
 async def _latest_cogs_map(
-    session: AsyncSession, brands: set[str] | None = None
+    session: AsyncSession, brands: set[str] | None = None, nm_ids: set[int] | None = None
 ) -> dict[int, float]:
     stmt = select(
         Cogs.nm_id,
@@ -644,7 +658,7 @@ async def _latest_cogs_map(
         Cogs.fulfillment_rub,
         Cogs.valid_from,
     ).order_by(Cogs.nm_id, Cogs.valid_from.desc())
-    nm_sub = _nm_id_subq(brands)
+    nm_sub = _nm_id_subq(brands, nm_ids)
     if nm_sub is not None:
         stmt = stmt.where(Cogs.nm_id.in_(nm_sub))
     rows = (await session.execute(stmt)).all()
@@ -728,6 +742,7 @@ async def _hybrid_orders_or_sales(
     end: datetime,
     brands: set[str] | None,
     cutoff: datetime | None,
+    nm_ids: set[int] | None = None,
     reporting_mode: ReportingMode = "operational",
 ) -> dict[str, float]:
     """Hybrid: для дат до cutoff — final, после — preliminary. Складываем.
@@ -738,13 +753,13 @@ async def _hybrid_orders_or_sales(
     """
     if cutoff is None or cutoff <= start:
         # Все дни — preliminary (нет закрытых отчётов или они старше start)
-        return await aggregate_fn_preliminary(session, start, end, brands)
+        return await aggregate_fn_preliminary(session, start, end, brands, nm_ids=nm_ids)
     if cutoff >= end:
         # Все дни — final (cutoff покрывает весь период)
-        return await aggregate_fn_final(session, start, end, brands, reporting_mode=reporting_mode)
+        return await aggregate_fn_final(session, start, end, brands, nm_ids=nm_ids, reporting_mode=reporting_mode)
     # Mixed: [start, cutoff) — final; [cutoff, end) — preliminary
-    final_part = await aggregate_fn_final(session, start, cutoff, brands, reporting_mode=reporting_mode)
-    prelim_part = await aggregate_fn_preliminary(session, cutoff, end, brands)
+    final_part = await aggregate_fn_final(session, start, cutoff, brands, nm_ids=nm_ids, reporting_mode=reporting_mode)
+    prelim_part = await aggregate_fn_preliminary(session, cutoff, end, brands, nm_ids=nm_ids)
     return _merge_dicts(final_part, prelim_part)
 
 
@@ -754,20 +769,21 @@ async def _hybrid_sold_units_and_cogs(
     end: datetime,
     cogs_map: dict[int, float],
     brands: set[str] | None = None,
+    nm_ids: set[int] | None = None,
     cutoff: datetime | None = None,
     reporting_mode: ReportingMode = "operational",
 ) -> tuple[int, float]:
     """Hybrid sold units + COGS — split по cutoff и суммируем."""
     if cutoff is None or cutoff <= start:
-        return await _sold_units_and_cogs(session, start, end, cogs_map, brands=brands)
+        return await _sold_units_and_cogs(session, start, end, cogs_map, brands=brands, nm_ids=nm_ids)
     if cutoff >= end:
         return await _final_sold_units_and_cogs(
-            session, start, end, cogs_map, brands=brands, reporting_mode=reporting_mode,
+            session, start, end, cogs_map, brands=brands, nm_ids=nm_ids, reporting_mode=reporting_mode,
         )
     f_units, f_cogs = await _final_sold_units_and_cogs(
-        session, start, cutoff, cogs_map, brands=brands, reporting_mode=reporting_mode,
+        session, start, cutoff, cogs_map, brands=brands, nm_ids=nm_ids, reporting_mode=reporting_mode,
     )
-    p_units, p_cogs = await _sold_units_and_cogs(session, cutoff, end, cogs_map, brands=brands)
+    p_units, p_cogs = await _sold_units_and_cogs(session, cutoff, end, cogs_map, brands=brands, nm_ids=nm_ids)
     return f_units + p_units, f_cogs + p_cogs
 
 
@@ -777,6 +793,7 @@ async def compute_dashboard(
     brands: set[str] | None = None,
     mode: Mode = "preliminary",
     reporting_mode: ReportingMode = "operational",
+    nm_ids: set[int] | None = None,
 ) -> dict[str, Any]:
     """Build dashboard KPIs.
 
@@ -829,63 +846,63 @@ async def compute_dashboard(
     if mode == "hybrid":
         curr_orders = await _hybrid_orders_or_sales(
             _final_orders_aggregate, _orders_aggregate,
-            session, period.start, period.end, brands, cutoff, reporting_mode=reporting_mode,
+            session, period.start, period.end, brands, cutoff, nm_ids=nm_ids, reporting_mode=reporting_mode,
         )
         prev_orders = await _hybrid_orders_or_sales(
             _final_orders_aggregate, _orders_aggregate,
-            session, period.prev_start, period.prev_end, brands, cutoff, reporting_mode=reporting_mode,
+            session, period.prev_start, period.prev_end, brands, cutoff, nm_ids=nm_ids, reporting_mode=reporting_mode,
         )
         curr_sales = await _hybrid_orders_or_sales(
             _final_sales_aggregate, _sales_aggregate,
-            session, period.start, period.end, brands, cutoff, reporting_mode=reporting_mode,
+            session, period.start, period.end, brands, cutoff, nm_ids=nm_ids, reporting_mode=reporting_mode,
         )
         prev_sales = await _hybrid_orders_or_sales(
             _final_sales_aggregate, _sales_aggregate,
-            session, period.prev_start, period.prev_end, brands, cutoff, reporting_mode=reporting_mode,
+            session, period.prev_start, period.prev_end, brands, cutoff, nm_ids=nm_ids, reporting_mode=reporting_mode,
         )
     elif mode == "final":
-        curr_orders = await orders_fn(session, period.start, period.end, brands, **rm_kw_final)
-        prev_orders = await orders_fn(session, period.prev_start, period.prev_end, brands, **rm_kw_final)
-        curr_sales = await sales_fn(session, period.start, period.end, brands, **rm_kw_final)
-        prev_sales = await sales_fn(session, period.prev_start, period.prev_end, brands, **rm_kw_final)
+        curr_orders = await orders_fn(session, period.start, period.end, brands, nm_ids=nm_ids, **rm_kw_final)
+        prev_orders = await orders_fn(session, period.prev_start, period.prev_end, brands, nm_ids=nm_ids, **rm_kw_final)
+        curr_sales = await sales_fn(session, period.start, period.end, brands, nm_ids=nm_ids, **rm_kw_final)
+        prev_sales = await sales_fn(session, period.prev_start, period.prev_end, brands, nm_ids=nm_ids, **rm_kw_final)
     else:
         # preliminary — _orders_aggregate / _sales_aggregate, без reporting_mode
-        curr_orders = await orders_fn(session, period.start, period.end, brands)
-        prev_orders = await orders_fn(session, period.prev_start, period.prev_end, brands)
-        curr_sales = await sales_fn(session, period.start, period.end, brands)
-        prev_sales = await sales_fn(session, period.prev_start, period.prev_end, brands)
-    curr_ad = await _ad_aggregate(session, period.start, period.end, brands)
-    prev_ad = await _ad_aggregate(session, period.prev_start, period.prev_end, brands)
-    stocks = await _stocks_aggregate(session, brands)
+        curr_orders = await orders_fn(session, period.start, period.end, brands, nm_ids=nm_ids)
+        prev_orders = await orders_fn(session, period.prev_start, period.prev_end, brands, nm_ids=nm_ids)
+        curr_sales = await sales_fn(session, period.start, period.end, brands, nm_ids=nm_ids)
+        prev_sales = await sales_fn(session, period.prev_start, period.prev_end, brands, nm_ids=nm_ids)
+    curr_ad = await _ad_aggregate(session, period.start, period.end, brands, nm_ids=nm_ids)
+    prev_ad = await _ad_aggregate(session, period.prev_start, period.prev_end, brands, nm_ids=nm_ids)
+    stocks = await _stocks_aggregate(session, brands, nm_ids=nm_ids)
 
     curr = _compute_window_kpis(curr_orders, curr_sales, curr_ad)
     prev = _compute_window_kpis(prev_orders, prev_sales, prev_ad)
 
-    cogs_map = await _latest_cogs_map(session, brands=brands)
+    cogs_map = await _latest_cogs_map(session, brands=brands, nm_ids=nm_ids)
     if mode == "hybrid":
         sold_units, sold_cogs = await _hybrid_sold_units_and_cogs(
-            session, period.start, period.end, cogs_map, brands=brands,
+            session, period.start, period.end, cogs_map, brands=brands, nm_ids=nm_ids,
             cutoff=cutoff, reporting_mode=reporting_mode,
         )
         _, prev_sold_cogs = await _hybrid_sold_units_and_cogs(
-            session, period.prev_start, period.prev_end, cogs_map, brands=brands,
+            session, period.prev_start, period.prev_end, cogs_map, brands=brands, nm_ids=nm_ids,
             cutoff=cutoff, reporting_mode=reporting_mode,
         )
     elif mode == "final":
         sold_units, sold_cogs = await sold_fn(
-            session, period.start, period.end, cogs_map, brands=brands,
+            session, period.start, period.end, cogs_map, brands=brands, nm_ids=nm_ids,
             reporting_mode=reporting_mode,
         )
         _, prev_sold_cogs = await sold_fn(
-            session, period.prev_start, period.prev_end, cogs_map, brands=brands,
+            session, period.prev_start, period.prev_end, cogs_map, brands=brands, nm_ids=nm_ids,
             reporting_mode=reporting_mode,
         )
     else:
         sold_units, sold_cogs = await sold_fn(
-            session, period.start, period.end, cogs_map, brands=brands,
+            session, period.start, period.end, cogs_map, brands=brands, nm_ids=nm_ids,
         )
         _, prev_sold_cogs = await sold_fn(
-            session, period.prev_start, period.prev_end, cogs_map, brands=brands,
+            session, period.prev_start, period.prev_end, cogs_map, brands=brands, nm_ids=nm_ids,
         )
     # Финансовые поля из wb_report_detail доступны в final и hybrid (берём
     # final-часть для closed-периода, для свежей части просто отсутствуют).
@@ -893,22 +910,22 @@ async def compute_dashboard(
         if mode == "hybrid" and cutoff is not None and cutoff > period.start and cutoff < period.end:
             # finance — только за final-часть [start, cutoff)
             fin = await _final_finance_aggregate(
-                session, period.start, cutoff, brands, reporting_mode=reporting_mode,
+                session, period.start, cutoff, brands, nm_ids=nm_ids, reporting_mode=reporting_mode,
             )
             prev_fin_end = min(cutoff, period.prev_end)
             if prev_fin_end > period.prev_start:
                 prev_fin = await _final_finance_aggregate(
-                    session, period.prev_start, prev_fin_end, brands,
+                    session, period.prev_start, prev_fin_end, brands, nm_ids=nm_ids,
                     reporting_mode=reporting_mode,
                 )
             else:
                 prev_fin = _empty_finance()
         else:
             fin = await _final_finance_aggregate(
-                session, period.start, period.end, brands, reporting_mode=reporting_mode,
+                session, period.start, period.end, brands, nm_ids=nm_ids, reporting_mode=reporting_mode,
             )
             prev_fin = await _final_finance_aggregate(
-                session, period.prev_start, period.prev_end, brands,
+                session, period.prev_start, period.prev_end, brands, nm_ids=nm_ids,
                 reporting_mode=reporting_mode,
             )
     else:
@@ -925,13 +942,13 @@ async def compute_dashboard(
     pnl_to = (period.end - timedelta(days=1)).date()
     pnl_curr = await build_pnl(
         session, date_from=pnl_from, date_to=pnl_to, granularity="month",
-        brands=brands, reporting_mode=reporting_mode,
+        brands=brands, nm_ids=nm_ids, reporting_mode=reporting_mode,
     )
     pnl_prev_from = period.prev_start.date()
     pnl_prev_to = (period.prev_end - timedelta(days=1)).date()
     pnl_prev = await build_pnl(
         session, date_from=pnl_prev_from, date_to=pnl_prev_to, granularity="month",
-        brands=brands, reporting_mode=reporting_mode,
+        brands=brands, nm_ids=nm_ids, reporting_mode=reporting_mode,
     )
     net_profit = _f(pnl_curr.get("totals", {}).get("profit", 0))
     prev_net_profit = _f(pnl_prev.get("totals", {}).get("profit", 0))
@@ -1134,6 +1151,7 @@ async def _sold_units_and_cogs(
     end: datetime,
     cogs_map: dict[int, float],
     brands: set[str] | None = None,
+    nm_ids: set[int] | None = None,
 ) -> tuple[float, float]:
     stmt = (
         select(
@@ -1143,7 +1161,7 @@ async def _sold_units_and_cogs(
         .where(WbSale.sale_dt >= start, WbSale.sale_dt < end)
         .group_by(WbSale.nm_id)
     )
-    nm_sub = _nm_id_subq(brands)
+    nm_sub = _nm_id_subq(brands, nm_ids)
     if nm_sub is not None:
         stmt = stmt.where(WbSale.nm_id.in_(nm_sub))
     rows = (await session.execute(stmt)).all()
@@ -1180,6 +1198,7 @@ async def revenue_timeseries(
     session: AsyncSession,
     days: int = 30,
     brands: set[str] | None = None,
+    nm_ids: set[int] | None = None,
     mode: Mode = "preliminary",
     reporting_mode: ReportingMode = "operational",
 ) -> list[dict[str, Any]]:
@@ -1194,7 +1213,7 @@ async def revenue_timeseries(
     )
     start = end - timedelta(days=days)
 
-    nm_sub = _nm_id_subq(brands)
+    nm_sub = _nm_id_subq(brands, nm_ids)
     ad_by_day = await _ad_cost_by_day(session, start, end, nm_sub)
 
     if mode == "final":
@@ -1282,6 +1301,7 @@ async def top_skus(
     by: str = "revenue",
     limit: int = 5,
     brands: set[str] | None = None,
+    nm_ids: set[int] | None = None,
     mode: Mode = "preliminary",
     order: str = "desc",
     reporting_mode: ReportingMode = "operational",
@@ -1294,8 +1314,8 @@ async def top_skus(
     period = (
         period_or_key if isinstance(period_or_key, Period) else get_period(period_or_key)
     )
-    cogs_map = await _latest_cogs_map(session, brands=brands)
-    top_nm_sub = _nm_id_subq(brands)
+    cogs_map = await _latest_cogs_map(session, brands=brands, nm_ids=nm_ids)
+    top_nm_sub = _nm_id_subq(brands, nm_ids)
 
     if mode == "final":
         is_sale = WbReportDetail.supplier_oper_name.in_(_SALE_NAMES)

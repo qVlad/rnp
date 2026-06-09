@@ -59,9 +59,20 @@
   все breakdown-запросы, пустой фильтр→None→parity сохранён).
 - **Phase B (в процессе):** ✅ /summary-report, ✅ /deductions (v0.64.28), ✅ /units
   (v0.64.29 — build_unit_economics+nm_ids, resolve_nm_scope c rbac_brands, бар на стр.).
-  ⏳ dashboard (13 call-sites `_nm_id_subq` в metrics.py — аккуратная протяжка
-  `nm_filter` через ~6 aggregate-функций, риск runtime-NameError → делать
-  сфокусированно, не ломая KPI-parity), pnl, abc, ad-campaigns. Phase C: мульти-магазин.
+  ✅ **dashboard** (протянул `nm_ids: set[int]|None` через `_nm_id_subq` + все ~12
+  aggregate-функций metrics.py + `compute_dashboard`/`revenue_timeseries`/`top_skus`
+  + `build_pnl` (nm_ids→contribution-margin, company_scope=False) + `compute_kpi_breakdown`;
+  API get_dashboard/timeseries/top-skus/kpi-breakdown/today-vs-yesterday принимают
+  brands/categories/groups/articles → `_resolve_global_filter`; фронт Dashboard.tsx
+  + MetricBreakdownPopup + TodayVsYesterdayStrip через useFilters).
+  ✅ **pnl** (table-вид; api/pnl.py get_pnl: cat/grp/art → resolve_nm_scope→nm_ids,
+  иначе legacy brand drill-down; бар только в table — cards/by-brand читают
+  /pnl/yoy и /pnl/by-brand, не подключены). ✅ **abc** (build_abc_xyz+nm_ids). ✅
+  **ad-campaigns** (WbAdStatsDaily.nm_id-предикат). ⚠️ **Runtime/QA НЕ прогнаны**
+  (docker down при разработке) — фин-правки (P&L/Dashboard KPI) требуют qa-tester +
+  import-check `from app.main import app` ПЕРЕД деплоем. **Phase C: мульти-магазин**
+  (заглушка «Магазины» в GlobalFilterBar) — НЕ начата; архитектурно тяжёлая
+  (кросс-tenant как /business-summary, риск ломки `do_orm_execute`).
 
 ### TASK-DEV-061: «Итоговое вознаграждение ВБ» (wbFinalReward) — точная формула TS
 - **Тип:** parity · **P2** · открыта 2026-06-09 (вынесено из DEV-060).

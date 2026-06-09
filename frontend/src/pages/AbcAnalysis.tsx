@@ -5,6 +5,8 @@ import { fmtRub, fmtNum, fmtPct } from "@/lib/format";
 import { useTagFilter } from "@/lib/useTagFilter";
 import TagFilterDropdown from "@/components/TagFilterDropdown";
 import PageHeader from "@/components/PageHeader";
+import { useFilters, filterKey } from "@/contexts/FilterContext";
+import { GlobalFilterBar } from "@/components/GlobalFilterBar";
 
 const METRICS = [
   { value: "revenue", label: "Выручка" },
@@ -48,10 +50,12 @@ export default function AbcAnalysis() {
   const [days, setDays] = useState(90);
   const [metric, setMetric] = useState<(typeof METRICS)[number]["value"]>("revenue");
   const [classFilter, setClassFilter] = useState<string>("");
+  const { filters: gFilters, toParams: gToParams } = useFilters();
+  const gfk = filterKey(gFilters);
 
   const q = useQuery({
-    queryKey: ["abc", days, metric],
-    queryFn: () => api.abcAnalysis(days, metric),
+    queryKey: ["abc", days, metric, gfk],
+    queryFn: () => api.abcAnalysis(days, metric, false, gToParams()),
   });
 
   const { matchTag } = useTagFilter("abc.tag-filter.v1");
@@ -107,6 +111,9 @@ export default function AbcAnalysis() {
           </div>
         }
       />
+
+      {/* DEV-062 — глобальные фильтры. */}
+      <GlobalFilterBar />
 
       <div className="card text-sm text-muted leading-relaxed">
         <strong>ABC</strong> — распределение SKU по доле выбранной метрики (Парето 80/15/5).

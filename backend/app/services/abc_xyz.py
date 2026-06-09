@@ -75,15 +75,21 @@ async def build_abc_xyz(
     metric: Metric = "revenue",
     include_archived: bool = False,
     brands: set[str] | None = None,
+    nm_ids: set[int] | None = None,
 ) -> dict[str, Any]:
-    """Compute ABC+XYZ classification for all SKUs sold in the last `days` days."""
+    """Compute ABC+XYZ classification for all SKUs sold in the last `days` days.
+
+    DEV-062: `nm_ids` (глобальные фильтры, RBAC уже учтён) имеет приоритет над
+    brand-whitelist.
+    """
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=days)
-    nm_filter = (
-        select(Product.nm_id).where(Product.brand.in_(list(brands)))
-        if brands is not None
-        else None
-    )
+    if nm_ids is not None:
+        nm_filter = select(Product.nm_id).where(Product.nm_id.in_(nm_ids))
+    elif brands is not None:
+        nm_filter = select(Product.nm_id).where(Product.brand.in_(list(brands)))
+    else:
+        nm_filter = None
 
     # Aggregate per SKU: total qty, total revenue, total for_pay (net revenue after WB cut).
     sales_stmt = (
@@ -141,7 +147,9 @@ async def build_abc_xyz(
         series_by_nm[int(r.nm_id)][d] = float(r.qty or 0)
 
     products_stmt = select(Product)
-    if brands is not None:
+    if nm_ids is not None:
+        products_stmt = products_stmt.where(Product.nm_id.in_(nm_ids))
+    elif brands is not None:
         products_stmt = products_stmt.where(Product.brand.in_(list(brands)))
     all_products = (await session.execute(products_stmt)).scalars().all()
     products = {p.nm_id: p for p in all_products}

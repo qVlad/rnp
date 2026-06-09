@@ -14,6 +14,7 @@ from app.services.auth import (
     get_current_user,
     get_db_tenant_scoped,
 )
+from app.services.filter_scope import resolve_nm_scope
 from app.services.pnl_builder import build_pnl
 from app.services.pnl_reconciliation import build_reconciliation
 
@@ -49,6 +50,9 @@ async def get_pnl(
             "INTERSECT с его brand_assignments (extra бренды просто игнорируются)."
         ),
     ),
+    categories: str | None = Query(default=None, description="DEV-062 глоб.фильтр: категории (CSV)"),
+    groups: str | None = Query(default=None, description="DEV-062 глоб.фильтр: id групп (CSV)"),
+    articles: str | None = Query(default=None, description="DEV-062 глоб.фильтр: nm_id (CSV)"),
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
@@ -57,31 +61,45 @@ async def get_pnl(
     if date_from is None:
         date_from = date_to - timedelta(days=29)
 
-    # Drill-down: explicit brands в query-param. Manager — intersect (RBAC).
+    rbac_brands = brands  # RBAC-ограничение роли (None = без ограничений)
+
+    # DEV-062: если задан хотя бы один не-brand измерение (категории/группы/
+    # артикулы) — сводим всю комбинацию (включая brands) к nm_id-набору через
+    # resolve_nm_scope (RBAC учтён). Иначе — legacy brand-only drill-down.
+    eff_brands: set[str] | None = rbac_brands
+    nm_ids: set[int] | None = None
     requested_brands: set[str] | None = None
-    if brands_param:
-        requested_brands = {b.strip() for b in brands_param.split(",") if b.strip()}
-    if requested_brands is not None:
-        if brands is None:
-            brands = requested_brands
-        else:
-            brands = brands & requested_brands
-            # Если intersect пуст → manager попросил чужие бренды → возвращаем
-            # пустой brand-set, build_pnl отдаст нули. Не 403 чтобы UI не падал
-            # на bookmarked deep-link'е, который потом был ограничен.
+    if any([categories, groups, articles]):
+        nm_ids = await resolve_nm_scope(
+            session, brands=brands_param, categories=categories, groups=groups,
+            articles=articles, rbac_brands=rbac_brands,
+        )
+        eff_brands = None
+    else:
+        # Drill-down: explicit brands в query-param. Manager — intersect (RBAC).
+        if brands_param:
+            requested_brands = {b.strip() for b in brands_param.split(",") if b.strip()}
+        if requested_brands is not None:
+            if eff_brands is None:
+                eff_brands = requested_brands
+            else:
+                eff_brands = eff_brands & requested_brands
+                # Если intersect пуст → manager попросил чужие бренды → пустой
+                # brand-set, build_pnl отдаст нули. Не 403 чтобы UI не падал.
 
     out = await build_pnl(
         session,
         date_from=date_from,
         date_to=date_to,
         granularity=granularity,
-        brands=brands,
+        brands=eff_brands,
+        nm_ids=nm_ids,
         reporting_mode=reporting_mode,
     )
-    out["scope"] = "company" if brands is None else "brands"
+    out["scope"] = "company" if (eff_brands is None and nm_ids is None) else "brands"
     out["reporting_mode"] = reporting_mode
     if requested_brands is not None:
-        out["filter_brands"] = sorted(brands) if brands else []
+        out["filter_brands"] = sorted(eff_brands) if eff_brands else []
 
     if compare:
         # Период такой же длины, сдвинутый назад на (N+1) дней, чтобы прошлый
@@ -94,7 +112,8 @@ async def get_pnl(
             date_from=prev_from,
             date_to=prev_to,
             granularity=granularity,
-            brands=brands,
+            brands=eff_brands,
+            nm_ids=nm_ids,
             reporting_mode=reporting_mode,
         )
         # Не возвращаем `rows` для прошлого периода — UI рисует только totals

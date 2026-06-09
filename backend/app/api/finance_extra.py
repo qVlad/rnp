@@ -1161,9 +1161,23 @@ _ADV_STATUS = {4: "Готова", 7: "Завершена", 9: "Активна", 
 async def ad_campaigns_analytics(
     start_date: Annotated[date, Query()],
     end_date: Annotated[date, Query()],
+    categories: Annotated[str | None, Query()] = None,
+    groups: Annotated[str | None, Query()] = None,
+    articles: Annotated[str | None, Query()] = None,
+    brands: Annotated[str | None, Query()] = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
-    """Аналитика РК (TASK-DEV-046): свод по кампаниям из WbAdStatsDaily за период."""
+    """Аналитика РК (TASK-DEV-046): свод по кампаниям из WbAdStatsDaily за период.
+
+    DEV-062: при заданных глобальных фильтрах spend/выручка считаются только по
+    строкам выбранных SKU (атрибуция РК к карточке через WbAdStatsDaily.nm_id).
+    """
+    nm_pred = []
+    if any([brands, categories, groups, articles]):
+        nm_scope = await resolve_nm_scope(
+            session, brands=brands, categories=categories, groups=groups, articles=articles
+        )
+        nm_pred = [WbAdStatsDaily.nm_id.in_(nm_scope if nm_scope is not None else set())]
     rows = (
         await session.execute(
             select(
@@ -1178,6 +1192,7 @@ async def ad_campaigns_analytics(
             .where(
                 WbAdStatsDaily.stat_date >= start_date,
                 WbAdStatsDaily.stat_date <= end_date,
+                *nm_pred,
             )
             .group_by(WbAdStatsDaily.advert_id)
         )

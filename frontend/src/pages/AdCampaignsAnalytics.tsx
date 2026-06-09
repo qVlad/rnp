@@ -9,12 +9,16 @@ import { usePeriod } from "@/contexts/PeriodContext";
 import { DateRangePicker } from "@/components/DateRangePicker";
 import PageHeader from "@/components/PageHeader";
 import { fmtRub, fmtNum, fmtPct } from "@/lib/format";
+import { useFilters, filterKey } from "@/contexts/FilterContext";
+import { GlobalFilterBar } from "@/components/GlobalFilterBar";
 
 export default function AdCampaignsAnalytics() {
   const { range, setPeriod } = usePeriod();
+  const { filters: gFilters, toParams: gToParams } = useFilters();
+  const gfk = filterKey(gFilters);
   const q = useQuery({
-    queryKey: ["ad-analytics", range.from, range.to],
-    queryFn: () => api.adCampaignsAnalytics(range.from, range.to),
+    queryKey: ["ad-analytics", range.from, range.to, gfk],
+    queryFn: () => api.adCampaignsAnalytics(range.from, range.to, gToParams()),
   });
   const t = q.data?.totals;
 
@@ -29,6 +33,8 @@ export default function AdCampaignsAnalytics() {
         to={range.to}
         onChange={(r) => setPeriod({ kind: "custom", from: r.from, to: r.to })}
       />
+      {/* DEV-062 — глобальные фильтры. */}
+      <GlobalFilterBar />
       {q.isLoading && <div className="text-muted text-sm">Загружаю…</div>}
       {q.data && (
         <>

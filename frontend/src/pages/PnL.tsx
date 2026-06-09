@@ -13,6 +13,8 @@ import PnLByBrandView from "@/components/PnLByBrandView";
 import DeltaCell from "@/components/DeltaCell";
 import { usePeriod } from "@/contexts/PeriodContext";
 import { useReportingMode } from "@/contexts/ReportingModeContext";
+import { useFilters, filterKey } from "@/contexts/FilterContext";
+import { GlobalFilterBar } from "@/components/GlobalFilterBar";
 import PageHeader from "@/components/PageHeader";
 import ReportingModeBadge from "@/components/ReportingModeBadge";
 
@@ -194,10 +196,20 @@ export default function PnL() {
   };
   const { isHidden: rowHidden } = useColumnVisibility("pnl.rows.hidden.v1");
 
+  // DEV-062 — глобальные фильтры. `brands` из бара имеет приоритет; legacy
+  // drill-down `?brands=` из /managers-kpi используется когда бар без брендов.
+  const { filters: gFilters, toParams: gToParams } = useFilters();
+  const gfk = filterKey(gFilters);
+  const pnlFilters = (() => {
+    const p = gToParams();
+    if (!p.brands && drillBrands && drillBrands.length > 0) p.brands = drillBrands.join(",");
+    return p;
+  })();
+
   const q = useQuery({
-    queryKey: ["pnl", from, to, granularity, compare, drillBrandsParam, reportingMode],
+    queryKey: ["pnl", from, to, granularity, compare, drillBrandsParam, reportingMode, gfk],
     queryFn: () =>
-      api.pnl(from, to, granularity, compare, drillBrands, reportingMode) as Promise<any>,
+      api.pnl(from, to, granularity, compare, null, reportingMode, pnlFilters) as Promise<any>,
   });
 
   const isBrandsScope = q.data?.scope === "brands";
@@ -315,6 +327,10 @@ export default function PnL() {
           </div>
         }
       />
+
+      {/* DEV-062 — глобальные фильтры (пока только для табличного вида; cards/
+          by-brand читают отдельные endpoints /pnl/yoy и /pnl/by-brand). */}
+      {view === "table" && <GlobalFilterBar />}
 
       {view === "cards" && <PnLCardsView />}
       {view === "by-brand" && <PnLByBrandView />}

@@ -7,6 +7,7 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
+import { useFilters, filterKey } from "@/contexts/FilterContext";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
 
 // Ключевые метрики для быстрого взгляда. Остальные доступны в обычных KPI cards.
@@ -22,9 +23,10 @@ function fmtByKey(key: string, val: number | string | null): string {
 }
 
 export default function TodayVsYesterdayStrip() {
+  const { filters, toParams } = useFilters();
   const q = useQuery<any>({
-    queryKey: ["today-vs-yesterday"],
-    queryFn: () => api.dashboardTodayVsYesterday("preliminary"),
+    queryKey: ["today-vs-yesterday", filterKey(filters)],
+    queryFn: () => api.dashboardTodayVsYesterday("preliminary", "operational", toParams()),
   });
   if (q.isLoading || !q.data) return null;
   const featured = (q.data.kpis as any[]).filter((k) => FEATURED_KEYS.includes(k.key));

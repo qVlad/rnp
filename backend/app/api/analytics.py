@@ -10,6 +10,7 @@ from app.db.session import get_db
 from app.services.auth import get_db_tenant_scoped
 from app.services.abc_xyz import build_abc_xyz
 from app.services.auth import current_brands_filter
+from app.services.filter_scope import resolve_nm_scope
 from app.services.forecast import build_stockout_forecast
 from app.services.supply_distribution import build_supply_distribution
 
@@ -21,15 +22,27 @@ async def abc_analysis(
     days: Annotated[int, Query(ge=7, le=365)] = 90,
     metric: Literal["revenue", "profit", "qty", "margin"] = "revenue",
     include_archived: Annotated[bool, Query()] = False,
+    categories: Annotated[str | None, Query()] = None,
+    groups: Annotated[str | None, Query()] = None,
+    articles: Annotated[str | None, Query()] = None,
+    glob_brands: Annotated[str | None, Query(alias="brands")] = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ):
+    # DEV-062: глобальные фильтры → nm_ids (RBAC учтён через rbac_brands).
+    nm_ids = None
+    if any([glob_brands, categories, groups, articles]):
+        nm_ids = await resolve_nm_scope(
+            session, brands=glob_brands, categories=categories, groups=groups,
+            articles=articles, rbac_brands=brands,
+        )
     return await build_abc_xyz(
         session,
         days=days,
         metric=metric,
         include_archived=include_archived,
-        brands=brands,
+        brands=None if nm_ids is not None else brands,
+        nm_ids=nm_ids,
     )
 
 

@@ -40,6 +40,8 @@ import StateOfBusinessCard from "@/components/StateOfBusinessCard";
 import ReportingModeBadge from "@/components/ReportingModeBadge";
 import { usePeriod } from "@/contexts/PeriodContext";
 import { useReportingMode } from "@/contexts/ReportingModeContext";
+import { useFilters, filterKey } from "@/contexts/FilterContext";
+import { GlobalFilterBar } from "@/components/GlobalFilterBar";
 import ViewPresetsBar from "@/components/ViewPresetsBar";
 import { exportToPdf, exportToPng } from "@/lib/exportPdf";
 import { Icon } from "@/components/Icon";
@@ -98,6 +100,10 @@ export default function Dashboard() {
   // Передаём в API-запросы; смена в Layout-toggle инвалидирует queries
   // через queryKey (см. ниже).
   const { reportingMode } = useReportingMode();
+  // DEV-062 — глобальные фильтры (бренды/категории/группы/артикулы). В queryKey
+  // → смена фильтра рефетчит все дашборд-запросы; toParams() → query-string в API.
+  const { filters: gFilters, toParams: gToParams } = useFilters();
+  const gfk = filterKey(gFilters);
   const [mode, setMode] = useState<Mode>(() => {
     if (ctxPeriod.kind === "custom") {
       return { kind: "custom", start: ctxPeriod.from, end: ctxPeriod.to };
@@ -162,22 +168,22 @@ export default function Dashboard() {
     mode.kind === "preset" ? `p:${mode.period}` : `c:${mode.start}:${mode.end}`;
 
   const dashQ = useQuery({
-    queryKey: ["dashboard", rangeKey, dataMode, reportingMode],
-    queryFn: () => api.dashboard(range, dataMode, reportingMode) as Promise<any>,
+    queryKey: ["dashboard", rangeKey, dataMode, reportingMode, gfk],
+    queryFn: () => api.dashboard(range, dataMode, reportingMode, gToParams()) as Promise<any>,
   });
   const tsQ = useQuery({
-    queryKey: ["timeseries", tsDays, dataMode, reportingMode],
-    queryFn: () => api.timeseries(tsDays, dataMode, reportingMode),
+    queryKey: ["timeseries", tsDays, dataMode, reportingMode, gfk],
+    queryFn: () => api.timeseries(tsDays, dataMode, reportingMode, gToParams()),
   });
   const topQ = useQuery({
-    queryKey: ["top", rangeKey, topBy, dataMode, reportingMode],
+    queryKey: ["top", rangeKey, topBy, dataMode, reportingMode, gfk],
     queryFn: () => {
       // worst_margin = по марже + сортировка asc (худшие сверху). Quick-win 3
       // из ревью c8f6609: «Top-5 проблемных SKU» — кандидаты на удаление /
       // ребренд / снижение закупки.
       const by = topBy === "worst_margin" ? "margin" : topBy;
       const order = topBy === "worst_margin" ? "asc" : "desc";
-      return api.topSkus(range, by, 5, dataMode, order, reportingMode) as Promise<any>;
+      return api.topSkus(range, by, 5, dataMode, order, reportingMode, gToParams()) as Promise<any>;
     },
   });
   const alertsQ = useQuery({ queryKey: ["alerts"], queryFn: () => api.alerts() });
@@ -412,6 +418,9 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* DEV-062 — глобальные фильтры (бренды/категории/группы/артикулы). */}
+      <GlobalFilterBar />
 
       {/* TASK-LEAD-029 — toggle и picker для сравнения двух периодов. */}
       <div className="flex items-center gap-2 flex-wrap">
