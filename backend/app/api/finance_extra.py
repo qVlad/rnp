@@ -415,15 +415,15 @@ async def summary_report(
     # плюс WB-услуги (логистика/хранение/приёмка/штрафы/удержания) − компенсации.
     # Это документная метрика (УПД); точная per-line NDS-сверка TS не воспроизводится
     # из агрегатов — остаётся небольшой остаток (см. TASK-DEV-061).
+    # База УПД — вознаграждение ВБ БЕЗ НДС (`ppvz_vw`): на неё НДС начисляется,
+    # поэтому сам НДС в базу НЕ входит (vw_nds исключён). Сверка 25-31: даёт Δ~1%.
     vw_row = (
         await session.execute(
-            select(
-                net(WbReportDetail.ppvz_vw).label("vw"),
-                net(WbReportDetail.ppvz_vw_nds).label("vw_nds"),
-            ).where(func.date(dcol) >= start_date, func.date(dcol) <= end_date, *nm_pred)
+            select(net(WbReportDetail.ppvz_vw).label("vw"))
+            .where(func.date(dcol) >= start_date, func.date(dcol) <= end_date, *nm_pred)
         )
     ).one()
-    vw_reward = float(vw_row.vw or 0) + float(vw_row.vw_nds or 0)
+    vw_reward = float(vw_row.vw or 0)
     # Детализация логистики по 5 категориям WB (DEV-060): дискриминатор —
     # bonus_type_name на строках «Логистика» (К клиенту при отмене/продаже,
     # От клиента при отмене/возврате, Возврат брака). Сверено с TS «в рубль».
@@ -1027,6 +1027,10 @@ async def get_deductions(
     start_date: Annotated[date, Query()],
     end_date: Annotated[date, Query()],
     reporting_mode: Annotated[str, Query()] = "financial",
+    brands: Annotated[str | None, Query()] = None,
+    categories: Annotated[str | None, Query()] = None,
+    groups: Annotated[str | None, Query()] = None,
+    articles: Annotated[str | None, Query()] = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     """«Прочие удержания» — non-core удержания/доплаты (удержания, приёмка,
@@ -1038,6 +1042,8 @@ async def get_deductions(
     DEV-058: «WB Продвижение» (реклама через финотчёт) выделена в `promo` и НЕ
     входит в headline `total` — TS относит её к рекламе, не к otherDeduction."""
     dcol = _date_col(reporting_mode)
+    nm_scope = await resolve_nm_scope(session, brands=brands, categories=categories, groups=groups, articles=articles)
+    nm_pred = [WbReportDetail.nm_id.in_(nm_scope)] if nm_scope is not None else []
     is_promo = func.coalesce(WbReportDetail.bonus_type_name, "").ilike(_PROMO_BONUS_LIKE)
     rows = (
         await session.execute(
@@ -1054,6 +1060,7 @@ async def get_deductions(
                 func.date(dcol) >= start_date,
                 func.date(dcol) <= end_date,
                 WbReportDetail.supplier_oper_name.notin_(_CORE_OPS),
+                *nm_pred,
             )
             .group_by(WbReportDetail.supplier_oper_name)
         )

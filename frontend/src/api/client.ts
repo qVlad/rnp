@@ -1278,11 +1278,11 @@ paymentOrderDelete: (payment_order_id: string) =>
   },
 
   // TASK-DEV-041/042/044: доп. отчёты под TrueStats.
-  deductions: (start: string, end: string, reporting_mode = "financial") =>
+  deductions: (start: string, end: string, reporting_mode = "financial", filters?: Record<string, string>) =>
     request<{ reporting_mode: string; total: number; fines_total: number; promo_total: number; items: Array<{
       operation: string; count: number; penalty: number; deduction: number;
       acceptance: number; additional: number; total: number; fines: number; promo: number;
-    }> }>(`/api/deductions?start_date=${start}&end_date=${end}&reporting_mode=${reporting_mode}`),
+    }> }>(`/api/deductions?${new URLSearchParams({ start_date: start, end_date: end, reporting_mode, ...(filters || {}) })}`),
 
   operations: (params: { start: string; end: string; reporting_mode?: string; operation?: string; limit?: number; offset?: number }) => {
     const qs = new URLSearchParams({ start_date: params.start, end_date: params.end });

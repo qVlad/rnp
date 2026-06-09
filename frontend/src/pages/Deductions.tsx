@@ -5,15 +5,19 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { usePeriod } from "@/contexts/PeriodContext";
+import { useFilters, filterKey } from "@/contexts/FilterContext";
 import { DateRangePicker } from "@/components/DateRangePicker";
+import { GlobalFilterBar } from "@/components/GlobalFilterBar";
 import PageHeader from "@/components/PageHeader";
 import { fmtRub, fmtNum } from "@/lib/format";
 
 export default function Deductions() {
   const { range, setPeriod } = usePeriod();
+  const { filters, toParams } = useFilters();
+  const fk = filterKey(filters);
   const q = useQuery({
-    queryKey: ["deductions", range.from, range.to],
-    queryFn: () => api.deductions(range.from, range.to, "financial"),
+    queryKey: ["deductions", range.from, range.to, fk],
+    queryFn: () => api.deductions(range.from, range.to, "financial", toParams()),
   });
 
   return (
@@ -22,11 +26,14 @@ export default function Deductions() {
         title="Прочие удержания"
         subtitle="Non-core удержания WB: удержания, платная приёмка, доплаты/возмещения (Джем, транзит). Штрафы и «WB Продвижение» (реклама через финотчёт) выделены отдельно и НЕ входят в «Прочие удержания» — как в TrueStats. Логистика/хранение/комиссия — отдельными строками. По дате отчёта (rr_dt)."
       />
-      <DateRangePicker
-        from={range.from}
-        to={range.to}
-        onChange={(r) => setPeriod({ kind: "custom", from: r.from, to: r.to })}
-      />
+      <div className="flex flex-wrap items-center gap-3">
+        <DateRangePicker
+          from={range.from}
+          to={range.to}
+          onChange={(r) => setPeriod({ kind: "custom", from: r.from, to: r.to })}
+        />
+        <GlobalFilterBar />
+      </div>
       {q.isLoading && <div className="text-muted text-sm">Загружаю…</div>}
       {q.data && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
