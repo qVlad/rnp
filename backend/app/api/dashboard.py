@@ -27,7 +27,8 @@ from app.services.kpi_breakdown import (
     BreakdownMetric,
     compute_kpi_breakdown,
 )
-from app.services.filter_scope import resolve_nm_scope
+from app.services.filter_scope import resolve_nm_scope, resolve_store_scope
+from app.services.tenant_context import set_tenant_filter
 from app.services.metrics import compute_dashboard, revenue_timeseries, top_skus
 from app.services.periods import Period, get_period, period_from_range
 from app.services.weekly_changes import build_weekly_changes
@@ -57,6 +58,20 @@ async def _resolve_global_filter(
         session, brands=glob_brands, categories=categories, groups=groups,
         articles=articles, rbac_brands=rbac_brands,
     )
+
+
+async def _apply_store_filter(
+    session: AsyncSession, *, stores: str | None, user: CurrentUser
+) -> bool:
+    """DEV-062 Phase C: если выбрано ≥2 магазина — расширить ORM-фильтр на их
+    tenant'ы (свод по кабинетам). Возврат: True если мульти-магазин активен."""
+    store_ids = await resolve_store_scope(
+        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id,
+    )
+    if store_ids:
+        set_tenant_filter(session, store_ids)
+        return True
+    return False
 
 
 def _resolve_period(
@@ -90,9 +105,12 @@ async def get_dashboard(
     groups: Annotated[str | None, Query()] = None,
     articles: Annotated[str | None, Query()] = None,
     glob_brands: Annotated[str | None, Query(alias="brands")] = None,
+    stores: Annotated[str | None, Query()] = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
+    user: CurrentUser = Depends(get_current_user),
 ) -> dict:
+    multi_store = await _apply_store_filter(session, stores=stores, user=user)
     nm_ids = await _resolve_global_filter(
         session, glob_brands=glob_brands, categories=categories, groups=groups,
         articles=articles, rbac_brands=brands,
@@ -104,6 +122,7 @@ async def get_dashboard(
         nm_ids=nm_ids,
         mode=mode,
         reporting_mode=reporting_mode,
+        multi_store=multi_store,
     )
 
 
@@ -116,9 +135,12 @@ async def get_timeseries(
     groups: Annotated[str | None, Query()] = None,
     articles: Annotated[str | None, Query()] = None,
     glob_brands: Annotated[str | None, Query(alias="brands")] = None,
+    stores: Annotated[str | None, Query()] = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
+    user: CurrentUser = Depends(get_current_user),
 ) -> dict:
+    await _apply_store_filter(session, stores=stores, user=user)
     nm_ids = await _resolve_global_filter(
         session, glob_brands=glob_brands, categories=categories, groups=groups,
         articles=articles, rbac_brands=brands,
@@ -148,12 +170,15 @@ async def get_top_skus(
     groups: Annotated[str | None, Query()] = None,
     articles: Annotated[str | None, Query()] = None,
     glob_brands: Annotated[str | None, Query(alias="brands")] = None,
+    stores: Annotated[str | None, Query()] = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
+    user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     """Top SKUs. `order=asc` + `by=margin` даёт worst-margin SKUs (TASK-DEV
     quick-win 3): топ-5 проблемных карточек, которые теряют деньги."""
     p = _resolve_period(period, start_date, end_date)
+    await _apply_store_filter(session, stores=stores, user=user)
     nm_ids = await _resolve_global_filter(
         session, glob_brands=glob_brands, categories=categories, groups=groups,
         articles=articles, rbac_brands=brands,
@@ -183,8 +208,10 @@ async def get_kpi_breakdown(
     groups: Annotated[str | None, Query()] = None,
     articles: Annotated[str | None, Query()] = None,
     glob_brands: Annotated[str | None, Query(alias="brands")] = None,
+    stores: Annotated[str | None, Query()] = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
+    user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     """TASK-LEAD-055 — Top-N SKU breakdown для KPI с большой суммой удержаний.
 
@@ -195,6 +222,7 @@ async def get_kpi_breakdown(
     financial) — без этого Σ breakdown ≠ Dashboard KPI в financial-режиме.
     """
     p = _resolve_period(period, start_date, end_date)
+    await _apply_store_filter(session, stores=stores, user=user)
     nm_ids = await _resolve_global_filter(
         session, glob_brands=glob_brands, categories=categories, groups=groups,
         articles=articles, rbac_brands=brands,
@@ -298,8 +326,10 @@ async def get_today_vs_yesterday(
     groups: Annotated[str | None, Query()] = None,
     articles: Annotated[str | None, Query()] = None,
     glob_brands: Annotated[str | None, Query(alias="brands")] = None,
+    stores: Annotated[str | None, Query()] = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
+    user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     """Сегодня vs вчера: KPI с delta. Под "Рука на пульсе" — utility wrapper
     над compute_dashboard, считает за оба дня и считает delta_pct.
@@ -313,16 +343,19 @@ async def get_today_vs_yesterday(
     p_today = period_from_range(today, today)
     p_yesterday = period_from_range(yesterday, yesterday)
 
+    multi_store = await _apply_store_filter(session, stores=stores, user=user)
     nm_ids = await _resolve_global_filter(
         session, glob_brands=glob_brands, categories=categories, groups=groups,
         articles=articles, rbac_brands=brands,
     )
     eff_brands = None if nm_ids is not None else brands
     d_today = await compute_dashboard(
-        session, p_today, brands=eff_brands, nm_ids=nm_ids, mode=mode, reporting_mode=reporting_mode,
+        session, p_today, brands=eff_brands, nm_ids=nm_ids, mode=mode,
+        reporting_mode=reporting_mode, multi_store=multi_store,
     )
     d_yesterday = await compute_dashboard(
-        session, p_yesterday, brands=eff_brands, nm_ids=nm_ids, mode=mode, reporting_mode=reporting_mode,
+        session, p_yesterday, brands=eff_brands, nm_ids=nm_ids, mode=mode,
+        reporting_mode=reporting_mode, multi_store=multi_store,
     )
 
     # Build delta KPIs zip-aligned by `.key`

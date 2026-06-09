@@ -14,7 +14,8 @@ from app.services.auth import (
     get_current_user,
     get_db_tenant_scoped,
 )
-from app.services.filter_scope import resolve_nm_scope
+from app.services.filter_scope import resolve_nm_scope, resolve_store_scope
+from app.services.tenant_context import set_tenant_filter
 from app.services.pnl_builder import build_pnl
 from app.services.pnl_reconciliation import build_reconciliation
 
@@ -53,13 +54,23 @@ async def get_pnl(
     categories: str | None = Query(default=None, description="DEV-062 глоб.фильтр: категории (CSV)"),
     groups: str | None = Query(default=None, description="DEV-062 глоб.фильтр: id групп (CSV)"),
     articles: str | None = Query(default=None, description="DEV-062 глоб.фильтр: nm_id (CSV)"),
+    stores: str | None = Query(default=None, description="DEV-062 Phase C: tenant-id магазинов (CSV) для свода"),
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
+    user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     if date_to is None:
         date_to = date.today()
     if date_from is None:
         date_from = date_to - timedelta(days=29)
+
+    # DEV-062 Phase C: свод по магазинам (≥2 кабинета) → расширить ORM-фильтр.
+    store_ids = await resolve_store_scope(
+        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id,
+    )
+    multi_store = bool(store_ids)
+    if store_ids:
+        set_tenant_filter(session, store_ids)
 
     rbac_brands = brands  # RBAC-ограничение роли (None = без ограничений)
 
@@ -94,9 +105,12 @@ async def get_pnl(
         granularity=granularity,
         brands=eff_brands,
         nm_ids=nm_ids,
+        multi_store=multi_store,
         reporting_mode=reporting_mode,
     )
-    out["scope"] = "company" if (eff_brands is None and nm_ids is None) else "brands"
+    out["scope"] = (
+        "brands" if (eff_brands is not None or nm_ids is not None or multi_store) else "company"
+    )
     out["reporting_mode"] = reporting_mode
     if requested_brands is not None:
         out["filter_brands"] = sorted(eff_brands) if eff_brands else []
@@ -114,6 +128,7 @@ async def get_pnl(
             granularity=granularity,
             brands=eff_brands,
             nm_ids=nm_ids,
+            multi_store=multi_store,
             reporting_mode=reporting_mode,
         )
         # Не возвращаем `rows` для прошлого периода — UI рисует только totals

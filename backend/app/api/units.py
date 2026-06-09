@@ -8,8 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Product
 from app.db.session import get_db
 from app.services.auth import get_db_tenant_scoped
-from app.services.auth import current_brands_filter
-from app.services.filter_scope import resolve_nm_scope
+from app.services.auth import CurrentUser, current_brands_filter, get_current_user
+from app.services.filter_scope import resolve_nm_scope, resolve_store_scope
+from app.services.tenant_context import set_tenant_filter
 from app.services.size_breakdown import build_size_breakdown
 from app.services.unit_economics import build_unit_economics
 
@@ -26,9 +27,17 @@ async def get_units(
     groups: Annotated[str | None, Query()] = None,
     articles: Annotated[str | None, Query()] = None,
     glob_brands: Annotated[str | None, Query(alias="brands")] = None,
+    stores: Annotated[str | None, Query()] = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
+    user: CurrentUser = Depends(get_current_user),
 ) -> dict:
+    # DEV-062 Phase C: свод по магазинам (≥2 кабинета) → расширить ORM-фильтр.
+    store_ids = await resolve_store_scope(
+        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id,
+    )
+    if store_ids:
+        set_tenant_filter(session, store_ids)
     # DEV-062: глобальные фильтры → nm_ids (RBAC учтён через rbac_brands).
     nm_ids = await resolve_nm_scope(
         session, brands=glob_brands, categories=categories, groups=groups,

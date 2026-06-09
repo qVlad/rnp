@@ -416,6 +416,7 @@ async def build_pnl(
     granularity: Granularity = "day",
     brands: set[str] | None = None,
     nm_ids: set[int] | None = None,
+    multi_store: bool = False,
     reporting_mode: "ReportingMode" = "operational",
 ) -> dict[str, Any]:
     """Per-period operating P&L.
@@ -447,7 +448,9 @@ async def build_pnl(
         company_scope = False
     else:
         nm_filter = None
-        company_scope = True  # keep OPEX/taxes/fixed only for org-wide view
+        # DEV-062 Phase C: мульти-магазин (свод по кабинетам) → contribution-margin,
+        # т.к. OPEX/налоги per-tenant с разными режимами в один свод не сводятся.
+        company_scope = not multi_store  # OPEX/taxes/fixed только для одного org-wide
 
     # ── A) WB report-detail aggregations (source of truth for revenue/commissions) ──
     # Каноничные предикаты + дата (sale_dt / rr_dt) импортируются из period_aggregates,

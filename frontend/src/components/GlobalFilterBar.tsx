@@ -1,8 +1,9 @@
 /**
  * GlobalFilterBar (TASK-DEV-062) — панель глобальных фильтров как в TS:
  * Магазины / Бренды / Категории / Группы / Артикулы. Каждая — мультиселект-дропдаун.
- * Магазины пока заглушка (мульти-кабинет = отдельная фаза). Остальные — рабочие,
- * пишут в FilterContext, страницы перечитываются.
+ * Магазины (Phase C) — мульти-кабинет: выбор ≥2 кабинетов даёт «свод» (сумма по
+ * выбранным tenant'ам). Дропдаун виден только если у пользователя >1 кабинета.
+ * Остальные — пишут в FilterContext, страницы перечитываются.
  */
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -74,9 +75,24 @@ export function GlobalFilterBar() {
   });
   const o = q.data;
 
+  // Phase C — мульти-магазин: список доступных кабинетов пользователя.
+  const tenantsQ = useQuery({
+    queryKey: ["available-tenants"],
+    queryFn: () => api.availableTenants(),
+  });
+  const tenants = tenantsQ.data ?? [];
+
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <MultiDropdown title="Магазины" options={[]} selected={[]} onChange={() => {}} disabled hint="Мульти-кабинет — в разработке" />
+      {tenants.length > 1 && (
+        <MultiDropdown
+          title="Магазины"
+          options={tenants.map((t) => ({ value: t.tenant_id, label: t.name }))}
+          selected={filters.stores}
+          onChange={(v) => setFilters({ ...filters, stores: v as number[] })}
+          hint="Выберите ≥2 кабинета для свода по магазинам"
+        />
+      )}
       <MultiDropdown
         title="Бренды"
         options={(o?.brands ?? []).map((b) => ({ value: b.value, label: b.value, count: b.count }))}

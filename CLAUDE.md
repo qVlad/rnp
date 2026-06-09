@@ -180,6 +180,16 @@ fallback (первый по `last_active_at DESC NULLS LAST`). Forbidden tenant 
 Фазе D). Frontend: AuthContext + Layout dropdown «Кабинет ▼» + `removeQueries()`
 при switch.
 
+**Мульти-магазин «свод» (DEV-062 Phase C):** глобальный фильтр «Магазины» (≥2
+кабинета) → `tenant_context.set_tenant_filter(session, ids)` ставит в `session.info`
+доп. ключ `tenant_filter_ids`; ORM-listener тогда фильтрует `tenant_id IN (ids)`
+вместо `== primary`. **Primary tenant сохраняется** (`set_tenant`) — используется
+для `AppSetting` (pitfall #16) и `before_flush` (writes → primary, без leak), поэтому
+режим **только для read-only аналитики** (GET dashboard/pnl/units/abc/deductions/
+summary/ad-campaigns). `ids` валидируются по `user_tenant_access`
+(`filter_scope.resolve_store_scope`). P&L в своде → contribution-margin
+(`build_pnl(multi_store=True)`: OPEX/налоги per-tenant не агрегируются).
+
 ## API endpoints (по группам)
 
 > Полные описания каждого эндпоинта — в [`FEATURES.md`](FEATURES.md). Видимость

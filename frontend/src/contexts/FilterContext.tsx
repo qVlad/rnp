@@ -10,9 +10,11 @@ export type FilterSelection = {
   categories: string[];
   groups: number[];
   articles: number[];
+  /** DEV-062 Phase C — мульти-магазин: tenant-id выбранных кабинетов (≥2 = свод). */
+  stores: number[];
 };
 
-const EMPTY: FilterSelection = { brands: [], categories: [], groups: [], articles: [] };
+const EMPTY: FilterSelection = { brands: [], categories: [], groups: [], articles: [], stores: [] };
 
 type Ctx = {
   filters: FilterSelection;
@@ -50,10 +52,14 @@ export function FilterProvider({ children }: { children: ReactNode }) {
     if (filters.categories.length) p.categories = filters.categories.join(",");
     if (filters.groups.length) p.groups = filters.groups.join(",");
     if (filters.articles.length) p.articles = filters.articles.join(",");
+    // Phase C: ≥2 магазина = свод (1 магазин фильтрует через активный кабинет, не через stores).
+    if (filters.stores.length >= 2) p.stores = filters.stores.join(",");
     return p;
   }, [filters]);
 
-  const active = filters.brands.length + filters.categories.length + filters.groups.length + filters.articles.length > 0;
+  const active =
+    filters.brands.length + filters.categories.length + filters.groups.length +
+    filters.articles.length > 0 || filters.stores.length >= 2;
 
   return (
     <FilterCtx.Provider value={{ filters, setFilters, clear, toParams, active }}>
@@ -70,5 +76,8 @@ export function useFilters() {
 
 /** Стабильный ключ для queryKey react-query (меняется при смене фильтра). */
 export function filterKey(f: FilterSelection): string {
-  return [f.brands.join("|"), f.categories.join("|"), f.groups.join("|"), f.articles.join("|")].join("~");
+  return [
+    f.brands.join("|"), f.categories.join("|"), f.groups.join("|"),
+    f.articles.join("|"), f.stores.join("|"),
+  ].join("~");
 }

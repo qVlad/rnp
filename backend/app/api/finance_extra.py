@@ -41,10 +41,10 @@ from app.db.models import (
     WbSale,
     WbStockSnapshot,
 )
-from app.services.filter_scope import resolve_nm_scope
+from app.services.filter_scope import resolve_nm_scope, resolve_store_scope
 from app.services.metrics import compute_dashboard
 from app.services.periods import period_from_range
-from app.services.tenant_context import get_tenant
+from app.services.tenant_context import get_tenant, set_tenant_filter
 from app.services.auth import get_db_tenant_scoped, require_director_or_head
 
 router = APIRouter(tags=["finance-extra"])
@@ -210,14 +210,22 @@ async def summary_report(
     categories: Annotated[str | None, Query()] = None,
     groups: Annotated[str | None, Query()] = None,
     articles: Annotated[str | None, Query()] = None,
+    stores: Annotated[str | None, Query()] = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
+    user=Depends(get_current_user),
 ) -> dict[str, Any]:
     """Сводный отчёт per-SKU 1:1 с TrueStats (TASK-DEV-039/047): реализация=retail_price
     (до СПП), продажи=retail_amount (после СПП) по rr_dt, COGS, логистика, прибыль.
     Раньше брали из /units (sale_dt) — расходилось с TS на per-SKU.
 
     DEV-062: глобальные фильтры brands/categories/groups/articles → nm_scope.
-    Когда фильтр пуст — nm_scope=None, поведение прежнее (parity сохраняется)."""
+    Когда фильтр пуст — nm_scope=None, поведение прежнее (parity сохраняется).
+    Phase C: ≥2 магазина → свод per-SKU по выбранным кабинетам."""
+    store_ids = await resolve_store_scope(
+        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id,
+    )
+    if store_ids:
+        set_tenant_filter(session, store_ids)
     nm_scope = await resolve_nm_scope(
         session, brands=brands, categories=categories, groups=groups, articles=articles
     )
@@ -1031,7 +1039,9 @@ async def get_deductions(
     categories: Annotated[str | None, Query()] = None,
     groups: Annotated[str | None, Query()] = None,
     articles: Annotated[str | None, Query()] = None,
+    stores: Annotated[str | None, Query()] = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
+    user=Depends(get_current_user),
 ) -> dict[str, Any]:
     """«Прочие удержания» — non-core удержания/доплаты (удержания, приёмка,
     доплаты/возмещения, Джем/транзит). По доке TrueStats сюда НЕ входят логистика
@@ -1042,6 +1052,11 @@ async def get_deductions(
     DEV-058: «WB Продвижение» (реклама через финотчёт) выделена в `promo` и НЕ
     входит в headline `total` — TS относит её к рекламе, не к otherDeduction."""
     dcol = _date_col(reporting_mode)
+    store_ids = await resolve_store_scope(
+        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id,
+    )
+    if store_ids:
+        set_tenant_filter(session, store_ids)
     nm_scope = await resolve_nm_scope(session, brands=brands, categories=categories, groups=groups, articles=articles)
     nm_pred = [WbReportDetail.nm_id.in_(nm_scope)] if nm_scope is not None else []
     is_promo = func.coalesce(WbReportDetail.bonus_type_name, "").ilike(_PROMO_BONUS_LIKE)
@@ -1165,13 +1180,21 @@ async def ad_campaigns_analytics(
     groups: Annotated[str | None, Query()] = None,
     articles: Annotated[str | None, Query()] = None,
     brands: Annotated[str | None, Query()] = None,
+    stores: Annotated[str | None, Query()] = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
+    user=Depends(get_current_user),
 ) -> dict[str, Any]:
     """Аналитика РК (TASK-DEV-046): свод по кампаниям из WbAdStatsDaily за период.
 
     DEV-062: при заданных глобальных фильтрах spend/выручка считаются только по
     строкам выбранных SKU (атрибуция РК к карточке через WbAdStatsDaily.nm_id).
+    Phase C: ≥2 магазина → свод РК по выбранным кабинетам.
     """
+    store_ids = await resolve_store_scope(
+        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id,
+    )
+    if store_ids:
+        set_tenant_filter(session, store_ids)
     nm_pred = []
     if any([brands, categories, groups, articles]):
         nm_scope = await resolve_nm_scope(

@@ -794,6 +794,7 @@ async def compute_dashboard(
     mode: Mode = "preliminary",
     reporting_mode: ReportingMode = "operational",
     nm_ids: set[int] | None = None,
+    multi_store: bool = False,
 ) -> dict[str, Any]:
     """Build dashboard KPIs.
 
@@ -942,13 +943,13 @@ async def compute_dashboard(
     pnl_to = (period.end - timedelta(days=1)).date()
     pnl_curr = await build_pnl(
         session, date_from=pnl_from, date_to=pnl_to, granularity="month",
-        brands=brands, nm_ids=nm_ids, reporting_mode=reporting_mode,
+        brands=brands, nm_ids=nm_ids, multi_store=multi_store, reporting_mode=reporting_mode,
     )
     pnl_prev_from = period.prev_start.date()
     pnl_prev_to = (period.prev_end - timedelta(days=1)).date()
     pnl_prev = await build_pnl(
         session, date_from=pnl_prev_from, date_to=pnl_prev_to, granularity="month",
-        brands=brands, nm_ids=nm_ids, reporting_mode=reporting_mode,
+        brands=brands, nm_ids=nm_ids, multi_store=multi_store, reporting_mode=reporting_mode,
     )
     net_profit = _f(pnl_curr.get("totals", {}).get("profit", 0))
     prev_net_profit = _f(pnl_prev.get("totals", {}).get("profit", 0))

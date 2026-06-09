@@ -10,7 +10,7 @@
 """
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Product, ProductGroupAssignment
@@ -18,6 +18,34 @@ from app.db.models import Product, ProductGroupAssignment
 
 def _csv(v: str | None) -> list[str]:
     return [x.strip() for x in (v or "").split(",") if x.strip()]
+
+
+async def resolve_store_scope(
+    session: AsyncSession,
+    *,
+    stores: str | None,
+    user_id: int,
+    fallback_tenant_id: int,
+) -> list[int] | None:
+    """DEV-062 Phase C: валидировать выбранные магазины (кабинеты) против
+    `user_tenant_access`.
+
+    Возврат: `list[int]` из ≥2 разрешённых tenant'ов (режим «свод по магазинам»)
+    или `None` (0/1 магазин ИЛИ нет доступа → обычный single-tenant активный
+    кабинет). Защита: показываем только tenant'ы, к которым у user есть доступ.
+    """
+    ids = [int(x) for x in _csv(stores) if x.lstrip("-").isdigit()]
+    if len(ids) < 2:
+        return None  # 0/1 магазин → обычный активный кабинет (без расширения)
+    acc = (
+        await session.execute(
+            text("select tenant_id from user_tenant_access where user_id = :u"),
+            {"u": user_id},
+        )
+    ).all()
+    allowed = {int(r[0]) for r in acc} or {int(fallback_tenant_id)}
+    validated = [t for t in ids if t in allowed]
+    return validated if len(validated) >= 2 else None
 
 
 async def resolve_nm_scope(

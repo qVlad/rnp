@@ -90,6 +90,32 @@ def get_tenant(session: AsyncSession | Session) -> int | None:
     return info.get(_SESSION_INFO_KEY)
 
 
+# DEV-062 Phase C (мульти-магазин): расширение ORM-фильтра на НЕСКОЛЬКО tenant'ов.
+# Ключ хранит list[int] выбранных кабинетов. Когда он задан — listener фильтрует
+# `tenant_id IN (...)` вместо `== primary`. ВАЖНО: primary tenant (`_SESSION_INFO_KEY`)
+# сохраняется и используется для AppSetting (pitfall #16) и before_flush/writes —
+# мульти-магазин предназначен ТОЛЬКО для read-only аналитики (суммирование «свод»).
+_SESSION_INFO_KEY_FILTER = "tenant_filter_ids"
+
+
+def set_tenant_filter(session: AsyncSession | Session, tenant_ids: list[int] | None) -> None:
+    """Расширить ORM-SELECT-фильтр на набор tenant'ов (мульти-магазин, read-only).
+
+    `None`/пусто ⇒ снять расширение (обычный single-tenant primary-режим).
+    Валидацию доступа (user_tenant_access) делает caller — сюда передаём уже
+    проверенный список.
+    """
+    info = (
+        session.sync_session.info  # type: ignore[union-attr]
+        if isinstance(session, AsyncSession)
+        else session.info
+    )
+    if not tenant_ids:
+        info.pop(_SESSION_INFO_KEY_FILTER, None)
+    else:
+        info[_SESSION_INFO_KEY_FILTER] = [int(t) for t in tenant_ids]
+
+
 # --- Event listeners --------------------------------------------------------
 
 
@@ -97,6 +123,19 @@ def get_tenant(session: AsyncSession | Session) -> int | None:
 def _apply_tenant_filter(execute_state: Any) -> None:
     """Добавить WHERE tenant_id = :tenant_id ко всем ORM SELECT'ам."""
     if not execute_state.is_select:
+        return
+    # DEV-062 Phase C: мульти-магазин — фильтр по набору кабинетов (свод).
+    filter_ids = execute_state.session.info.get(_SESSION_INFO_KEY_FILTER)
+    if filter_ids:
+        ids = list(filter_ids)
+        execute_state.statement = execute_state.statement.options(
+            with_loader_criteria(
+                TenantScopedMixin,
+                lambda cls: cls.tenant_id.in_(ids),
+                include_aliases=True,
+                track_closure_variables=False,
+            )
+        )
         return
     tenant_id = execute_state.session.info.get(_SESSION_INFO_KEY)
     if tenant_id is None:

@@ -7,10 +7,11 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.services.auth import get_db_tenant_scoped
+from app.services.auth import CurrentUser, get_current_user, get_db_tenant_scoped
 from app.services.abc_xyz import build_abc_xyz
 from app.services.auth import current_brands_filter
-from app.services.filter_scope import resolve_nm_scope
+from app.services.filter_scope import resolve_nm_scope, resolve_store_scope
+from app.services.tenant_context import set_tenant_filter
 from app.services.forecast import build_stockout_forecast
 from app.services.supply_distribution import build_supply_distribution
 
@@ -26,9 +27,17 @@ async def abc_analysis(
     groups: Annotated[str | None, Query()] = None,
     articles: Annotated[str | None, Query()] = None,
     glob_brands: Annotated[str | None, Query(alias="brands")] = None,
+    stores: Annotated[str | None, Query()] = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
+    user: CurrentUser = Depends(get_current_user),
 ):
+    # DEV-062 Phase C: свод по магазинам (≥2 кабинета) → расширить ORM-фильтр.
+    store_ids = await resolve_store_scope(
+        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id,
+    )
+    if store_ids:
+        set_tenant_filter(session, store_ids)
     # DEV-062: глобальные фильтры → nm_ids (RBAC учтён через rbac_brands).
     nm_ids = None
     if any([glob_brands, categories, groups, articles]):

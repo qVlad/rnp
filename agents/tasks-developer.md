@@ -70,9 +70,16 @@
   /pnl/yoy и /pnl/by-brand, не подключены). ✅ **abc** (build_abc_xyz+nm_ids). ✅
   **ad-campaigns** (WbAdStatsDaily.nm_id-предикат). ⚠️ **Runtime/QA НЕ прогнаны**
   (docker down при разработке) — фин-правки (P&L/Dashboard KPI) требуют qa-tester +
-  import-check `from app.main import app` ПЕРЕД деплоем. **Phase C: мульти-магазин**
-  (заглушка «Магазины» в GlobalFilterBar) — НЕ начата; архитектурно тяжёлая
-  (кросс-tenant как /business-summary, риск ломки `do_orm_execute`).
+  import-check `from app.main import app` ПЕРЕД деплоем. **Phase C: мульти-магазин** ✅ (v0.64.31, по решению
+  пользователя «суммировать кабинеты в один свод»): `tenant_context.set_tenant_filter`
+  расширяет ORM-listener на `tenant_id IN (выбранные)` (валидация `resolve_store_scope`
+  по user_tenant_access), primary tenant сохраняется для AppSetting/writes →
+  только read-only аналитика. `build_pnl(multi_store=True)`→contribution-margin.
+  Провод stores на dashboard/pnl/units/abc/deductions/summary/ad-campaigns; фронт
+  FilterContext.stores + GlobalFilterBar «Магазины» (виден при >1 кабинете).
+  ⚠️ **КРОСС-TENANT — НЕ верифицирован рантаймом** (docker был down): обязателен
+  import-check + ручной тест изоляции (свод 2 кабинетов = сумма, 1 кабинет = без
+  изменений, manager-scope) ПЕРЕД деплоем.
 
 ### TASK-DEV-061: «Итоговое вознаграждение ВБ» (wbFinalReward) — точная формула TS
 - **Тип:** parity · **P2** · открыта 2026-06-09 (вынесено из DEV-060).
