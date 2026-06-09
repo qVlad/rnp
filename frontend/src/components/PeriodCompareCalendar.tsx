@@ -102,7 +102,7 @@ export function PeriodCompareCalendar({
       </button>
 
       {open && (
-        <div className="absolute z-50 mt-1 bg-surface border border-border rounded-lg shadow-xl p-4 text-sm w-[680px]">
+        <div className="absolute z-50 mt-1 bg-surface border border-border rounded-lg shadow-xl p-4 text-sm w-[640px] max-w-[95vw]">
           <div className="flex gap-3 mb-3">
             {(["main", "compare"] as const).map((tg) => {
               const r = tg === "main" ? dMain : dCmp;
@@ -121,16 +121,16 @@ export function PeriodCompareCalendar({
           </div>
 
           <div className="flex gap-4">
-            <div className="flex gap-4">
+            <div className="flex gap-3">
               {months.map((mv, mi) => (
-                <div key={mi} className="w-[230px]">
+                <div key={mi} className="w-[200px] shrink-0">
                   <div className="flex items-center justify-between mb-2">
                     {mi === 0 ? <button onClick={() => setView(new Date(Date.UTC(view.getUTCFullYear(), view.getUTCMonth() - 1, 1)))} className="px-2 text-muted hover:text-white">‹</button> : <span className="w-6" />}
-                    <div className="font-medium">{MONTHS_RU[mv.getUTCMonth()]} {mv.getUTCFullYear()}</div>
+                    <div className="font-medium text-[13px]">{MONTHS_RU[mv.getUTCMonth()]} {mv.getUTCFullYear()}</div>
                     {mi === 1 ? <button onClick={() => setView(new Date(Date.UTC(view.getUTCFullYear(), view.getUTCMonth() + 1, 1)))} className="px-2 text-muted hover:text-white">›</button> : <span className="w-6" />}
                   </div>
-                  <div className="grid grid-cols-7 gap-1">
-                    {DOW.map((d) => <div key={d} className="text-center text-[11px] text-muted py-1">{d}</div>)}
+                  <div className="grid grid-cols-7 gap-0.5">
+                    {DOW.map((d) => <div key={d} className="text-center text-[10px] text-muted py-1">{d}</div>)}
                     {monthGrid(mv).map((d, i) => {
                       if (!d) return <div key={i} />;
                       const iso = d2iso(d);
@@ -140,10 +140,10 @@ export function PeriodCompareCalendar({
                       const inRange = iso >= lo && iso <= hi;
                       const edge = iso === lo || iso === hi;
                       const cls = [
-                        "text-center py-1 rounded cursor-pointer tabular-nums text-[13px]",
+                        "text-center py-1 rounded cursor-pointer tabular-nums text-[12px]",
                         edge ? "bg-accent text-white font-semibold"
-                          : inRange ? "bg-accent/30"
-                          : inMain ? "bg-accent/15" : inCmp ? "bg-muted/15" : "hover:bg-surface-2",
+                          : inRange ? "bg-accent/40 text-white"
+                          : inMain ? "bg-accent/20" : inCmp ? "bg-muted/20" : "hover:bg-surface-2",
                       ].join(" ");
                       return <div key={i} className={cls} onClick={() => onDay(iso)}>{d.getUTCDate()}</div>;
                     })}
@@ -152,21 +152,19 @@ export function PeriodCompareCalendar({
               ))}
             </div>
 
-            <div className="flex flex-col gap-2 min-w-[200px] border-l border-border/40 pl-4">
-              <div className="grid grid-cols-2 gap-2">
-                {presets.map((p) => (
-                  <button key={p.label} type="button" onClick={() => setCur(p.r())}
-                    className="px-2 py-1.5 rounded border border-border text-xs hover:bg-surface-2">{p.label}</button>
-                ))}
-              </div>
+            <div className="flex flex-col gap-1.5 w-[180px] shrink-0 border-l border-border/40 pl-4">
+              {presets.map((p) => (
+                <button key={p.label} type="button" onClick={() => setCur(p.r())}
+                  className="px-3 py-1.5 rounded border border-border text-xs whitespace-nowrap text-left hover:bg-surface-2">{p.label}</button>
+              ))}
               <div className="text-xs text-muted mt-2">Неделя</div>
-              <select className="input text-xs" value=""
+              <select className="input text-xs w-full" value=""
                 onChange={(e) => { const w = weeks.find((x) => x.label === e.target.value); if (w) setCur(w.r); }}>
-                <option value="">— выбрать неделю —</option>
+                <option value="">— выбрать —</option>
                 {weeks.map((w) => <option key={w.label} value={w.label}>{w.label}</option>)}
               </select>
               <div className="text-[11px] text-muted mt-1">
-                {anchor ? `Выбрано: ${fmt(anchor)} → кликни вторую дату` : "Кликни диапазон на календаре"}
+                {anchor ? `${fmt(anchor)} → вторую дату` : "Кликни диапазон"}
               </div>
             </div>
           </div>
