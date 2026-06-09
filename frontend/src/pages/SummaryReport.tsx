@@ -3,11 +3,11 @@
  * плитки (с раскраской и периодом сравнения) + таблица по SKU. Данные —
  * /api/summary-report (per-SKU по rr_dt). Сходится с TS «в рубль» по базе.
  */
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { usePeriod } from "@/contexts/PeriodContext";
-import { DateRangePicker } from "@/components/DateRangePicker";
+import { PeriodCompareCalendar } from "@/components/PeriodCompareCalendar";
 import PageHeader from "@/components/PageHeader";
 import { fmtRub, fmtNum, fmtPct } from "@/lib/format";
 
@@ -28,7 +28,10 @@ function prevPeriod(from: string, to: string): { from: string; to: string } {
 
 export default function SummaryReport() {
   const { range, setPeriod } = usePeriod();
-  const cmp = useMemo(() => prevPeriod(range.from, range.to), [range.from, range.to]);
+  // Период сравнения: по умолчанию пред. период; пользователь может переопределить.
+  const autoCmp = useMemo(() => prevPeriod(range.from, range.to), [range.from, range.to]);
+  const [cmpOverride, setCmpOverride] = useState<{ from: string; to: string } | null>(null);
+  const cmp = cmpOverride ?? autoCmp;
 
   const q = useQuery({
     queryKey: ["summary-report", range.from, range.to],
@@ -98,22 +101,14 @@ export default function SummaryReport() {
         title="Сводный отчёт"
         subtitle="Метрики и разрез по SKU за период. По дате отчёта (rr_dt) — как TrueStats. Цвет плитки — динамика к периоду сравнения."
       />
-      <div className="flex flex-wrap items-end gap-4">
-        <div>
-          <div className="text-xs text-muted mb-1">Основной период</div>
-          <DateRangePicker
-            from={range.from}
-            to={range.to}
-            onChange={(r) => setPeriod({ kind: "custom", from: r.from, to: r.to })}
-          />
-        </div>
-        <div className="opacity-90">
-          <div className="text-xs text-muted mb-1">Период сравнения</div>
-          <div className="text-sm card px-3 py-2">
-            {cmp.from} — {cmp.to} <span className="text-muted">(пред. период)</span>
-          </div>
-        </div>
-      </div>
+      <PeriodCompareCalendar
+        main={{ from: range.from, to: range.to }}
+        compare={cmp}
+        onApply={(m, c) => {
+          setPeriod({ kind: "custom", from: m.from, to: m.to });
+          setCmpOverride(c);
+        }}
+      />
       {q.isLoading && <div className="text-muted text-sm">Загружаю…</div>}
       {q.error && <div className="text-danger text-sm">Ошибка: {String(q.error)}</div>}
 
