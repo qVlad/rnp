@@ -483,19 +483,22 @@ async def summary_report(
                 .group_by(WbStockSnapshot.nm_id)
             )
         ).all()
-        # Витринная цена покупателя (после СПП) для капитализации по рознице —
-        # из wb_card_price (миграция 0069), а не из base-price снапшота (завышал).
+        # Капитализация по рознице (TS capitalizationByPrice) = остаток × ЦЕНА ДО
+        # СПП (price.basic с карточки). Сверено с TS byProduct: unit price =
+        # basic_price (492809391→9000, no-sales SKU→set price 7200), НЕ buyer_price
+        # (после СПП) и НЕ base-price снапшота. Источник — wb_card_price (миграция
+        # 0069): basic_price; fallback на buyer_price если basic пуст.
         snap_nm0 = [int(s.nm_id) for s in srows if s.nm_id]
         price_map: dict[int, float] = {}
         if snap_nm0:
             prows = (
                 await session.execute(
-                    select(WbCardPrice.nm_id, WbCardPrice.buyer_price).where(
-                        WbCardPrice.nm_id.in_(snap_nm0), WbCardPrice.buyer_price.isnot(None)
+                    select(WbCardPrice.nm_id, WbCardPrice.basic_price, WbCardPrice.buyer_price).where(
+                        WbCardPrice.nm_id.in_(snap_nm0)
                     )
                 )
             ).all()
-            price_map = {int(n): float(p or 0) for n, p in prows}
+            price_map = {int(n): float(b or by or 0) for n, b, by in prows}
         # COGS as-of сегодня (для капитализации берём текущую себестоимость).
         cogs_now: dict[int, float] = {}
         snap_nm = [int(s.nm_id) for s in srows if s.nm_id]
