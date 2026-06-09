@@ -35,6 +35,7 @@ from app.db.models import (
     Product,
     WbAdCampaign,
     WbAdStatsDaily,
+    WbCardPrice,
     WbOrder,
     WbReportDetail,
     WbSale,
@@ -477,13 +478,24 @@ async def summary_report(
                     func.coalesce(func.sum(WbStockSnapshot.quantity), 0).label("qty"),
                     func.coalesce(func.sum(WbStockSnapshot.in_way_to_client), 0).label("to_c"),
                     func.coalesce(func.sum(WbStockSnapshot.in_way_from_client), 0).label("from_c"),
-                    func.coalesce(func.avg(WbStockSnapshot.price), 0).label("price"),
-                    func.coalesce(func.avg(WbStockSnapshot.discount), 0).label("disc"),
                 )
                 .where(WbStockSnapshot.snapshot_dt == last_snap)
                 .group_by(WbStockSnapshot.nm_id)
             )
         ).all()
+        # Витринная цена покупателя (после СПП) для капитализации по рознице —
+        # из wb_card_price (миграция 0069), а не из base-price снапшота (завышал).
+        snap_nm0 = [int(s.nm_id) for s in srows if s.nm_id]
+        price_map: dict[int, float] = {}
+        if snap_nm0:
+            prows = (
+                await session.execute(
+                    select(WbCardPrice.nm_id, WbCardPrice.buyer_price).where(
+                        WbCardPrice.nm_id.in_(snap_nm0), WbCardPrice.buyer_price.isnot(None)
+                    )
+                )
+            ).all()
+            price_map = {int(n): float(p or 0) for n, p in prows}
         # COGS as-of сегодня (для капитализации берём текущую себестоимость).
         cogs_now: dict[int, float] = {}
         snap_nm = [int(s.nm_id) for s in srows if s.nm_id]
@@ -505,8 +517,7 @@ async def summary_report(
             stock_from += int(s.from_c)
             total_units = qty + int(s.to_c) + int(s.from_c)
             cap_cost += total_units * cogs_now.get(int(s.nm_id), 0.0)
-            price_net = float(s.price or 0) * (1 - float(s.disc or 0) / 100.0)
-            cap_price += total_units * price_net
+            cap_price += total_units * price_map.get(int(s.nm_id), 0.0)
     stock_total = stock_wh + stock_to + stock_from
     period_days = (end_date - start_date).days + 1
 
