@@ -410,6 +410,20 @@ async def summary_report(
     promo_ad_total = float(ded_row.promo_ad or 0)  # WB Продвижение из финотчёта (как TS — не в прибыль здесь)
     # Компенсации — добавляются к прибыли (доплаты + ppvz компенсационных операций).
     compensation_total = float(ded_row.comp_ppvz or 0) + float(ded_row.additional or 0)
+    # DEV-061: «Итоговое вознаграждение ВБ» (база УПД/НДС) — по рекомендации анализа
+    # считаем от РЕАЛЬНОГО поля вознаграждения ВБ `ppvz_vw` (+НДС), net Продажа−Возврат,
+    # плюс WB-услуги (логистика/хранение/приёмка/штрафы/удержания) − компенсации.
+    # Это документная метрика (УПД); точная per-line NDS-сверка TS не воспроизводится
+    # из агрегатов — остаётся небольшой остаток (см. TASK-DEV-061).
+    vw_row = (
+        await session.execute(
+            select(
+                net(WbReportDetail.ppvz_vw).label("vw"),
+                net(WbReportDetail.ppvz_vw_nds).label("vw_nds"),
+            ).where(func.date(dcol) >= start_date, func.date(dcol) <= end_date, *nm_pred)
+        )
+    ).one()
+    vw_reward = float(vw_row.vw or 0) + float(vw_row.vw_nds or 0)
     # Детализация логистики по 5 категориям WB (DEV-060): дискриминатор —
     # bonus_type_name на строках «Логистика» (К клиенту при отмене/продаже,
     # От клиента при отмене/возврате, Возврат брака). Сверено с TS «в рубль».
@@ -687,14 +701,14 @@ async def summary_report(
         "turnover_orders_days": round(stock_total / ((pmap.get("orders") or 0) / period_days), 2) if pmap.get("orders") else None,
         # GMROI у TS = null на недельном окне (нужен годовой расчёт) — отдаём null.
         "gmroi": None,
-        # Итоговое вознаграждение ВБ (база УПД/НДС, DEV-060) — информационная метрика
-        # для разделения операций ВБ на «с НДС»/«без НДС». По определению TS: сумма
-        # всех расходов внутри ВБ (комиссия+эквайринг+логистика+хранение+приёмка+
-        # штрафы+прочие удержания) ЗА ВЫЧЕТОМ СПП, с учётом взаимозачётов (компенсации).
-        # СПП уже исключён: комиссия net (sales−ppvz−acquiring) считается от цены после
-        # СПП. На эту сумму ВБ выставляет УПД и начисляет НДС.
+        # Итоговое вознаграждение ВБ (база УПД/НДС, DEV-061) — информационная метрика
+        # для разделения операций ВБ на «с НДС»/«без НДС». База = РЕАЛЬНОЕ вознагр. ВБ
+        # `ppvz_vw`(+НДС) net Продажа−Возврат + WB-услуги (логистика/хранение/приёмка/
+        # штрафы/прочие) − компенсации. На эту сумму ВБ выставляет УПД и начисляет НДС.
+        # NB: точная per-line NDS-сверка TS не воспроизводится из агрегатов (остаток —
+        # см. TASK-DEV-061: документная метрика, авторитет = WbOffsetAct.total_sum).
         "wb_final_reward": round(
-            commission_t + acquiring_t + logistics_t + storage_t
+            vw_reward + logistics_t + storage_t
             + acceptance_total + fines_total + prochie_total - compensation_total,
             2,
         ),
