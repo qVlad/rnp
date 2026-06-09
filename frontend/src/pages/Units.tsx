@@ -21,6 +21,8 @@ import TagFilterDropdown from "@/components/TagFilterDropdown";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
 import { useTagFilter } from "@/lib/useTagFilter";
 import { usePeriod } from "@/contexts/PeriodContext";
+import { useFilters, filterKey } from "@/contexts/FilterContext";
+import { GlobalFilterBar } from "@/components/GlobalFilterBar";
 import PageHeader from "@/components/PageHeader";
 import ReportingModeBadge from "@/components/ReportingModeBadge";
 
@@ -149,6 +151,9 @@ const PRICE_OV_KEY = "units.price-overrides.v1";
 
 export default function Units() {
   const qc = useQueryClient();
+  // DEV-062: глобальные фильтры.
+  const { filters: uFilters, toParams: uToParams } = useFilters();
+  const ufk = filterKey(uFilters);
   // TASK-UI-005 continuation: two-way sync с PeriodContext.
   const { period: ctxPeriod, setPeriod: ctxSetPeriod } = usePeriod();
   const [mode, setMode] = useState<Mode>(() => {
@@ -339,9 +344,9 @@ export default function Units() {
     mode.kind === "preset" ? `p:${mode.period}` : `c:${mode.start}:${mode.end}`;
 
   const q = useQuery({
-    queryKey: ["units", rangeKey, includeArchived],
+    queryKey: ["units", rangeKey, includeArchived, ufk],
     queryFn: () =>
-      api.units(range as any, includeArchived) as Promise<{
+      api.units(range as any, includeArchived, uToParams()) as Promise<{
         items: UnitRow[];
         days_back: number;
         start_date: string;
@@ -928,12 +933,13 @@ export default function Units() {
               </button>
             ))}
           </div>
-          <div className="flex items-center gap-2 text-xs">
+          <div className="flex items-center gap-2 text-xs flex-wrap">
             <DateRangePicker
               from={customStart || today()}
               to={customEnd || today()}
               onChange={(r) => { setCustomStart(r.from); setCustomEnd(r.to); }}
             />
+            <GlobalFilterBar />
             <button
               className={`btn ${mode.kind === "custom" ? "border-accent text-accent" : ""}`}
               onClick={applyCustom}

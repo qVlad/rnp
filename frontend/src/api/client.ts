@@ -1264,6 +1264,7 @@ paymentOrderDelete: (payment_order_id: string) =>
   units: (
     range: { period: "day" | "week" | "month" } | { start: string; end: string },
     includeArchived = false,
+    filters?: Record<string, string>,
   ) => {
     const qs = new URLSearchParams();
     if ("period" in range) {
@@ -1274,6 +1275,7 @@ paymentOrderDelete: (payment_order_id: string) =>
       qs.set("end_date", range.end);
     }
     qs.set("include_archived", String(includeArchived));
+    for (const [k, v] of Object.entries(filters || {})) qs.set(k, v);
     return request(`/api/units?${qs}`);
   },
 

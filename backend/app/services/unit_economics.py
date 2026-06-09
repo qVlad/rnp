@@ -69,6 +69,7 @@ async def build_unit_economics(
     end_date: date | None = None,
     include_archived: bool = False,
     brands: set[str] | None = None,
+    nm_ids: set[int] | None = None,
 ) -> dict[str, Any]:
     """Per-SKU unit economics with full P&L breakdown.
 
@@ -84,11 +85,13 @@ async def build_unit_economics(
     else:
         end = datetime.now(timezone.utc)
         start = end - timedelta(days=days_back)
-    nm_filter = (
-        select(Product.nm_id).where(Product.brand.in_(list(brands)))
-        if brands is not None
-        else None
-    )
+    # nm_filter — подзапрос nm_id под brand-RBAC И глобальные фильтры (DEV-062).
+    _nm_conds = []
+    if brands is not None:
+        _nm_conds.append(Product.brand.in_(list(brands)))
+    if nm_ids is not None:
+        _nm_conds.append(Product.nm_id.in_(nm_ids))
+    nm_filter = select(Product.nm_id).where(*_nm_conds) if _nm_conds else None
 
     sales_stmt = (
         select(
@@ -532,6 +535,8 @@ async def build_unit_economics(
     products_stmt = select(Product)
     if brands is not None:
         products_stmt = products_stmt.where(Product.brand.in_(list(brands)))
+    if nm_ids is not None:
+        products_stmt = products_stmt.where(Product.nm_id.in_(nm_ids))
     all_products = (await session.execute(products_stmt)).scalars().all()
     products = {p.nm_id: p for p in all_products}
     archived_nm_ids: set[int] = (

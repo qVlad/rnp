@@ -9,6 +9,7 @@ from app.db.models import Product
 from app.db.session import get_db
 from app.services.auth import get_db_tenant_scoped
 from app.services.auth import current_brands_filter
+from app.services.filter_scope import resolve_nm_scope
 from app.services.size_breakdown import build_size_breakdown
 from app.services.unit_economics import build_unit_economics
 
@@ -21,16 +22,26 @@ async def get_units(
     start_date: Annotated[date | None, Query()] = None,
     end_date: Annotated[date | None, Query()] = None,
     include_archived: Annotated[bool, Query()] = False,
+    categories: Annotated[str | None, Query()] = None,
+    groups: Annotated[str | None, Query()] = None,
+    articles: Annotated[str | None, Query()] = None,
+    glob_brands: Annotated[str | None, Query(alias="brands")] = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
 ) -> dict:
+    # DEV-062: глобальные фильтры → nm_ids (RBAC учтён через rbac_brands).
+    nm_ids = await resolve_nm_scope(
+        session, brands=glob_brands, categories=categories, groups=groups,
+        articles=articles, rbac_brands=brands,
+    )
     return await build_unit_economics(
         session,
         days_back=days_back,
         start_date=start_date,
         end_date=end_date,
         include_archived=include_archived,
-        brands=brands,
+        brands=None if nm_ids is not None else brands,
+        nm_ids=nm_ids,
     )
 
 
