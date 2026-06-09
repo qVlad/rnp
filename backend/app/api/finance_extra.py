@@ -462,26 +462,6 @@ async def summary_report(
     ]
     compensation_breakdown.sort(key=lambda x: abs(x["amount"]), reverse=True)
 
-    # DEBUG (DEV-060): кандидаты для wbFinalReward (база УПД/НДС). Тестируем против TS.
-    vw_row = (
-        await session.execute(
-            select(
-                func.coalesce(func.sum(WbReportDetail.ppvz_vw), 0).label("vw_gross"),
-                func.coalesce(func.sum(WbReportDetail.ppvz_vw_nds), 0).label("vw_nds_gross"),
-                func.coalesce(func.sum(WbReportDetail.ppvz_sales_commission), 0).label("sales_comm"),
-                net(WbReportDetail.ppvz_vw).label("vw_net"),
-                net(WbReportDetail.ppvz_vw_nds).label("vw_nds_net"),
-            ).where(func.date(dcol) >= start_date, func.date(dcol) <= end_date)
-        )
-    ).one()
-    _vw = {
-        "vw_gross": round(float(vw_row.vw_gross or 0), 2),
-        "vw_nds_gross": round(float(vw_row.vw_nds_gross or 0), 2),
-        "sales_comm": round(float(vw_row.sales_comm or 0), 2),
-        "vw_net": round(float(vw_row.vw_net or 0), 2),
-        "vw_nds_net": round(float(vw_row.vw_nds_net or 0), 2),
-    }
-
     # Возвраты ₽ (gross retail возвратов) — для плитки «Возвраты».
     returns_rub = float(
         (
@@ -719,7 +699,6 @@ async def summary_report(
         "compensation_breakdown": [
             {**b, "pct": _pct(b["amount"])} for b in compensation_breakdown
         ],
-        "_debug_vw": _vw,  # DEV-060: временно для подбора формулы wbFinalReward
         # Фин-отчёт WB опубликован по этот день включительно; дни после —
         # операционная оценка по выкупам (estimated_from). None = весь период
         # опубликован (закрытая неделя, без оценки).
