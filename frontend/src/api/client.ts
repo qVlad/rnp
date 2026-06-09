@@ -1315,6 +1315,8 @@ paymentOrderDelete: (payment_order_id: string) =>
   summaryReport: (start: string, end: string, reporting_mode = "financial") =>
     request<{ tax_rate: number; published_through: string | null; estimated_from: string | null;
       logistics_breakdown: Array<{ category: string; amount: number; pct: number }>;
+      fines_breakdown: Array<{ category: string; amount: number; pct: number }>;
+      compensation_breakdown: Array<{ category: string; amount: number; pct: number }>;
       totals: Record<string, number>; items: Array<{
       nm_id: number; vendor_code: string | null; brand: string | null; subject: string | null; photo_url: string | null;
       realisation: number; sales: number; to_transfer: number; commission: number; acquiring: number;

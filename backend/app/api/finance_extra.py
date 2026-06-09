@@ -419,6 +419,49 @@ async def summary_report(
     ]
     logistics_breakdown.sort(key=lambda x: abs(x["amount"]), reverse=True)
 
+    # Штрафы — расшифровка по bonus_type_name (DEV-060).
+    fine_rows = (
+        await session.execute(
+            select(
+                func.coalesce(WbReportDetail.bonus_type_name, "—").label("cat"),
+                func.coalesce(func.sum(WbReportDetail.penalty), 0).label("amt"),
+            )
+            .where(
+                func.date(dcol) >= start_date,
+                func.date(dcol) <= end_date,
+                WbReportDetail.penalty != 0,
+            )
+            .group_by(WbReportDetail.bonus_type_name)
+        )
+    ).all()
+    fines_breakdown = [
+        {"category": r.cat, "amount": round(float(r.amt or 0), 2)}
+        for r in fine_rows if abs(float(r.amt or 0)) >= 0.005
+    ]
+    fines_breakdown.sort(key=lambda x: abs(x["amount"]), reverse=True)
+
+    # Компенсации — расшифровка по supplier_oper_name (ppvz компенсационных операций).
+    comp_rows = (
+        await session.execute(
+            select(
+                func.coalesce(WbReportDetail.supplier_oper_name, "—").label("cat"),
+                func.coalesce(func.sum(WbReportDetail.ppvz_for_pay), 0).label("amt"),
+            )
+            .where(
+                func.date(dcol) >= start_date,
+                func.date(dcol) <= end_date,
+                WbReportDetail.supplier_oper_name.notin_(_CORE_OPS),
+                WbReportDetail.ppvz_for_pay != 0,
+            )
+            .group_by(WbReportDetail.supplier_oper_name)
+        )
+    ).all()
+    compensation_breakdown = [
+        {"category": r.cat, "amount": round(float(r.amt or 0), 2)}
+        for r in comp_rows if abs(float(r.amt or 0)) >= 0.005
+    ]
+    compensation_breakdown.sort(key=lambda x: abs(x["amount"]), reverse=True)
+
     # Возвраты ₽ (gross retail возвратов) — для плитки «Возвраты».
     returns_rub = float(
         (
@@ -637,9 +680,15 @@ async def summary_report(
         "tax_rate": tax_rate,
         "items": items,
         "totals": tot,
-        # Детализация логистики (5 категорий WB) — для выпадашки на плитке.
+        # Детализации для выпадашек на плитках (DEV-060).
         "logistics_breakdown": [
             {**b, "pct": _pct(b["amount"])} for b in logistics_breakdown
+        ],
+        "fines_breakdown": [
+            {**b, "pct": _pct(b["amount"])} for b in fines_breakdown
+        ],
+        "compensation_breakdown": [
+            {**b, "pct": _pct(b["amount"])} for b in compensation_breakdown
         ],
         # Фин-отчёт WB опубликован по этот день включительно; дни после —
         # операционная оценка по выкупам (estimated_from). None = весь период
