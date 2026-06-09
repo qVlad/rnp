@@ -11,6 +11,48 @@
 
 > Lead заполняет этот файл из `ROADMAP.md`, запросов пользователя, найденных багов QA.
 
+### TASK-DEV-062: Глобальные фильтры как в TS (Магазины/Бренды/Категории/Группы/Артикулы) — ПЛАН
+- **Тип:** feature/architecture · **P1** · запрос пользователя 2026-06-09.
+- **Цель:** единая панель фильтров (5 измерений) на КАЖДОМ аналитическом экране, как
+  у TS: комбинируемый выбор по магазинам(кабинетам)/брендам/категориям/группам/
+  артикулам. Любой экран пересчитывается под выбранную комбинацию.
+- **Что УЖЕ есть (фундамент):**
+  • Магазины = кабинеты: `user_tenant_access` (M:N), `services/active_tenant.py`
+    резолвер, AuthContext + Layout dropdown «Кабинет ▼» (TASK-LEAD-048). Сейчас —
+    ОДИН активный кабинет; мульти-выбор магазинов = новое.
+  • Бренды: `products.brand` + `BrandAssignment` (RBAC manager-scope) + `brands_param`
+    уже принимают ~15 эндпоинтов (`current_brands_filter`).
+  • Категории: `products.category` (WB category) + `products.subject` (предмет).
+  • Группы: `ProductGroup` + `ProductGroupAssignment` (nm↔группа).
+  • Артикулы: `products.nm_id` / `vendor_code`.
+- **Архитектура (предлагаемая):**
+  1. **Backend resolver** `services/filter_scope.py: resolve_nm_scope(session, sel) ->
+     set[int] | None`. Вход: {brands[],categories[],groups[],articles[]}. INTERSECT
+     всех заданных измерений по `products` + `ProductGroupAssignment` → set(nm_id);
+     затем INTERSECT с RBAC (`current_brands_filter`). None = без ограничений.
+     Пустой результат → пусто (как manager без назначений).
+  2. **Options endpoint** `GET /api/filters/options` → доступные значения каждого
+     измерения для активного скоупа (+counts), с КАСКАДОМ (выбран бренд → категории/
+     артикулы сужаются), как TS. Учитывает RBAC.
+  3. **Унификация параметра:** все аналитические эндпоинты принимают компактный
+     фильтр (reuse `brands_param` + новые `categories`/`groups`/`articles` query) и
+     зовут `resolve_nm_scope` вместо локального brands-only. ~20 эндпоинтов.
+  4. **Магазины (мульти-кабинет) — отдельная фаза:** большинство эндпоинтов
+     tenant-scoped через middleware (один tenant). Кросс-кабинетная агрегация = как
+     `/business-summary` (raw SQL по tenant'ам из user_tenant_access). Тяжёлая часть.
+  - **Frontend:**
+    1. `FilterContext` (по образцу `PeriodContext`/`ReportingModeContext`): selections
+       {stores[],brands[],categories[],groups[],articles[]}, persist localStorage + URL.
+    2. `<GlobalFilterBar>` (5 мультиселект-дропдаунов) в Layout-хедере на аналит.
+       страницах (скрыт для bookkeeper). Каскадная подгрузка из /api/filters/options.
+    3. Каждая страница: фильтр в queryKey + прокидывает в API-вызов.
+- **Фазы:** A) FilterContext+GlobalFilterBar+options+resolver, провод на summary-report
+  /units/dashboard (один кабинет). B) раскатка на все аналит. страницы. C) мульти-
+  магазин (кросс-tenant агрегация). RBAC: manager-scope intersect; bookkeeper — без бара.
+- **Риски:** (a) кросс-tenant ломает глобальный tenant-фильтр `do_orm_execute` —
+  нужен явный мульти-tenant путь (как business-summary); (b) каскад options не должен
+  бить БД на каждый клик (кэш/debounce); (c) RBAC manager — intersect, не override.
+
 ### TASK-DEV-061: «Итоговое вознаграждение ВБ» (wbFinalReward) — точная формула TS
 - **Тип:** parity · **P2** · открыта 2026-06-09 (вынесено из DEV-060).
 - **Определение пользователя:** информационная метрика для разделения операций ВБ
