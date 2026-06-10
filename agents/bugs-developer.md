@@ -25,6 +25,49 @@
 
 ---
 
+## BUG-DEV-023: Кросс-tenant RBAC-leak в мульти-магазине (DEV-062 Phase C)
+
+- **Приоритет:** P2 (security)
+- **Обнаружено:** 2026-06-10 (review DEV-062, QA-subagent)
+- **Среда:** prod (v0.64.32)
+- **Причина:** `resolve_store_scope` валидирует выбранные магазины только по `user_tenant_access`, не пересекает с brand-RBAC. Эндпоинты с `current_brands_filter` (`/dashboard`, `/units`, `/abc-analysis`) доступны manager'у; `set_tenant_filter([A,B])` расширяет SELECT на оба кабинета, а `rbac_brands` взяты из brand_assignments primary-тенанта и матчатся по имени бренда в обоих → данные одноимённого бренда из tenant B (не назначенного manager'у в B) утекают в свод.
+- **Затронутые файлы:** `services/filter_scope.py:resolve_store_scope`, `api/dashboard.py`, `api/units.py`, `api/analytics.py`
+- **Критерии исправления:**
+  - [ ] Мульти-магазин (≥2 store) либо ограничен director/head, либо store-scope пересекается с RBAC.
+  - [ ] Тест: manager с доступом к 2 кабинетам и brand-scope в одном — не видит данные неназначенного одноимённого бренда из второго.
+- **Статус:** Открыт
+
+## BUG-DEV-024: /ads/heatmap теряет brand-RBAC без активного глоб-фильтра (DEV-062)
+
+- **Приоритет:** P2
+- **Обнаружено:** 2026-06-10 (review DEV-062, QA-subagent)
+- **Среда:** prod (v0.64.32)
+- **Причина:** `brands=Depends(current_brands_filter)` добавлен, но `nm_pred` строится только `if any([glob_brands, categories, groups, articles])`. Manager без выбранного фильтра → видит ВСЕ кампании тенанта (RBAC игнорируется).
+- **Затронутые файлы:** `api/ads.py:78-93`
+- **Критерии исправления:**
+  - [ ] nm-scope резолвится из `rbac_brands` всегда (даже без выбранного измерения) → manager видит только свои бренды.
+- **Статус:** Открыт
+
+## BUG-DEV-025: COGS-map коллапс по nm_id в мульти-магазине своде (DEV-062 Phase C)
+
+- **Приоритет:** P3 (edge — нужен общий nm_id в 2 кабинетах)
+- **Обнаружено:** 2026-06-10 (review DEV-062, QA-subagent)
+- **Причина:** `_latest_cogs_map` (и COGS-путь pnl_builder) дедупит `if nm in out: continue`. Под `set_tenant_filter([A,B])` при одинаковом nm_id в обоих кабинетах COGS одного тенанта выигрывает недетерминированно, а выручка суммируется по обоим → неверная маржа/прибыль свода.
+- **Затронутые файлы:** `services/metrics.py:_latest_cogs_map`, `services/pnl_builder.py`
+- **Критерии исправления:**
+  - [ ] В мульти-магазине COGS агрегируется per (tenant,nm) или средневзвешенно.
+- **Статус:** Открыт
+
+## BUG-DEV-026: P&L баннер свода говорит «попросите директора» директору (DEV-062)
+
+- **Приоритет:** P3
+- **Обнаружено:** 2026-06-10 (review DEV-062, UX-subagent)
+- **Причина:** `PnL.tsx:246` показывает «P&L по своим брендам … попросите директора» — для директора в мульти-магазин/глоб-фильтр своде неверно.
+- **Затронутые файлы:** `frontend/src/pages/PnL.tsx`
+- **Критерии исправления:**
+  - [ ] Текст баннера ветвится: manager-brands vs multi-store/глоб-фильтр свод директора.
+- **Статус:** Открыт
+
 ## BUG-DEV-022: /localization — блок «худшая локализация» вниз + честный счётчик
 
 - **Приоритет:** P3

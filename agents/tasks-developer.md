@@ -84,6 +84,20 @@
   ⚠️ **КРОСС-TENANT — НЕ верифицирован рантаймом** (docker был down): обязателен
   import-check + ручной тест изоляции (свод 2 кабинетов = сумма, 1 кабинет = без
   изменений, manager-scope) ПЕРЕД деплоем.
+- **Review 2026-06-10 (v0.64.32, post-feature loop):** деплой ✅, live-проверка
+  Dashboard/PnL/ABC/Ads (Claude-in-Chrome) — фильтр работает, 0 ошибок. Итог —
+  `agents/references/feedback-reviews/dev-062-global-filters-2026-06-10.md`. Заведены
+  BUG-DEV-023/024 (P2 RBAC, manager), BUG-DEV-025/026 (P3) + follow-up TASK'и ниже.
+  - **TASK-DEV-063 (P2):** Группы в `/api/filters/options` не каскадятся по выбранным
+    брендам (`filters.py:63-70` без `sel_brands`). Фильтровать через ProductGroupAssignment→Product.brand.
+  - **TASK-DEV-064 (P2):** Индикатор активного фильтра вне бара (чип «N брендов · M артикулов»)
+    + scope-баннер на Dashboard (сейчас KPI молча сужаются, в отличие от P&L).
+  - **TASK-DEV-065 (P3):** «Магазины·1» silent no-op — при 1 выбранном либо переключать
+    активный кабинет, либо inline-подсказка «выберите ≥2 для свода».
+  - **TASK-DEV-066 (P3):** Пустое состояние Ad-страниц при SKU-фильтре — добавлять
+    «… по выбранному фильтру» когда фильтр активен.
+  - **TASK-DEV-067 (P3):** by-brand период (`localStorage pnl-by-brand.range.v1`)
+    рассинхронен с глоб-периодом фильтр-бара — синхронизировать/подписать.
 
 ### TASK-DEV-061: «Итоговое вознаграждение ВБ» (wbFinalReward) — точная формула TS
 - **Тип:** parity · **P2** · открыта 2026-06-09 (вынесено из DEV-060).
