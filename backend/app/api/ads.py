@@ -14,7 +14,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import WbAdCampaign, WbAdStatsDaily
-from app.services.auth import get_db_tenant_scoped
+from app.services.auth import (
+    CurrentUser,
+    current_brands_filter,
+    get_current_user,
+    get_db_tenant_scoped,
+)
+from app.services.filter_scope import resolve_nm_scope, resolve_store_scope
+from app.services.tenant_context import set_tenant_filter
 
 router = APIRouter(prefix="/api/ads", tags=["ads"])
 
@@ -30,7 +37,14 @@ async def get_ads_heatmap(
             regex="^(drr|spent|orders|clicks|revenue|cpl|cps|basket_conv|order_conv)$"
         ),
     ] = "drr",
+    categories: Annotated[str | None, Query()] = None,
+    groups: Annotated[str | None, Query()] = None,
+    articles: Annotated[str | None, Query()] = None,
+    glob_brands: Annotated[str | None, Query(alias="brands")] = None,
+    stores: Annotated[str | None, Query()] = None,
     session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
+    user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Heatmap: строки = кампании, колонки = дни, значение = выбранная метрика.
 
@@ -51,6 +65,21 @@ async def get_ads_heatmap(
     if start_date is None:
         start_date = end_date - timedelta(days=days_back)
 
+    # DEV-062 Phase C: свод по магазинам (≥2 кабинета) → расширить ORM-фильтр.
+    store_ids = await resolve_store_scope(
+        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id,
+    )
+    if store_ids:
+        set_tenant_filter(session, store_ids)
+    # DEV-062: глобальные фильтры → nm_id-предикат (РК атрибутируются к карточке).
+    nm_pred = []
+    if any([glob_brands, categories, groups, articles]):
+        nm_scope = await resolve_nm_scope(
+            session, brands=glob_brands, categories=categories, groups=groups,
+            articles=articles, rbac_brands=brands,
+        )
+        nm_pred = [WbAdStatsDaily.nm_id.in_(nm_scope if nm_scope is not None else set())]
+
     # Aggregate per (advert_id, stat_date)
     stmt = (
         select(
@@ -64,6 +93,7 @@ async def get_ads_heatmap(
         )
         .where(WbAdStatsDaily.stat_date >= start_date)
         .where(WbAdStatsDaily.stat_date <= end_date)
+        .where(*nm_pred)
         .group_by(WbAdStatsDaily.advert_id, WbAdStatsDaily.stat_date)
     )
     rows = (await session.execute(stmt)).all()

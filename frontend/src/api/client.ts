@@ -779,8 +779,12 @@ export const api = {
     );
   },
 
-  pnlYoY: (year?: number) =>
-    request<{
+  pnlYoY: (year?: number, filters?: Record<string, string>) => {
+    const qs = new URLSearchParams();
+    if (year) qs.set("year", String(year));
+    for (const [k, v] of Object.entries(filters || {})) qs.set(k, v);
+    const s = qs.toString();
+    return request<{
       scope: "company" | "brands";
       current: {
         year: number;
@@ -796,17 +800,19 @@ export const api = {
         rows: Array<Record<string, any>>;
         totals: Record<string, number>;
       };
-    }>(`/api/pnl/yoy${year ? `?year=${year}` : ""}`),
+    }>(`/api/pnl/yoy${s ? `?${s}` : ""}`);
+  },
 
   // TASK-DEV-010: `from`/`to` (YYYY-MM-DD) — опциональные. Если оба
   // заданы — перекрывают `months`. Snap к границам месяца на бекенде.
-  pnlByBrand: (months: number = 6, from?: string, to?: string) => {
+  pnlByBrand: (months: number = 6, from?: string, to?: string, filters?: Record<string, string>) => {
     const qs = new URLSearchParams();
     qs.set("months", String(months));
     if (from && to) {
       qs.set("date_from", from);
       qs.set("date_to", to);
     }
+    for (const [k, v] of Object.entries(filters || {})) qs.set(k, v);
     return request<{
       scope: "company" | "brands";
       months: string[];
@@ -2323,8 +2329,9 @@ paymentOrderDelete: (payment_order_id: string) =>
     }>(`/api/checklist?${qs.toString()}`);
   },
 
-  adsHeatmap: (from: string, to: string, metric: string) => {
+  adsHeatmap: (from: string, to: string, metric: string, filters?: Record<string, string>) => {
     const qs = new URLSearchParams({ from, to, metric });
+    for (const [k, v] of Object.entries(filters || {})) qs.set(k, v);
     return request(`/api/ads/heatmap?${qs}`);
   },
 

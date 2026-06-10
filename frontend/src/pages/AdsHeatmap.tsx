@@ -5,6 +5,8 @@ import { DateRangePicker } from "@/components/DateRangePicker";
 import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
 import { usePeriod } from "@/contexts/PeriodContext";
 import PageHeader from "@/components/PageHeader";
+import { useFilters, filterKey } from "@/contexts/FilterContext";
+import { GlobalFilterBar } from "@/components/GlobalFilterBar";
 
 type Metric =
   | "drr"
@@ -85,10 +87,11 @@ export default function AdsHeatmap() {
   const from = range.from;
   const to = range.to;
   const [metric, setMetric] = useState<Metric>("drr");
+  const { filters, toParams } = useFilters();
 
   const q = useQuery<any>({
-    queryKey: ["ads-heatmap", from, to, metric],
-    queryFn: () => api.adsHeatmap(from, to, metric),
+    queryKey: ["ads-heatmap", from, to, metric, filterKey(filters)],
+    queryFn: () => api.adsHeatmap(from, to, metric, toParams()),
   });
   const d: any = q.data;
   const days: string[] = d?.days || [];
@@ -111,6 +114,9 @@ export default function AdsHeatmap() {
         title="Тепловая карта рекламы"
         subtitle={metricHelp[metric]}
       />
+
+      {/* DEV-062 — глобальные фильтры. */}
+      <GlobalFilterBar />
 
       <section className="card flex flex-wrap gap-4 items-end">
         <div className="flex flex-col gap-1">

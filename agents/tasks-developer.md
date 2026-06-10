@@ -77,6 +77,10 @@
   только read-only аналитика. `build_pnl(multi_store=True)`→contribution-margin.
   Провод stores на dashboard/pnl/units/abc/deductions/summary/ad-campaigns; фронт
   FilterContext.stores + GlobalFilterBar «Магазины» (виден при >1 кабинете).
+  **Добивка (v0.64.32):** фильтр+stores доведены на P&L cards (/pnl/yoy) и by-brand
+  (/pnl/by-brand, per-brand ∩ nm_ids) + Тепловую карту рекламы (/ads/heatmap);
+  бар на /pnl теперь во всех 3 видах. Осталось без бара: ManagerSummary, прогнозы
+  stockout/supply-distribution (вне scope DEV-062).
   ⚠️ **КРОСС-TENANT — НЕ верифицирован рантаймом** (docker был down): обязателен
   import-check + ручной тест изоляции (свод 2 кабинетов = сумма, 1 кабинет = без
   изменений, manager-scope) ПЕРЕД деплоем.

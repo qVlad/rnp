@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Area, AreaChart, ResponsiveContainer, Tooltip } from "recharts";
 import { api } from "@/api/client";
 import { fmtRub, fmtPct } from "@/lib/format";
+import { useFilters, filterKey } from "@/contexts/FilterContext";
 
 interface CardDef {
   key: string;
@@ -342,10 +343,11 @@ export default function PnLCardsView() {
   const currentYear = new Date().getFullYear();
   const [year, setYear] = useState<number>(currentYear);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const { filters, toParams } = useFilters();
 
   const q = useQuery({
-    queryKey: ["pnl-yoy", year],
-    queryFn: () => api.pnlYoY(year),
+    queryKey: ["pnl-yoy", year, filterKey(filters)],
+    queryFn: () => api.pnlYoY(year, toParams()),
   });
 
   if (q.isLoading)

@@ -147,8 +147,14 @@ async def get_pnl_yoy(
         default=None,
         description="Год для текущего среза. По умолчанию — текущий.",
     ),
+    categories: str | None = Query(default=None, description="DEV-062 глоб.фильтр: категории (CSV)"),
+    groups: str | None = Query(default=None, description="DEV-062 глоб.фильтр: id групп (CSV)"),
+    articles: str | None = Query(default=None, description="DEV-062 глоб.фильтр: nm_id (CSV)"),
+    glob_brands: str | None = Query(default=None, alias="brands", description="DEV-062 глоб.фильтр: бренды (CSV)"),
+    stores: str | None = Query(default=None, description="DEV-062 Phase C: tenant-id магазинов (CSV)"),
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
+    user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     """Year-over-year P&L: текущий год (помесячно до сегодня) + прошлый год
     (полные 12 месяцев) для cards-view на /pnl.
@@ -157,6 +163,9 @@ async def get_pnl_yoy(
     они идут как точки sparkline'а на карточках. Прошлый год всегда полный,
     чтобы карточки могли отрисовать одинаковую sparkline (для незавершённого
     текущего года часть значений будет 0 — это ОК).
+
+    DEV-062: глобальные фильтры (бренды/категории/группы/артикулы) → nm_ids;
+    Phase C: ≥2 магазина → свод по кабинетам (contribution-margin).
     """
     today = date.today()
     if year is None:
@@ -167,22 +176,40 @@ async def get_pnl_yoy(
     prev_from = date(year - 1, 1, 1)
     prev_to = date(year - 1, 12, 31)
 
+    store_ids = await resolve_store_scope(
+        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id,
+    )
+    multi_store = bool(store_ids)
+    if store_ids:
+        set_tenant_filter(session, store_ids)
+    nm_ids = None
+    if any([glob_brands, categories, groups, articles]):
+        nm_ids = await resolve_nm_scope(
+            session, brands=glob_brands, categories=categories, groups=groups,
+            articles=articles, rbac_brands=brands,
+        )
+    eff_brands = None if nm_ids is not None else brands
+
     cur = await build_pnl(
         session,
         date_from=cur_from,
         date_to=cur_to,
         granularity="month",
-        brands=brands,
+        brands=eff_brands,
+        nm_ids=nm_ids,
+        multi_store=multi_store,
     )
     prev = await build_pnl(
         session,
         date_from=prev_from,
         date_to=prev_to,
         granularity="month",
-        brands=brands,
+        brands=eff_brands,
+        nm_ids=nm_ids,
+        multi_store=multi_store,
     )
     return {
-        "scope": "company" if brands is None else "brands",
+        "scope": "brands" if (eff_brands is not None or nm_ids is not None or multi_store) else "company",
         "current": {
             "year": year,
             "from": cur_from.isoformat(),
@@ -246,6 +273,11 @@ async def get_pnl_by_brand(
     months: int = Query(default=6, ge=1, le=24),
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
+    categories: str | None = Query(default=None, description="DEV-062 глоб.фильтр: категории (CSV)"),
+    groups: str | None = Query(default=None, description="DEV-062 глоб.фильтр: id групп (CSV)"),
+    articles: str | None = Query(default=None, description="DEV-062 глоб.фильтр: nm_id (CSV)"),
+    glob_brands: str | None = Query(default=None, alias="brands", description="DEV-062 глоб.фильтр: бренды (CSV)"),
+    stores: str | None = Query(default=None, description="DEV-062 Phase C: tenant-id магазинов (CSV)"),
     session: AsyncSession = Depends(get_db_tenant_scoped),
     user: CurrentUser = Depends(get_current_user),
     brands: set[str] | None = Depends(current_brands_filter),
@@ -292,6 +324,24 @@ async def get_pnl_by_brand(
         last_day = monthrange(cur_y, cur_m)[1]
         date_to = date(cur_y, cur_m, last_day)
 
+    # DEV-062 Phase C: свод по магазинам (≥2 кабинета) → расширить ORM-фильтр.
+    store_ids = await resolve_store_scope(
+        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id,
+    )
+    if store_ids:
+        set_tenant_filter(session, store_ids)
+
+    # DEV-062: SKU-level фильтр (категории/группы/артикулы) → nm_ids; в by-brand
+    # каждый бренд строится по своему пересечению (brand ∩ выбранные nm).
+    nm_ids = None
+    if any([categories, groups, articles]):
+        nm_ids = await resolve_nm_scope(
+            session, brands=glob_brands, categories=categories, groups=groups,
+            articles=articles, rbac_brands=brands,
+        )
+    # Бренды из бара (glob_brands) сужают набор строк матрицы.
+    sel_brands = {b.strip() for b in (glob_brands or "").split(",") if b.strip()} or None
+
     # Список брендов: если manager — берём из его фильтра, иначе DISTINCT из products
     if brands is None:
         all_brands_rows = (
@@ -303,6 +353,22 @@ async def get_pnl_by_brand(
         brand_list = sorted({b for b in all_brands_rows if b})
     else:
         brand_list = sorted(brands)
+    if sel_brands is not None:
+        brand_list = [b for b in brand_list if b in sel_brands]
+
+    # Per-brand nm-набор при SKU-level фильтре (brand ∩ выбранные nm).
+    brand_nm_map: dict[str, set[int]] = {}
+    if nm_ids is not None:
+        rows_bn = (
+            await session.execute(
+                select(Product.brand, Product.nm_id).where(Product.nm_id.in_(nm_ids))
+            )
+        ).all()
+        for b, nm in rows_bn:
+            if b and nm is not None:
+                brand_nm_map.setdefault(b, set()).add(int(nm))
+        # Оставляем только бренды, у которых есть SKU в выбранном наборе.
+        brand_list = [b for b in brand_list if b in brand_nm_map]
 
     # TASK-DEV-019: brand → manager mapping. Один SELECT для всех брендов,
     # JOIN brand_assignments → users → собираем строкой через ", " если
@@ -339,13 +405,23 @@ async def get_pnl_by_brand(
 
     rows: list[dict[str, Any]] = []
     for brand in brand_list:
-        pnl = await build_pnl(
-            session,
-            date_from=date_from,
-            date_to=date_to,
-            granularity="month",
-            brands={brand},
-        )
+        if nm_ids is not None:
+            # SKU-level фильтр: бренд × выбранные артикулы (nm_ids перекрывает brands).
+            pnl = await build_pnl(
+                session,
+                date_from=date_from,
+                date_to=date_to,
+                granularity="month",
+                nm_ids=brand_nm_map.get(brand, set()),
+            )
+        else:
+            pnl = await build_pnl(
+                session,
+                date_from=date_from,
+                date_to=date_to,
+                granularity="month",
+                brands={brand},
+            )
         # Маппим period_start → row
         by_period = {r["period_start"]: r for r in pnl.get("rows", [])}
         monthly: list[dict[str, Any]] = []

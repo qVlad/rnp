@@ -18,6 +18,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { fmtRub, fmtPct } from "@/lib/format";
 import { DateRangePicker, type DateRange } from "@/components/DateRangePicker";
+import { useFilters, filterKey } from "@/contexts/FilterContext";
 
 function marginColor(pct: number): string {
   if (pct >= 15) return "bg-success/10 text-success";
@@ -85,9 +86,10 @@ export default function PnLByBrandView() {
     } catch {}
   }, [range]);
 
+  const { filters, toParams } = useFilters();
   const q = useQuery({
-    queryKey: ["pnl-by-brand", range.from, range.to],
-    queryFn: () => api.pnlByBrand(6, range.from, range.to),
+    queryKey: ["pnl-by-brand", range.from, range.to, filterKey(filters)],
+    queryFn: () => api.pnlByBrand(6, range.from, range.to, toParams()),
   });
 
   const data = q.data;

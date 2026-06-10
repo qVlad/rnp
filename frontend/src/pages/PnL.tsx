@@ -328,9 +328,9 @@ export default function PnL() {
         }
       />
 
-      {/* DEV-062 — глобальные фильтры (пока только для табличного вида; cards/
-          by-brand читают отдельные endpoints /pnl/yoy и /pnl/by-brand). */}
-      {view === "table" && <GlobalFilterBar />}
+      {/* DEV-062 — глобальные фильтры (table/cards/by-brand — все три вида
+          подключены к /pnl, /pnl/yoy, /pnl/by-brand соответственно). */}
+      <GlobalFilterBar />
 
       {view === "cards" && <PnLCardsView />}
       {view === "by-brand" && <PnLByBrandView />}
