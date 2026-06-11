@@ -150,13 +150,23 @@ async def sync_ts_opex(
 
     by_cat, meta = await compute_ts_opex_breakdown(token, ts_account_id, date_from, date_to)
 
-    # Идемпотентность: убрать прежние ts-sync записи этого периода.
+    # Идемпотентность: убрать прежние записи этого периода, которыми владеет
+    # TS-перенос — и наши ts-sync, И прежние РУЧНЫЕ «Перенос из TrueStats»
+    # (их завели вручную до фичи, синк теперь единственный источник TS-OPEX).
+    # Чужие/обычные OPEX-записи НЕ трогаем. Бэкап БД делается перед прогоном.
+    from sqlalchemy import or_
+
     marker = f"ts-sync:{date_from.isoformat()}..{date_to.isoformat()}"
     old_ids = (
         await session.execute(
             select(OpexEntry.id).where(
                 OpexEntry.tenant_id == tenant_id,
-                OpexEntry.comment == marker,
+                OpexEntry.entry_date >= date_from,
+                OpexEntry.entry_date <= date_to,
+                or_(
+                    OpexEntry.comment == marker,
+                    OpexEntry.comment.like("Перенос из TrueStats%"),
+                ),
             )
         )
     ).scalars().all()
