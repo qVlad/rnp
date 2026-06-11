@@ -196,6 +196,13 @@
     `/sync/trigger` отказывает advert-сущностям пока advert-cooldown активен.
 
 ### TASK-DEV-076: Кросс-процессный advert-лимитер (корневой фикс самотроттла) — P2
+- **✅ РЕАЛИЗОВАНО (v0.64.38, 2026-06-11):** `cooldown.reserve_interval_slot(category,
+  token_key, min_interval_s)` — Redis-гейт `SET wb:slot:{cat}:{token} NX PX 20000`;
+  если слот занят — ждём TTL и повторяем (cap 90s, fail-open при Redis-сбое).
+  Вызывается в `WbApiClient.request` для `category=="advert"` (ключ = sha1(token)[:12])
+  → 20s-floor теперь держится КРОСС-ПРОЦЕССНО (fanout/manual-trigger/abtest на одном
+  токене больше не бёрстят → нет `429 per seller`). Scope только advert (минимум
+  риска); analytics/finance — при необходимости позже тем же механизмом.
 - **Тип:** integration/reliability · **P2** · из аудита WB-интеграции 2026-06-11.
 - **Проблема:** `TokenBucketLimiter` in-memory, пересоздаётся в каждом `WbApiClient`
   (новый клиент per-task) → 20s-floor/3min для advert НЕ держатся между Celery-тасками/

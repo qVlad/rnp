@@ -209,6 +209,17 @@ class WbApiClient:
         if remaining > 0:
             raise WbCooldownActive(category, remaining)
 
+        # DEV-076: cross-process min-interval floor for bursty advert-API.
+        # In-process limiter resets per Celery task → 20s floor leaks across
+        # tasks/processes (fanout + manual trigger + abtest on one seller token
+        # → 429 "per seller"). This Redis slot-gate (keyed by token) enforces
+        # the 20s spacing globally. Fail-open if Redis down.
+        if category == "advert":
+            import hashlib as _hashlib
+
+            _token_key = _hashlib.sha1((self.token or "").encode()).hexdigest()[:12]
+            await cooldown.reserve_interval_slot("advert", _token_key, 20.0)
+
         client = await self._ensure_client()
         url = f"{self._bases[category]}{path}"
         backoff = 1.0

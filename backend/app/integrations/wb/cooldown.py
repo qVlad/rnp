@@ -7,6 +7,8 @@ rate-limiters can no longer over-spend.
 """
 from __future__ import annotations
 
+import asyncio
+
 import redis.asyncio as redis_async
 
 from app.core.config import settings
@@ -15,6 +17,7 @@ from app.core.logging import get_logger
 log = get_logger(__name__)
 
 _KEY = "wb:cooldown:{category}"
+_SLOT_KEY = "wb:slot:{category}:{token_key}"
 _DEFAULT_COOLDOWN_SECONDS = 600  # 10 minutes — typical WB penalty window
 
 
@@ -59,6 +62,55 @@ async def set_cooldown(category: str, seconds: int = _DEFAULT_COOLDOWN_SECONDS) 
         except Exception:
             pass
     log.warning("WB %s: global cooldown for %ds", category, seconds)
+
+
+async def reserve_interval_slot(
+    category: str,
+    token_key: str,
+    min_interval_s: float,
+    max_wait_s: float = 90.0,
+) -> None:
+    """Cross-process минимальный интервал между вызовами категории (TASK-DEV-076).
+
+    In-process `TokenBucketLimiter` пересоздаётся в каждом Celery-таске (новый
+    `WbApiClient`), поэтому его `min_interval_s` НЕ держится между тасками/
+    процессами — fanout + ручной `/sync/trigger` + abtest на одном seller-токене
+    бёрстят advert-API → `429 per seller`. Этот Redis-гейт держит интервал
+    глобально: `SET key NX PX <interval>` — если слот занят, ждём его TTL и
+    повторяем. Ключ — (category, token), чтобы разные кабинеты не блокировали
+    друг друга.
+
+    Fail-open: при недоступности Redis или превышении `max_wait_s` — просто
+    продолжаем (in-process лимитер всё ещё защищает в рамках процесса); лучше
+    отправить запрос, чем зависнуть.
+    """
+    r = _client()
+    key = _SLOT_KEY.format(category=category, token_key=token_key)
+    px = max(1, int(min_interval_s * 1000))
+    waited = 0.0
+    try:
+        while True:
+            ok = await r.set(key, "1", nx=True, px=px)
+            if ok:
+                return
+            ttl_ms = await r.pttl(key)
+            sleep_s = max(0.05, (ttl_ms if ttl_ms and ttl_ms > 0 else px) / 1000.0)
+            if waited + sleep_s > max_wait_s:
+                log.warning(
+                    "WB %s slot wait > %.0fs (token %s) — proceeding fail-open",
+                    category, max_wait_s, token_key,
+                )
+                return
+            await asyncio.sleep(sleep_s)
+            waited += sleep_s
+    except Exception as e:
+        log.error("redis unreachable in reserve_interval_slot(%s): %s — fail-open", category, e)
+        return
+    finally:
+        try:
+            await r.aclose()
+        except Exception:
+            pass
 
 
 async def clear(category: str) -> None:
