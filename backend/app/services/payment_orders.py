@@ -318,6 +318,7 @@ _STAS_COLUMN_MAP: dict[str, list[str]] = {
     "paid_dt": ["дата оплаты"],
     "upd_delivery_amount": ["упд доставка"],  # «УПД Доставка по выкупу»
     "buyout_returns_amount": ["возвраты выкупы"],
+    "check_col": ["проверка"],  # контрольная колонка бухгалтера (должна быть ~0)
 }
 
 
@@ -407,6 +408,16 @@ def parse_stas_razmetka_xlsx(
                 _parse_decimal(row[cols["buyout_returns_amount"]])
                 if "buyout_returns_amount" in cols else None
             ) or Decimal("0")
+            # Контрольная колонка бухгалтера «ПРОВЕРКА» должна быть ~0. Ненулевая
+            # = строка неполная/несведённая (был кейс отчёта 737866885: ПРОВЕРКА
+            # −268.29 = недостающая УПД доставки). Сообщаем, НЕ глотаем молча.
+            if "check_col" in cols:
+                chk = _parse_decimal(row[cols["check_col"]])
+                if chk is not None and abs(chk) > Decimal("0.05"):
+                    errors.append(
+                        f"⚠ Отчёт {poid}: контрольная колонка «ПРОВЕРКА»={chk} ≠ 0 — "
+                        f"строка может быть неполной (проверьте УПД/суммы в файле)."
+                    )
             out.append({
                 "payment_order_id": poid[:64],
                 "created_dt": created_dt,
