@@ -386,7 +386,9 @@ def parse_stas_razmetka_xlsx(
             poid = str(row[cols["payment_order_id"]] or "").strip()
             if not poid or not poid.replace(".0", "").isdigit():
                 continue  # пропускаем итоговые/пустые строки
-            poid = poid.replace(".0", "")
+            # Ключ как у существующих строк (синк/разовая заливка): "realization-<№>".
+            # Без префикса импорт вставлял бы дубли → двойной Банк (TASK-DEV-068).
+            poid = f"realization-{poid.replace('.0', '')}"
             amount = _parse_decimal(row[cols["amount"]]) or Decimal("0")
             paid_dt = _parse_date_ru(row[cols["paid_dt"]]) if "paid_dt" in cols else None
             period_end = _parse_date_ru(row[cols["period_end"]]) if "period_end" in cols else None
