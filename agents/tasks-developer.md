@@ -159,9 +159,19 @@
     107 726, июнь 718/66 006). ⇒ **синк рекламы Onyx обрывается после ~10 числа**
     (WB advert-throttle для этого кабинета ИЛИ sync только для «активного» tenant /
     мульти-tenant scheduling баг). Дашборд Onyx показывает 0 корректно — данных нет.
-    Фикс: разобрать `sync/tasks` ad_stats для tenant 1 (почему только ~10 дней),
-    дёрнуть ре-синк (`POST /api/settings/sync/trigger`); если WB не отдаёт историю —
-    это волатильность (`ad-data-volatility`), freeze вперёд. Главный драйвер profit-Δ.
+    **ФИНАЛЬНЫЙ ДИАГНОЗ (2026-06-11, проверено на проде):** две причины.
+    (1) **Список кампаний Onyx был устаревший** — `wb_ad_campaigns` tenant 1 = 47 шт,
+    0 active (статусы 7/11). Ре-синк `_sync_ad_campaigns_async(1)` подтянул 1 active
+    (status 9). ⇒ `sync_ad_campaigns` для Onyx не отрабатывал регулярно (мульти-tenant
+    scheduling). **Фикс-направление:** гарантировать запуск campaign-sync на ВСЕ
+    tenants (не только active). (2) **Но fullstats Onyx WB-429-throttled** — ре-синк
+    ad_stats словил `429 "Limited by global limiter, per seller"` на чанке 13.05-11.06
+    → 18-24.05 НЕ восстановилось. Это WB-side throttle (`ad-data-volatility`, pitfall
+    #5: чистить cooldown НЕЛЬЗЯ). **Вывод: историю рекламы Onyx мы вытащить не можем** —
+    TS показывает 18 900 из ФИН-отчёта (Продвижение, не fullstats); наш аналог
+    `promo_ad`=6 902 (тоже ≠ 18 900). ⇒ **реклама принципиально не 1:1** (разные
+    источники WB + throttle). Частично залил 1089 ad-строк Onyx за доступные даты.
+    **Следствие: profit НЕ сводится 1:1 с TS** — рекламная компонента неустранима.
   - **TASK-DEV-070 (P2, методология → TS-режим страница):** profit. TS profit =
     `toTransfer − logist − storage − COGS − tax − ad − otherDeduction − expense(OPEX-мелкие)`
     = 483 584.93; наш net_profit 497 769.07 (Δ≈14k — почти весь = пропущенная реклама
