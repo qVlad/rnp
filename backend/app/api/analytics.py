@@ -34,7 +34,7 @@ async def abc_analysis(
 ):
     # DEV-062 Phase C: свод по магазинам (≥2 кабинета) → расширить ORM-фильтр.
     store_ids = await resolve_store_scope(
-        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id,
+        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id, rbac_brands=brands,
     )
     if store_ids:
         set_tenant_filter(session, store_ids)

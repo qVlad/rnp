@@ -222,7 +222,7 @@ async def summary_report(
     Когда фильтр пуст — nm_scope=None, поведение прежнее (parity сохраняется).
     Phase C: ≥2 магазина → свод per-SKU по выбранным кабинетам."""
     store_ids = await resolve_store_scope(
-        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id,
+        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id, rbac_brands=None,
     )
     if store_ids:
         set_tenant_filter(session, store_ids)
@@ -1053,7 +1053,7 @@ async def get_deductions(
     входит в headline `total` — TS относит её к рекламе, не к otherDeduction."""
     dcol = _date_col(reporting_mode)
     store_ids = await resolve_store_scope(
-        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id,
+        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id, rbac_brands=None,
     )
     if store_ids:
         set_tenant_filter(session, store_ids)
@@ -1191,7 +1191,7 @@ async def ad_campaigns_analytics(
     Phase C: ≥2 магазина → свод РК по выбранным кабинетам.
     """
     store_ids = await resolve_store_scope(
-        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id,
+        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id, rbac_brands=None,
     )
     if store_ids:
         set_tenant_filter(session, store_ids)

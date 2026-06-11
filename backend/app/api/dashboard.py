@@ -61,12 +61,16 @@ async def _resolve_global_filter(
 
 
 async def _apply_store_filter(
-    session: AsyncSession, *, stores: str | None, user: CurrentUser
+    session: AsyncSession, *, stores: str | None, user: CurrentUser,
+    rbac_brands: set[str] | None,
 ) -> bool:
     """DEV-062 Phase C: если выбрано ≥2 магазина — расширить ORM-фильтр на их
-    tenant'ы (свод по кабинетам). Возврат: True если мульти-магазин активен."""
+    tenant'ы (свод по кабинетам). Возврат: True если мульти-магазин активен.
+    BUG-DEV-023: для brand-scoped роли (manager) свод запрещён (RBAC по
+    brand-name утёк бы кросс-tenant) — `rbac_brands` прокидываем в резолвер."""
     store_ids = await resolve_store_scope(
         session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id,
+        rbac_brands=rbac_brands,
     )
     if store_ids:
         set_tenant_filter(session, store_ids)
@@ -110,7 +114,7 @@ async def get_dashboard(
     brands: set[str] | None = Depends(current_brands_filter),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
-    multi_store = await _apply_store_filter(session, stores=stores, user=user)
+    multi_store = await _apply_store_filter(session, stores=stores, user=user, rbac_brands=brands)
     nm_ids = await _resolve_global_filter(
         session, glob_brands=glob_brands, categories=categories, groups=groups,
         articles=articles, rbac_brands=brands,
@@ -140,7 +144,7 @@ async def get_timeseries(
     brands: set[str] | None = Depends(current_brands_filter),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
-    await _apply_store_filter(session, stores=stores, user=user)
+    await _apply_store_filter(session, stores=stores, user=user, rbac_brands=brands)
     nm_ids = await _resolve_global_filter(
         session, glob_brands=glob_brands, categories=categories, groups=groups,
         articles=articles, rbac_brands=brands,
@@ -178,7 +182,7 @@ async def get_top_skus(
     """Top SKUs. `order=asc` + `by=margin` даёт worst-margin SKUs (TASK-DEV
     quick-win 3): топ-5 проблемных карточек, которые теряют деньги."""
     p = _resolve_period(period, start_date, end_date)
-    await _apply_store_filter(session, stores=stores, user=user)
+    await _apply_store_filter(session, stores=stores, user=user, rbac_brands=brands)
     nm_ids = await _resolve_global_filter(
         session, glob_brands=glob_brands, categories=categories, groups=groups,
         articles=articles, rbac_brands=brands,
@@ -222,7 +226,7 @@ async def get_kpi_breakdown(
     financial) — без этого Σ breakdown ≠ Dashboard KPI в financial-режиме.
     """
     p = _resolve_period(period, start_date, end_date)
-    await _apply_store_filter(session, stores=stores, user=user)
+    await _apply_store_filter(session, stores=stores, user=user, rbac_brands=brands)
     nm_ids = await _resolve_global_filter(
         session, glob_brands=glob_brands, categories=categories, groups=groups,
         articles=articles, rbac_brands=brands,
@@ -343,7 +347,7 @@ async def get_today_vs_yesterday(
     p_today = period_from_range(today, today)
     p_yesterday = period_from_range(yesterday, yesterday)
 
-    multi_store = await _apply_store_filter(session, stores=stores, user=user)
+    multi_store = await _apply_store_filter(session, stores=stores, user=user, rbac_brands=brands)
     nm_ids = await _resolve_global_filter(
         session, glob_brands=glob_brands, categories=categories, groups=groups,
         articles=articles, rbac_brands=brands,

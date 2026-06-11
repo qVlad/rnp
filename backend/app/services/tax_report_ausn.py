@@ -395,21 +395,20 @@ async def build_ausn_monthly_report(
                 monthly[target_month].bank += float(amount or 0)
                 monthly[target_month].realizations_count += 1
 
-    # УПД доставки — приоритетно из payment_orders (Стас-стиль), fallback
-    # на wb_redeem_notification (total_sum_with_vat — ВНИМАНИЕ: это не
-    # совсем то же что Стас Z колонка; используется только если кастомных
-    # данных нет).
-    has_upd_from_payment_orders = bool(upd_rows)
-    if has_upd_from_payment_orders:
-        for p_end, upd in upd_rows:
-            m = _month_key(p_end)
-            if m in monthly:
-                monthly[m].upd_delivery += float(upd or 0)
-    else:
-        for nd, amount in redeem_rows:
-            m = _month_key(nd)
-            if m in monthly:
-                monthly[m].upd_delivery += float(amount or 0)
+    # УПД доставки = sum(WbPaymentOrder.upd_delivery_amount) по period_end месяца
+    # (Стас «УПД Доставка по выкупу» — только delivery-портация выкупа).
+    # BUG (review 2026-06-10): РАНЬШЕ при пустых payment-orders за месяц был
+    # fallback на WbRedeemNotification.total_sum_with_vat — но это ПОЛНАЯ сумма
+    # выкупа (~×80 от delivery-УПД), он завышал налоговую базу (напр. май:
+    # 49 312 / 371 676 вместо реальных 4 514.14). Fallback УДАЛЁН: если за
+    # месяц нет payment-orders с upd_delivery_amount → УПД доставки = 0
+    # (данные ещё не импортированы; честный 0 лучше завышенной базы).
+    # `redeem_rows` оставлены для возможной отдельной справки, в базу не идут.
+    for p_end, upd in upd_rows:
+        m = _month_key(p_end)
+        if m in monthly:
+            monthly[m].upd_delivery += float(upd or 0)
+    _ = redeem_rows  # намеренно не используется в базе (см. коммент выше)
 
     # 5) База + налог
     for m, row in monthly.items():

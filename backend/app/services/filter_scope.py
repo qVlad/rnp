@@ -26,6 +26,7 @@ async def resolve_store_scope(
     stores: str | None,
     user_id: int,
     fallback_tenant_id: int,
+    rbac_brands: set[str] | None = "__unset__",  # type: ignore[assignment]
 ) -> list[int] | None:
     """DEV-062 Phase C: валидировать выбранные магазины (кабинеты) против
     `user_tenant_access`.
@@ -33,7 +34,17 @@ async def resolve_store_scope(
     Возврат: `list[int]` из ≥2 разрешённых tenant'ов (режим «свод по магазинам»)
     или `None` (0/1 магазин ИЛИ нет доступа → обычный single-tenant активный
     кабинет). Защита: показываем только tenant'ы, к которым у user есть доступ.
+
+    **BUG-DEV-023:** brand-scoped роль (manager, `rbac_brands` — непустой set ИЛИ
+    пустой) НЕ допускается к кросс-tenant своду: RBAC задан по brand-name в
+    рамках одного кабинета и при расширении на другой tenant утёк бы на
+    одноимённые бренды. Мульти-магазин — только для unrestricted ролей
+    (director/head, `rbac_brands is None`). `"__unset__"` — back-compat для
+    вызовов без передачи RBAC (трактуем как «не ограничивать», но такие вызовы
+    надо обновить).
     """
+    if rbac_brands is not None and rbac_brands != "__unset__":
+        return None  # manager (brand-scope) — без кросс-tenant свода
     ids = [int(x) for x in _csv(stores) if x.lstrip("-").isdigit()]
     if len(ids) < 2:
         return None  # 0/1 магазин → обычный активный кабинет (без расширения)

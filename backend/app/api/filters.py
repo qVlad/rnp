@@ -60,13 +60,28 @@ async def filter_options(
     arow = (await session.execute(art_q.order_by(Product.vendor_code))).all()
     art_opts = [{"value": int(nm), "label": vc or str(nm), "brand": br} for nm, vc, br in arow if nm]
 
-    # Группы товаров.
-    grow = (await session.execute(
-        select(ProductGroup.id, ProductGroup.name, func.count(ProductGroupAssignment.nm_id))
+    # Группы товаров. TASK-DEV-063: каскад по выбранным брендам + RBAC (как
+    # категории/артикулы). Join на Product через nm_id; при заданном brand-scope
+    # показываем только группы с ≥1 SKU в скоупе (0-count группы скрываются).
+    grp_q = (
+        select(
+            ProductGroup.id,
+            ProductGroup.name,
+            func.count(func.distinct(ProductGroupAssignment.nm_id)),
+        )
         .outerjoin(ProductGroupAssignment, ProductGroupAssignment.group_id == ProductGroup.id)
+        .outerjoin(Product, Product.nm_id == ProductGroupAssignment.nm_id)
         .group_by(ProductGroup.id, ProductGroup.name)
         .order_by(ProductGroup.name)
-    )).all()
+    )
+    g_scope = []
+    if rbac_brands is not None:
+        g_scope.append(Product.brand.in_(rbac_brands))
+    if sel_brands:
+        g_scope.append(Product.brand.in_(sel_brands))
+    if g_scope:
+        grp_q = grp_q.where(*g_scope)
+    grow = (await session.execute(grp_q)).all()
     group_opts = [{"value": int(gid), "label": name, "count": int(n)} for gid, name, n in grow]
 
     return {

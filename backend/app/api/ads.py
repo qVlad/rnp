@@ -67,18 +67,21 @@ async def get_ads_heatmap(
 
     # DEV-062 Phase C: свод по магазинам (≥2 кабинета) → расширить ORM-фильтр.
     store_ids = await resolve_store_scope(
-        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id,
+        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id, rbac_brands=brands,
     )
     if store_ids:
         set_tenant_filter(session, store_ids)
     # DEV-062: глобальные фильтры → nm_id-предикат (РК атрибутируются к карточке).
+    # BUG-DEV-024: RBAC применяется ВСЕГДА для brand-scoped роли (manager), даже
+    # без выбранного фильтра — иначе manager видел бы все кампании тенанта.
     nm_pred = []
-    if any([glob_brands, categories, groups, articles]):
+    if any([glob_brands, categories, groups, articles]) or brands is not None:
         nm_scope = await resolve_nm_scope(
             session, brands=glob_brands, categories=categories, groups=groups,
             articles=articles, rbac_brands=brands,
         )
-        nm_pred = [WbAdStatsDaily.nm_id.in_(nm_scope if nm_scope is not None else set())]
+        if nm_scope is not None:
+            nm_pred = [WbAdStatsDaily.nm_id.in_(nm_scope)]
 
     # Aggregate per (advert_id, stat_date)
     stmt = (

@@ -198,7 +198,7 @@ export default function PnL() {
 
   // DEV-062 — глобальные фильтры. `brands` из бара имеет приоритет; legacy
   // drill-down `?brands=` из /managers-kpi используется когда бар без брендов.
-  const { filters: gFilters, toParams: gToParams } = useFilters();
+  const { filters: gFilters, toParams: gToParams, active: gActive } = useFilters();
   const gfk = filterKey(gFilters);
   const pnlFilters = (() => {
     const p = gToParams();
@@ -245,9 +245,21 @@ export default function PnL() {
       )}
       {isBrandsScope && !drillBrands && (
         <div className="card text-xs text-muted border-border bg-surface">
-          Вы видите P&amp;L по своим брендам — contribution-margin вид (без OPEX,
-          fixed-costs, налогов и НДС). Чтобы увидеть полный финансовый
-          результат компании, попросите директора.
+          {gActive ? (
+            <>
+              Применён глобальный фильтр (бренды / категории / SKU / магазины) —
+              показан <b>contribution-margin</b> вид (без OPEX, fixed-costs, налогов
+              и НДС; в своде по магазинам они per-tenant не агрегируются). Снимите
+              фильтр в панели сверху, чтобы увидеть полный финансовый результат
+              компании.
+            </>
+          ) : (
+            <>
+              Вы видите P&amp;L по своим брендам — contribution-margin вид (без OPEX,
+              fixed-costs, налогов и НДС). Чтобы увидеть полный финансовый
+              результат компании, попросите директора.
+            </>
+          )}
         </div>
       )}
       <PageHeader
