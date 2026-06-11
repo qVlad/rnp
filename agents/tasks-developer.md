@@ -99,6 +99,26 @@
   - **TASK-DEV-067 (P3):** by-brand период (`localStorage pnl-by-brand.range.v1`)
     рассинхронен с глоб-периодом фильтр-бара — синхронизировать/подписать.
 
+### TASK-DEV-077: OPEX-методология от TS (синк operation/list с распределением) — P2
+- **Тип:** integration/parity · **P2** · запрос пользователя 2026-06-11 («методологию OPEX возьми от TS»).
+- **Разобрано вживую (TS API):** TS учитывает ВСЕ операционные расходы (ФОТ/аренда/
+  подписки) и распределяет по аккаунтам владельца через `distribution`:
+  equal (÷ число аккаунтов), proportional (× доля реализации), single. Onyx-доля OPEX
+  за май ≈ **177 289** (125 887 equal + ~51 402 proportional, Onyx=26.04% реализации
+  группы) vs наш плоский 87 000. `stats.expense` (2 493/нед, marketplace) ≠
+  `operation/list` (177k/мес, операционные) — «в разных местах разное».
+- **✅ РЕАЛИЗОВАНО (v0.64.42):** `integrations/truestats.py` (operation_list +
+  account_realisation, api2, x-auth-token); `services/opex_ts_sync.py` (доля кабинета
+  по equal/proportional, маппинг в OpexCategory `TS: <name>`, идемпотентный upsert в
+  opex_entries с маркером `ts-sync:<period>` + tenant-allocation 1.0); endpoint
+  `POST /api/opex/sync-ts?month=YYYY-MM` (director). Гранулярность — месяц.
+- **Конфиг (per-tenant AppSetting):** `ts_auth_token` (120-hex из TS-сессии),
+  `ts_account_id` (Onyx=25143). Ставится через `PUT /api/settings`.
+- **Осталось:** (1) пользователь задаёт ts_auth_token + ts_account_id; (2) прогнать
+  sync-ts за месяцы + сверить Onyx OPEX с TS. **Follow-up:** шифровать ts_auth_token
+  (Fernet, как wb_token) — сейчас plaintext AppSetting; proportional-базис = реализация
+  (допущение, сверить с TS); токен протухает → нужен refresh (или TS-login).
+
 ### TASK-DEV-068: Май АУСН не сходится — нет импортёра «Стас Разметка банка» (P1, налоги)
 - **Тип:** data/feature · **P1** · открыта 2026-06-10 · ✅ **ВЫПОЛНЕНО 2026-06-11 (v0.64.34/35)**.
 - **РЕШЕНО:** построен парсер листа «Отчеты+УПД» (`parse_stas_razmetka_xlsx` +

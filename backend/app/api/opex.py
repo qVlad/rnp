@@ -56,6 +56,33 @@ router = APIRouter(
 )
 
 
+@router.post("/sync-ts", dependencies=[Depends(require_director)])
+async def sync_ts_opex_endpoint(
+    month: str | None = Query(default=None, description="YYYY-MM (иначе from+to)"),
+    date_from: date | None = Query(default=None, alias="from"),
+    date_to: date | None = Query(default=None, alias="to"),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """TASK-DEV-077: синк OPEX из TrueStats (методология TS — полные операционные
+    расходы с распределением, доля нашего кабинета). Помесячно, идемпотентно.
+    Конфиг — AppSetting `ts_auth_token` + `ts_account_id`."""
+    from app.services.opex_ts_sync import month_bounds, sync_ts_opex
+
+    if month:
+        try:
+            y, m = int(month[:4]), int(month[5:7])
+            date_from, date_to = month_bounds(y, m)
+        except (ValueError, IndexError):
+            raise HTTPException(400, "month должен быть YYYY-MM")
+    if not (date_from and date_to):
+        raise HTTPException(400, "Укажите month=YYYY-MM или from+to")
+    res = await sync_ts_opex(session, date_from=date_from, date_to=date_to)
+    if res.get("error"):
+        raise HTTPException(400, res["error"])
+    await session.commit()
+    return res
+
+
 class OpexCategoryIn(BaseModel):
     name: str
     kind: Literal["expense", "income"] = "expense"
