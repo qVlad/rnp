@@ -488,16 +488,57 @@ async def _buyout_pct_30d(
     on_date: date,
     velocity_days: int = 30,
 ) -> dict[int, Decimal]:
-    """% выкупа per nm_id за последние velocity_days дней.
+    """% выкупа per nm_id за последние velocity_days дней. Доля 0-1.
 
-    Формула: НЕТТО-выкупы / orders (без is_cancel). Доля 0-1.
-    Нетто = sales(is_return=False) − returns(is_return=True): WB ЛК «% выкупа»
-    нетит возвраты, поэтому валовый sales/orders завышал показатель (для товаров
-    с высоким возвратом — напр. обувь — до ~2× : 97% вместо реальных ~40%).
-    DEV-078. Если orders=0 — nm_id отсутствует в dict (caller → fallback).
+    Иерархия (DEV-078):
+    1. **Primary — `wb_funnel_daily`** (Analytics API = данные Воронки ЛК WB):
+       `SUM(buyouts_count)/SUM(orders_count)`. `buyouts_count` уже НЕТТО возвратов
+       (как Воронка ЛК), поэтому ratio совпадает с «% выкупа» в ЛК WB.
+    2. **Fallback — `wb_sales`/`wb_orders`** (нет funnel-покрытия): НЕТТО-выкупы
+       `sales(is_return=False) − returns(is_return=True)` / orders(без is_cancel).
+       Валовый sales/orders (старая формула) завышал для товаров с высоким
+       возвратом (обувь: 97% вместо ~40%) — возвраты лагают в трейлинг-окне.
+
+    Если ни funnel, ни orders нет — nm_id отсутствует в dict (caller → fallback).
     """
     if not nm_ids:
         return {}
+    out: dict[int, Decimal] = {}
+    # 1) Primary: funnel ratio (WB Воронка). orders_count>0 → используем.
+    funnel_window_from = on_date - timedelta(days=velocity_days)
+    funnel_stmt = (
+        select(
+            WbFunnelDaily.nm_id,
+            func.sum(WbFunnelDaily.orders_count),
+            func.sum(WbFunnelDaily.buyouts_count),
+        )
+        .where(
+            WbFunnelDaily.tenant_id == tenant_id,
+            WbFunnelDaily.nm_id.in_(nm_ids),
+            WbFunnelDaily.dt >= funnel_window_from,
+            WbFunnelDaily.dt <= on_date,
+        )
+        .group_by(WbFunnelDaily.nm_id)
+    )
+    funnel_covered: set[int] = set()
+    for nm, f_orders, f_buyouts in (await session.execute(funnel_stmt)).all():
+        nm_int = int(nm)
+        o = int(f_orders or 0)
+        if o <= 0:
+            continue
+        funnel_covered.add(nm_int)
+        ratio = Decimal(int(f_buyouts or 0)) / Decimal(o)
+        if ratio > Decimal("1"):
+            ratio = Decimal("1")
+        elif ratio < Decimal("0"):
+            ratio = Decimal("0")
+        out[nm_int] = ratio
+
+    # 2) Fallback (нетто wb_sales/wb_orders) — только для nm без funnel-покрытия.
+    fallback_nm = [n for n in nm_ids if int(n) not in funnel_covered]
+    if not fallback_nm:
+        return out
+    nm_ids = fallback_nm
     cutoff = datetime.combine(
         on_date - timedelta(days=velocity_days),
         datetime.min.time(),
@@ -549,7 +590,7 @@ async def _buyout_pct_30d(
         for nm, cnt in (await session.execute(returns_stmt)).all()
     }
 
-    out: dict[int, Decimal] = {}
+    # NB: `out` уже содержит funnel-результаты — НЕ переинициализировать.
     for nm, orders in orders_by_nm.items():
         if orders <= 0:
             continue
