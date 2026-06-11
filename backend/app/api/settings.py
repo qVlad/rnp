@@ -306,23 +306,45 @@ async def trigger_sync(
     if tenant_id is None:
         raise HTTPException(400, "Tenant context is not set")
 
+    # TASK-DEV-069: advert-API троттлится per-seller. Ручной триггер advert-таска
+    # во время активного cooldown'а только продлевает пенальти (CLAUDE pitfall #5).
+    # Поэтому advert-категорийные сущности пропускаем, пока cooldown активен.
+    # (Корневой фикс кросс-процессного лимитера — TASK-DEV-076.)
+    from app.integrations.wb.cooldown import get_remaining as _cooldown_remaining
+
+    _ADVERT_ENTITIES = {"ad_campaigns", "ad_campaign_details", "ad_stats"}
+    advert_cd = await _cooldown_remaining("advert")
+
     # Спец-кейс "all": запускает все per-tenant таски для текущего tenant'а
     # параллельно — кнопка «Первичная выгрузка» в UI.
     if payload.entity == "all":
         days = payload.days_back or 0
         submitted: list[str] = []
+        skipped: list[str] = []
         for entity, task in per_tenant_task_map.items():
+            if entity in _ADVERT_ENTITIES and advert_cd > 0:
+                skipped.append(entity)
+                continue
             if entity in SUPPORTS_DAYS_BACK and days > 0:
                 r = task.delay(tenant_id, days)
             else:
                 r = task.delay(tenant_id)
             submitted.append(f"{entity}:{r.id}")
-        return {"task_id": ",".join(submitted), "entity": "all", "status": "queued"}
+        out = {"task_id": ",".join(submitted), "entity": "all", "status": "queued"}
+        if skipped:
+            out["skipped_advert_cooldown"] = f"{','.join(skipped)} (advert cooldown {advert_cd}s)"
+        return out
 
     # Per-tenant таск, опционально с days_back.
     task = per_tenant_task_map.get(payload.entity)
     if task is None:
         raise HTTPException(400, f"Unknown entity {payload.entity}")
+    if payload.entity in _ADVERT_ENTITIES and advert_cd > 0:
+        raise HTTPException(
+            429,
+            f"advert под WB-cooldown ещё {advert_cd}s — ручной синк продлит пенальти "
+            f"(pitfall #5). Подождите остывания, потом повторите.",
+        )
     if payload.days_back is not None and payload.entity in SUPPORTS_DAYS_BACK:
         async_result = task.delay(tenant_id, payload.days_back)
     else:
