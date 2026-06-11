@@ -143,9 +143,10 @@ async def compute_recommended_coefs(
             Decimal(tariff.delivery_base) + liter_over * Decimal(tariff.delivery_liter)
         )
         if tariff.delivery_expr is not None:
-            # delivery_expr — это % коэф склада (например 105 = 1.05).
-            # WB Tariffs API отдаёт его как число 0-200 (= 0-200%).
-            per_unit_theoretical *= Decimal(tariff.delivery_expr) / Decimal("100")
+            # delivery_expr хранится УЖЕ как коэффициент (1.05, 1.6) —
+            # tariffs.py:176-177 делит исходный %-ный delivery_expr_pct на 100
+            # при парсинге WB Tariffs API. Здесь повторно делить НЕ нужно.
+            per_unit_theoretical *= Decimal(tariff.delivery_expr)
 
         theoretical = per_unit_theoretical * Decimal(qty or 0)
         actual = Decimal(delivery_rub or 0)

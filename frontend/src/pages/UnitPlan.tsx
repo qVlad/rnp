@@ -602,7 +602,7 @@ const COLUMNS: ColDef[] = [
     label: "Комиссия %",
     visibleByDefault: true,
     render: (r) =>
-      r.commission_pct != null ? fmtPct(r.commission_pct) : "—",
+      r.commission_pct != null ? fmtPct(r.commission_pct * 100) : "—",
   },
   {
     id: "acquiring_pct",
@@ -610,7 +610,7 @@ const COLUMNS: ColDef[] = [
     label: "Эквайринг %",
     visibleByDefault: false,
     render: (r) =>
-      r.acquiring_pct != null ? fmtPct(r.acquiring_pct) : "—",
+      r.acquiring_pct != null ? fmtPct(r.acquiring_pct * 100) : "—",
   },
   {
     id: "commission_total_pct",
@@ -619,7 +619,7 @@ const COLUMNS: ColDef[] = [
     visibleByDefault: false,
     render: (r) =>
       r.commission_total_pct != null
-        ? fmtPct(r.commission_total_pct)
+        ? fmtPct(r.commission_total_pct * 100)
         : "—",
   },
   {
@@ -797,7 +797,7 @@ const COLUMNS: ColDef[] = [
     label: "Реклама %",
     visibleByDefault: false,
     render: (r) =>
-      r.marketing_pct != null ? fmtPct(r.marketing_pct) : "—",
+      r.marketing_pct != null ? fmtPct(r.marketing_pct * 100) : "—",
   },
   // ── Costs — Tax / VAT ──
   {
@@ -812,7 +812,7 @@ const COLUMNS: ColDef[] = [
     group: "costs",
     label: "Налог %",
     visibleByDefault: false,
-    render: (r) => (r.tax_pct != null ? fmtPct(r.tax_pct) : "—"),
+    render: (r) => (r.tax_pct != null ? fmtPct(r.tax_pct * 100) : "—"),
   },
   {
     id: "vat_rub",
@@ -826,7 +826,7 @@ const COLUMNS: ColDef[] = [
     group: "costs",
     label: "НДС %",
     visibleByDefault: false,
-    render: (r) => (r.vat_pct != null ? fmtPct(r.vat_pct) : "—"),
+    render: (r) => (r.vat_pct != null ? fmtPct(r.vat_pct * 100) : "—"),
   },
   // ── Costs — Acceptance ──
   {

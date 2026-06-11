@@ -99,6 +99,32 @@
   - **TASK-DEV-067 (P3):** by-brand период (`localStorage pnl-by-brand.range.v1`)
     рассинхронен с глоб-периодом фильтр-бара — синхронизировать/подписать.
 
+### TASK-DEV-078: /unit-plan — расхождения цифр с WB (комиссия + 4 поля) — P1
+- **Тип:** bugfix/parity · **P1** · запрос пользователя 2026-06-11 («не сошлись:
+  1.остатки 2.СПП 3.комиссия 4.логистика 5.% выкупа»).
+- **✅ FIXED (display, v0.64.45):** комиссия и 5 родственных %-колонок
+  (`commission_pct`, `acquiring_pct`, `commission_total_pct`, `marketing_pct`,
+  `tax_pct`, `vat_pct`) бэкенд отдаёт как ДОЛЮ (0-1, `_pct_to_share` ÷100 в
+  loader), а фронт рисовал их через `fmtPct(x)` без ×100 → «15%» показывалось как
+  «0.2%». Добавлен `* 100` (как у buyout/storage/cogs/logistics_share колонок,
+  которые уже были корректны). `UnitPlan.tsx` строки 605/613/622/800/815/829.
+- **✅ FIXED (расчёт, v0.64.45):** `unit_plan_coef_recommendations.py:148` —
+  двойное `/100` на `delivery_expr` (он уже коэффициент 1.05/1.6 — нормализован в
+  `tariffs.py:176-177` при парсинге). Рекомендация il_coef была завышена ~×100.
+- **СПП (#2):** дисплей корректен (`fmtPct(spp_pct*100)` стр.573). Расхождение —
+  ДАННЫЕ: `observed_spp` из `wb_card_price` (миграция 0069, source of truth) vs
+  fallback `spp_default 20%`, если card-цена для nm не синкнута. Приоритет
+  override>observed>subject>default.
+- **Остатки (#1):** `_latest_stock` суммирует `quantity` по последнему snapshot_dt
+  (FBO, без `in_way_to_client`/`quantity_full`). Возможные причины расхождения с
+  WB ЛК: WB-экран показывает quantity_full (вкл. в пути) ИЛИ freshness (sync 2×/день).
+- **% выкупа (#5):** `buyout_pct` из `wb_funnel_daily` (Воронка, rolling-7, копится
+  с 22.05 — см. [[orders-funnel-wb-limit]]); нет покрытия → fallback 0.5.
+- **Логистика (#4):** `logistics_rub` от tariffs×volume_l×coef; coef уже корректен
+  (delivery_expr=1.6 в `unit_plan.py:343`). Кандидат — volume_l (перемеры WB).
+- **Осталось:** по #1/#2/#4/#5 нужен референс пользователя (конкретный nm_id +
+  цифры из WB ЛК) — отличить freshness от source-mismatch без догадок.
+
 ### TASK-DEV-077: OPEX-методология от TS (синк operation/list с распределением) — P2
 - **Тип:** integration/parity · **P2** · запрос пользователя 2026-06-11 («методологию OPEX возьми от TS»).
 - **Разобрано вживую (TS API):** TS учитывает ВСЕ операционные расходы (ФОТ/аренда/
