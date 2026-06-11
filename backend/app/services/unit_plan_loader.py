@@ -222,30 +222,46 @@ async def load_reference_bundle(
 async def reference_status(
     session: AsyncSession, *, on_date: date
 ) -> dict[str, Any]:
-    """Возраст последнего snapshot'а каждой tariff-таблицы (для UI-баннера)."""
+    """Свежесть tariff-таблиц для UI-баннера.
+
+    ВАЖНО: «stale» считаем по `fetched_at` (когда МЫ последний раз синкнули),
+    а НЕ по `effective_from` (когда WB последний раз ИЗМЕНИЛ тариф). SCD2: если
+    WB не менял тариф — новая строка не создаётся, `effective_from` остаётся
+    старым, но `fetched_at` обновляется ежедневным синком. Старый `effective_from`
+    (напр. pallet не менялся 3 нед) — это НОРМА, не повод для тревоги. Раньше
+    баннер ложно загорался на неизменных тарифах (DEV-078).
+
+    `*_age_days`/`*_last_sync` — по `effective_from` (когда WB менял тариф,
+    информативно). `*_fetched_age_days` — по `fetched_at` (реальная свежесть синка).
+    """
     out: dict[str, Any] = {}
+    fetched_ages: list[int | None] = []
     for label, model in (
         ("box", WbTariffBox),
         ("pallet", WbTariffPallet),
         ("commission", WbTariffCommission),
     ):
-        latest = (
+        latest_eff, latest_fetched = (
             await session.execute(
-                select(func.max(model.effective_from))
+                select(func.max(model.effective_from), func.max(model.fetched_at))
             )
-        ).scalar()
-        if latest is None:
+        ).one()
+        if latest_eff is None:
             out[f"{label}_age_days"] = None
             out[f"{label}_last_sync"] = None
         else:
-            age = (on_date - latest).days
-            out[f"{label}_age_days"] = age
-            out[f"{label}_last_sync"] = latest.isoformat()
-    # «Stale» — любая из трёх таблиц старше 7 дней (или вообще отсутствует).
-    ages = [
-        out[f"{label}_age_days"] for label in ("box", "pallet", "commission")
-    ]
-    out["stale"] = any(a is None or a > 7 for a in ages)
+            out[f"{label}_age_days"] = (on_date - latest_eff).days
+            out[f"{label}_last_sync"] = latest_eff.isoformat()
+        if latest_fetched is None:
+            out[f"{label}_fetched_age_days"] = None
+            fetched_ages.append(None)
+        else:
+            f_age = (on_date - latest_fetched.date()).days
+            out[f"{label}_fetched_age_days"] = f_age
+            fetched_ages.append(f_age)
+    # «Stale» — синк реально не отрабатывал >2 дней (синк ежедневный) или таблица
+    # пуста. На неизменные (но свежесинканные) тарифы НЕ реагируем.
+    out["stale"] = any(a is None or a > 2 for a in fetched_ages)
     return out
 
 
