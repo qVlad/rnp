@@ -17,7 +17,7 @@ from app.services.auth import (
     require_director_head_or_bookkeeper,
 )
 from app.services.payment_orders import (
-    parse_payment_history_xlsx,
+    parse_payment_xlsx_auto,
     upsert_payment_orders,
 )
 from app.services.tax_report import build_tax_report
@@ -188,13 +188,18 @@ async def import_payment_orders(
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict:
-    """Импорт XLSX «История платежей» из ЛК WB.
+    """Импорт XLSX платёжных данных. Авто-детект формата (TASK-DEV-068):
 
-    Файл выгружается из `seller.wildberries.ru/payment-history/active` →
-    кнопка экспорта в Excel. Парсер находит колонки по подстроке в
-    заголовке (порядок колонок неважен), upsert по
-    (tenant_id, payment_order_id) → повторный импорт идемпотентен,
-    обновления статуса (processing → paid) подхватываются.
+    - **WB «История платежей»** (`seller.wildberries.ru/payment-history/active`
+      → экспорт): колонки «ID заявки», «Сумма», «Статус оплаты». Ставит
+      paid_dt/amount/status.
+    - **«Стас Разметка банка»** (лист «Отчеты+УПД»): источник истины для АУСН —
+      «Итого к оплате» (→ Банк по «Дата оплаты»), «ВЗЗ по отчету», «УПД Доставка
+      по выкупу», «Возвраты выкупы» по period_end. Воспроизводит лист «Итоги»
+      копейка-в-копейку.
+
+    Upsert по (tenant_id, payment_order_id=№ отчета) → повторный импорт
+    идемпотентен.
     """
     if not file.filename or not (
         file.filename.endswith(".xlsx") or file.filename.endswith(".xls")
@@ -204,7 +209,7 @@ async def import_payment_orders(
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(413, "Файл больше 10 МБ")
 
-    rows, parse_errors = parse_payment_history_xlsx(content)
+    rows, parse_errors, fmt = parse_payment_xlsx_auto(content)
     if not rows and parse_errors:
         raise HTTPException(400, "; ".join(parse_errors))
 
@@ -212,7 +217,9 @@ async def import_payment_orders(
     if parse_errors:
         result.errors = (result.errors or []) + parse_errors
     await session.commit()
-    return result.to_dict()
+    out = result.to_dict()
+    out["format"] = fmt
+    return out
 
 
 @router.get("/payment-orders")

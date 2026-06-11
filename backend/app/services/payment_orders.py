@@ -303,3 +303,143 @@ async def upsert_payment_orders(
     result.rows_inserted = sum(1 for r in rows if r["payment_order_id"] not in existing_set)
     result.rows_updated = sum(1 for r in rows if r["payment_order_id"] in existing_set)
     return result
+
+
+# ── Стас «Разметка банка» — лист «Отчеты+УПД» ────────────────────────────────
+# Источник истины для АУСН (TASK-DEV-068): Банк = «Итого к оплате» по «Дата
+# оплаты», ВЗЗ/УПД по «Дата конца» (period_end). Воспроизводит лист «Итоги»
+# копейка-в-копейку (проверено на апреле/мае 2026).
+_STAS_COLUMN_MAP: dict[str, list[str]] = {
+    "payment_order_id": ["№ отчета", "номер отчета", "n отчета"],
+    "period_end": ["дата конца"],
+    "created_dt": ["дата формирования"],
+    "report_type": ["тип отчета"],
+    "amount": ["итого к оплате"],
+    "paid_dt": ["дата оплаты"],
+    "upd_delivery_amount": ["упд доставка"],  # «УПД Доставка по выкупу»
+    "buyout_returns_amount": ["возвраты выкупы"],
+}
+
+
+def _is_stas_sheet(header_row: list[Any]) -> bool:
+    """Лист «Отчеты+УПД» определяем по наличию «Дата оплаты» + «УПД Доставка»."""
+    cols = _find_columns_map(list(header_row), _STAS_COLUMN_MAP)
+    return "paid_dt" in cols and "upd_delivery_amount" in cols and "amount" in cols
+
+
+def _find_columns_map(header_row: list[Any], cmap: dict[str, list[str]]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for col_idx, cell in enumerate(header_row):
+        for field, candidates in cmap.items():
+            if field in out:
+                continue
+            if _match_column(cell, candidates):
+                out[field] = col_idx
+                break
+    return out
+
+
+def parse_stas_razmetka_xlsx(
+    file_bytes: bytes,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Парсит файл бухгалтера «Стас Разметка банка» (лист «Отчеты+УПД»).
+
+    Возвращает (rows, errors) для upsert в wb_payment_order:
+      payment_order_id = «№ отчета»; amount = «Итого к оплате» (→ Банк по
+      «Дата оплаты»); paid_dt = «Дата оплаты» (есть → status=paid);
+      period_end = «Дата конца»; report_type = «Тип отчета»;
+      upd_delivery_amount = «УПД Доставка по выкупу»; buyout_returns_amount =
+      «Возвраты выкупы». Все строки — единый набор ключей (для pg_insert).
+    """
+    errors: list[str] = []
+    try:
+        wb = load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=True)
+    except Exception as e:
+        return [], [f"Не удалось открыть XLSX: {e}"]
+
+    # Ищем лист с заголовком «Дата оплаты» + «УПД Доставка».
+    target_ws = None
+    header: list[Any] = []
+    for ws in wb.worksheets:
+        try:
+            first = next(ws.iter_rows(values_only=True))
+        except StopIteration:
+            continue
+        if first and _is_stas_sheet(list(first)):
+            target_ws = ws
+            header = list(first)
+            break
+    if target_ws is None:
+        return [], ["Лист «Отчеты+УПД» (с колонками «Дата оплаты» и «УПД Доставка по выкупу») не найден"]
+
+    cols = _find_columns_map(header, _STAS_COLUMN_MAP)
+    if "payment_order_id" not in cols or "amount" not in cols:
+        return [], ["В листе нет обязательных колонок «№ отчета» / «Итого к оплате»"]
+
+    rows_iter = target_ws.iter_rows(values_only=True)
+    next(rows_iter)  # skip header
+    out: list[dict[str, Any]] = []
+    for row_num, row in enumerate(rows_iter, start=2):
+        if not row or all(c is None or c == "" for c in row):
+            continue
+        try:
+            poid = str(row[cols["payment_order_id"]] or "").strip()
+            if not poid or not poid.replace(".0", "").isdigit():
+                continue  # пропускаем итоговые/пустые строки
+            poid = poid.replace(".0", "")
+            amount = _parse_decimal(row[cols["amount"]]) or Decimal("0")
+            paid_dt = _parse_date_ru(row[cols["paid_dt"]]) if "paid_dt" in cols else None
+            period_end = _parse_date_ru(row[cols["period_end"]]) if "period_end" in cols else None
+            created_dt = (
+                _parse_date_ru(row[cols["created_dt"]]) if "created_dt" in cols else None
+            ) or period_end
+            report_type = (
+                str(row[cols["report_type"]] or "").strip()[:32] or None
+                if "report_type" in cols else None
+            )
+            upd = (
+                _parse_decimal(row[cols["upd_delivery_amount"]])
+                if "upd_delivery_amount" in cols else None
+            ) or Decimal("0")
+            buyout = (
+                _parse_decimal(row[cols["buyout_returns_amount"]])
+                if "buyout_returns_amount" in cols else None
+            ) or Decimal("0")
+            out.append({
+                "payment_order_id": poid[:64],
+                "created_dt": created_dt,
+                "paid_dt": paid_dt,
+                "amount": amount,
+                "currency": "RUB",
+                "status": "paid" if paid_dt is not None else "processing",
+                "status_raw": None,
+                "bank_comment": None,
+                "period_end": period_end,
+                "report_type": report_type,
+                "upd_delivery_amount": upd,
+                "buyout_returns_amount": buyout,
+            })
+        except Exception as e:
+            errors.append(f"Строка {row_num}: ошибка парсинга — {e}")
+    return out, errors
+
+
+def parse_payment_xlsx_auto(
+    file_bytes: bytes,
+) -> tuple[list[dict[str, Any]], list[str], str]:
+    """Авто-детект формата: «Стас Разметка» (лист «Отчеты+УПД») vs WB «История
+    платежей». Возврат: (rows, errors, format_label)."""
+    try:
+        wb = load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=True)
+    except Exception as e:
+        return [], [f"Не удалось открыть XLSX: {e}"], "unknown"
+    for ws in wb.worksheets:
+        try:
+            first = next(ws.iter_rows(values_only=True))
+        except StopIteration:
+            continue
+        if first and _is_stas_sheet(list(first)):
+            rows, errs = parse_stas_razmetka_xlsx(file_bytes)
+            return rows, errs, "stas_razmetka"
+    rows, errs = parse_payment_history_xlsx(file_bytes)
+    return rows, errs, "payment_history"
