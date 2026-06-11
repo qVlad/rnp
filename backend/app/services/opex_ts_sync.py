@@ -138,10 +138,14 @@ async def sync_ts_opex(
     tenant_id = get_tenant(session)
     if tenant_id is None:
         return {"error": "tenant_id не задан"}
-    token = await _setting(session, tenant_id, "ts_auth_token")
+    # Токен хранится зашифрованным (Fernet, как wb_token) в `ts_auth_token_enc`.
+    from app.services.secrets_crypto import decrypt as _decrypt
+
+    enc = await _setting(session, tenant_id, "ts_auth_token_enc")
+    token = _decrypt(enc) if enc else None
     acc_raw = await _setting(session, tenant_id, "ts_account_id")
     if not token or not acc_raw or not acc_raw.isdigit():
-        return {"error": "не заданы AppSetting ts_auth_token и/или ts_account_id"}
+        return {"error": "не заданы ts_auth_token_enc (POST /api/opex/ts-token) и/или ts_account_id"}
     ts_account_id = int(acc_raw)
 
     by_cat, meta = await compute_ts_opex_breakdown(token, ts_account_id, date_from, date_to)

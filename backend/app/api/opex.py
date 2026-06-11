@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import OpexCategory, OpexEntry, OpexEntryAllocation
+from app.db.models import AppSetting, OpexCategory, OpexEntry, OpexEntryAllocation
 from app.db.session import get_db
 from app.services.audit import actor_from_request, audit_log, snapshot
 from app.services.auth import (
@@ -54,6 +54,41 @@ router = APIRouter(
     tags=["opex"],
     dependencies=[Depends(require_director_or_head)],
 )
+
+
+class TsTokenIn(BaseModel):
+    token: str
+    account_id: int | None = None
+
+
+@router.post("/ts-token", dependencies=[Depends(require_director)])
+async def set_ts_token(
+    payload: TsTokenIn, session: AsyncSession = Depends(get_db_tenant_scoped)
+) -> dict[str, Any]:
+    """Сохранить TS authToken ЗАШИФРОВАННЫМ (Fernet, как wb_token) в AppSetting
+    `ts_auth_token_enc` (+ опц. ts_account_id). Plaintext в БД не хранится."""
+    from sqlalchemy.dialects.postgresql import insert as _pg_insert
+
+    from app.services.secrets_crypto import encrypt as _encrypt
+    from app.services.tenant_context import get_tenant as _get_tenant
+
+    tid = _get_tenant(session)
+    if tid is None:
+        raise HTTPException(400, "tenant не задан")
+    tok = (payload.token or "").strip()
+    if not tok:
+        raise HTTPException(400, "token пуст")
+    rows = [{"tenant_id": tid, "key": "ts_auth_token_enc", "value": _encrypt(tok)}]
+    if payload.account_id is not None:
+        rows.append({"tenant_id": tid, "key": "ts_account_id", "value": str(payload.account_id)})
+    for r in rows:
+        stmt = _pg_insert(AppSetting).values(**r).on_conflict_do_update(
+            index_elements=["tenant_id", "key"], set_={"value": r["value"]}
+        )
+        await session.execute(stmt)
+    await session.commit()
+    return {"status": "ok", "token_len": len(tok), "encrypted": True,
+            "account_id_set": payload.account_id is not None}
 
 
 @router.post("/sync-ts", dependencies=[Depends(require_director)])
