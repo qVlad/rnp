@@ -111,19 +111,27 @@
 - **✅ FIXED (расчёт, v0.64.45):** `unit_plan_coef_recommendations.py:148` —
   двойное `/100` на `delivery_expr` (он уже коэффициент 1.05/1.6 — нормализован в
   `tariffs.py:176-177` при парсинге). Рекомендация il_coef была завышена ~×100.
-- **СПП (#2):** дисплей корректен (`fmtPct(spp_pct*100)` стр.573). Расхождение —
-  ДАННЫЕ: `observed_spp` из `wb_card_price` (миграция 0069, source of truth) vs
-  fallback `spp_default 20%`, если card-цена для nm не синкнута. Приоритет
-  override>observed>subject>default.
-- **Остатки (#1):** `_latest_stock` суммирует `quantity` по последнему snapshot_dt
-  (FBO, без `in_way_to_client`/`quantity_full`). Возможные причины расхождения с
-  WB ЛК: WB-экран показывает quantity_full (вкл. в пути) ИЛИ freshness (sync 2×/день).
-- **% выкупа (#5):** `buyout_pct` из `wb_funnel_daily` (Воронка, rolling-7, копится
-  с 22.05 — см. [[orders-funnel-wb-limit]]); нет покрытия → fallback 0.5.
-- **Логистика (#4):** `logistics_rub` от tariffs×volume_l×coef; coef уже корректен
+- **✅ FIXED СПП (#2, v0.64.46):** референс nm 386557916 — WB ЛК СПП 28%, РНП
+  показывал **53.6%**. Корень: `observed_spp = (1−buyer/basic)` считал СПП от
+  basic=РРЦ (9100₽, перечёркнутая) → включал и скидку продавца, и СПП. WB-шный
+  СПП — от цены ПОСЛЕ скидки продавца (price_o≈5642₽). Фикс: `PriceSnapshot.
+  buyer_price_observed` (реальная цена покупателя из `wb_card_price.buyer_price`),
+  в `compute_row` СПП = `1 − buyer/price_q` (приоритетнее config.spp_observed).
+  Проверено: price_after_spp 2616→**4163₽** (= реальной витрине), СПП 53.6→**26%**
+  (≈ЛК 28%; Δ от dest=МСК/spp=30 card-параметров). Это чинит и занижение маржи!
+  Loader: `_card_buyer_prices`. config.spp_observed (vs basic) теперь вытеснён.
+- **✅ FIXED % выкупа (#5, v0.64.46):** референс nm 386557916 — WB ЛК 40%, РНП
+  **97.5%**. Корень: `_buyout_pct_30d` = вал sales(is_return=False)/orders, БЕЗ
+  нетирования возвратов. WB ЛК «% выкупа» — НЕТТО. Для обуви (возврат ~60%) вал
+  ×2.4 завышал. Фикс: net = sales(is_return=False) − returns(is_return=True),
+  buyout = net/orders. (Валидировать после деплоя — для трейлинг-окна возвраты
+  свежих заказов лагают ~2 нед, net может быть чуть выше ЛК-40%.)
+- **Остатки (#1):** WB 354 vs РНП 373 (+19, ~5%). `_latest_stock` суммирует
+  `quantity` по последнему snapshot. Δ мал → вероятно freshness (sync 2×/день vs
+  WB live) ИЛИ склад/размер вне ЛК-фильтра. Код НЕ трогаю (риск регрессии > 5% Δ).
+- **Логистика (#4):** `logistics_rub` от tariffs×volume_l×coef; coef корректен
   (delivery_expr=1.6 в `unit_plan.py:343`). Кандидат — volume_l (перемеры WB).
-- **Осталось:** по #1/#2/#4/#5 нужен референс пользователя (конкретный nm_id +
-  цифры из WB ЛК) — отличить freshness от source-mismatch без догадок.
+  Референс-числа не дал — ждём.
 
 ### TASK-DEV-077: OPEX-методология от TS (синк operation/list с распределением) — P2
 - **Тип:** integration/parity · **P2** · запрос пользователя 2026-06-11 («методологию OPEX возьми от TS»).

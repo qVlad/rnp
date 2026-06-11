@@ -490,8 +490,11 @@ async def _buyout_pct_30d(
 ) -> dict[int, Decimal]:
     """% выкупа per nm_id за последние velocity_days дней.
 
-    Формула: sales (без is_return) / orders (без is_cancel). Доля 0-1.
-    Если orders=0 — nm_id отсутствует в dict (caller использует fallback).
+    Формула: НЕТТО-выкупы / orders (без is_cancel). Доля 0-1.
+    Нетто = sales(is_return=False) − returns(is_return=True): WB ЛК «% выкупа»
+    нетит возвраты, поэтому валовый sales/orders завышал показатель (для товаров
+    с высоким возвратом — напр. обувь — до ~2× : 97% вместо реальных ~40%).
+    DEV-078. Если orders=0 — nm_id отсутствует в dict (caller → fallback).
     """
     if not nm_ids:
         return {}
@@ -530,18 +533,65 @@ async def _buyout_pct_30d(
         for nm, cnt in (await session.execute(sales_stmt)).all()
     }
 
+    # Возвраты (is_return=True) за тот же период — нетим, как WB ЛК.
+    returns_stmt = (
+        select(WbSale.nm_id, func.count())
+        .where(
+            WbSale.tenant_id == tenant_id,
+            WbSale.nm_id.in_(nm_ids),
+            WbSale.sale_dt >= cutoff,
+            WbSale.is_return.is_(True),
+        )
+        .group_by(WbSale.nm_id)
+    )
+    returns_by_nm: dict[int, int] = {
+        int(nm): int(cnt or 0)
+        for nm, cnt in (await session.execute(returns_stmt)).all()
+    }
+
     out: dict[int, Decimal] = {}
     for nm, orders in orders_by_nm.items():
         if orders <= 0:
             continue
-        sales = sales_by_nm.get(nm, 0)
-        if sales <= 0:
+        net_sold = sales_by_nm.get(nm, 0) - returns_by_nm.get(nm, 0)
+        if net_sold <= 0:
             continue
-        # Сапиэно: buyout = sales / orders. Clamp [0, 1].
-        ratio = Decimal(sales) / Decimal(orders)
+        # buyout = нетто-выкупы / orders. Clamp [0, 1].
+        ratio = Decimal(net_sold) / Decimal(orders)
         if ratio > Decimal("1"):
             ratio = Decimal("1")
         out[nm] = ratio
+    return out
+
+
+async def _card_buyer_prices(
+    session: AsyncSession, *, tenant_id: int, nm_ids: list[int]
+) -> dict[int, Decimal]:
+    """Реальная витринная цена покупателя (с СПП) per nm из `wb_card_price`
+    (источник card.wb.ru, миграция 0069). Только осмысленные (>0).
+
+    Используется compute_row для расчёта СПП относительно цены ПОСЛЕ скидки
+    продавца (как показывает WB ЛК), а не от РРЦ. `observed_spp_pct` в той же
+    таблице исторически считался от basic/РРЦ → конфликтовал с ЛК (см. DEV-078).
+    """
+    if not nm_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(WbCardPrice.nm_id, WbCardPrice.buyer_price).where(
+                WbCardPrice.tenant_id == tenant_id,
+                WbCardPrice.nm_id.in_(nm_ids),
+                WbCardPrice.buyer_price.isnot(None),
+                WbCardPrice.buyer_price > 0,
+            )
+        )
+    ).all()
+    out: dict[int, Decimal] = {}
+    for nm, buyer in rows:
+        try:
+            out[int(nm)] = Decimal(str(buyer))
+        except Exception:  # noqa: BLE001
+            continue
     return out
 
 
@@ -738,6 +788,11 @@ async def load_per_nm_snapshots(
     price_map = await _latest_price(
         session, tenant_id=tenant_id, nm_ids=nm_ids_list
     )
+    # Реальная витринная цена покупателя (с СПП) — для корректного СПП
+    # (vs цены после скидки продавца, а не РРЦ). См. compute_row.
+    buyer_price_map = await _card_buyer_prices(
+        session, tenant_id=tenant_id, nm_ids=nm_ids_list
+    )
     override_map = await _overrides(
         session, tenant_id=tenant_id, nm_ids=nm_ids_list
     )
@@ -784,6 +839,7 @@ async def load_per_nm_snapshots(
             discount_pct=discount_share,
             source=price_source,
             synced_at=price_synced_at,
+            buyer_price_observed=buyer_price_map.get(nm),
         )
         cogs_snap = CogsSnapshot(cost_rub=cogs_map.get(nm))
         funnel_snap = FunnelSnapshot(

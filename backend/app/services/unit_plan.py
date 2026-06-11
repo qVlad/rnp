@@ -77,6 +77,12 @@ class PriceSnapshot:
     #   "none"      — ни там ни там цены нет
     source: str = "none"
     synced_at: datetime | None = None
+    # Реальная витринная цена покупателя (с СПП) из card.wb.ru → wb_card_price.
+    # Если задана, СПП вычисляется как (1 − buyer/price_q) — относительно цены,
+    # к которой СПП применяется в лесенке (т.е. совпадает с тем, что показывает
+    # WB ЛК: СПП от цены ПОСЛЕ скидки продавца, а не от РРЦ). Приоритетнее
+    # config.spp_observed (который ошибочно считал СПП от basic/РРЦ).
+    buyer_price_observed: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -513,13 +519,27 @@ def compute_row(
     # P → Q: ВБ Клуб
     wb_club_pct = config.wb_club_pct
     price_q = price_o * (D1 - wb_club_pct)
-    # R → S: СПП (override → observed → per-subject → default)
-    spp_pct = _resolve_spp_pct(
-        override=override,
-        subject=product.subject,
-        nm_id=product.nm_id,
-        config=config,
-    )
+    # R → S: СПП (override → observed-buyer → per-subject → default).
+    # Если есть реальная витринная цена покупателя — считаем СПП как
+    # (1 − buyer/price_q): это СПП от цены, к которой он применяется (после
+    # скидки продавца + ВБ Клуб), что совпадает с тем, что показывает WB ЛК.
+    # Так price_s == реальной цене покупателя (а не заниженной от РРЦ).
+    if override.spp_pct is not None:
+        spp_pct = override.spp_pct
+    elif price.buyer_price_observed is not None and price_q > D0:
+        spp_pct = D1 - (price.buyer_price_observed / price_q)
+        # clamp [0, 0.95] — защита от мусора / buyer > price_q
+        if spp_pct < D0:
+            spp_pct = D0
+        elif spp_pct > Decimal("0.95"):
+            spp_pct = Decimal("0.95")
+    else:
+        spp_pct = _resolve_spp_pct(
+            override=override,
+            subject=product.subject,
+            nm_id=product.nm_id,
+            config=config,
+        )
     price_s = price_q * (D1 - spp_pct)
     # T: WB Wallet
     wb_wallet_pct = config.wb_wallet_pct
