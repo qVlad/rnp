@@ -321,24 +321,13 @@ async def summary_report(
 
     rows = list(acc.values())
     nm_ids = list(acc.keys())
-    # DEV-073: хранение per-nm из paid_storage (тот же источник, что dashboard/pnl
-    # через resolve_period_storage_by_nm), а НЕ из report_detail.storage_fee —
-    # последний отличался от TS/ЛК на копейки (округление + storage на rows без
-    # nm_id не попадал в per-nm сумму). При недостаточном покрытии paid_storage
-    # resolver вернёт {} → оставляем storage_fee (свежие недели не регрессируют).
-    from datetime import datetime as _dt, time as _time
-
-    from app.services.storage_resolver import resolve_period_storage_by_nm
-
-    _paid_by_nm, _ = await resolve_period_storage_by_nm(
-        session,
-        start=_dt.combine(start_date, _time.min),
-        end=_dt.combine(end_date + timedelta(days=1), _time.min),
-        brands_subq=(nm_scope if nm_scope is not None else None),
-    )
-    if _paid_by_nm:
-        for _nm, _a in acc.items():
-            _a.storage = _paid_by_nm.get(_nm, 0.0)
+    # DEV-073 (НЕ фиксим — by design): хранение оставляем из report_detail.storage_fee
+    # per-nm. Попытка взять paid_storage by-nm недосчитывает (storage начисляется на
+    # ВСЕ хранимые SKU, а summary знает только проданные → суммировалось ~11k вместо
+    # ~25.8k). paid_storage TOTAL = TS точно, но per-nm-консистентность ломается.
+    # Итог: storage_fee per-nm = 25 812.72 vs TS 25 812.76 — расхождение 0.04₽
+    # (округление между двумя валидными источниками WB), неустранимо без потери
+    # консистентности «итог = сумма строк». Оставляем как есть.
     # COGS — себестоимость, ДЕЙСТВОВАВШАЯ в периоде (valid_from <= end_date),
     # последняя из таких. DEV-060: важно для versioning — TS меняет себестоимость
     # датой (напр. −11₽/шт с 25.05); брать абсолютный latest ломало бы прошлые
