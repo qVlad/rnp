@@ -490,117 +490,103 @@ async def _buyout_pct_30d(
 ) -> dict[int, Decimal]:
     """% выкупа per nm_id за последние velocity_days дней. Доля 0-1.
 
-    Иерархия (DEV-078):
-    1. **Primary — `wb_funnel_daily`** (Analytics API = данные Воронки ЛК WB):
-       `SUM(buyouts_count)/SUM(orders_count)`. `buyouts_count` уже НЕТТО возвратов
-       (как Воронка ЛК), поэтому ratio совпадает с «% выкупа» в ЛК WB.
-    2. **Fallback — `wb_sales`/`wb_orders`** (нет funnel-покрытия): НЕТТО-выкупы
-       `sales(is_return=False) − returns(is_return=True)` / orders(без is_cancel).
-       Валовый sales/orders (старая формула) завышал для товаров с высоким
-       возвратом (обувь: 97% вместо ~40%) — возвраты лагают в трейлинг-окне.
+    Формула совпадает 1:1 с `services/unit_economics.build_unit_economics`
+    (страница /units, сходится с «% выкупа» WB-кабинета — DEV-078):
 
-    Если ни funnel, ни orders нет — nm_id отсутствует в dict (caller → fallback).
+      buyout = rd_units_net / total_orders
+        • rd_units_net  — НЕТТО-выкупы из report_detail (Продажа − Возврат по
+          `sale_dt`, авторитетный фин-отчёт; нетит возвраты как WB ЛК);
+        • total_orders  — wb_orders ВКЛЮЧАЯ отменённые покупателем (active +
+          cancelled), как знаменатель «выкупа» в кабинете WB.
+
+    Прежние варианты были неверны: вал `sales/orders` (без нетирования) завышал
+    (обувь ~97% vs ЛК 40%); `wb_funnel_daily.buyouts_count` разрежён (rolling-7,
+    покрытие с 22.05) → занижал (~23%). report_detail полнее и совпадает с /units.
+
+    Fallback (нет report_detail у nm): нетто `wb_sales` / total_orders.
+    Если total_orders=0 — nm_id отсутствует в dict (caller → config-fallback).
     """
     if not nm_ids:
         return {}
-    out: dict[int, Decimal] = {}
-    # 1) Primary: funnel ratio (WB Воронка). orders_count>0 → используем.
-    funnel_window_from = on_date - timedelta(days=velocity_days)
-    funnel_stmt = (
-        select(
-            WbFunnelDaily.nm_id,
-            func.sum(WbFunnelDaily.orders_count),
-            func.sum(WbFunnelDaily.buyouts_count),
-        )
-        .where(
-            WbFunnelDaily.tenant_id == tenant_id,
-            WbFunnelDaily.nm_id.in_(nm_ids),
-            WbFunnelDaily.dt >= funnel_window_from,
-            WbFunnelDaily.dt <= on_date,
-        )
-        .group_by(WbFunnelDaily.nm_id)
-    )
-    funnel_covered: set[int] = set()
-    for nm, f_orders, f_buyouts in (await session.execute(funnel_stmt)).all():
-        nm_int = int(nm)
-        o = int(f_orders or 0)
-        if o <= 0:
-            continue
-        funnel_covered.add(nm_int)
-        ratio = Decimal(int(f_buyouts or 0)) / Decimal(o)
-        if ratio > Decimal("1"):
-            ratio = Decimal("1")
-        elif ratio < Decimal("0"):
-            ratio = Decimal("0")
-        out[nm_int] = ratio
+    from app.services.period_aggregates import OP_SALE, OP_RETURN
 
-    # 2) Fallback (нетто wb_sales/wb_orders) — только для nm без funnel-покрытия.
-    fallback_nm = [n for n in nm_ids if int(n) not in funnel_covered]
-    if not fallback_nm:
-        return out
-    nm_ids = fallback_nm
-    cutoff = datetime.combine(
-        on_date - timedelta(days=velocity_days),
-        datetime.min.time(),
-        tzinfo=timezone.utc,
-    )
+    cutoff_date = on_date - timedelta(days=velocity_days)
+    cutoff = datetime.combine(cutoff_date, datetime.min.time(), tzinfo=timezone.utc)
+    end_dt = datetime.combine(on_date, datetime.min.time(), tzinfo=timezone.utc)
+
+    # Знаменатель: total_orders = active + cancelled (всё в wb_orders), как WB ЛК.
     orders_stmt = (
         select(WbOrder.nm_id, func.count())
         .where(
             WbOrder.tenant_id == tenant_id,
             WbOrder.nm_id.in_(nm_ids),
             WbOrder.order_dt >= cutoff,
-            WbOrder.is_cancel.is_(False),
         )
         .group_by(WbOrder.nm_id)
     )
-    orders_by_nm: dict[int, int] = {
+    total_orders_by_nm: dict[int, int] = {
         int(nm): int(cnt or 0)
         for nm, cnt in (await session.execute(orders_stmt)).all()
     }
 
-    sales_stmt = (
-        select(WbSale.nm_id, func.count())
-        .where(
-            WbSale.tenant_id == tenant_id,
-            WbSale.nm_id.in_(nm_ids),
-            WbSale.sale_dt >= cutoff,
-            WbSale.is_return.is_(False),
+    # Числитель (primary): report_detail net = Продажа − Возврат по sale_dt.
+    rd_stmt = (
+        select(
+            WbReportDetail.nm_id,
+            (
+                func.sum(case((OP_SALE, 1), else_=0))
+                - func.sum(case((OP_RETURN, 1), else_=0))
+            ).label("net_units"),
         )
-        .group_by(WbSale.nm_id)
+        .where(
+            WbReportDetail.tenant_id == tenant_id,
+            WbReportDetail.nm_id.in_(nm_ids),
+            WbReportDetail.sale_dt >= cutoff,
+            WbReportDetail.sale_dt < end_dt,
+        )
+        .group_by(WbReportDetail.nm_id)
     )
-    sales_by_nm: dict[int, int] = {
-        int(nm): int(cnt or 0)
-        for nm, cnt in (await session.execute(sales_stmt)).all()
+    rd_net_by_nm: dict[int, int] = {
+        int(nm): int(net or 0)
+        for nm, net in (await session.execute(rd_stmt)).all()
     }
 
-    # Возвраты (is_return=True) за тот же период — нетим, как WB ЛК.
-    returns_stmt = (
-        select(WbSale.nm_id, func.count())
-        .where(
-            WbSale.tenant_id == tenant_id,
-            WbSale.nm_id.in_(nm_ids),
-            WbSale.sale_dt >= cutoff,
-            WbSale.is_return.is_(True),
+    # Fallback-числитель: нетто wb_sales (для nm без report_detail-данных).
+    rd_missing = [n for n in nm_ids if int(n) not in rd_net_by_nm]
+    sales_net_by_nm: dict[int, int] = {}
+    if rd_missing:
+        sales_stmt = (
+            select(
+                WbSale.nm_id,
+                func.sum(case((WbSale.is_return.is_(False), 1), else_=0))
+                - func.sum(case((WbSale.is_return.is_(True), 1), else_=0)),
+            )
+            .where(
+                WbSale.tenant_id == tenant_id,
+                WbSale.nm_id.in_(rd_missing),
+                WbSale.sale_dt >= cutoff,
+            )
+            .group_by(WbSale.nm_id)
         )
-        .group_by(WbSale.nm_id)
-    )
-    returns_by_nm: dict[int, int] = {
-        int(nm): int(cnt or 0)
-        for nm, cnt in (await session.execute(returns_stmt)).all()
-    }
+        sales_net_by_nm = {
+            int(nm): int(net or 0)
+            for nm, net in (await session.execute(sales_stmt)).all()
+        }
 
-    # NB: `out` уже содержит funnel-результаты — НЕ переинициализировать.
-    for nm, orders in orders_by_nm.items():
-        if orders <= 0:
+    out: dict[int, Decimal] = {}
+    for nm, total_orders in total_orders_by_nm.items():
+        if total_orders <= 0:
             continue
-        net_sold = sales_by_nm.get(nm, 0) - returns_by_nm.get(nm, 0)
+        net_sold = rd_net_by_nm.get(nm)
+        if net_sold is None:
+            net_sold = sales_net_by_nm.get(nm, 0)
         if net_sold <= 0:
             continue
-        # buyout = нетто-выкупы / orders. Clamp [0, 1].
-        ratio = Decimal(net_sold) / Decimal(orders)
+        ratio = Decimal(net_sold) / Decimal(total_orders)
         if ratio > Decimal("1"):
             ratio = Decimal("1")
+        elif ratio < Decimal("0"):
+            ratio = Decimal("0")
         out[nm] = ratio
     return out
 
