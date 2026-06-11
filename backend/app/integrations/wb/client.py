@@ -209,16 +209,23 @@ class WbApiClient:
         if remaining > 0:
             raise WbCooldownActive(category, remaining)
 
-        # DEV-076: cross-process min-interval floor for bursty advert-API.
-        # In-process limiter resets per Celery task → 20s floor leaks across
-        # tasks/processes (fanout + manual trigger + abtest on one seller token
-        # → 429 "per seller"). This Redis slot-gate (keyed by token) enforces
-        # the 20s spacing globally. Fail-open if Redis down.
-        if category == "advert":
-            import hashlib as _hashlib
+        # DEV-076 (расширено: ВСЕ категории — троттлы недопустимы).
+        # In-process TokenBucketLimiter пересоздаётся в каждом Celery-таске
+        # (новый WbApiClient) → его интервал/лимит НЕ держатся между тасками/
+        # процессами; fanout (per-tenant) + ручной /sync/trigger + abtest на
+        # одном seller-токене бёрстят WB → 429 "per seller". Redis slot-gate
+        # держит эффективный интервал ГЛОБАЛЬНО (кросс-процесс), keyed по
+        # (category, token). Эффективный интервал = max(min_interval, 60/rpm) —
+        # покрывает и per-call floor, и per-minute cap (через равномерное
+        # распределение). Fail-open при недоступности Redis.
+        _lim = self._limiters.get(category)
+        if _lim is not None:
+            _interval = max(_lim.min_interval_s, 60.0 / _lim.requests_per_minute)
+            if _interval > 0:
+                import hashlib as _hashlib
 
-            _token_key = _hashlib.sha1((self.token or "").encode()).hexdigest()[:12]
-            await cooldown.reserve_interval_slot("advert", _token_key, 20.0)
+                _token_key = _hashlib.sha1((self.token or "").encode()).hexdigest()[:12]
+                await cooldown.reserve_interval_slot(category, _token_key, _interval)
 
         client = await self._ensure_client()
         url = f"{self._bases[category]}{path}"

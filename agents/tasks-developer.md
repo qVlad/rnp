@@ -201,8 +201,14 @@
   если слот занят — ждём TTL и повторяем (cap 90s, fail-open при Redis-сбое).
   Вызывается в `WbApiClient.request` для `category=="advert"` (ключ = sha1(token)[:12])
   → 20s-floor теперь держится КРОСС-ПРОЦЕССНО (fanout/manual-trigger/abtest на одном
-  токене больше не бёрстят → нет `429 per seller`). Scope только advert (минимум
-  риска); analytics/finance — при необходимости позже тем же механизмом.
+  токене больше не бёрстят → нет `429 per seller`).
+- **✅ РАСШИРЕНО НА ВСЕ КАТЕГОРИИ (v0.64.39, по запросу «троттлы недопустимы»):** гейт
+  применяется ко ВСЕМ WB-категориям в `WbApiClient.request`, эффективный интервал =
+  `max(limiter.min_interval_s, 60/limiter.requests_per_minute)` (advert/analytics 20s,
+  finance 60s, documents/tariffs/prices 10s, statistics 60s, common/content 1s).
+  Keyed (category, token) → разные кабинеты не блокируют друг друга; fail-open при
+  Redis-сбое; cap ожидания 90s. Проверено: ad_campaigns sync ок, redis-ключ
+  `wb:slot:advert:<tok>` ставится.
 - **Тип:** integration/reliability · **P2** · из аудита WB-интеграции 2026-06-11.
 - **Проблема:** `TokenBucketLimiter` in-memory, пересоздаётся в каждом `WbApiClient`
   (новый клиент per-task) → 20s-floor/3min для advert НЕ держатся между Celery-тасками/
