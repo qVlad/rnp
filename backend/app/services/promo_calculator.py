@@ -12,11 +12,11 @@ boost продаж +80% — выгодно ли вступать?»
 2. **With promo:**
    - new_price = baseline_price × (1 − discount_pct/100)
    - new_velocity = baseline_velocity × (1 + velocity_boost_pct/100)
-   - new_revenue_per_day = new_price × new_velocity × buyout_rate
+     (velocity уже NET — возвраты учтены в units_net из report_detail)
+   - new_revenue_per_day = new_price × new_velocity
    - new_margin_per_unit = new_price − cogs − commission_rate × new_price
                           − logistics_per_unit − storage_per_unit
    - new_total_margin = new_margin_per_unit × new_velocity × duration_days
-                        × buyout_rate
 
 3. **Сравнение:** revenue delta, margin delta, profitable yes/no.
 
@@ -84,7 +84,6 @@ class SkuBaseline:
     revenue_per_day: float  # canonical revenue (rev_sale − rev_return) / days
     velocity_per_day: float  # units_sold / days
     avg_price: float  # revenue_per_unit (учитывает текущие скидки/промо)
-    buyout_rate: float  # 0..1 (если orders < sales — берём 1.0 как safe default)
     margin_per_unit: float  # avg_price − cogs − commission − logistics_per_unit
     commission_rate: float  # 0..1, calculated from rd_metrics
     logistics_per_unit: float  # delivery+storage+penalty распределённый per unit
@@ -139,8 +138,8 @@ def simulate_promo(
     Math:
     - new_price = avg_price × (1 − discount/100)
     - new_velocity = velocity_per_day × (1 + boost/100)
-    - new_units_per_day = new_velocity × buyout_rate  (buyout_rate
-      уже отражает фактический выкуп; cap'ируем на 1.0)
+    - new_units_per_day = new_velocity  (velocity уже NET — возвраты учтены
+      в units_net из report_detail, отдельный множитель выкупа не нужен)
     - new_revenue_per_day = new_price × new_units_per_day
     - commission на новой цене: commission_rate (как доля от revenue)
       остаётся той же, abs = commission_rate × new_price
@@ -163,7 +162,6 @@ def simulate_promo(
         else baseline.avg_price
     )
     bl_velocity = baseline.velocity_per_day
-    bl_buyout = max(0.01, min(1.0, baseline.buyout_rate))  # avoid 0-div / >1
     bl_units_per_day = bl_velocity  # velocity уже NET (buyout-учтённый sales)
     bl_revenue_per_day = bl_units_per_day * bl_price
     # Маржа/шт пересчитываем от bl_price (консистентно с new_price ниже), а не
@@ -233,7 +231,6 @@ def simulate_promo(
     baseline_dict = {
         "avg_price": round(bl_price, 2),
         "velocity_per_day": round(bl_velocity, 3),
-        "buyout_rate": round(bl_buyout, 3),
         "revenue_per_day": round(bl_revenue_per_day, 2),
         "margin_per_unit": round(bl_margin_per_unit, 2),
         "margin_per_day": round(bl_margin_per_day, 2),
@@ -246,7 +243,6 @@ def simulate_promo(
     with_promo_dict = {
         "avg_price": round(new_price, 2),
         "velocity_per_day": round(new_velocity, 3),
-        "buyout_rate": round(bl_buyout, 3),
         "revenue_per_day": round(new_revenue_per_day, 2),
         "margin_per_unit": round(new_margin_per_unit, 2),
         "margin_per_day": round(new_margin_per_day, 2),
@@ -406,11 +402,6 @@ async def _load_baselines(
             avg_price - cogs_per_unit - commission_per_unit - logistics_per_unit
         )
 
-        # buyout_rate: примерно units_net / (units_sale + units_return) (Inversed).
-        # Если данных нет — 1.0 (conservative default: считаем что весь заказ выкупится).
-        # Точная цифра из WbOrder не критична здесь — velocity уже NET.
-        buyout_rate = 1.0
-
         out[nm] = SkuBaseline(
             nm_id=nm,
             vendor_code=prod.vendor_code,
@@ -421,7 +412,6 @@ async def _load_baselines(
             revenue_per_day=revenue_per_day,
             velocity_per_day=velocity_per_day,
             avg_price=avg_price,
-            buyout_rate=buyout_rate,
             margin_per_unit=margin_per_unit,
             commission_rate=commission_rate,
             logistics_per_unit=logistics_per_unit,

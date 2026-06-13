@@ -21,7 +21,6 @@ def _bl(
     cogs_per_unit: float,
     commission_rate: float = 0.20,
     logistics_per_unit: float = 50.0,
-    buyout_rate: float = 1.0,
 ) -> SkuBaseline:
     """Build a fixture baseline with sane derived fields."""
     return SkuBaseline(
@@ -34,7 +33,6 @@ def _bl(
         revenue_per_day=velocity * avg_price,
         velocity_per_day=velocity,
         avg_price=avg_price,
-        buyout_rate=buyout_rate,
         margin_per_unit=margin_per_unit,
         commission_rate=commission_rate,
         logistics_per_unit=logistics_per_unit,
