@@ -2189,6 +2189,20 @@ paymentOrderDelete: (payment_order_id: string) =>
     }),
   deleteOffPlatformMovement: (id: number) =>
     request(`/api/off-platform/movements/${id}`, { method: "DELETE" }),
+  // DEV-083 — перемещение между своими складами (пара движений).
+  transferOffPlatform: (body: {
+    dt: string;
+    nm_id: number;
+    qty: number;
+    unit_cost: number;
+    from_warehouse: string;
+    to_warehouse: string;
+    comment?: string | null;
+  }) =>
+    request("/api/off-platform/transfer", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   offPlatformSummary: (asOf?: string) =>
     request<{
       as_of: string | null;
@@ -2199,6 +2213,11 @@ paymentOrderDelete: (payment_order_id: string) =>
         vendor_code: string | null;
         subject: string | null;
         brand: string | null;
+        qty_balance: number;
+        capitalization: number;
+      }>;
+      by_warehouse: Array<{
+        warehouse_name: string;
         qty_balance: number;
         capitalization: number;
       }>;

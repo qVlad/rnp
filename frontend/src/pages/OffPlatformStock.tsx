@@ -26,6 +26,7 @@ export default function OffPlatformStock() {
   const [qty, setQty] = useState("1");
   const [unitCost, setUnitCost] = useState("0");
   const [comment, setComment] = useState("");
+  const [warehouse, setWarehouse] = useState("");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -36,6 +37,7 @@ export default function OffPlatformStock() {
     setQty("1");
     setUnitCost("0");
     setComment("");
+    setWarehouse("");
     setEditingId(null);
     setErr(null);
   };
@@ -49,6 +51,7 @@ export default function OffPlatformStock() {
         qty: Number(qty),
         unit_cost: Number(unitCost) || 0,
         comment: comment || null,
+        warehouse_name: warehouse.trim() || null,
       };
       return editingId
         ? api.updateOffPlatformMovement(editingId, body)
@@ -78,8 +81,14 @@ export default function OffPlatformStock() {
     setQty(String(m.qty));
     setUnitCost(String(m.unit_cost));
     setComment(m.comment || "");
+    setWarehouse(m.warehouse_name && m.warehouse_name !== "Основной" ? m.warehouse_name : "");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
+
+  // DEV-083 — список известных складов (из summary.by_warehouse) для подсказок.
+  const knownWarehouses = (summary.data?.by_warehouse ?? []).map(
+    (w) => w.warehouse_name,
+  );
 
   const kinds = movements.data?.kinds ?? [];
   const kindLabels = movements.data?.kind_labels ?? {};
@@ -143,12 +152,47 @@ export default function OffPlatformStock() {
         </div>
       </section>
 
+      {/* DEV-083 — по складам */}
+      {sum && sum.by_warehouse && sum.by_warehouse.length > 0 && (
+        <section className="card">
+          <h2 className="font-medium mb-2">По складам</h2>
+          <table className="w-full text-sm">
+            <thead className="text-muted text-xs uppercase">
+              <tr>
+                <th className="text-left p-2">Склад</th>
+                <th className="text-right p-2">Остаток (шт.)</th>
+                <th className="text-right p-2">Капитализация</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sum.by_warehouse.map((w) => (
+                <tr key={w.warehouse_name} className="border-t border-border">
+                  <td className="p-2">{w.warehouse_name}</td>
+                  <td className="p-2 text-right font-mono">{fmtNum(w.qty_balance)}</td>
+                  <td className="p-2 text-right font-mono">{fmtRub(w.capitalization)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      {/* DEV-083 — перемещение между своими складами */}
+      <TransferSection
+        knownWarehouses={knownWarehouses}
+        today={today}
+        onDone={() => {
+          qc.invalidateQueries({ queryKey: ["off-platform-movements"] });
+          qc.invalidateQueries({ queryKey: ["off-platform-summary"] });
+        }}
+      />
+
       {/* Form */}
       <section className="card">
         <h2 className="font-medium mb-2">
           {editingId ? `Редактирование движения #${editingId}` : "Добавить движение"}
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-7 gap-2 items-end">
+        <div className="grid grid-cols-1 md:grid-cols-8 gap-2 items-end">
           <Field label="Дата">
             <input
               type="date"
@@ -156,6 +200,21 @@ export default function OffPlatformStock() {
               value={dt}
               onChange={(e: any) => setDt(e.target.value)}
             />
+          </Field>
+          <Field label="Склад">
+            <input
+              type="text"
+              className="input"
+              list="own-warehouses"
+              placeholder="Основной"
+              value={warehouse}
+              onChange={(e: any) => setWarehouse(e.target.value)}
+            />
+            <datalist id="own-warehouses">
+              {knownWarehouses.map((w) => (
+                <option key={w} value={w} />
+              ))}
+            </datalist>
           </Field>
           <Field label="Тип">
             <select
@@ -276,6 +335,7 @@ export default function OffPlatformStock() {
             <thead className="text-muted text-xs uppercase">
               <tr>
                 <th className="text-left p-2">Дата</th>
+                <th className="text-left p-2">Склад</th>
                 <th className="text-left p-2">Тип</th>
                 <th className="text-left p-2">SKU</th>
                 <th className="text-right p-2">Кол-во</th>
@@ -291,6 +351,7 @@ export default function OffPlatformStock() {
                   <td className="p-2 font-mono text-xs whitespace-nowrap">
                     {m.dt}
                   </td>
+                  <td className="p-2 text-xs">{m.warehouse_name || "Основной"}</td>
                   <td className="p-2">
                     <span
                       className={
@@ -354,5 +415,92 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span className="text-xs text-muted uppercase tracking-wide">{label}</span>
       {children}
     </label>
+  );
+}
+
+// DEV-083 — перемещение SKU между своими складами (пара движений на бэке).
+function TransferSection({
+  knownWarehouses,
+  today,
+  onDone,
+}: {
+  knownWarehouses: string[];
+  today: string;
+  onDone: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [dt, setDt] = useState(today);
+  const [nmId, setNmId] = useState("");
+  const [qty, setQty] = useState("1");
+  const [unitCost, setUnitCost] = useState("0");
+  const [fromWh, setFromWh] = useState("");
+  const [toWh, setToWh] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+
+  const mut = useMutation({
+    mutationFn: () =>
+      api.transferOffPlatform({
+        dt,
+        nm_id: Number(nmId),
+        qty: Number(qty),
+        unit_cost: Number(unitCost) || 0,
+        from_warehouse: fromWh.trim(),
+        to_warehouse: toWh.trim(),
+      }),
+    onSuccess: () => {
+      setErr(null);
+      setNmId("");
+      setQty("1");
+      onDone();
+    },
+    onError: (e: any) => setErr(e.message),
+  });
+
+  return (
+    <section className="card">
+      <button
+        className="font-medium flex items-center gap-2"
+        onClick={() => setOpen((o) => !o)}
+      >
+        {open ? "▾" : "▸"} Перемещение между складами
+      </button>
+      {open && (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-7 gap-2 items-end mt-3">
+            <Field label="Дата">
+              <input type="date" className="input" value={dt} onChange={(e: any) => setDt(e.target.value)} />
+            </Field>
+            <Field label="nm_id">
+              <input type="number" className="input" value={nmId} onChange={(e: any) => setNmId(e.target.value)} />
+            </Field>
+            <Field label="Откуда">
+              <input type="text" className="input" list="own-warehouses" placeholder="Основной" value={fromWh} onChange={(e: any) => setFromWh(e.target.value)} />
+            </Field>
+            <Field label="Куда">
+              <input type="text" className="input" list="own-warehouses" value={toWh} onChange={(e: any) => setToWh(e.target.value)} />
+            </Field>
+            <Field label="Кол-во">
+              <input type="number" min="1" className="input" value={qty} onChange={(e: any) => setQty(e.target.value)} />
+            </Field>
+            <Field label="Цена/шт, ₽">
+              <input type="number" step="0.01" className="input" value={unitCost} onChange={(e: any) => setUnitCost(e.target.value)} />
+            </Field>
+            <button
+              className="btn-primary"
+              disabled={mut.isPending || !nmId || !fromWh.trim() || !toWh.trim() || fromWh.trim() === toWh.trim()}
+              onClick={() => mut.mutate()}
+            >
+              Переместить
+            </button>
+          </div>
+          {knownWarehouses.length > 0 && (
+            <div className="text-xs text-muted mt-1">
+              Склады: {knownWarehouses.join(", ")}
+            </div>
+          )}
+          {err && <div className="text-danger text-xs mt-2">{err}</div>}
+        </>
+      )}
+    </section>
   );
 }

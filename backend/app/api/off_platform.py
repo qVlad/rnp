@@ -15,7 +15,7 @@ from app.services import off_platform
 from app.services.auth import require_director_or_head
 
 
-_AUDIT_FIELDS = ["id", "dt", "nm_id", "kind", "qty", "unit_cost", "comment"]
+_AUDIT_FIELDS = ["id", "dt", "nm_id", "warehouse_name", "kind", "qty", "unit_cost", "comment"]
 
 router = APIRouter(
     prefix="/api/off-platform",
@@ -30,6 +30,17 @@ class MovementPayload(BaseModel):
     kind: str
     qty: int
     unit_cost: float | None = 0
+    comment: str | None = None
+    warehouse_name: str | None = None
+
+
+class TransferPayload(BaseModel):
+    dt: date
+    nm_id: int
+    qty: int
+    unit_cost: float | None = 0
+    from_warehouse: str
+    to_warehouse: str
     comment: str | None = None
 
 
@@ -66,6 +77,7 @@ async def create_movement(
             qty=payload.qty,
             unit_cost=payload.unit_cost or 0,
             comment=payload.comment,
+            warehouse_name=payload.warehouse_name,
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
@@ -78,6 +90,39 @@ async def create_movement(
     )
     await session.commit()
     return {"id": row.id, "status": "created"}
+
+
+@router.post("/transfer")
+async def transfer(
+    payload: TransferPayload,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Перемещение SKU между своими складами (DEV-083) — пара движений."""
+    if payload.qty <= 0:
+        raise HTTPException(400, "qty must be positive")
+    try:
+        ids = await off_platform.transfer_between(
+            session,
+            dt=payload.dt,
+            nm_id=payload.nm_id,
+            qty=payload.qty,
+            unit_cost=payload.unit_cost or 0,
+            from_warehouse=payload.from_warehouse.strip(),
+            to_warehouse=payload.to_warehouse.strip(),
+            comment=payload.comment,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    await audit_log(
+        session, "off_platform_stock_movements", "transfer",
+        entity_id=f"{ids['out_id']}→{ids['in_id']}",
+        after={"from": payload.from_warehouse, "to": payload.to_warehouse,
+               "nm_id": payload.nm_id, "qty": payload.qty},
+        actor=actor_from_request(request),
+    )
+    await session.commit()
+    return {"status": "transferred", **ids}
 
 
 @router.put("/movements/{movement_id}")
@@ -104,6 +149,7 @@ async def update_movement(
     row.qty = int(payload.qty)
     row.unit_cost = Decimal(str(payload.unit_cost or 0))
     row.comment = payload.comment
+    row.warehouse_name = payload.warehouse_name or None
     await audit_log(
         session, "off_platform_stock_movements", "update",
         entity_id=str(row.id),

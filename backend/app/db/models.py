@@ -848,6 +848,10 @@ class OffPlatformStockMovement(Base, TenantScopedMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     dt: Mapped[date] = mapped_column(Date, index=True)
     nm_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    # На каком СВОЁМ складе движение (DEV-083, миграция 0076). NULL = «Основной».
+    # Баланс/капитализация считаются per-(warehouse_name, nm_id). Перемещение
+    # между своими складами = пара движений wh_transfer_out/in (qty-нейтрально).
+    warehouse_name: Mapped[str | None] = mapped_column(String(255), index=True)
     # kind drives the sign of qty in capitalization math (see service helpers)
     kind: Mapped[str] = mapped_column(String(32), index=True)
     qty: Mapped[int] = mapped_column(Integer)

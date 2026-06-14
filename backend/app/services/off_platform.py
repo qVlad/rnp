@@ -28,10 +28,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import OffPlatformStockMovement, Product
 
 INFLOW_KINDS: frozenset[str] = frozenset(
-    {"purchase", "transfer_from_wb", "adjustment_plus"}
+    {"purchase", "transfer_from_wb", "adjustment_plus", "wh_transfer_in"}
 )
 OUTFLOW_KINDS: frozenset[str] = frozenset(
-    {"transfer_to_wb", "write_off", "adjustment_minus"}
+    {"transfer_to_wb", "write_off", "adjustment_minus", "wh_transfer_out"}
 )
 ALL_KINDS: frozenset[str] = INFLOW_KINDS | OUTFLOW_KINDS
 
@@ -39,10 +39,14 @@ KIND_LABELS: dict[str, str] = {
     "purchase": "Закупка",
     "transfer_from_wb": "Возврат с WB",
     "adjustment_plus": "Корректировка (+)",
+    "wh_transfer_in": "Перемещение (приход)",
     "transfer_to_wb": "Отгрузка на WB",
     "write_off": "Списание",
     "adjustment_minus": "Корректировка (−)",
+    "wh_transfer_out": "Перемещение (расход)",
 }
+
+DEFAULT_WAREHOUSE = "Основной"
 
 
 def signed_qty(kind: str, qty: int) -> int:
@@ -94,6 +98,7 @@ async def list_movements(
                 "vendor_code": vc,
                 "subject": subj,
                 "brand": brand,
+                "warehouse_name": m.warehouse_name or DEFAULT_WAREHOUSE,
                 "kind": m.kind,
                 "kind_label": KIND_LABELS.get(m.kind, m.kind),
                 "qty": m.qty,
@@ -116,6 +121,7 @@ async def summary(
     stmt = select(
         OffPlatformStockMovement.nm_id,
         OffPlatformStockMovement.kind,
+        OffPlatformStockMovement.warehouse_name,
         func.sum(OffPlatformStockMovement.qty).label("qty_sum"),
         func.sum(
             OffPlatformStockMovement.qty * OffPlatformStockMovement.unit_cost
@@ -124,11 +130,14 @@ async def summary(
     if as_of is not None:
         stmt = stmt.where(OffPlatformStockMovement.dt <= as_of)
     stmt = stmt.group_by(
-        OffPlatformStockMovement.nm_id, OffPlatformStockMovement.kind
+        OffPlatformStockMovement.nm_id,
+        OffPlatformStockMovement.kind,
+        OffPlatformStockMovement.warehouse_name,
     )
     rows = (await session.execute(stmt)).all()
 
     by_nm: dict[int | None, dict[str, float]] = {}
+    by_warehouse: dict[str, dict[str, float]] = {}
     by_kind: dict[str, dict[str, float]] = {
         k: {"qty": 0.0, "amount": 0.0} for k in sorted(ALL_KINDS)
     }
@@ -139,6 +148,10 @@ async def summary(
         agg = by_nm.setdefault(r.nm_id, {"qty": 0.0, "amount": 0.0})
         agg["qty"] += qty
         agg["amount"] += amt
+        wh = r.warehouse_name or DEFAULT_WAREHOUSE
+        wagg = by_warehouse.setdefault(wh, {"qty": 0.0, "amount": 0.0})
+        wagg["qty"] += qty
+        wagg["amount"] += amt
         by_kind.setdefault(r.kind, {"qty": 0.0, "amount": 0.0})
         # by_kind shows TOTAL flow per kind (unsigned qty) so user sees
         # "сколько закупили, сколько списали" — not net.
@@ -186,11 +199,23 @@ async def summary(
     total_qty = round(sum(a["qty"] for a in by_nm.values()), 2)
     total_amount = round(sum(a["amount"] for a in by_nm.values()), 2)
 
+    by_warehouse_out = [
+        {
+            "warehouse_name": wh,
+            "qty_balance": round(v["qty"], 2),
+            "capitalization": round(v["amount"], 2),
+        }
+        for wh, v in sorted(
+            by_warehouse.items(), key=lambda kv: -kv[1]["amount"]
+        )
+    ]
+
     return {
         "as_of": as_of.isoformat() if as_of else None,
         "total_qty": total_qty,
         "total_capitalization": total_amount,
         "items": items,
+        "by_warehouse": by_warehouse_out,
         "by_kind": {
             k: {"qty": round(v["qty"], 2), "amount": round(v["amount"], 2)}
             for k, v in by_kind.items()
@@ -208,6 +233,7 @@ async def create_movement(
     qty: int,
     unit_cost: Decimal | float | int = 0,
     comment: str | None = None,
+    warehouse_name: str | None = None,
 ) -> OffPlatformStockMovement:
     if kind not in ALL_KINDS:
         raise ValueError(
@@ -229,7 +255,35 @@ async def create_movement(
         qty=int(qty),
         unit_cost=Decimal(str(unit_cost)),
         comment=comment,
+        warehouse_name=(warehouse_name or None),
     )
     session.add(row)
     await session.flush()
     return row
+
+
+async def transfer_between(
+    session: AsyncSession,
+    *,
+    dt: date,
+    nm_id: int,
+    qty: int,
+    unit_cost: Decimal | float | int,
+    from_warehouse: str,
+    to_warehouse: str,
+    comment: str | None = None,
+) -> dict[str, int]:
+    """Перемещение между своими складами = пара движений (расход с from +
+    приход на to). Qty-нейтрально для общего баланса, но двигает per-склад."""
+    if from_warehouse == to_warehouse:
+        raise ValueError("склады отправления и назначения совпадают")
+    note = comment or f"Перемещение {from_warehouse} → {to_warehouse}"
+    out = await create_movement(
+        session, dt=dt, nm_id=nm_id, kind="wh_transfer_out", qty=qty,
+        unit_cost=unit_cost, comment=note, warehouse_name=from_warehouse,
+    )
+    inn = await create_movement(
+        session, dt=dt, nm_id=nm_id, kind="wh_transfer_in", qty=qty,
+        unit_cost=unit_cost, comment=note, warehouse_name=to_warehouse,
+    )
+    return {"out_id": out.id, "in_id": inn.id}

@@ -48,14 +48,15 @@
   (director_or_head, синхронно — каталог мал). UI: кнопка «Синхронизация склеек»
   на `/product-groups` (`ProductGroups.tsx`).
 
-### TASK-DEV-083: Свои склады — мульти-склад + межскладские перемещения — P3
-- **Тип:** feature/parity · PARTIAL. TS «Склады (Beta)»: несколько СВОИХ складов,
-  операции Поступление/Перемещение/Списание + журнал + капитализация per-склад.
-  У нас `/off-platform`: операции есть (purchase/transfer_to-from_wb/write_off/adj),
-  капитализация есть, НО единый пул — у `OffPlatformStockMovement` нет
-  warehouse_id, нет перемещения между своими складами.
-- **Гэп:** warehouse_id на движениях + операция transfer между своими складами +
-  per-склад остатки/капитализация. Миграция + UI.
+### TASK-DEV-083: Свои склады — мульти-склад + межскладские перемещения — P3 ✅
+- **Тип:** feature/parity · ✅ **ВЫПОЛНЕНО 2026-06-13 (v0.70.0)**.
+- Миграция **0076** (`off_platform_stock_movements.warehouse_name`, NULL=«Основной»).
+  Новые kinds `wh_transfer_out/in` (перемещение). `services/off_platform.py`:
+  `warehouse_name` в movements + `by_warehouse` в summary + `transfer_between()`
+  (пара движений, qty-нейтрально). API: warehouse_name в payload + `POST
+  /api/off-platform/transfer`. UI `OffPlatformStock.tsx`: поле «Склад» в форме,
+  карточка «По складам», сворачиваемая секция «Перемещение между складами»,
+  колонка склада в журнале.
 
 ### TASK-DEV-084: Выделенная страница товара `/product/:nm_id` — P2 ✅
 - **Тип:** feature/parity · ✅ **ВЫПОЛНЕНО 2026-06-13 (v0.66.0)**.

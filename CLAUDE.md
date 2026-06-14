@@ -102,7 +102,7 @@ frontend/src/      api/client.ts, contexts/AuthContext, components/Layout, pages
 docker-compose.yml · .env(.example) · .claude/settings.json (permissions)
 ```
 
-## Миграции БД (75 шт., 0001-0075)
+## Миграции БД (76 шт., 0001-0076)
 
 > **Полный список с деталями — [`FEATURES.md`](FEATURES.md) → «Миграции».** Здесь
 > — одна строка на миграцию. Новую миграцию добавляй и сюда (1 строка), и в FEATURES (детали).
@@ -142,6 +142,7 @@ docker-compose.yml · .env(.example) · .claude/settings.json (permissions)
 | 0071-0073 | manual_operation (+is_planned обязательства ДДС) / metric_plan (план-факт по метрикам) |
 | 0074 | **products.imt_id** — WB склейка (imtID). DEV-082 авто-группировка склеек: `skleika_sync.py` → группы `Склейка: <imtID>`, `POST /api/product-groups/sync-skleika` + кнопка на `/product-groups` |
 | 0075 | **chart_annotation** — команд-аннотации на дату (DEV-081). 📌-маркеры на timeseries дашборда + панель заметок. `api/annotations.py` (GET все / POST+DELETE director_or_head) |
+| 0076 | **off_platform_stock_movements.warehouse_name** — мульти-склад своих складов (DEV-083). NULL=«Основной». kinds `wh_transfer_out/in` + `POST /api/off-platform/transfer` (межскладское перемещение) + `by_warehouse` в summary |
 
 ## Роли и RBAC
 
