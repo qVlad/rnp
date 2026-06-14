@@ -1,171 +1,107 @@
 /**
- * Content script на www.wildberries.ru/catalog/*.
+ * Content script (ISOLATED) на www.wildberries.ru — приём ранга выдачи.
  *
- * Задача: трекинг позиций карточек, участвующих в активных A/B-тестах РНП,
- * по ключевикам поиска. Это позволит на странице теста показать селлеру:
- * «Вариант A был на 3-й странице → 1230 показов. Вариант B на 1-й странице
- * → 9800 показов». Большая разница в показах между вариантами при ротации
- * обычно объясняется именно сменой позиции.
+ * Источник данных — MAIN-world interceptor `wb-search-interceptor-main.ts`,
+ * который перехватывает JSON поискового API (search.wb.ru) и шлёт сюда через
+ * window.postMessage. DOM-скрейпинг (старый `findSearchCards`) больше НЕ
+ * используется для сбора — он хрупкий на виртуализированной выдаче WB.
  *
- * Логика:
- *   1. На любой странице каталога/поиска получаем кеш активных тестов из
- *      service worker.
- *   2. Парсим выдачу через wb-parsers.findSearchCards.
- *   3. Для каждой найденной карточки которая есть в активных тестах —
- *      отправляем событие в SW через bg-bridge: { type: "postPositions",
- *      payload: { nmId, query, position, page, collectedAt } }.
- *   4. SW шлёт POST /api/extension/positions на backend РНП.
+ * Делаем:
+ *   1. Принимаем { __rnp: "wb-search-ranking", query, page, cards }.
+ *   2. Шлём полный ранг в SW (`postSearchRanking`) — backend сохранит только
+ *      если в выдаче есть наша карточка (анти-спай-гард, DEV-085).
+ *   3. Для nmId из активных A/B-тестов — дополнительно `postPositions`
+ *      (трекинг позиций вариантов) + подсветка карточки в DOM (best-effort).
  *
- * Что мы НЕ делаем (важно):
- *   • Не парсим чужие карточки (не наши SKU) — не делаем спай-функционал.
- *   • Не дёргаем поиск автоматически (это спам в WB) — работаем только с
- *     тем, что пользователь сам открыл в браузере.
- *   • Не сохраняем cookies, токены, личные данные пользователя.
+ * Что НЕ делаем: не дёргаем поиск сами (только то, что юзер открыл), не
+ * храним cookies/токены. Сбор гейтится настройкой `enablePositionTracking`.
  */
-
-import {
-  isSearchPage,
-  isCatalogPage,
-  extractSearchQuery,
-  findSearchCards,
-} from "@/lib/wb-parsers";
 import { getCachedActiveTests, getSettings } from "@/lib/storage";
 import { bgRequest } from "@/lib/bg-bridge";
 
-async function collectPositions(): Promise<void> {
+type RankingMessage = {
+  __rnp: "wb-search-ranking";
+  query: string;
+  page: number;
+  cards: { nmId: number; position: number }[];
+};
+
+// Дедуп — interceptor уже дедупит по query|page 3с, но при SPA-навигации
+// content script может получить повтор; держим короткую память.
+const handled = new Set<string>();
+
+async function onRanking(msg: RankingMessage): Promise<void> {
   const settings = await getSettings();
-  if (!settings.enablePositionTracking) {
-    console.debug("[rnp-ext] position tracking disabled");
-    return;
-  }
+  if (!settings.enablePositionTracking) return;
+  if (!msg.query || !Array.isArray(msg.cards) || msg.cards.length === 0) return;
 
-  if (!isSearchPage() && !isCatalogPage()) return;
+  const key = `${msg.query}|${msg.page}|${msg.cards.length}`;
+  if (handled.has(key)) return;
+  handled.add(key);
+  if (handled.size > 200) handled.clear();
 
-  const query = extractSearchQuery() || derivePseudoQueryFromCatalogUrl();
-  if (!query) return;
-
-  const cards = findSearchCards();
-  if (cards.length === 0) {
-    console.debug("[rnp-ext] no cards found on", location.href);
-    return;
-  }
-
-  const page = derivePageNumberFromUrl();
   const collectedAt = new Date().toISOString();
 
-  // DEV-085 — конкурентное сравнение: шлём ПОЛНЫЙ ранг выдачи (наши +
-  // конкуренты), но только для реального поиска (не каталог-броузинга — меньше
-  // шума). Бэкенд сохраняет ранг ТОЛЬКО если в нём есть наша карточка
-  // (анти-спай-гард на сервере) — произвольные чужие запросы не пишутся.
-  if (isSearchPage()) {
-    try {
-      await bgRequest({
-        type: "postSearchRanking",
-        payload: {
-          query,
-          page,
-          collectedAt,
-          cards: cards.map((c) => ({ nmId: c.nmId, position: c.position })),
-        },
-      });
-    } catch (e) {
-      console.warn("[rnp-ext] bgRequest postSearchRanking failed:", e);
-    }
+  // 1) Полный ранг (наши + конкуренты) — backend фильтрует по нашей карточке.
+  try {
+    await bgRequest({
+      type: "postSearchRanking",
+      payload: {
+        query: msg.query,
+        page: msg.page,
+        collectedAt,
+        cards: msg.cards.map((c) => ({ nmId: c.nmId, position: c.position })),
+      },
+    });
+  } catch (e) {
+    console.warn("[rnp-ext] postSearchRanking failed:", e);
   }
 
-  // A/B-трекинг позиций наших тестовых карточек (как раньше) + подсветка.
-  const activeTests = await getCachedActiveTests();
-  if (activeTests.length === 0) return;
-  const trackedNmIds = new Set(activeTests.map((t) => t.nmId));
-  const matches = cards.filter((c) => trackedNmIds.has(c.nmId));
-  if (matches.length === 0) {
-    console.debug(
-      `[rnp-ext] no tracked cards on "${query}" page ${page} (${cards.length} total cards)`,
-    );
+  // 2) A/B-трекинг позиций тестовых карточек + подсветка.
+  let trackedNmIds: Set<number>;
+  try {
+    const activeTests = await getCachedActiveTests();
+    trackedNmIds = new Set(activeTests.map((t) => t.nmId));
+  } catch {
     return;
   }
+  if (trackedNmIds.size === 0) return;
 
-  console.log(
-    `[rnp-ext] found ${matches.length} tracked cards on "${query}" page ${page}`,
-  );
-  for (const c of matches) {
+  for (const c of msg.cards) {
+    if (!trackedNmIds.has(c.nmId)) continue;
     try {
       await bgRequest({
         type: "postPositions",
         payload: {
           nmId: c.nmId,
-          query,
+          query: msg.query,
           position: c.position,
-          page,
+          page: msg.page,
           collectedAt,
         },
       });
     } catch (e) {
-      console.warn("[rnp-ext] bgRequest postPositions failed:", e);
+      console.warn("[rnp-ext] postPositions failed:", e);
     }
-    highlightTrackedCard(c.element);
+    highlightTrackedCard(c.nmId);
   }
 }
 
-function derivePseudoQueryFromCatalogUrl(): string | null {
-  // Каталог без явного search — используем последний сегмент URL как «query»
-  // (например, /catalog/elektronika/list.aspx → "elektronika").
-  try {
-    const u = new URL(location.href);
-    const segments = u.pathname.split("/").filter(Boolean);
-    const idx = segments.findIndex((s) => s === "catalog");
-    if (idx !== -1 && segments[idx + 1]) return segments[idx + 1];
-  } catch {
-    /* noop */
-  }
-  return null;
+function highlightTrackedCard(nmId: number): void {
+  // Best-effort — DOM может отличаться, тогда просто no-op.
+  const el = document.querySelector(`[data-nm-id="${nmId}"]`) as HTMLElement | null;
+  if (!el || el.dataset.rnpHighlighted === "1") return;
+  el.dataset.rnpHighlighted = "1";
+  el.style.outline = "2px solid #3b82f6";
+  el.style.outlineOffset = "2px";
+  el.style.borderRadius = "8px";
 }
 
-function derivePageNumberFromUrl(): number {
-  try {
-    const u = new URL(location.href);
-    const p = u.searchParams.get("page");
-    if (p) {
-      const n = Number.parseInt(p, 10);
-      return Number.isFinite(n) ? n : 1;
-    }
-  } catch {
-    /* noop */
-  }
-  return 1;
-}
+window.addEventListener("message", (ev: MessageEvent) => {
+  if (ev.source !== window) return;
+  const data = ev.data as RankingMessage | undefined;
+  if (!data || data.__rnp !== "wb-search-ranking") return;
+  void onRanking(data);
+});
 
-function highlightTrackedCard(el: Element): void {
-  const target = el as HTMLElement;
-  if (target.dataset.rnpHighlighted === "1") return;
-  target.dataset.rnpHighlighted = "1";
-  target.style.outline = "2px solid #3b82f6";
-  target.style.outlineOffset = "2px";
-  target.style.borderRadius = "8px";
-}
-
-// ---- Lifecycle ----
-
-// Первичный запуск с задержкой (карточки рендерятся лениво).
-setTimeout(collectPositions, 1500);
-
-// При скролле/подгрузке новых карточек повторяем сбор.
-// На WB подгрузка через scroll — отслеживаем через IntersectionObserver
-// на footer или через debounced scroll listener.
-let scrollDebounce: number | undefined;
-window.addEventListener(
-  "scroll",
-  () => {
-    if (scrollDebounce) window.clearTimeout(scrollDebounce);
-    scrollDebounce = window.setTimeout(collectPositions, 800);
-  },
-  { passive: true },
-);
-
-// SPA-роутинг — поиск/каталог переключаются без полной перезагрузки.
-const _push = history.pushState.bind(history);
-history.pushState = function (...args) {
-  _push(...args);
-  setTimeout(collectPositions, 1500);
-};
-window.addEventListener("popstate", () => setTimeout(collectPositions, 1500));
+console.debug("[rnp-ext] wb-search receiver ready on", location.href);

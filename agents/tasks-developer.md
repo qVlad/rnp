@@ -83,6 +83,14 @@
   `bg-bridge.ts`, `background/index.ts`. **Требует пересборки расширения**
   (`cd extension && npm run build` + reload unpacked) — обычным deploy не катится.
   50+ метрик TS — не цель (фокус на марже/CPC-MAX).
+- **🔧 ФИКС v0.72.1 (DOM→interceptor):** первый заход данных не дал — DOM-скрейпинг
+  `findSearchCards` (`[data-nm-id]`) не работает на виртуализир. выдаче WB (и A/B
+  positions тоже копились 0). Переписал на **MAIN-world interceptor**
+  `wb-search-interceptor-main.ts` (как transit/realization): перехватывает JSON
+  поискового API `search.wb.ru` (`{data:{products:[{id}]}}`) → query+ранг →
+  postMessage → `wb-search.ts` (ISOLATED) → `postSearchRanking`/`postPositions`.
+  Позиция глобальная `(page-1)*100+idx`. DOM теперь только для подсветки (best-effort).
+  ⚠️ user должен переустановить расширение (reload unpacked из `extension/dist/`).
 
 ### TASK-DEV-086: «Структура выручки» — отдельный виджет — P3 ✅
 - **Тип:** feature/parity · ✅ **ВЫПОЛНЕНО 2026-06-13 (v0.68.0)**.

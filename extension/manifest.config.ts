@@ -114,6 +114,16 @@ export default defineManifest({
       run_at: "document_idle",
     },
     {
+      // DEV-085: MAIN-world interceptor выдачи поиска. Перехватывает JSON
+      // поискового API (search.wb.ru/catalog.wb.ru), достаёт упорядоченный
+      // список nmId + query, шлёт через postMessage в wb-search.ts (ISOLATED).
+      // Надёжнее DOM-скрейпинга на виртуализированной выдаче WB.
+      matches: ["https://www.wildberries.ru/*"],
+      js: ["src/content/wb-search-interceptor-main.ts"],
+      run_at: "document_start",
+      world: "MAIN",
+    },
+    {
       // Auto-connect: на любой странице РНП content script говорит SW
       // «здесь РНП», SW через chrome.cookies API достаёт rnp_session
       // (HttpOnly) и сохраняет URL+JWT в settings. Юзеру не нужно
