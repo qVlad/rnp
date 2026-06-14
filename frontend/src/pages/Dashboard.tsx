@@ -1,5 +1,20 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
+import {
+  DndContext,
+  DragEndEvent,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  rectSortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   CartesianGrid,
   Line,
@@ -17,7 +32,7 @@ import MetricDrilldownModal, {
 import MetricBreakdownPopup, {
   type BreakdownMetric,
 } from "@/components/MetricBreakdownPopup";
-import { type CompositionSegment } from "@/components/CompositionBar";
+import CompositionBar, { type CompositionSegment } from "@/components/CompositionBar";
 import AlertsBar from "@/components/AlertsBar";
 import ManagerPlanProgressCard from "@/components/ManagerPlanProgressCard";
 import CustomMetricsCard from "@/components/CustomMetricsCard";
@@ -652,6 +667,45 @@ const HERO_KEYS = new Set([
   "net_profit",
 ]);
 
+// DEV-079 — порядок compact-плиток дашборда (drag-and-drop), persist в localStorage.
+const KPI_ORDER_KEY = "dashboard.kpi.order.v1";
+function loadKpiOrder(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(KPI_ORDER_KEY) || "[]");
+    return Array.isArray(raw) ? raw.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+function saveKpiOrder(order: string[]): void {
+  try {
+    localStorage.setItem(KPI_ORDER_KEY, JSON.stringify(order));
+  } catch {
+    /* ignore quota */
+  }
+}
+
+function SortableKpiTile({ id, children }: { id: string; children: ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Translate.toString(transform),
+        transition,
+        opacity: isDragging ? 0.6 : 1,
+        zIndex: isDragging ? 10 : undefined,
+        cursor: "grab",
+      }}
+      {...attributes}
+      {...listeners}
+    >
+      {children}
+    </div>
+  );
+}
+
 function DashboardKpiGrid({
   kpis,
   mode,
@@ -669,6 +723,34 @@ function DashboardKpiGrid({
   const visible = kpis.filter((k) => !isHidden(k.key));
   const heroes = visible.filter((k) => HERO_KEYS.has(k.key));
   const rest = visible.filter((k) => !HERO_KEYS.has(k.key));
+
+  // DEV-079 — пользовательский порядок compact-плиток (drag-and-drop).
+  const [kpiOrder, setKpiOrder] = useState<string[]>(loadKpiOrder);
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+  );
+  const orderedRest = useMemo(() => {
+    const pos = (k: string) => {
+      const i = kpiOrder.indexOf(k);
+      return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+    };
+    // stable sort: неизвестные ключи сохраняют исходный относительный порядок.
+    return rest
+      .map((k, i) => ({ k, i }))
+      .sort((a, b) => pos(a.k.key) - pos(b.k.key) || a.i - b.i)
+      .map((x) => x.k);
+  }, [rest, kpiOrder]);
+  const onTileDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const ids = orderedRest.map((k) => k.key);
+    const from = ids.indexOf(String(active.id));
+    const to = ids.indexOf(String(over.id));
+    if (from < 0 || to < 0) return;
+    const next = arrayMove(ids, from, to);
+    setKpiOrder(next);
+    saveKpiOrder(next);
+  };
   const [drillMetric, setDrillMetric] = useState<MetricKey | null>(null);
   const [breakdownMetric, setBreakdownMetric] = useState<BreakdownMetric | null>(null);
   const handleDrill = (m: "revenue" | "orders" | "ad_cost" | "profit") =>
@@ -821,19 +903,48 @@ function DashboardKpiGrid({
           })}
         </div>
       )}
-      {rest.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-          {rest.map((k: any) => (
-            <KpiCard
-              key={k.key}
-              kpi={k}
-              variant="compact"
-              onDrillDown={handleDrill}
-              onBreakdown={handleBreakdown}
-            />
-          ))}
-        </div>
+      {orderedRest.length > 0 && (
+        <DndContext
+          sensors={dndSensors}
+          collisionDetection={closestCenter}
+          onDragEnd={onTileDragEnd}
+        >
+          <SortableContext
+            items={orderedRest.map((k) => k.key)}
+            strategy={rectSortingStrategy}
+          >
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+              {orderedRest.map((k: any) => (
+                <SortableKpiTile key={k.key} id={k.key}>
+                  <KpiCard
+                    kpi={k}
+                    variant="compact"
+                    onDrillDown={handleDrill}
+                    onBreakdown={handleBreakdown}
+                  />
+                </SortableKpiTile>
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
       )}
+      {/* DEV-086 (TS-parity «Структура выручки») — отдельный виджет полной
+          ширины: на что разбивается брутто-выручка (Поступило + удержания WB).
+          В preliminary WB-метрики = 0 → composition вернёт упрощённый вид. */}
+      {(() => {
+        const comp = compositionFor("revenue_net");
+        if (!comp) return null;
+        return (
+          <div className="card">
+            <div className="text-sm font-semibold mb-2">Структура выручки</div>
+            <CompositionBar
+              segments={comp.segments}
+              totalOverride={comp.total}
+              unit="rub"
+            />
+          </div>
+        );
+      })()}
       {drillMetric && (
         <MetricDrilldownModal
           metric={drillMetric}

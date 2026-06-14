@@ -23,13 +23,13 @@
   размер внутреннего блока ∝ значению 2-й (sqrt-площадь, 0.3..1.0). 2-й запрос
   `adsHeatmap(sizeMetric)`, выравнивание по advert_id. `AdsHeatmap.tsx`.
 
-### TASK-DEV-079: Дашборд — drag-reorder KPI-плиток + сохранение раскладки — P2
-- **Тип:** feature/parity · PARTIAL. TS: плитки переставляются drag-and-drop +
-  сохраняются как шаблоны («Настройка виджетов»). У нас: show/hide (`ColumnVisibility`)
-  + пресеты состояния (`ViewPresetsBar` scope=dashboard), НО без перетаскивания
-  порядка плиток. Есть `@dnd-kit` + `DraggableHeader` (юзается в /units колонках) —
-  переиспользовать. Также: на дашборде нет кнопки «+ Метрика» (есть в /settings).
-- **Гэп:** drag-reorder KPI-карточек + персист порядка в `user_view_preset`.
+### TASK-DEV-079: Дашборд — drag-reorder KPI-плиток + сохранение раскладки — P2 ✅
+- **Тип:** feature/parity · ✅ **ВЫПОЛНЕНО 2026-06-13 (v0.68.0)**.
+- Compact-плитки KPI перетаскиваются (dnd-kit, `rectSortingStrategy`, activation
+  distance 8 чтобы клики drill/breakdown работали). Порядок персистится в
+  localStorage `dashboard.kpi.order.v1`. `SortableKpiTile` + `onTileDragEnd` в
+  `Dashboard.tsx:DashboardKpiGrid`. Hero-плитки и show/hide — без изменений.
+  («+ Метрика» на дашборде — отдельный мелкий гэп, не делаем: конструктор в /settings.)
 
 ### TASK-DEV-081: Комментарии-маркеры на графиках (team-аннотации по датам) — P2
 - **Тип:** feature/parity · MISSING. TS: коммент привязан к дате/артикулу/периоду,
@@ -74,11 +74,12 @@
 - **Гэп:** сбор позиций по ключам (есть в extension abtest_position_snapshot?) +
   competitor-поля. Проверить доступность данных WB прежде чем строить.
 
-### TASK-DEV-086: «Структура выручки» — waterfall-виджет — P3
-- **Тип:** feature/parity · PARTIAL (низкий приоритет). У нас `CompositionBar`
-  (stacked-bar в hero-карточках) уже бьёт реализацию на компоненты, но налог/COGS
-  схлопнуты в «Прочее» и это не waterfall. TS — отдельный bar-виджет «Структура
-  выручки». **Гэп:** отдельный waterfall с полной декомпозицией. Маржинальная ценность.
+### TASK-DEV-086: «Структура выручки» — отдельный виджет — P3 ✅
+- **Тип:** feature/parity · ✅ **ВЫПОЛНЕНО 2026-06-13 (v0.68.0)**.
+- Композиция брутто-выручки (Поступило + Комиссия/Логистика/Хранение/Прочее)
+  вынесена в отдельную карточку полной ширины «Структура выручки» на дашборде
+  (`Dashboard.tsx`, переиспользует `CompositionBar` + `compositionFor`). Полный
+  split COGS/налог доступен на `/pnl` (на дашборде этих KPI нет — by design).
 
 ### TASK-DEV-062: Глобальные фильтры как в TS (Магазины/Бренды/Категории/Группы/Артикулы) — ПЛАН
 - **Тип:** feature/architecture · **P1** · запрос пользователя 2026-06-09.
