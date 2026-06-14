@@ -19,7 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import JamQuery, Product
+from app.db.models import AbTestPositionSnapshot, JamQuery, Product
 from app.services.audit import audit_log
 from app.services.auth import (
     CurrentUser,
@@ -58,6 +58,94 @@ async def jam_status(
         ),
         "docs_url": "https://seller.wildberries.ru/analytics/cards-comparison",
     }
+
+
+@router.get("/positions")
+async def jam_positions(
+    days_back: Annotated[int, Query(ge=1, le=180)] = 30,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
+) -> dict[str, Any]:
+    """Динамика позиций наших карточек в поиске WB (DEV-085).
+
+    Источник — `abtest_position_snapshot` (позиции шлёт Chrome-расширение при
+    заходе на www.wildberries.ru). Группируем по (nm_id, query): последняя
+    позиция, дельта к первой в окне, лучшая/худшая, число замеров + таймлайн.
+
+    Manager — только свои бренды (через Product.brand). Конкурентное сравнение
+    НЕ поддерживается: расширение собирает позиции только наших карточек, не
+    чужих (см. follow-up в DEV-085).
+    """
+    cutoff = date.today() - timedelta(days=days_back)
+    stmt = (
+        select(
+            AbTestPositionSnapshot.nm_id,
+            AbTestPositionSnapshot.query,
+            AbTestPositionSnapshot.position,
+            AbTestPositionSnapshot.page,
+            AbTestPositionSnapshot.collected_at,
+        )
+        .where(func.date(AbTestPositionSnapshot.collected_at) >= cutoff)
+        .order_by(AbTestPositionSnapshot.collected_at)
+    )
+    rows = (await session.execute(stmt)).all()
+
+    # brand-scope: какие nm_id видит пользователь.
+    allowed: set[int] | None = None
+    if brands is not None:
+        prod_rows = (
+            await session.execute(
+                select(Product.nm_id).where(Product.brand.in_(list(brands)))
+            )
+        ).scalars().all()
+        allowed = {int(n) for n in prod_rows}
+
+    grouped: dict[tuple[int, str], list[dict[str, Any]]] = {}
+    for r in rows:
+        nm = int(r.nm_id)
+        if allowed is not None and nm not in allowed:
+            continue
+        grouped.setdefault((nm, r.query), []).append(
+            {
+                "dt": r.collected_at.isoformat(),
+                "position": int(r.position),
+                "page": int(r.page),
+            }
+        )
+
+    nm_ids = sorted({k[0] for k in grouped})
+    vendor: dict[int, str | None] = {}
+    if nm_ids:
+        for nm, vc in (
+            await session.execute(
+                select(Product.nm_id, Product.vendor_code).where(
+                    Product.nm_id.in_(nm_ids)
+                )
+            )
+        ).all():
+            vendor[int(nm)] = vc
+
+    items: list[dict[str, Any]] = []
+    for (nm, query), series in grouped.items():
+        positions = [s["position"] for s in series]
+        first_pos, last_pos = positions[0], positions[-1]
+        items.append(
+            {
+                "nm_id": nm,
+                "vendor_code": vendor.get(nm),
+                "query": query,
+                "current_position": last_pos,
+                "current_page": series[-1]["page"],
+                "delta": first_pos - last_pos,  # >0 = поднялись (позиция меньше)
+                "best": min(positions),
+                "worst": max(positions),
+                "samples": len(series),
+                "timeline": series[-30:],  # последние 30 точек для спарклайна
+            }
+        )
+    # сортировка: сначала по nm, потом по текущей позиции (лучшие сверху).
+    items.sort(key=lambda x: (x["nm_id"], x["current_position"]))
+    return {"days_back": days_back, "items": items, "count": len(items)}
 
 
 @router.get("/clusters/{nm_id}")

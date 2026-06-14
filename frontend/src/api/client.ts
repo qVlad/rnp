@@ -2305,6 +2305,24 @@ paymentOrderDelete: (payment_order_id: string) =>
     }>("/api/jam/status"),
   jamSkus: () =>
     request<{ items: { nm_id: number; queries: number }[] }>("/api/jam/skus"),
+  // DEV-085 — динамика позиций наших карточек в поиске (из расширения).
+  jamPositions: (days_back = 30) =>
+    request<{
+      days_back: number;
+      count: number;
+      items: Array<{
+        nm_id: number;
+        vendor_code: string | null;
+        query: string;
+        current_position: number;
+        current_page: number;
+        delta: number;
+        best: number;
+        worst: number;
+        samples: number;
+        timeline: { dt: string; position: number; page: number }[];
+      }>;
+    }>(`/api/jam/positions?days_back=${days_back}`),
   jamSyncNow: (days_back = 30) =>
     request<{
       tenant_id?: number;

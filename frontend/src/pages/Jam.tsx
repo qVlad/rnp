@@ -65,6 +65,12 @@ export default function Jam() {
     enabled: nmId != null,
   });
 
+  // DEV-085 — динамика позиций (из расширения, abtest_position_snapshot).
+  const positions = useQuery({
+    queryKey: ["jam-positions", days],
+    queryFn: () => api.jamPositions(days),
+  });
+
   const syncMut = useMutation({
     mutationFn: () => api.jamSyncNow(days),
     onSuccess: (data) => {
@@ -408,6 +414,68 @@ export default function Jam() {
               </div>
             )}
           </div>
+        )}
+      </section>
+
+      {/* DEV-085 — динамика позиций наших карточек в поиске */}
+      <section className="card">
+        <h2 className="font-medium mb-1">Динамика позиций в поиске</h2>
+        <p className="text-xs text-muted mb-3">
+          Позиции наших карточек по запросам — собирает Chrome-расширение при
+          заходе на www.wildberries.ru. Конкурентов пока не отслеживаем.
+        </p>
+        {positions.isLoading && <div className="text-muted text-sm">Загрузка…</div>}
+        {!positions.isLoading && (positions.data?.count ?? 0) === 0 && (
+          <div className="text-muted text-sm">
+            Нет данных по позициям за период. Установите Chrome-расширение РНП и
+            зайдите на поиск WB — позиции начнут собираться.
+          </div>
+        )}
+        {(positions.data?.count ?? 0) > 0 && (
+          <table className="w-full text-sm">
+            <thead className="text-muted text-xs uppercase">
+              <tr>
+                <th className="text-left p-2">SKU</th>
+                <th className="text-left p-2">Запрос</th>
+                <th className="text-right p-2">Позиция</th>
+                <th className="text-right p-2">Стр.</th>
+                <th className="text-right p-2">Δ к началу</th>
+                <th className="text-right p-2">Лучшая / Худшая</th>
+                <th className="text-right p-2">Замеров</th>
+              </tr>
+            </thead>
+            <tbody>
+              {positions.data!.items.map((p) => (
+                <tr key={`${p.nm_id}-${p.query}`} className="border-t border-border">
+                  <td className="p-2 font-mono text-xs">
+                    #{p.nm_id}
+                    {p.vendor_code && (
+                      <div className="text-muted">{p.vendor_code}</div>
+                    )}
+                  </td>
+                  <td className="p-2 text-xs">{p.query}</td>
+                  <td className="p-2 text-right font-mono">{p.current_position}</td>
+                  <td className="p-2 text-right font-mono">{p.current_page}</td>
+                  <td
+                    className={`p-2 text-right font-mono ${
+                      p.delta > 0
+                        ? "text-success"
+                        : p.delta < 0
+                          ? "text-danger"
+                          : "text-muted"
+                    }`}
+                    title="Изменение позиции за период (положительное = поднялись выше)"
+                  >
+                    {p.delta > 0 ? `↑${p.delta}` : p.delta < 0 ? `↓${-p.delta}` : "—"}
+                  </td>
+                  <td className="p-2 text-right font-mono text-xs">
+                    {p.best} / {p.worst}
+                  </td>
+                  <td className="p-2 text-right font-mono text-muted">{p.samples}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </section>
 
