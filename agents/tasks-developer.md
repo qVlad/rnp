@@ -39,12 +39,15 @@
 - **Гэп:** обобщить до date-keyed комментариев + `ReferenceLine/Dot` на timeseries
   (компоненты уже есть в PaymentCalendar/MetricDrilldown).
 
-### TASK-DEV-082: Синхронизация склеек WB (авто-группировка) — P2
-- **Тип:** feature/parity · MISSING. TS: кнопка «Синхронизация склеек» —
-  авто-группирует карточки WB по imtID (склейка). У нас `/product-groups` —
-  только ручные группы (paste nm_ids). `imt_id` в репо нет.
-- **Гэп:** тянуть imtID из WB Content API (`/content/v2/get/cards/list`),
-  авто-создавать/обновлять группы по склейке. Миграция (products.imt_id) + sync.
+### TASK-DEV-082: Синхронизация склеек WB (авто-группировка) — P2 ✅
+- **Тип:** feature/parity · ✅ **ВЫПОЛНЕНО 2026-06-13 (v0.67.0)**.
+- Миграция **0074** (`products.imt_id` BIGINT + index). `services/skleika_sync.py`:
+  тянет карточки `/content/v2/get/cards/list` → nm→imtID, проставляет
+  `products.imt_id`, авто-создаёт/обновляет группы `Склейка: <imtID>` для
+  склеек ≥2 nm (идемпотентно, ручные группы не трогает — управляет только
+  префиксом `Склейка: `). Эндпоинт `POST /api/product-groups/sync-skleika`
+  (director_or_head, синхронно — каталог мал). UI: кнопка «Синхронизация склеек»
+  на `/product-groups` (`ProductGroups.tsx`).
 
 ### TASK-DEV-083: Свои склады — мульти-склад + межскладские перемещения — P3
 - **Тип:** feature/parity · PARTIAL. TS «Склады (Beta)»: несколько СВОИХ складов,

@@ -102,7 +102,7 @@ frontend/src/      api/client.ts, contexts/AuthContext, components/Layout, pages
 docker-compose.yml · .env(.example) · .claude/settings.json (permissions)
 ```
 
-## Миграции БД (70 шт., 0001-0070)
+## Миграции БД (74 шт., 0001-0074)
 
 > **Полный список с деталями — [`FEATURES.md`](FEATURES.md) → «Миграции».** Здесь
 > — одна строка на миграцию. Новую миграцию добавляй и сюда (1 строка), и в FEATURES (детали).
@@ -139,6 +139,8 @@ docker-compose.yml · .env(.example) · .claude/settings.json (permissions)
 | 0068 | **wb_promotion** + **wb_promotion_nomenclature** — кэш акций WB-календаря (sync 08:30, source=wb/excel). /promo-calculator-wb читает из БД, не дёргает WB каждый заход |
 | 0069 | **wb_card_price** — реальная витринная цена покупателя с СПП из публичного card.wb.ru/cards/v4 (без токена, sync 05:15, composite PK tenant+nm). observed_spp_pct=(1−buyer/basic)×100 → /unit-plan СПП авто-подтяжка (override>observed>subject>default) |
 | 0070 | **finance_reference** — справочники операций (TASK-DEV-043): свои статьи расходов / контрагенты / счета (ref_type+name+extra JSONB). UI `/finance-extras`, CRUD `/api/finance-reference` |
+| 0071-0073 | manual_operation (+is_planned обязательства ДДС) / metric_plan (план-факт по метрикам) |
+| 0074 | **products.imt_id** — WB склейка (imtID). DEV-082 авто-группировка склеек: `skleika_sync.py` → группы `Склейка: <imtID>`, `POST /api/product-groups/sync-skleika` + кнопка на `/product-groups` |
 
 ## Роли и RBAC
 

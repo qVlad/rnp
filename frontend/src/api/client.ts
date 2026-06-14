@@ -2099,6 +2099,16 @@ paymentOrderDelete: (payment_order_id: string) =>
     ),
   productGroupsMembershipMap: () =>
     request<{ map: Record<string, number[]> }>("/api/product-groups/membership-map"),
+  // DEV-082 — синхронизация склеек WB (imtID → авто-группы).
+  syncSkleika: () =>
+    request<{
+      status: string;
+      cards: number;
+      tagged: number;
+      skleikas: number;
+      groups_created: number;
+      groups_updated: number;
+    }>("/api/product-groups/sync-skleika", { method: "POST" }),
 
   // ── Audit log ──
   listAuditLog: (params: {

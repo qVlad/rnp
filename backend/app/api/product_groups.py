@@ -14,9 +14,10 @@ from app.db.models import (
     Product,
     ProductGroup,
     ProductGroupAssignment,
+    Tenant,
 )
 from app.db.session import get_db
-from app.services.auth import get_db_tenant_scoped
+from app.services.auth import CurrentUser, get_current_user, get_db_tenant_scoped
 from app.services.audit import actor_from_request, audit_log, snapshot
 
 router = APIRouter(prefix="/api/product-groups", tags=["product-groups"])
@@ -118,6 +119,32 @@ async def list_members(
 
 
 # ── CRUD ─────────────────────────────────────────────────────────────────
+
+
+@router.post("/sync-skleika")
+async def sync_skleika_endpoint(
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Синхронизация склеек WB (TASK-DEV-082): тянет imtID из Content API,
+    проставляет `products.imt_id` и авто-создаёт/обновляет группы
+    `Склейка: <imtID>` для карточек одной склейки. Идемпотентно."""
+    from app.services.secrets_crypto import decrypt
+    from app.services.skleika_sync import sync_skleika
+
+    tenant = (
+        await session.execute(select(Tenant).where(Tenant.id == user.tenant_id))
+    ).scalar_one_or_none()
+    if tenant is None or not tenant.wb_token:
+        raise HTTPException(400, "WB-токен не задан для кабинета")
+    try:
+        token = decrypt(tenant.wb_token)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"не удалось расшифровать WB-токен: {exc}") from exc
+    try:
+        return await sync_skleika(session, tenant_id=user.tenant_id, token=token)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"WB Content API недоступен: {exc}") from exc
 
 
 @router.post("")

@@ -17,6 +17,7 @@ export default function ProductGroups() {
   const [color, setColor] = useState("");
   const [comment, setComment] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [skleikaMsg, setSkleikaMsg] = useState<string | null>(null);
 
   const reset = () => {
     setEditingId(null);
@@ -90,6 +91,19 @@ export default function ProductGroups() {
     },
   });
 
+  const skleikaMut = useMutation({
+    mutationFn: () => api.syncSkleika(),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["product-groups"] });
+      setSkleikaMsg(
+        `Готово: карточек ${r.cards}, проставлен imtID у ${r.tagged}, ` +
+          `склеек ${r.skleikas} (создано ${r.groups_created}, обновлено ${r.groups_updated}).`,
+      );
+    },
+    onError: (e: any) =>
+      setSkleikaMsg(`Ошибка: ${e?.message || "не удалось синхронизировать склейки"}`),
+  });
+
   const startEdit = (g: any) => {
     setEditingId(g.id);
     setName(g.name);
@@ -109,6 +123,27 @@ export default function ProductGroups() {
         title="Группы товаров"
         subtitle="объединяй SKU по бренду / категории / ответственному менеджеру — для фильтра на дашборде, план-факте, юнит-экономика"
       />
+
+      {/* DEV-082 — авто-группировка склеек WB */}
+      <section className="card flex flex-wrap items-center gap-3">
+        <button
+          className="btn"
+          onClick={() => {
+            setSkleikaMsg(null);
+            skleikaMut.mutate();
+          }}
+          disabled={skleikaMut.isPending}
+          title="Тянет imtID карточек из WB Content API и авто-создаёт группы «Склейка: <imtID>» для товаров одной склейки. Идемпотентно."
+        >
+          {skleikaMut.isPending ? "Синхронизация…" : "Синхронизация склеек"}
+        </button>
+        <span className="text-xs text-muted">
+          авто-группы из склеек WB (карточки с общим imtID). Ручные группы не трогаются.
+        </span>
+        {skleikaMsg && (
+          <span className="text-sm text-fg w-full">{skleikaMsg}</span>
+        )}
+      </section>
 
       {/* Create / edit form */}
       <section className="card">
