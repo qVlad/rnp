@@ -73,11 +73,16 @@
   `GET /api/jam/positions?days_back` (brand-scope) → per (nm_id, query): текущая
   позиция/страница, Δ к началу, лучшая/худшая, замеры, таймлайн. Секция «Динамика
   позиций в поиске» на `/jam` (`Jam.tsx`). Пусто → подсказка поставить расширение.
-- **❌ Конкурентное сравнение — DATA-BLOCKED (follow-up):** `abtest_position_snapshot`
-  хранит позиции ТОЛЬКО наших карточек (из активных A/B-тестов). Чтобы сравнивать с
-  конкурентами на том же запросе — расширение должно парсить ВСЕ карточки выдачи
-  (не только наши) + новая таблица competitor_position. Это отдельная extension-задача,
-  НЕ строим вслепую. 50+ метрик TS — тоже не цель (у нас фокус на марже/CPC-MAX).
+- **✅ Конкурентное сравнение (v0.72.0):** расширение теперь шлёт ПОЛНЫЙ ранг
+  выдачи (`postSearchRanking` → `POST /api/extension/search-ranking`); анти-спай-гард
+  на бэке: ранг сохраняется в `wb_search_position` (миграция 0077) ТОЛЬКО если в
+  выдаче есть наша карточка. `is_own` по join с products. UI на `/jam` секция
+  «Конкуренты по запросу»: выбор запроса (`GET /jam/competitor-queries`) →
+  ранжированная выдача с подсветкой наших (`GET /jam/competitors?query=`).
+  Extension: `wb-search.ts` (full-ranking send для isSearchPage), `rnp-api.ts`,
+  `bg-bridge.ts`, `background/index.ts`. **Требует пересборки расширения**
+  (`cd extension && npm run build` + reload unpacked) — обычным deploy не катится.
+  50+ метрик TS — не цель (фокус на марже/CPC-MAX).
 
 ### TASK-DEV-086: «Структура выручки» — отдельный виджет — P3 ✅
 - **Тип:** feature/parity · ✅ **ВЫПОЛНЕНО 2026-06-13 (v0.68.0)**.

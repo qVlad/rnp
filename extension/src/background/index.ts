@@ -27,6 +27,7 @@ import {
   getWbTokenStatus,
   openRnpLauncher,
   postPositions,
+  postSearchRanking,
   saveWbToken,
 } from "@/lib/rnp-api";
 import type { BgRequest, BgResponse } from "@/lib/bg-bridge";
@@ -1033,6 +1034,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
       case "postPositions": {
         const ok = await postPositions(req.payload);
+        const resp: BgResponse = { kind: "ok", recorded: ok };
+        sendResponse(resp);
+        return;
+      }
+      case "postSearchRanking": {
+        const ok = await postSearchRanking(req.payload);
         const resp: BgResponse = { kind: "ok", recorded: ok };
         sendResponse(resp);
         return;

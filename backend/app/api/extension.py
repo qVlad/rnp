@@ -54,6 +54,7 @@ from app.db.models import (
     Product,
     Tenant,
     User,
+    WbSearchPosition,
 )
 from app.db.session import get_db
 from app.services.auth import CurrentUser, decode_session_token, get_current_user
@@ -203,6 +204,18 @@ class PositionsPayload(BaseModel):
     position: int
     page: int
     collectedAt: str
+
+
+class SearchCardIn(BaseModel):
+    nmId: int
+    position: int
+
+
+class SearchRankingPayload(BaseModel):
+    query: str
+    page: int = 1
+    collectedAt: str
+    cards: list[SearchCardIn] = Field(default_factory=list)
 
 
 class WbTokenSavePayload(BaseModel):
@@ -555,6 +568,67 @@ async def record_positions(
         "[extension] positions saved: tenant=%s nm=%s q=%r pos=%s page=%s",
         user.tenant_id, payload.nmId, payload.query[:80],
         payload.position, payload.page,
+    )
+    return None
+
+
+@router.post("/search-ranking", status_code=204)
+async def record_search_ranking(
+    payload: SearchRankingPayload,
+    user: CurrentUser = Depends(get_extension_user),
+    session: AsyncSession = Depends(get_db),
+) -> None:
+    """Полная выдача поиска WB (наши + конкуренты) — DEV-085 конкурент-сравнение.
+
+    Анти-спай-гард: сохраняем ранг ТОЛЬКО если в нём есть хотя бы одна НАША
+    карточка (иначе это произвольный чужой запрос — пропускаем). `is_own`
+    проставляем по join с products. Кап топ-100 позиций.
+    """
+    set_tenant(session, user.tenant_id)
+    cards = [c for c in payload.cards if 1 <= c.position <= 100_000][:100]
+    if not cards:
+        return None
+    nm_ids = [int(c.nmId) for c in cards]
+
+    own = set(
+        (
+            await session.execute(
+                select(Product.nm_id).where(
+                    Product.tenant_id == user.tenant_id,
+                    Product.nm_id.in_(nm_ids),
+                )
+            )
+        ).scalars().all()
+    )
+    if not own:
+        # Ни одной нашей карточки в выдаче → не наш запрос, не сохраняем.
+        return None
+
+    from datetime import datetime as _dt
+
+    try:
+        collected = _dt.fromisoformat(payload.collectedAt.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        collected = datetime.now(timezone.utc)
+
+    query = payload.query[:500]
+    page = payload.page if 1 <= payload.page <= 1000 else 1
+    for c in cards:
+        session.add(
+            WbSearchPosition(
+                tenant_id=user.tenant_id,
+                query=query,
+                nm_id=int(c.nmId),
+                position=int(c.position),
+                page=page,
+                is_own=int(c.nmId) in own,
+                collected_at=collected,
+            )
+        )
+    await session.commit()
+    log.info(
+        "[extension] search-ranking saved: tenant=%s q=%r cards=%s own=%s",
+        user.tenant_id, query[:80], len(cards), len(own),
     )
     return None
 

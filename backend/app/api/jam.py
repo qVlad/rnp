@@ -19,7 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AbTestPositionSnapshot, JamQuery, Product
+from app.db.models import AbTestPositionSnapshot, JamQuery, Product, WbSearchPosition
 from app.services.audit import audit_log
 from app.services.auth import (
     CurrentUser,
@@ -146,6 +146,92 @@ async def jam_positions(
     # сортировка: сначала по nm, потом по текущей позиции (лучшие сверху).
     items.sort(key=lambda x: (x["nm_id"], x["current_position"]))
     return {"days_back": days_back, "items": items, "count": len(items)}
+
+
+@router.get("/competitor-queries")
+async def jam_competitor_queries(
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Запросы, по которым есть собранная выдача (для выбора в UI)."""
+    rows = (
+        await session.execute(
+            select(
+                WbSearchPosition.query,
+                func.max(WbSearchPosition.collected_at).label("last"),
+                func.count(func.distinct(WbSearchPosition.nm_id)).label("cards"),
+            ).group_by(WbSearchPosition.query)
+        )
+    ).all()
+    items = [
+        {"query": r.query, "last": r.last.isoformat() if r.last else None,
+         "cards": int(r.cards or 0)}
+        for r in rows
+    ]
+    items.sort(key=lambda x: x["last"] or "", reverse=True)
+    return {"items": items, "count": len(items)}
+
+
+@router.get("/competitors")
+async def jam_competitors(
+    query: Annotated[str, Query(min_length=1)],
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Последний срез выдачи WB по запросу: наши карточки + конкуренты (DEV-085).
+
+    Источник — `wb_search_position` (полный ранг шлёт расширение для запросов,
+    где есть наша карточка). Берём самый свежий `collected_at` по этому запросу.
+    Наши карточки помечены `is_own` + vendor_code.
+    """
+    last = (
+        await session.execute(
+            select(func.max(WbSearchPosition.collected_at)).where(
+                WbSearchPosition.query == query
+            )
+        )
+    ).scalar()
+    if last is None:
+        return {"query": query, "collected_at": None, "items": [], "count": 0}
+
+    rows = (
+        await session.execute(
+            select(WbSearchPosition)
+            .where(
+                WbSearchPosition.query == query,
+                WbSearchPosition.collected_at == last,
+            )
+            .order_by(WbSearchPosition.position)
+        )
+    ).scalars().all()
+
+    own_nms = [r.nm_id for r in rows if r.is_own]
+    vendor: dict[int, str | None] = {}
+    if own_nms:
+        for nm, vc in (
+            await session.execute(
+                select(Product.nm_id, Product.vendor_code).where(
+                    Product.nm_id.in_(own_nms)
+                )
+            )
+        ).all():
+            vendor[int(nm)] = vc
+
+    items = [
+        {
+            "nm_id": r.nm_id,
+            "position": r.position,
+            "page": r.page,
+            "is_own": r.is_own,
+            "vendor_code": vendor.get(r.nm_id) if r.is_own else None,
+        }
+        for r in rows
+    ]
+    return {
+        "query": query,
+        "collected_at": last.isoformat(),
+        "items": items,
+        "count": len(items),
+        "own_count": len(own_nms),
+    }
 
 
 @router.get("/clusters/{nm_id}")

@@ -2323,6 +2323,26 @@ paymentOrderDelete: (payment_order_id: string) =>
         timeline: { dt: string; position: number; page: number }[];
       }>;
     }>(`/api/jam/positions?days_back=${days_back}`),
+  // DEV-085 follow-up — конкурентное сравнение по запросу (полная выдача).
+  jamCompetitorQueries: () =>
+    request<{
+      count: number;
+      items: { query: string; last: string | null; cards: number }[];
+    }>("/api/jam/competitor-queries"),
+  jamCompetitors: (query: string) =>
+    request<{
+      query: string;
+      collected_at: string | null;
+      count: number;
+      own_count: number;
+      items: Array<{
+        nm_id: number;
+        position: number;
+        page: number;
+        is_own: boolean;
+        vendor_code: string | null;
+      }>;
+    }>(`/api/jam/competitors?query=${encodeURIComponent(query)}`),
   jamSyncNow: (days_back = 30) =>
     request<{
       tenant_id?: number;

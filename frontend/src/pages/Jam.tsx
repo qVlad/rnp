@@ -71,6 +71,18 @@ export default function Jam() {
     queryFn: () => api.jamPositions(days),
   });
 
+  // DEV-085 follow-up — конкурентное сравнение по запросу (полная выдача).
+  const [compQuery, setCompQuery] = useState("");
+  const compQueries = useQuery({
+    queryKey: ["jam-competitor-queries"],
+    queryFn: () => api.jamCompetitorQueries(),
+  });
+  const competitors = useQuery({
+    queryKey: ["jam-competitors", compQuery],
+    queryFn: () => api.jamCompetitors(compQuery),
+    enabled: !!compQuery,
+  });
+
   const syncMut = useMutation({
     mutationFn: () => api.jamSyncNow(days),
     onSuccess: (data) => {
@@ -476,6 +488,91 @@ export default function Jam() {
               ))}
             </tbody>
           </table>
+        )}
+      </section>
+
+      {/* DEV-085 follow-up — конкурентное сравнение по запросу */}
+      <section className="card">
+        <h2 className="font-medium mb-1">Конкуренты по запросу</h2>
+        <p className="text-xs text-muted mb-3">
+          Полная выдача WB по запросу — наши карточки и конкуренты. Собирает
+          расширение РНП при заходе на поиск (только по запросам, где есть наша
+          карточка). Выберите запрос:
+        </p>
+        {(compQueries.data?.count ?? 0) === 0 ? (
+          <div className="text-muted text-sm">
+            Нет собранных выдач. Установите расширение и зайдите на поиск WB по
+            запросу, где ранжируется ваша карточка.
+          </div>
+        ) : (
+          <select
+            className="input mb-3 max-w-md"
+            value={compQuery}
+            onChange={(e) => setCompQuery(e.target.value)}
+          >
+            <option value="">— выберите запрос —</option>
+            {compQueries.data!.items.map((q) => (
+              <option key={q.query} value={q.query}>
+                {q.query} ({q.cards} карточек)
+              </option>
+            ))}
+          </select>
+        )}
+        {competitors.isLoading && <div className="text-muted text-sm">Загрузка…</div>}
+        {compQuery && (competitors.data?.count ?? 0) > 0 && (
+          <>
+            <div className="text-xs text-muted mb-2">
+              Срез на{" "}
+              {competitors.data!.collected_at
+                ? new Date(competitors.data!.collected_at).toLocaleString("ru")
+                : "—"}{" "}
+              · наших карточек в выдаче: {competitors.data!.own_count}
+            </div>
+            <table className="w-full text-sm">
+              <thead className="text-muted text-xs uppercase">
+                <tr>
+                  <th className="text-right p-2">Поз.</th>
+                  <th className="text-right p-2">Стр.</th>
+                  <th className="text-left p-2">nm_id</th>
+                  <th className="text-left p-2">Чья карточка</th>
+                </tr>
+              </thead>
+              <tbody>
+                {competitors.data!.items.map((r) => (
+                  <tr
+                    key={`${r.position}-${r.nm_id}`}
+                    className={`border-t border-border ${
+                      r.is_own ? "bg-accent-subtle" : ""
+                    }`}
+                  >
+                    <td className="p-2 text-right font-mono font-medium">
+                      {r.position}
+                    </td>
+                    <td className="p-2 text-right font-mono text-muted">{r.page}</td>
+                    <td className="p-2 font-mono text-xs">
+                      <a
+                        href={`https://www.wildberries.ru/catalog/${r.nm_id}/detail.aspx`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline decoration-dotted"
+                      >
+                        #{r.nm_id}
+                      </a>
+                    </td>
+                    <td className="p-2 text-xs">
+                      {r.is_own ? (
+                        <span className="text-accent font-medium">
+                          🟦 Наша{r.vendor_code ? ` · ${r.vendor_code}` : ""}
+                        </span>
+                      ) : (
+                        <span className="text-muted">конкурент</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
         )}
       </section>
 

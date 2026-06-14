@@ -132,6 +132,38 @@ export async function postPositions(payload: {
 }
 
 /**
+ * Полная выдача поиска (наши + конкуренты) — DEV-085. Бэкенд сохраняет ранг
+ * только если в нём есть наша карточка (анти-спай-гард на сервере).
+ */
+export async function postSearchRanking(payload: {
+  query: string;
+  page: number;
+  collectedAt: string;
+  cards: { nmId: number; position: number }[];
+}): Promise<boolean> {
+  if (USE_MOCK) {
+    console.log("[rnp-api MOCK] postSearchRanking", payload);
+    return true;
+  }
+  const settings = await getSettings();
+  if (!settings.rnpUrl || !settings.rnpToken) return false;
+  try {
+    const res = await fetch(`${settings.rnpUrl}/api/extension/search-ranking`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${settings.rnpToken}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    return res.ok;
+  } catch (e) {
+    console.warn("[rnp-api] postSearchRanking failed:", e);
+    return false;
+  }
+}
+
+/**
  * Auto-token (Часть 1 ветки feature/cycles-schedule):
  * сохранение JWT, полученного content script'ом из cabinet tokensjrpc.
  * Возвращает true если backend подтвердил сохранение.

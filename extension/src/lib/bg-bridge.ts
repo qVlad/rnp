@@ -30,6 +30,15 @@ export type BgRequest =
         collectedAt: string;
       };
     }
+  | {
+      type: "postSearchRanking";
+      payload: {
+        query: string;
+        page: number;
+        collectedAt: string;
+        cards: { nmId: number; position: number }[];
+      };
+    }
   | { type: "openLauncher"; nmId: number }
   | { type: "openTestPage"; testId: string }
   /**

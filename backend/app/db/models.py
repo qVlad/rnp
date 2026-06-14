@@ -1557,6 +1557,35 @@ class AbTestPositionSnapshot(Base, TenantScopedMixin):
     )
 
 
+class WbSearchPosition(Base, TenantScopedMixin):
+    """Полная выдача поиска WB по запросу — наши И чужие карточки (DEV-085).
+
+    Расширение шлёт весь видимый ранг (`POST /api/extension/search-ranking`)
+    ТОЛЬКО для запросов, где есть хоть одна НАША карточка (бэкенд так фильтрует —
+    не спай по произвольным запросам). `is_own` ставится на бэке по join с
+    products. Используется конкурентным сравнением `/jam` (кто выше нас).
+    """
+
+    __tablename__ = "wb_search_position"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    query: Mapped[str] = mapped_column(String(500), nullable=False)
+    nm_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    page: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    is_own: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    collected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_wb_search_pos_tenant_q_dt", "tenant_id", "query", "collected_at"),
+    )
+
+
 class AbTestStatsSnapshot(Base, TenantScopedMixin):
     """Snapshot кумулятивов за день — для дельта-атрибуции между вариантами.
 

@@ -41,12 +41,6 @@ async function collectPositions(): Promise<void> {
 
   if (!isSearchPage() && !isCatalogPage()) return;
 
-  // Узнаём какие тесты сейчас активны — чтобы не слать данные про чужие SKU.
-  // Если пользователь не настроил РНП или ничего не активно — выходим.
-  const activeTests = await getCachedActiveTests();
-  if (activeTests.length === 0) return;
-  const trackedNmIds = new Set(activeTests.map((t) => t.nmId));
-
   const query = extractSearchQuery() || derivePseudoQueryFromCatalogUrl();
   if (!query) return;
 
@@ -59,9 +53,32 @@ async function collectPositions(): Promise<void> {
   const page = derivePageNumberFromUrl();
   const collectedAt = new Date().toISOString();
 
+  // DEV-085 — конкурентное сравнение: шлём ПОЛНЫЙ ранг выдачи (наши +
+  // конкуренты), но только для реального поиска (не каталог-броузинга — меньше
+  // шума). Бэкенд сохраняет ранг ТОЛЬКО если в нём есть наша карточка
+  // (анти-спай-гард на сервере) — произвольные чужие запросы не пишутся.
+  if (isSearchPage()) {
+    try {
+      await bgRequest({
+        type: "postSearchRanking",
+        payload: {
+          query,
+          page,
+          collectedAt,
+          cards: cards.map((c) => ({ nmId: c.nmId, position: c.position })),
+        },
+      });
+    } catch (e) {
+      console.warn("[rnp-ext] bgRequest postSearchRanking failed:", e);
+    }
+  }
+
+  // A/B-трекинг позиций наших тестовых карточек (как раньше) + подсветка.
+  const activeTests = await getCachedActiveTests();
+  if (activeTests.length === 0) return;
+  const trackedNmIds = new Set(activeTests.map((t) => t.nmId));
   const matches = cards.filter((c) => trackedNmIds.has(c.nmId));
   if (matches.length === 0) {
-    // Полезная диагностика только если есть tracked nmIds:
     console.debug(
       `[rnp-ext] no tracked cards on "${query}" page ${page} (${cards.length} total cards)`,
     );
@@ -71,8 +88,6 @@ async function collectPositions(): Promise<void> {
   console.log(
     `[rnp-ext] found ${matches.length} tracked cards on "${query}" page ${page}`,
   );
-
-  // Шлём через типизированный bg-bridge — service worker сделает реальный fetch.
   for (const c of matches) {
     try {
       await bgRequest({
@@ -86,12 +101,8 @@ async function collectPositions(): Promise<void> {
         },
       });
     } catch (e) {
-      // Если SW не отвечает — не страшно, попробуем в следующий раз.
       console.warn("[rnp-ext] bgRequest postPositions failed:", e);
     }
-
-    // Опционально подсвечиваем карточку, чтобы пользователь видел что
-    // РНП «знает» про эту позицию.
     highlightTrackedCard(c.element);
   }
 }
