@@ -53,6 +53,14 @@ function isRubMetric(m: Metric): boolean {
   return m === "spent" || m === "revenue" || m === "cpl" || m === "cps";
 }
 
+// Форматирование значения произвольной метрики для tooltip (для 2-й метрики).
+function fmtTitle2(m: Metric, val: number): string {
+  if (m === "drr") return fmtPct(val);
+  if (m === "basket_conv" || m === "order_conv") return fmtPct(val, 1);
+  if (isRubMetric(m)) return fmtRub(val);
+  return fmtNum(val);
+}
+
 function cellColor(metric: Metric, val: number | null): string {
   if (val == null || val <= 0) return "bg-bg text-muted/60";
   if (metric === "drr") {
@@ -87,11 +95,20 @@ export default function AdsHeatmap() {
   const from = range.from;
   const to = range.to;
   const [metric, setMetric] = useState<Metric>("drr");
+  // DEV-080 (TS-parity): двойная метрика — цвет = metric, размер ячейки = sizeMetric.
+  const [sizeMetric, setSizeMetric] = useState<Metric | "none">("none");
   const { filters, toParams } = useFilters();
 
   const q = useQuery<any>({
     queryKey: ["ads-heatmap", from, to, metric, filterKey(filters)],
     queryFn: () => api.adsHeatmap(from, to, metric, toParams()),
+  });
+  // Вторая метрика — отдельный запрос (API отдаёт по одной метрике за раз).
+  // Кампании/дни совпадают (тот же период/фильтры) → выравниваем по advert_id.
+  const sizeQ = useQuery<any>({
+    queryKey: ["ads-heatmap-size", from, to, sizeMetric, filterKey(filters)],
+    queryFn: () => api.adsHeatmap(from, to, sizeMetric as Metric, toParams()),
+    enabled: sizeMetric !== "none",
   });
   const d: any = q.data;
   const days: string[] = d?.days || [];
@@ -107,6 +124,28 @@ export default function AdsHeatmap() {
     for (const c of campaigns) for (const v of c.cells) if (v != null && v > m) m = v;
     return m || 1;
   }, [campaigns, metric]);
+
+  // Карта advert_id → cells второй метрики + её max (для масштаба размера).
+  const sizeByAdvert = useMemo(() => {
+    const map: Record<string, (number | null)[]> = {};
+    let mx = 0;
+    if (sizeMetric !== "none" && sizeQ.data?.campaigns) {
+      for (const c of sizeQ.data.campaigns) {
+        map[String(c.advert_id)] = c.cells;
+        for (const v of c.cells) if (v != null && v > mx) mx = v;
+      }
+    }
+    return { map, max: mx || 1 };
+  }, [sizeQ.data, sizeMetric]);
+
+  // Масштаб 0.3..1.0 по площади (sqrt) для значения второй метрики.
+  const sizeScale = (advertId: number | string, i: number): number => {
+    if (sizeMetric === "none") return 1;
+    const cells = sizeByAdvert.map[String(advertId)];
+    const v = cells?.[i];
+    if (v == null || v <= 0) return 0.22;
+    return Math.max(0.3, Math.min(1, Math.sqrt(v / sizeByAdvert.max)));
+  };
 
   return (
     <div className="space-y-4">
@@ -158,6 +197,31 @@ export default function AdsHeatmap() {
                 </option>
               ))}
             </optgroup>
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-muted uppercase">Размер ячейки</span>
+          <select
+            className="input"
+            value={sizeMetric}
+            onChange={(e) => setSizeMetric(e.target.value as Metric | "none")}
+            title="Вторая метрика: размер ячейки ∝ её значению (цвет — основная метрика). Как в TrueStats."
+          >
+            <option value="none">— нет (одна метрика) —</option>
+            {(
+              [
+                "spent",
+                "revenue",
+                "orders",
+                "clicks",
+                "cpl",
+                "cps",
+              ] as Metric[]
+            ).map((m) => (
+              <option key={m} value={m} disabled={m === metric}>
+                {metricLabel[m]}
+              </option>
+            ))}
           </select>
         </div>
         {totals && (
@@ -269,6 +333,32 @@ export default function AdsHeatmap() {
                       if (isRubMetric(metric)) return fmtRub(val);
                       return fmtNum(val);
                     };
+                    // Двойная метрика: цвет ячейки несёт metric, а размер
+                    // внутреннего блока ∝ значению sizeMetric (DEV-080).
+                    if (sizeMetric !== "none") {
+                      const scale = sizeScale(c.advert_id, i);
+                      const sizeCells = sizeByAdvert.map[String(c.advert_id)];
+                      const sizeVal = sizeCells?.[i];
+                      const pct = `${Math.round(scale * 100)}%`;
+                      return (
+                        <td
+                          key={i}
+                          className="p-0.5 text-center align-middle min-w-[30px] h-[26px]"
+                          title={`${days[i]}: ${metricLabel[metric]} ${
+                            v != null ? fmtTitle(v) : "—"
+                          } · ${metricLabel[sizeMetric as Metric]} ${
+                            sizeVal != null ? fmtTitle2(sizeMetric as Metric, sizeVal) : "—"
+                          }`}
+                        >
+                          <div className="w-full h-full flex items-center justify-center">
+                            <div
+                              className={`rounded-sm ${cls}`}
+                              style={{ width: pct, height: pct, ...intensityStyle }}
+                            />
+                          </div>
+                        </td>
+                      );
+                    }
                     return (
                       <td
                         key={i}
