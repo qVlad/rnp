@@ -705,6 +705,18 @@ export const api = {
     }>(
       `/api/dashboard/timeseries?days=${days}&mode=${mode}&reporting_mode=${reportingMode}${filterSuffix(filters)}`,
     ),
+  // DEV-081 — команд-аннотации на дату (маркеры на графиках).
+  annotations: (from: string, to: string) =>
+    request<{
+      items: { id: number; dt: string; text: string; author_name: string | null }[];
+    }>(`/api/annotations?from=${from}&to=${to}`),
+  createAnnotation: (dt: string, text: string) =>
+    request<{ id: number; status: string }>("/api/annotations", {
+      method: "POST",
+      body: JSON.stringify({ dt, text }),
+    }),
+  deleteAnnotation: (id: number) =>
+    request<{ status: string }>(`/api/annotations/${id}`, { method: "DELETE" }),
   dashboardCompare: (
     aFrom: string,
     aTo: string,

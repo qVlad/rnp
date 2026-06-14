@@ -19,6 +19,7 @@ from app.api import (
     chargebacks,
     checklist,
     cost_history,
+    annotations,
     dashboard,
     dashboard_compare,
     excel,
@@ -218,6 +219,7 @@ async def whoami() -> dict[str, object]:
 
 app.include_router(dashboard.router)
 app.include_router(dashboard_compare.router)
+app.include_router(annotations.router)
 app.include_router(pnl.router)
 app.include_router(units.router)
 app.include_router(finance_extra.router)

@@ -2598,6 +2598,25 @@ class WeeklyReportComment(Base, TenantScopedMixin):
     )
 
 
+class ChartAnnotation(Base, TenantScopedMixin):
+    """Команд-аннотация на дату (DEV-081, TS-parity комментарии-маркеры).
+
+    Заметка, привязанная к календарной дате (запуск рекламы, смена цены,
+    поставка, промо). Рисуется маркером (ReferenceLine) на timeseries-графиках
+    и видна всей команде. Глобальная (не per-brand) в v1.
+    """
+
+    __tablename__ = "chart_annotation"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    dt: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    author_name: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class WbTransitTariff(Base, TenantScopedMixin):
     """Тарифы транзитных направлений из ЛК WB (TASK-LEAD-078, миграция 0059).
 

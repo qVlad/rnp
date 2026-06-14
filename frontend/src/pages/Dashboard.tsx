@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   DndContext,
   DragEndEvent,
@@ -19,6 +19,7 @@ import {
   CartesianGrid,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -202,6 +203,39 @@ export default function Dashboard() {
     },
   });
   const alertsQ = useQuery({ queryKey: ["alerts"], queryFn: () => api.alerts() });
+
+  // DEV-081 — команд-аннотации (маркеры на timeseries за окно графика).
+  const qc = useQueryClient();
+  const canEditAnnotations =
+    user?.role === "director" || user?.role === "head_of_sales";
+  const tsFrom = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - tsDays);
+    return d.toISOString().slice(0, 10);
+  }, [tsDays]);
+  const tsTo = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const annQ = useQuery({
+    queryKey: ["annotations", tsFrom, tsTo],
+    queryFn: () => api.annotations(tsFrom, tsTo),
+  });
+  const annotations = annQ.data?.items ?? [];
+  const [annDate, setAnnDate] = useState(tsTo);
+  const [annText, setAnnText] = useState("");
+  const addAnnMut = useMutation({
+    mutationFn: () => api.createAnnotation(annDate, annText.trim()),
+    onSuccess: () => {
+      setAnnText("");
+      qc.invalidateQueries({ queryKey: ["annotations"] });
+    },
+  });
+  const delAnnMut = useMutation({
+    mutationFn: (id: number) => api.deleteAnnotation(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["annotations"] }),
+  });
+  // Только аннотации, чья дата попадает в точки графика (иначе ReferenceLine
+  // не привяжется к оси X).
+  const chartDates = new Set<string>((tsQ.data?.rows ?? []).map((r: any) => r.date));
+  const chartAnnotations = annotations.filter((a) => chartDates.has(a.dt));
 
   const applyCustom = () => {
     if (!customStart || !customEnd) return;
@@ -578,9 +612,80 @@ export default function Dashboard() {
                     dot={false}
                     hide={!showOrders}
                   />
+                  {/* DEV-081 — маркеры команд-аннотаций на оси дат. */}
+                  {chartAnnotations.map((a) => (
+                    <ReferenceLine
+                      key={a.id}
+                      yAxisId="revenue"
+                      x={a.dt}
+                      stroke="var(--accent)"
+                      strokeDasharray="3 3"
+                      label={{
+                        value: "📌",
+                        position: "top",
+                        fontSize: 11,
+                      }}
+                    />
+                  ))}
                 </LineChart>
               </ResponsiveContainer>
             )}
+            {/* DEV-081 — команд-заметки на датах (маркеры 📌 на графике выше). */}
+            <div className="mt-3 border-t border-border pt-2">
+              <div className="text-xs text-muted mb-1">
+                Заметки на графике (запуск рекламы / смена цены / поставка)
+              </div>
+              {canEditAnnotations && (
+                <div className="flex flex-wrap items-center gap-2 mb-2">
+                  <input
+                    type="date"
+                    className="input"
+                    value={annDate}
+                    onChange={(e) => setAnnDate(e.target.value)}
+                  />
+                  <input
+                    type="text"
+                    className="input flex-1 min-w-[160px]"
+                    placeholder="напр. подняли ставки РК"
+                    value={annText}
+                    onChange={(e) => setAnnText(e.target.value)}
+                    maxLength={2000}
+                  />
+                  <button
+                    className="btn"
+                    disabled={!annText.trim() || addAnnMut.isPending}
+                    onClick={() => addAnnMut.mutate()}
+                  >
+                    Добавить
+                  </button>
+                </div>
+              )}
+              {annotations.length > 0 ? (
+                <ul className="flex flex-wrap gap-2">
+                  {annotations.map((a) => (
+                    <li
+                      key={a.id}
+                      className="text-xs bg-bg rounded px-2 py-1 flex items-center gap-1.5"
+                      title={a.author_name || ""}
+                    >
+                      <span className="text-muted font-mono">{a.dt.slice(5)}</span>
+                      <span>{a.text}</span>
+                      {canEditAnnotations && (
+                        <button
+                          className="text-danger hover:opacity-70"
+                          title="Удалить"
+                          onClick={() => delAnnMut.mutate(a.id)}
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="text-xs text-muted">Заметок за период нет.</div>
+              )}
+            </div>
           </div>
         </div>
 

@@ -31,13 +31,12 @@
   `Dashboard.tsx:DashboardKpiGrid`. Hero-плитки и show/hide — без изменений.
   («+ Метрика» на дашборде — отдельный мелкий гэп, не делаем: конструктор в /settings.)
 
-### TASK-DEV-081: Комментарии-маркеры на графиках (team-аннотации по датам) — P2
-- **Тип:** feature/parity · MISSING. TS: коммент привязан к дате/артикулу/периоду,
-  рисуется маркером на оси времени графика, тултип, виден всей команде (аннотации
-  запусков рекламы/смены цены/поставок). У нас только `weekly_report_comment`
-  (week_start+brand, текстблоки в /weekly-report) — уже, без чарт-маркеров.
-- **Гэп:** обобщить до date-keyed комментариев + `ReferenceLine/Dot` на timeseries
-  (компоненты уже есть в PaymentCalendar/MetricDrilldown).
+### TASK-DEV-081: Комментарии-маркеры на графиках (team-аннотации по датам) — P2 ✅
+- **Тип:** feature/parity · ✅ **ВЫПОЛНЕНО 2026-06-13 (v0.69.0)**.
+- Миграция **0075** (`chart_annotation`: tenant_id, dt, text, author_name).
+  `api/annotations.py` (GET период — все роли; POST/DELETE — director_or_head).
+  Дашборд: 📌-маркеры (`ReferenceLine`) на timeseries за окно графика + панель
+  «Заметки» (add date+text / list / delete) под графиком. `Dashboard.tsx`.
 
 ### TASK-DEV-082: Синхронизация склеек WB (авто-группировка) — P2 ✅
 - **Тип:** feature/parity · ✅ **ВЫПОЛНЕНО 2026-06-13 (v0.67.0)**.
