@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, Link } from "react-router-dom";
 import {
   type ColumnDef,
   flexRender,
@@ -516,7 +516,13 @@ export default function Units() {
         accessorKey: "nm_id",
         cell: (c) => (
           <div className="font-mono text-xs leading-tight max-w-[150px] whitespace-normal">
-            <div className="whitespace-nowrap">#{c.getValue<number>()}</div>
+            <Link
+              to={`/product/${c.getValue<number>()}`}
+              className="whitespace-nowrap underline decoration-dotted hover:text-accent"
+              title="Открыть карточку товара"
+            >
+              #{c.getValue<number>()}
+            </Link>
             <div className="text-muted line-clamp-2 break-words">
               {c.row.original.vendor_code || c.row.original.subject || "—"}
             </div>

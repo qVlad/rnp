@@ -55,12 +55,13 @@
 - **Гэп:** warehouse_id на движениях + операция transfer между своими складами +
   per-склад остатки/капитализация. Миграция + UI.
 
-### TASK-DEV-084: Выделенная страница товара `/product/:nm_id` — P2
-- **Тип:** feature/parity · PARTIAL. TS: отдельная страница SKU со всеми KPI +
-  фото/ссылка на WB. У нас только drill-drawer/modal в /units и /unit-plan +
-  deep-link `?nm_id=`. Нет standalone-страницы.
-- **Гэп:** роут `/product/:nm_id`, переиспользовать существующие per-SKU эндпоинты
-  (units/unit-plan/detail, price-history, funnel) на одной странице.
+### TASK-DEV-084: Выделенная страница товара `/product/:nm_id` — P2 ✅
+- **Тип:** feature/parity · ✅ **ВЫПОЛНЕНО 2026-06-13 (v0.66.0)**.
+- `frontend/src/pages/ProductPage.tsx` + роут `/product/:nmId` (App.tsx).
+  Шапка (фото/название/бренд/предмет/ссылка на WB) + 20 KPI за период (из
+  `/api/units?articles=<nm>`) + график цены 90д + COGS + план-факт (из
+  `/api/unit-plan/{nm}/detail`). Переиспользует существующие эндпоинты — без
+  нового бэкенда. Артикул в `/units` теперь ссылка на карточку.
 
 ### TASK-DEV-085: Джем — конкурентное сравнение + динамика позиций — P3
 - **Тип:** feature/parity · PARTIAL (часть может быть data-blocked). TS поиск-аналитика:

@@ -88,6 +88,7 @@
 | Фича | Описание | Путь в коде | Доступ |
 |---|---|---|---|
 | Units таблица | Per-SKU revenue, COGS, commission, logistics, storage, маржа, ROI | `pages/Units.tsx`, `services/unit_economics.py`, `api/units.py` | brands-filter |
+| **Карточка товара `/product/:nm_id`** (TS-parity DEV-084) | Выделенная страница одного SKU: шапка (фото/название/бренд/предмет + ссылка на WB) + 20 KPI за период (из `/api/units?articles=<nm>`) + график цены 90д + COGS + план-факт (из `/api/unit-plan/{nm}/detail`). Переиспользует существующие эндпоинты, без нового бэкенда. Артикул в таблице `/units` — ссылка на карточку | `pages/ProductPage.tsx`, route `product/:nmId` | brands-filter |
 | Cashback в marketing_total | `wb_report_detail.cashback_amount` per nm включён в drr% / margin / expenses_for_tax. WB-маркетинг платит покупателю, но это скрытый промо-расход селлера (drr / маржа падают) | `services/unit_economics.py:cashback_rd` | brands-filter |
 | Фильтр по бренду в /supply, /units | Tabs/dropdown «Все / Бренд A / Без бренда» — клиентский фильтр, persist в localStorage. Manager увидит только свои бренды | `pages/Supply.tsx`, `pages/Units.tsx` (UNITS_BRAND_FILTER_KEY, BRAND_FILTER_KEY) | brands-filter |
 | ABC-анализ | ABC-классификация по выручке / марже / маржинальности | `pages/AbcAnalysis.tsx`, `services/abc_xyz.py` | brands-filter |

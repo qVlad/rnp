@@ -15,6 +15,7 @@ import ReconciliationAuto from "./pages/ReconciliationAuto";
 import Taxes from "./pages/Taxes";
 import Supplies from "./pages/Supplies";
 import Units from "./pages/Units";
+import ProductPage from "./pages/ProductPage";
 import Funnel from "./pages/Funnel";
 import UnitPlan from "./pages/UnitPlan";
 import Tariffs from "./pages/Tariffs";
@@ -216,6 +217,7 @@ export default function App() {
             }
           />
           <Route path="units" element={<Units />} />
+          <Route path="product/:nmId" element={<ProductPage />} />
           <Route path="funnel" element={<Funnel />} />
           <Route path="unit-plan" element={<UnitPlan />} />
           <Route path="tariffs" element={<Tariffs />} />
