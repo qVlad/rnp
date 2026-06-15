@@ -38,7 +38,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.logging import get_logger
@@ -166,6 +166,14 @@ async def _sync_tenant_funnel_async(
                             buyouts_count = int(
                                 h.get("buyoutCount") or h.get("buyoutsCount") or 0
                             )
+                            # Отмены/невыкупы — для WB-формулы % выкупа
+                            # buyouts/(buyouts+cancels). WB отдаёт cancelCount.
+                            _cc = (
+                                h.get("cancelCount")
+                                or h.get("cancelsCount")
+                                or h.get("canceledCount")
+                            )
+                            cancel_count = int(_cc) if _cc is not None else None
                             orders_sum = Decimal(
                                 str(h.get("orderSum") or h.get("ordersSumRub") or 0)
                             )
@@ -178,6 +186,7 @@ async def _sync_tenant_funnel_async(
                                     "dt": dt,
                                     "orders_count": orders_count,
                                     "buyouts_count": buyouts_count,
+                                    "cancel_count": cancel_count,
                                     "orders_sum_rub": orders_sum,
                                     "open_count": int(open_count) if open_count else None,
                                     "cart_count": int(cart_count) if cart_count else None,
@@ -191,6 +200,10 @@ async def _sync_tenant_funnel_async(
                             set_={
                                 "orders_count": stmt.excluded.orders_count,
                                 "buyouts_count": stmt.excluded.buyouts_count,
+                                "cancel_count": func.coalesce(
+                                    stmt.excluded.cancel_count,
+                                    WbFunnelDaily.cancel_count,
+                                ),
                                 "orders_sum_rub": stmt.excluded.orders_sum_rub,
                                 "open_count": stmt.excluded.open_count,
                                 "cart_count": stmt.excluded.cart_count,

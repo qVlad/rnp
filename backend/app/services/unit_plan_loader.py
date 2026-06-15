@@ -503,50 +503,67 @@ async def _buyout_pct_30d(
     nm_ids: list[int],
     on_date: date,
     velocity_days: int = 30,
+    period_from: date | None = None,
+    period_to: date | None = None,
 ) -> dict[int, Decimal]:
-    """% выкупа per nm_id за последние velocity_days дней. Доля 0-1.
+    """% выкупа per nm_id. Доля 0-1. Совпадает с интерактивной Воронкой WB.
 
-    **Источник — Воронка WB** (`wb_funnel_daily`): `SUM(buyouts_count) /
-    SUM(orders_count)`. Это тот же Analytics API, что и интерактивный отчёт
-    «Воронка» в ЛК (content-analytics/interactive-report) — поэтому % выкупа,
-    заказы и выкупы совпадают с Воронкой 1:1. Запрос пользователя 2026-06-15:
-    «выкупы и заказы из воронки, % выкупа должен совпадать с воронкой»
-    (отменяет DEV-078, где буфер брался из report_detail).
+    **Формула как в Воронке:** `buyouts / (buyouts + cancels)` — знаменатель =
+    ТЕРМИНАЛЬНЫЕ заказы (выкуплено + отменено), БЕЗ «в пути». Не `buyouts/orders`
+    (там в orders сидят ещё не доставленные → % занижается). Источник —
+    `wb_funnel_daily` (тот же Analytics API, что и отчёт «Воронка» в ЛК), поле
+    `cancel_count` (миграция 0078). Запрос пользователя 2026-06-15.
 
-    Fallback (нет funnel-покрытия у nm — Воронка rolling-7, копится с 22.05):
-    нетто report_detail (Продажа−Возврат по sale_dt) / wb_orders(total). Если
-    нет ни того ни другого — nm отсутствует в dict (caller → config-fallback).
+    **Период:** если заданы `period_from/period_to` — считаем за это окно (как
+    выбранный период в Воронке); иначе последние `velocity_days` дней.
+
+    Деградации:
+      • нет `cancel_count` за период (старые строки) → `buyouts/orders` (как было);
+      • нет funnel-покрытия у nm → fallback report_detail-net/wb_orders.
     """
     if not nm_ids:
         return {}
     from app.services.period_aggregates import OP_SALE, OP_RETURN
 
-    cutoff_date = on_date - timedelta(days=velocity_days)
-    cutoff = datetime.combine(cutoff_date, datetime.min.time(), tzinfo=timezone.utc)
-    end_dt = datetime.combine(on_date, datetime.min.time(), tzinfo=timezone.utc)
+    win_from = period_from or (on_date - timedelta(days=velocity_days))
+    win_to = period_to or on_date
+    cutoff = datetime.combine(win_from, datetime.min.time(), tzinfo=timezone.utc)
+    end_dt = datetime.combine(win_to + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
 
     out: dict[int, Decimal] = {}
 
-    # ── Primary: Воронка (wb_funnel_daily) ──
+    # ── Primary: Воронка (wb_funnel_daily) — buyouts/(buyouts+cancels) ──
     funnel_stmt = (
         select(
             WbFunnelDaily.nm_id,
             func.sum(WbFunnelDaily.orders_count),
             func.sum(WbFunnelDaily.buyouts_count),
+            func.sum(func.coalesce(WbFunnelDaily.cancel_count, 0)),
+            func.sum(
+                case((WbFunnelDaily.cancel_count.isnot(None), 1), else_=0)
+            ),
         )
         .where(
             WbFunnelDaily.tenant_id == tenant_id,
             WbFunnelDaily.nm_id.in_(nm_ids),
-            WbFunnelDaily.dt >= cutoff_date,
-            WbFunnelDaily.dt <= on_date,
+            WbFunnelDaily.dt >= win_from,
+            WbFunnelDaily.dt <= win_to,
         )
         .group_by(WbFunnelDaily.nm_id)
     )
-    for nm, f_orders, f_buyouts in (await session.execute(funnel_stmt)).all():
+    for nm, f_orders, f_buyouts, f_cancels, f_has_cancel in (
+        await session.execute(funnel_stmt)
+    ).all():
         o = int(f_orders or 0)
-        if o <= 0:
+        b = int(f_buyouts or 0)
+        c = int(f_cancels or 0)
+        has_cancel = int(f_has_cancel or 0) > 0
+        if has_cancel and (b + c) > 0:
+            ratio = Decimal(b) / Decimal(b + c)  # WB-формула: терминальные
+        elif o > 0:
+            ratio = Decimal(b) / Decimal(o)  # деградация (нет cancel-данных)
+        else:
             continue
-        ratio = Decimal(int(f_buyouts or 0)) / Decimal(o)
         if ratio > Decimal("1"):
             ratio = Decimal("1")
         elif ratio < Decimal("0"):
@@ -820,6 +837,8 @@ async def load_per_nm_snapshots(
     on_date: date,
     brands: set[str] | None = None,
     velocity_days: int = 30,
+    buyout_from: date | None = None,
+    buyout_to: date | None = None,
 ) -> dict[int, dict[str, Any]]:
     """Bulk-fetch snapshots для UNIT-плана.
 
@@ -856,6 +875,8 @@ async def load_per_nm_snapshots(
         nm_ids=nm_ids_list,
         on_date=on_date,
         velocity_days=velocity_days,
+        period_from=buyout_from,
+        period_to=buyout_to,
     )
     price_map = await _latest_price(
         session, tenant_id=tenant_id, nm_ids=nm_ids_list

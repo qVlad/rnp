@@ -44,6 +44,7 @@ from app.db.models import (
     UnitPlanSnapshot,
     UnitPlanSnapshotConfig,
     WbOrder,
+    WbCardPrice,
     WbPrice,
     WbSale,
 )
@@ -177,6 +178,8 @@ async def _compute_unit_plan_rows(
     global_cfg = await load_global_config(
         session, tenant_id=tenant_id, on_date=on_date
     )
+    # % выкупа считаем за выбранный период (period_1), если он задан — тогда
+    # сходится с Воронкой за те же даты. Иначе — велосити-окно (30д).
     nm_snaps = await load_per_nm_snapshots(
         session,
         tenant_id=tenant_id,
@@ -184,6 +187,8 @@ async def _compute_unit_plan_rows(
         on_date=on_date,
         brands=brands,
         velocity_days=global_cfg.velocity_days,
+        buyout_from=period_1_from,
+        buyout_to=period_1_to,
     )
 
     # ── Historical snapshots (BA-BF) ──
@@ -1549,11 +1554,31 @@ async def prices_status(
     if max_synced is not None:
         now = datetime.now(max_synced.tzinfo or timezone.utc)
         age_minutes = (now - max_synced).total_seconds() / 60.0
+
+    # СПП — отдельный источник (card.wb.ru → wb_card_price, синк 05:15 МСК).
+    spp_row = (
+        await session.execute(
+            select(
+                func.count(WbCardPrice.nm_id),
+                func.max(WbCardPrice.synced_at),
+            ).where(WbCardPrice.tenant_id == user.tenant_id)
+        )
+    ).one()
+    spp_count, spp_synced = spp_row
+    spp_age_minutes: float | None = None
+    if spp_synced is not None:
+        now = datetime.now(spp_synced.tzinfo or timezone.utc)
+        spp_age_minutes = (now - spp_synced).total_seconds() / 60.0
+
     return {
         "rows": int(count or 0),
         "synced_at_min": min_synced.isoformat() if min_synced else None,
         "synced_at_max": max_synced.isoformat() if max_synced else None,
         "age_minutes": age_minutes,
+        # СПП-фрешнес (TASK-DEV-087): обновляется раз в сутки 05:15 МСК.
+        "spp_rows": int(spp_count or 0),
+        "spp_synced_at": spp_synced.isoformat() if spp_synced else None,
+        "spp_age_minutes": spp_age_minutes,
     }
 
 

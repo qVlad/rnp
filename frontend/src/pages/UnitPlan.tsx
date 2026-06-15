@@ -2859,14 +2859,23 @@ function PricesHealthBar({
   const isLowCoverage = coveragePct != null && coveragePct < 50;
   const tone = isStale || isLowCoverage ? "warn" : "success";
 
-  const ageText =
-    age == null
+  const fmtAge = (a: number | null | undefined): string =>
+    a == null
       ? "никогда"
-      : age < 1
+      : a < 1
         ? "только что"
-        : age < 60
-          ? `${Math.round(age)} мин назад`
-          : `${Math.floor(age / 60)} ч назад`;
+        : a < 60
+          ? `${Math.round(a)} мин назад`
+          : a < 1440
+            ? `${Math.floor(a / 60)} ч назад`
+            : `${Math.floor(a / 1440)} дн назад`;
+  const ageText = fmtAge(age);
+
+  // СПП — отдельный источник (card.wb.ru, синк раз в сутки 05:15 МСК).
+  const sppAge = status?.spp_age_minutes;
+  const sppRows = status?.spp_rows ?? 0;
+  const sppStale = sppAge == null || sppAge > 36 * 60; // >36ч = пропущен суточный синк
+  const sppTone = sppStale ? "warn" : "success";
 
   return (
     <div className="card p-3 flex flex-wrap items-center gap-3 text-sm">
@@ -2887,6 +2896,19 @@ function PricesHealthBar({
             <span className="font-mono">{coveragePct}%</span>)
           </>
         )}
+      </span>
+      <span
+        className={`inline-flex items-center gap-1.5 text-${sppTone}`}
+        title="СПП тянется из витрины card.wb.ru. Синк раз в сутки в 05:15 МСК (не realtime). Приоритет на /unit-plan: ручной override → витрина (СПП) → по предмету → дефолт."
+      >
+        <span className="text-base">{sppTone === "success" ? "●" : "◐"}</span>
+        <span className="font-medium">СПП:</span>
+        <span className="text-fg">
+          обновлён <span className="font-mono">{fmtAge(sppAge)}</span>
+          {sppRows > 0 && (
+            <> (<span className="font-mono">{sppRows}</span> SKU)</>
+          )}
+        </span>
       </span>
       <button
         type="button"

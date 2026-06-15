@@ -568,6 +568,10 @@ class WbFunnelDaily(Base, TenantScopedMixin):
     dt: Mapped[date] = mapped_column(Date, primary_key=True)
     orders_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     buyouts_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Отмены/невыкупы из Воронки (cancelCount). WB «% выкупа» = buyouts /
+    # (buyouts + cancels) — знаменатель = терминальные заказы (без «в пути»),
+    # не все заказы. Миграция 0078. NULL = старые строки до захвата поля.
+    cancel_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     orders_sum_rub: Mapped[Decimal] = mapped_column(
         Numeric(14, 2), default=Decimal("0"), server_default="0"
     )

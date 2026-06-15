@@ -3292,6 +3292,10 @@ export interface UnitPlanPricesStatus {
   synced_at_min: string | null;
   synced_at_max: string | null;
   age_minutes: number | null;
+  // СПП-фрешнес (DEV-087): card.wb.ru, синк раз в сутки 05:15 МСК.
+  spp_rows?: number;
+  spp_synced_at?: string | null;
+  spp_age_minutes?: number | null;
 }
 
 /** Фактические il_coef / irp_coef из истории — подсказка под полями в /settings. */
