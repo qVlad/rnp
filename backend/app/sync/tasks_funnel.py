@@ -53,9 +53,6 @@ from app.sync.checkpoints import update_checkpoint
 log = get_logger(__name__)
 
 DAYS_BACK = 7
-
-# DEV-087: разовый лог ключей history (сбрасывается при рестарте процесса).
-_LOGGED_KEYS = {"done": False}
 # WB Analytics v3 sales-funnel ограничения (подтверждено эмпирически
 # 2026-05-28, TASK-LEAD-153):
 #   - period: rolling 7 дней от сегодня. start_date > today-7 → 400 «invalid
@@ -111,8 +108,6 @@ async def _sync_tenant_funnel_async(
     """Async core: sync funnel daily для одного tenant'а за `days_back` дней."""
     from app.db.session import task_session_scope
 
-    _LOGGED_KEYS["done"] = False  # DEV-087: лог ключей history раз на каждый прогон
-
     async with task_session_scope() as session:
         tenant = (
             await session.execute(select(Tenant).where(Tenant.id == tenant_id))
@@ -165,29 +160,31 @@ async def _sync_tenant_funnel_async(
                             dt = _parse_dt(h.get("date") or h.get("dt"))
                             if dt is None:
                                 continue
-                            # DEV-087 диагностика (разово): какие поля реально
-                            # отдаёт WB history — ищем поле отмен/невыкупов.
-                            if not _LOGGED_KEYS["done"] and isinstance(h, dict):
-                                _LOGGED_KEYS["done"] = True
-                                log.info(
-                                    "[funnel] history keys=%s sample=%s",
-                                    sorted(h.keys()),
-                                    {k: h.get(k) for k in list(h.keys())[:25]},
-                                )
                             orders_count = int(
                                 h.get("orderCount") or h.get("ordersCount") or 0
                             )
                             buyouts_count = int(
                                 h.get("buyoutCount") or h.get("buyoutsCount") or 0
                             )
-                            # Отмены/невыкупы — для WB-формулы % выкупа
-                            # buyouts/(buyouts+cancels). WB отдаёт cancelCount.
-                            _cc = (
-                                h.get("cancelCount")
-                                or h.get("cancelsCount")
-                                or h.get("canceledCount")
-                            )
-                            cancel_count = int(_cc) if _cc is not None else None
+                            # Отмены/невыкупы (DEV-087). WB v3 history НЕ отдаёт
+                            # cancelCount, но отдаёт buyoutPercent = выкупы /
+                            # (выкупы + отмены) — терминальный % как в Воронке.
+                            # Выводим отмены: cancels = buyouts·(100−p)/p.
+                            # Остаток orderCount (заказы «в пути») в знаменатель
+                            # НЕ входит — поэтому наш % сходится с Воронкой.
+                            _bp = h.get("buyoutPercent")
+                            cancel_count: int | None = None
+                            try:
+                                bp = float(_bp) if _bp is not None else 0.0
+                                if buyouts_count > 0 and bp > 0:
+                                    cancel_count = max(
+                                        0,
+                                        round(buyouts_count * (100.0 - bp) / bp),
+                                    )
+                                elif buyouts_count == 0 and bp == 0:
+                                    cancel_count = None  # данных по терминальным нет
+                            except (TypeError, ValueError):
+                                cancel_count = None
                             orders_sum = Decimal(
                                 str(h.get("orderSum") or h.get("ordersSumRub") or 0)
                             )
