@@ -556,14 +556,13 @@ async def _buyout_pct_30d(
     ).all():
         o = int(f_orders or 0)
         b = int(f_buyouts or 0)
-        c = int(f_cancels or 0)
-        has_cancel = int(f_has_cancel or 0) > 0
-        if has_cancel and (b + c) > 0:
-            ratio = Decimal(b) / Decimal(b + c)  # WB-формула: терминальные
-        elif o > 0:
-            ratio = Decimal(b) / Decimal(o)  # деградация (нет cancel-данных)
-        else:
+        if o <= 0:
             continue
+        # ВРЕМЕННО: buyouts/orders. Точный терминальный % Воронки
+        # (buyouts/(buyouts+cancels)) требует агрегатного запроса к WB —
+        # подневная история отмены на днях без выкупов не восстанавливает
+        # (DEV-087, обсуждается с пользователем).
+        ratio = Decimal(b) / Decimal(o)
         if ratio > Decimal("1"):
             ratio = Decimal("1")
         elif ratio < Decimal("0"):

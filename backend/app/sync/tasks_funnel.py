@@ -166,25 +166,11 @@ async def _sync_tenant_funnel_async(
                             buyouts_count = int(
                                 h.get("buyoutCount") or h.get("buyoutsCount") or 0
                             )
-                            # Отмены/невыкупы (DEV-087). WB v3 history НЕ отдаёт
-                            # cancelCount, но отдаёт buyoutPercent = выкупы /
-                            # (выкупы + отмены) — терминальный % как в Воронке.
-                            # Выводим отмены: cancels = buyouts·(100−p)/p.
-                            # Остаток orderCount (заказы «в пути») в знаменатель
-                            # НЕ входит — поэтому наш % сходится с Воронкой.
-                            _bp = h.get("buyoutPercent")
+                            # DEV-087: WB v3 history НЕ отдаёт cancelCount, а
+                            # подневный buyoutPercent не восстанавливает отмены на
+                            # днях без выкупов → терминальный % Воронки из подневки
+                            # не собрать. cancel_count пока не пишем (None).
                             cancel_count: int | None = None
-                            try:
-                                bp = float(_bp) if _bp is not None else 0.0
-                                if buyouts_count > 0 and bp > 0:
-                                    cancel_count = max(
-                                        0,
-                                        round(buyouts_count * (100.0 - bp) / bp),
-                                    )
-                                elif buyouts_count == 0 and bp == 0:
-                                    cancel_count = None  # данных по терминальным нет
-                            except (TypeError, ValueError):
-                                cancel_count = None
                             orders_sum = Decimal(
                                 str(h.get("orderSum") or h.get("ordersSumRub") or 0)
                             )
@@ -211,10 +197,7 @@ async def _sync_tenant_funnel_async(
                             set_={
                                 "orders_count": stmt.excluded.orders_count,
                                 "buyouts_count": stmt.excluded.buyouts_count,
-                                "cancel_count": func.coalesce(
-                                    stmt.excluded.cancel_count,
-                                    WbFunnelDaily.cancel_count,
-                                ),
+                                "cancel_count": stmt.excluded.cancel_count,
                                 "orders_sum_rub": stmt.excluded.orders_sum_rub,
                                 "open_count": stmt.excluded.open_count,
                                 "cart_count": stmt.excluded.cart_count,
