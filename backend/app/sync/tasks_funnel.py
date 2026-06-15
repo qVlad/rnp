@@ -111,6 +111,8 @@ async def _sync_tenant_funnel_async(
     """Async core: sync funnel daily для одного tenant'а за `days_back` дней."""
     from app.db.session import task_session_scope
 
+    _LOGGED_KEYS["done"] = False  # DEV-087: лог ключей history раз на каждый прогон
+
     async with task_session_scope() as session:
         tenant = (
             await session.execute(select(Tenant).where(Tenant.id == tenant_id))
