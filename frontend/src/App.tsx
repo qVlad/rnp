@@ -61,6 +61,7 @@ import AbTestDetail from "./pages/AbTestDetail";
 import ManagersKpi from "./pages/ManagersKpi";
 import PromoCalculator from "./pages/PromoCalculator";
 import PromoCalculatorWb from "./pages/PromoCalculatorWb";
+import PromoMargin from "./pages/PromoMargin";
 import LeakReport from "./pages/LeakReport";
 import SummaryReport from "./pages/SummaryReport";
 import Stocks from "./pages/Stocks";
@@ -300,6 +301,7 @@ export default function App() {
           <Route path="calc" element={<UnitCalculator />} />
           <Route path="promo-calculator" element={<PromoCalculator />} />
           <Route path="promo-calculator-wb" element={<PromoCalculatorWb />} />
+          <Route path="promo-margin" element={<PromoMargin />} />
           <Route
             path="users"
             element={

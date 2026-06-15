@@ -506,21 +506,16 @@ async def _buyout_pct_30d(
 ) -> dict[int, Decimal]:
     """% выкупа per nm_id за последние velocity_days дней. Доля 0-1.
 
-    Формула совпадает 1:1 с `services/unit_economics.build_unit_economics`
-    (страница /units, сходится с «% выкупа» WB-кабинета — DEV-078):
+    **Источник — Воронка WB** (`wb_funnel_daily`): `SUM(buyouts_count) /
+    SUM(orders_count)`. Это тот же Analytics API, что и интерактивный отчёт
+    «Воронка» в ЛК (content-analytics/interactive-report) — поэтому % выкупа,
+    заказы и выкупы совпадают с Воронкой 1:1. Запрос пользователя 2026-06-15:
+    «выкупы и заказы из воронки, % выкупа должен совпадать с воронкой»
+    (отменяет DEV-078, где буфер брался из report_detail).
 
-      buyout = rd_units_net / total_orders
-        • rd_units_net  — НЕТТО-выкупы из report_detail (Продажа − Возврат по
-          `sale_dt`, авторитетный фин-отчёт; нетит возвраты как WB ЛК);
-        • total_orders  — wb_orders ВКЛЮЧАЯ отменённые покупателем (active +
-          cancelled), как знаменатель «выкупа» в кабинете WB.
-
-    Прежние варианты были неверны: вал `sales/orders` (без нетирования) завышал
-    (обувь ~97% vs ЛК 40%); `wb_funnel_daily.buyouts_count` разрежён (rolling-7,
-    покрытие с 22.05) → занижал (~23%). report_detail полнее и совпадает с /units.
-
-    Fallback (нет report_detail у nm): нетто `wb_sales` / total_orders.
-    Если total_orders=0 — nm_id отсутствует в dict (caller → config-fallback).
+    Fallback (нет funnel-покрытия у nm — Воронка rolling-7, копится с 22.05):
+    нетто report_detail (Продажа−Возврат по sale_dt) / wb_orders(total). Если
+    нет ни того ни другого — nm отсутствует в dict (caller → config-fallback).
     """
     if not nm_ids:
         return {}
@@ -529,6 +524,40 @@ async def _buyout_pct_30d(
     cutoff_date = on_date - timedelta(days=velocity_days)
     cutoff = datetime.combine(cutoff_date, datetime.min.time(), tzinfo=timezone.utc)
     end_dt = datetime.combine(on_date, datetime.min.time(), tzinfo=timezone.utc)
+
+    out: dict[int, Decimal] = {}
+
+    # ── Primary: Воронка (wb_funnel_daily) ──
+    funnel_stmt = (
+        select(
+            WbFunnelDaily.nm_id,
+            func.sum(WbFunnelDaily.orders_count),
+            func.sum(WbFunnelDaily.buyouts_count),
+        )
+        .where(
+            WbFunnelDaily.tenant_id == tenant_id,
+            WbFunnelDaily.nm_id.in_(nm_ids),
+            WbFunnelDaily.dt >= cutoff_date,
+            WbFunnelDaily.dt <= on_date,
+        )
+        .group_by(WbFunnelDaily.nm_id)
+    )
+    for nm, f_orders, f_buyouts in (await session.execute(funnel_stmt)).all():
+        o = int(f_orders or 0)
+        if o <= 0:
+            continue
+        ratio = Decimal(int(f_buyouts or 0)) / Decimal(o)
+        if ratio > Decimal("1"):
+            ratio = Decimal("1")
+        elif ratio < Decimal("0"):
+            ratio = Decimal("0")
+        out[int(nm)] = ratio
+
+    # ── Fallback (report_detail / wb_orders) — только для nm без Воронки ──
+    fb_nm = [int(n) for n in nm_ids if int(n) not in out]
+    if not fb_nm:
+        return out
+    nm_ids = fb_nm
 
     # Знаменатель: total_orders = active + cancelled (всё в wb_orders), как WB ЛК.
     orders_stmt = (
@@ -545,7 +574,7 @@ async def _buyout_pct_30d(
         for nm, cnt in (await session.execute(orders_stmt)).all()
     }
 
-    # Числитель (primary): report_detail net = Продажа − Возврат по sale_dt.
+    # Числитель (fallback): report_detail net = Продажа − Возврат по sale_dt.
     rd_stmt = (
         select(
             WbReportDetail.nm_id,
@@ -589,7 +618,7 @@ async def _buyout_pct_30d(
             for nm, net in (await session.execute(sales_stmt)).all()
         }
 
-    out: dict[int, Decimal] = {}
+    # NB: `out` уже содержит funnel-результаты (primary) — НЕ переинициализируем.
     for nm, total_orders in total_orders_by_nm.items():
         if total_orders <= 0:
             continue

@@ -118,6 +118,7 @@ const GROUPS: Group[] = [
       { to: "/transit-calculator", label: "Калькулятор транзита" },
       { to: "/promo-calculator", label: "Калькулятор рентабельности" },
       { to: "/promo-calculator-wb", label: "Калькулятор WB-акций" },
+      { to: "/promo-margin", label: "Маржа в акции (до/после)" },
     ],
   },
   {
