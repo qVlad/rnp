@@ -53,6 +53,9 @@ from app.sync.checkpoints import update_checkpoint
 log = get_logger(__name__)
 
 DAYS_BACK = 7
+
+# DEV-087: разовый лог ключей history (сбрасывается при рестарте процесса).
+_LOGGED_KEYS = {"done": False}
 # WB Analytics v3 sales-funnel ограничения (подтверждено эмпирически
 # 2026-05-28, TASK-LEAD-153):
 #   - period: rolling 7 дней от сегодня. start_date > today-7 → 400 «invalid
@@ -160,6 +163,15 @@ async def _sync_tenant_funnel_async(
                             dt = _parse_dt(h.get("date") or h.get("dt"))
                             if dt is None:
                                 continue
+                            # DEV-087 диагностика (разово): какие поля реально
+                            # отдаёт WB history — ищем поле отмен/невыкупов.
+                            if not _LOGGED_KEYS["done"] and isinstance(h, dict):
+                                _LOGGED_KEYS["done"] = True
+                                log.info(
+                                    "[funnel] history keys=%s sample=%s",
+                                    sorted(h.keys()),
+                                    {k: h.get(k) for k in list(h.keys())[:25]},
+                                )
                             orders_count = int(
                                 h.get("orderCount") or h.get("ordersCount") or 0
                             )
