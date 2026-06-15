@@ -35,7 +35,7 @@
 
   function parseUrlMeta(url: string): { query: string | null; page: number } {
     try {
-      const u = new URL(url);
+      const u = new URL(url, location.href);
       const query =
         u.searchParams.get("query") || u.searchParams.get("search") || null;
       const pageRaw = u.searchParams.get("page");
@@ -46,15 +46,37 @@
     }
   }
 
+  /** Запрос из URL текущей страницы (search.aspx?search=… / ?query=…) — fallback,
+   *  если у API-эндпоинта query в теле/не в URL. */
+  function pageQuery(): string | null {
+    try {
+      const sp = new URL(location.href).searchParams;
+      const q = sp.get("search") || sp.get("query");
+      return q ? q.trim() : null;
+    } catch {
+      return null;
+    }
+  }
+
   const lastByQuery = new Map<string, number>();
+  const candidateLogged = new Set<string>();
 
   function maybePost(url: string, raw: unknown): void {
-    // Интересует только поиск (есть query). Каталог-броузинг без query — мимо.
-    if (!/search\.wb\.ru|catalog\.wb\.ru|\/exactmatch\//i.test(url)) return;
-    const { query, page } = parseUrlMeta(url);
-    if (!query) return;
     const products = extractProducts(raw);
     if (!products || products.length === 0) return;
+
+    // Нашли products[] — это кандидат на выдачу. Диагностика (раз на URL).
+    const urlKey = url.split("?")[0];
+    if (!candidateLogged.has(urlKey)) {
+      candidateLogged.add(urlKey);
+      console.log(`${TAG} CANDIDATE products[] (${products.length}) at`, url);
+    }
+
+    // Запрос: из URL API, иначе из URL страницы (search.aspx?search=…).
+    const meta = parseUrlMeta(url);
+    const query = meta.query || pageQuery();
+    if (!query) return; // не поиск (каталог-броузинг без запроса) — пропускаем
+    const page = meta.page;
 
     const cards: { nmId: number; position: number }[] = [];
     let idx = 0;
@@ -83,8 +105,28 @@
   }
 
   function shouldInspect(url: string): boolean {
-    // search.wb.ru / catalog.wb.ru — домен wb.ru (не wildberries.ru!).
-    return /(?:search|catalog)\.wb\.ru/i.test(url) || /\/exactmatch\//i.test(url);
+    // Любой wb.ru-хост (search/catalog/u-search/… — точный неизвестен, WB меняет).
+    return /\bwb\.ru\b/i.test(url) || /\/exactmatch\//i.test(url);
+  }
+
+  // ---- Диагностика: ловит ли WB поиск через Web Worker (тогда window.fetch
+  //      в MAIN не видит запрос). Логируем создание воркеров.
+  try {
+    const OrigWorker = window.Worker;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    window.Worker = function (this: unknown, ...args: any[]) {
+      try {
+        console.log(`${TAG} Worker created:`, String(args[0]).slice(0, 80));
+      } catch {
+        /* noop */
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return new (OrigWorker as any)(...args);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    window.Worker.prototype = OrigWorker.prototype;
+  } catch {
+    /* never break */
   }
 
   // ---- fetch interceptor ----
