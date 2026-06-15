@@ -192,16 +192,26 @@ async def jam_competitors(
     if last is None:
         return {"query": query, "collected_at": None, "items": [], "count": 0}
 
+    # Один поисковый «заход» = несколько страниц, каждая приходит со своим
+    # collected_at (секунды друг от друга). Берём окно 1ч от последнего среза и
+    # для каждой позиции — самую свежую строку (DISTINCT ON position), чтобы
+    # склеить страницы 1/2/… в единый ранг (а не показывать только последнюю).
+    window_start = last - timedelta(hours=1)
     rows = (
         await session.execute(
             select(WbSearchPosition)
             .where(
                 WbSearchPosition.query == query,
-                WbSearchPosition.collected_at == last,
+                WbSearchPosition.collected_at >= window_start,
             )
-            .order_by(WbSearchPosition.position)
+            .order_by(
+                WbSearchPosition.position,
+                WbSearchPosition.collected_at.desc(),
+            )
+            .distinct(WbSearchPosition.position)
         )
     ).scalars().all()
+    rows = sorted(rows, key=lambda r: r.position)
 
     own_nms = [r.nm_id for r in rows if r.is_own]
     vendor: dict[int, str | None] = {}
