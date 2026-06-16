@@ -335,12 +335,13 @@ celery_app.conf.update(
             "task": "sync.promotions",
             "schedule": crontab(hour=8, minute=30),
         },
-        # --- WB card prices / СПП (TASK-DEV-037 ph3) ---
-        # Ежедневно 05:15 МСК — реальная цена покупателя с СПП из card.wb.ru
-        # (публичный, без токена). Источник для реального СПП в /unit-plan.
-        "sync-card-prices-daily": {
+        # --- WB card prices / СПП (TASK-DEV-037 ph3; чаще — DEV-087) ---
+        # Каждые 6 часов (00:15/06:15/12:15/18:15 МСК) — реальная цена покупателя
+        # с СПП из card.wb.ru (публичный, без токена → можно чаще, чем seller-API).
+        # Источник для реального СПП в /unit-plan.
+        "sync-card-prices-6h": {
             "task": "sync.card_prices",
-            "schedule": crontab(hour=5, minute=15),
+            "schedule": crontab(hour="0,6,12,18", minute=15),
         },
         # --- WB Funnel Daily (TASK-LEAD-153) ---
         # Ежедневно 06:00 МСК (после orders/sales sync) — тянет per-day

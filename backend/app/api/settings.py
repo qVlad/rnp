@@ -287,6 +287,7 @@ async def trigger_sync(
         sync_stocks_for_tenant,
     )
     from app.sync.tasks_funnel import sync_funnel_daily
+    from app.sync.tasks_card_prices import sync_card_prices
 
     per_tenant_task_map = {
         "orders": sync_orders_for_tenant,
@@ -300,6 +301,7 @@ async def trigger_sync(
         "redeem_notifications": sync_redeem_notifications_for_tenant,
         "offset_acts": sync_offset_acts_for_tenant,
         "funnel": sync_funnel_daily,  # Воронка (orders/buyouts/cancels), DEV-087
+        "card_prices": sync_card_prices,  # СПП из card.wb.ru, DEV-087
     }
     # Таски, поддерживающие days_back параметром.
     SUPPORTS_DAYS_BACK = {"report_detail", "redeem_notifications", "offset_acts", "ad_stats"}
