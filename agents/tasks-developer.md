@@ -1638,7 +1638,15 @@
   (`wb_funnel_daily` SUM buyouts/orders = интерактивный отчёт Воронки 1:1).
   Отменяет DEV-078 (report_detail) по прямому запросу. Fallback report_detail/
   wb_orders для nm без funnel-покрытия.
+- **✅ Авто-подтяжка глоб.констант /unit-plan (2026-06-16):** аудит 17 констант
+  GlobalConfig — мёртвых нет, все используются в `compute_row`. По выбору
+  пользователя `_apply_config_auto_pull` в `unit_plan_loader.load_global_config`:
+  Налог/НДС из налог-настроек tenant (`settings_timeline.load_static_settings`:
+  tax_rate/vat_rate/vat_payer; АУСН/без-НДС → vat_pct=0/vat_mode='none'), ИЛ/ИРП —
+  фактические из `compute_recommended_coefs` (delivery/теор, paid_acceptance/retail).
+  Любая ошибка источника → тихо ручное значение (graceful). СПП-default и
+  buyout_fallback остаются ручными fallback-константами.
 - **Осталось (след. шаг):** /units (unit_economics) buyout/заказы/выкупы тоже из
   Воронки (сейчас report_detail/wb_orders) — display-метрики, деньги остаются на
-  фин-отчёте; СПП freshness-индикатор на /unit-plan; проверить полноту funnel-синка
+  фин-отчёте; проверить полноту funnel-синка
   (наш funnel заказов < wb_orders → возможны пробелы в Воронке, копится с 22.05).

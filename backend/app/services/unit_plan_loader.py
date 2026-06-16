@@ -313,7 +313,9 @@ async def load_global_config(
 
     if row is None:
         cfg = _default_global_config()
-        return replace(cfg, spp_observed=spp_observed) if spp_observed else cfg
+        if spp_observed:
+            cfg = replace(cfg, spp_observed=spp_observed)
+        return await _apply_config_auto_pull(session, cfg, tenant_id)
 
     # spp_by_subject — JSONB, значения 0-100 → доли.
     spp_map_raw = row.spp_by_subject or {}
@@ -325,7 +327,7 @@ async def load_global_config(
             except Exception:  # noqa: BLE001 — malformed JSON value
                 continue
 
-    return GlobalConfig(
+    cfg = GlobalConfig(
         wb_club_pct=_pct_to_share(row.wb_club_pct),
         spp_default_pct=_pct_to_share(row.spp_default_pct),
         spp_by_subject=spp_by_subject,
@@ -353,6 +355,58 @@ async def load_global_config(
         ),
         spp_observed=spp_observed,
     )
+    return await _apply_config_auto_pull(session, cfg, tenant_id)
+
+
+async def _apply_config_auto_pull(
+    session: AsyncSession, cfg: GlobalConfig, tenant_id: int
+) -> GlobalConfig:
+    """DEV-087 авто-подтяжка констант /unit-plan (выбор пользователя 2026-06-16):
+    • Налог/НДС — из налог-настроек tenant (settings_timeline: tax_rate/vat_rate/
+      vat_payer), чтобы не расходилось с /taxes. АУСН/без-НДС → НДС=0/none.
+    • ИЛ/ИРП-коэф — фактические из истории (compute_recommended_coefs:
+      delivery_rub/теор и paid_acceptance/retail). Если факта нет — ручные из config.
+    Любая ошибка источника — тихо оставляем ручное значение (graceful).
+    """
+    from dataclasses import replace as _dc_replace
+
+    updates: dict[str, Any] = {}
+
+    # 1) Налог/НДС из настроек tenant.
+    try:
+        from app.services.settings_timeline import load_static_settings
+
+        s = await load_static_settings(session)
+        tr = s.get("tax_rate")
+        if tr not in (None, ""):
+            updates["tax_pct"] = _pct_to_share(Decimal(str(float(tr))))
+        vat_payer = (s.get("vat_payer") or "").strip().lower() in ("1", "true", "yes")
+        vr = s.get("vat_rate")
+        if vat_payer and vr not in (None, ""):
+            updates["vat_pct"] = _pct_to_share(Decimal(str(float(vr))))
+        else:
+            updates["vat_pct"] = Decimal("0")
+            updates["vat_mode"] = "none"
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 2) ИЛ/ИРП-коэф из фактических рекомендаций.
+    try:
+        from app.services.unit_plan_coef_recommendations import (
+            compute_recommended_coefs,
+        )
+
+        rec = await compute_recommended_coefs(
+            session, tenant_id=tenant_id, days=cfg.velocity_days or 30
+        )
+        if rec.il_coef_actual is not None and rec.il_coef_actual > 0:
+            updates["il_coef"] = rec.il_coef_actual
+        if rec.irp_coef_actual is not None and rec.irp_coef_actual > 0:
+            updates["irp_coef"] = rec.irp_coef_actual
+    except Exception:  # noqa: BLE001
+        pass
+
+    return _dc_replace(cfg, **updates) if updates else cfg
 
 
 # ---------------------------------------------------------------------------
