@@ -393,10 +393,18 @@ async def _compute_unit_plan_rows(
 
             price0 = bundle["price"]
             if price0.base_price is not None and price0.base_price > 0:
+                _k = Decimal("1") - Decimal(str(promo_discount_pct)) / Decimal("100")
+                # Снижаем ВСЮ лесенку цены на скидку акции: и base_price, и
+                # наблюдаемую витринную цену (buyer_price_observed) — иначе из-за
+                # СПП-пиннинга итоговая цена не падает (price_final = buyer_observed).
                 price_promo = _dc_replace(
                     price0,
-                    base_price=price0.base_price
-                    * (Decimal("1") - Decimal(str(promo_discount_pct)) / Decimal("100")),
+                    base_price=price0.base_price * _k,
+                    buyer_price_observed=(
+                        price0.buyer_price_observed * _k
+                        if price0.buyer_price_observed is not None
+                        else None
+                    ),
                 )
                 dto_after = compute_row(
                     product=product,
