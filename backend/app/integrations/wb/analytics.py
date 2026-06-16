@@ -168,51 +168,40 @@ async def fetch_funnel_aggregate(
         else:
             cards = data.get("items") or data.get("cards") or []
 
-    # DEV-087 диагностика: реальная форма ответа агрегата (path/shape неизвестны).
-    try:
-        inner = data.get("data") if isinstance(data, dict) else None
-        log.info(
-            "[funnel-agg] inner type=%s keys=%s cards=%d",
-            type(inner).__name__,
-            sorted(inner.keys()) if isinstance(inner, dict) else None,
-            len(cards),
-        )
-        if cards and isinstance(cards[0], dict):
-            log.info(
-                "[funnel-agg] card[0] keys=%s sample=%s",
-                sorted(cards[0].keys()),
-                {k: cards[0].get(k) for k in list(cards[0].keys())[:12]},
-            )
-    except Exception:  # noqa: BLE001
-        pass
-
+    # Структура (WB v3, 2026): card = {product:{nmId}, statistic:{selected:{
+    #   buyoutCount, cancelCount, orderCount, conversions:{buyoutPercent}}, past, comparison}}.
+    # % выкупа Воронки = selected.conversions.buyoutPercent = buyoutCount /
+    # (buyoutCount + cancelCount) — терминальный, без «в пути». Берём ЯВНО блок
+    # `selected` (не past/comparison) и явные ключи.
     out: dict[int, dict[str, float]] = {}
     for card in cards:
         if not isinstance(card, dict):
             continue
-        prod = card.get("product") if isinstance(card.get("product"), dict) else card
+        prod = card.get("product") if isinstance(card.get("product"), dict) else {}
         nm = prod.get("nmId") or prod.get("nmID") or card.get("nmId") or card.get("nmID")
-        if not isinstance(nm, int):
-            try:
-                nm = int(nm)
-            except (TypeError, ValueError):
-                continue
-        # Ищем агрегат за выбранный период (избегаем previous-блок, если есть).
-        stats = (
-            card.get("statistics")
-            or card.get("selectedPeriod")
-            or card
-        )
-        bp = _deep_find_number(stats, ("buyoutPercent", "buyoutsPercent"))
-        bc = _deep_find_number(stats, ("buyoutCount", "buyoutsCount"))
-        oc = _deep_find_number(stats, ("orderCount", "ordersCount"))
-        cc = _deep_find_number(stats, ("cancelCount", "cancelsCount"))
-        if bp is None and bc is None:
+        try:
+            nm = int(nm)
+        except (TypeError, ValueError):
+            continue
+        stat = card.get("statistic") or card.get("statistics") or {}
+        sel = stat.get("selected") or stat.get("selectedPeriod") or {}
+        if not isinstance(sel, dict) or not sel:
+            continue
+        conv = sel.get("conversions") if isinstance(sel.get("conversions"), dict) else {}
+        bc = sel.get("buyoutCount")
+        cc = sel.get("cancelCount")
+        bp = conv.get("buyoutPercent")
+        # Приоритет: явная WB-формула buyouts/(buyouts+cancels); иначе buyoutPercent.
+        if isinstance(bc, (int, float)) and isinstance(cc, (int, float)) and (bc + cc) > 0:
+            pct = float(bc) / float(bc + cc) * 100.0
+        elif isinstance(bp, (int, float)):
+            pct = float(bp)
+        else:
             continue
         out[int(nm)] = {
-            "buyout_pct": bp if bp is not None else 0.0,
-            "buyouts": bc if bc is not None else 0.0,
-            "orders": oc if oc is not None else 0.0,
-            "cancels": cc if cc is not None else 0.0,
+            "buyout_pct": pct,
+            "buyouts": float(bc) if isinstance(bc, (int, float)) else 0.0,
+            "orders": float(sel.get("orderCount") or 0),
+            "cancels": float(cc) if isinstance(cc, (int, float)) else 0.0,
         }
     return out
