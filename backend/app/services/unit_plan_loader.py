@@ -838,6 +838,7 @@ async def load_per_nm_snapshots(
     velocity_days: int = 30,
     buyout_from: date | None = None,
     buyout_to: date | None = None,
+    buyout_override: dict[int, Decimal] | None = None,
 ) -> dict[int, dict[str, Any]]:
     """Bulk-fetch snapshots для UNIT-плана.
 
@@ -877,6 +878,10 @@ async def load_per_nm_snapshots(
         period_from=buyout_from,
         period_to=buyout_to,
     )
+    # DEV-087: точный % выкупа из агрегата Воронки WB (если передан) —
+    # приоритетнее подневной buyouts/orders.
+    if buyout_override:
+        buyout_map.update(buyout_override)
     price_map = await _latest_price(
         session, tenant_id=tenant_id, nm_ids=nm_ids_list
     )

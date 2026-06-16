@@ -39,6 +39,7 @@ from app.db.models import (
     Cogs,
     Product,
     SalesPlan,
+    Tenant,
     UnitPlanGlobalConfig,
     UnitPlanOverride,
     UnitPlanSnapshot,
@@ -143,6 +144,75 @@ def _global_config_to_dict(g: UnitPlanGlobalConfig) -> dict[str, Any]:
 # GET /rows
 # ---------------------------------------------------------------------------
 
+# DEV-087: in-process TTL-кэш агрегата Воронки (точный % выкупа за период).
+# Ключ (tenant, from, to) → (expiry_monotonic, {nm: buyout_share}). Чтобы не
+# дёргать WB Analytics на каждый рендер (лимит 3/мин), кэшируем на 15 мин.
+_FUNNEL_AGG_TTL_S = 15 * 60
+_funnel_agg_cache: dict[tuple[int, str, str], tuple[float, dict[int, Decimal]]] = {}
+
+
+async def _funnel_buyout_override(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    period_from: date,
+    period_to: date,
+) -> dict[int, Decimal]:
+    """Точный % выкупа из агрегата Воронки WB за период (как в интерактивном
+    отчёте). `{nm: доля 0-1}`. Кэш 15 мин. При любой проблеме → {} (graceful —
+    loader откатится на buyouts/orders)."""
+    import time as _time
+
+    key = (tenant_id, period_from.isoformat(), period_to.isoformat())
+    cached = _funnel_agg_cache.get(key)
+    if cached and cached[0] > _time.monotonic():
+        return cached[1]
+
+    from app.integrations.wb.analytics import fetch_funnel_aggregate
+    from app.integrations.wb.client import WbApiClient
+    from app.services.secrets_crypto import decrypt as _decrypt
+
+    tenant = (
+        await session.execute(select(Tenant).where(Tenant.id == tenant_id))
+    ).scalar_one_or_none()
+    if tenant is None or not tenant.wb_token:
+        return {}
+    nm_ids = [
+        int(n)
+        for n in (
+            await session.execute(
+                select(Product.nm_id).where(
+                    Product.tenant_id == tenant_id,
+                    Product.is_archived.is_(False),
+                )
+            )
+        ).scalars().all()
+        if n
+    ]
+    if not nm_ids:
+        return {}
+    try:
+        token = _decrypt(tenant.wb_token)
+        async with WbApiClient(token=token) as client:
+            agg = await fetch_funnel_aggregate(client, nm_ids, period_from, period_to)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("funnel aggregate fetch failed: %s", exc)
+        return {}
+
+    override: dict[int, Decimal] = {}
+    for nm, stats in agg.items():
+        pct = stats.get("buyout_pct")
+        if pct is None:
+            continue
+        share = Decimal(str(pct)) / Decimal("100")
+        if share < 0:
+            share = Decimal("0")
+        elif share > 1:
+            share = Decimal("1")
+        override[int(nm)] = share
+    _funnel_agg_cache[key] = (_time.monotonic() + _FUNNEL_AGG_TTL_S, override)
+    return override
+
 
 async def _compute_unit_plan_rows(
     *,
@@ -180,6 +250,17 @@ async def _compute_unit_plan_rows(
     )
     # % выкупа считаем за выбранный период (period_1), если он задан — тогда
     # сходится с Воронкой за те же даты. Иначе — велосити-окно (30д).
+    # DEV-087: при выбранном периоде тянем ТОЧНЫЙ % выкупа из агрегата Воронки
+    # WB (buyouts/(buyouts+cancels), терминальный — как в отчёте). Кэш 15 мин,
+    # при сбое WB — graceful откат на buyouts/orders из БД.
+    buyout_override: dict[int, Decimal] = {}
+    if period_1_from is not None and period_1_to is not None:
+        buyout_override = await _funnel_buyout_override(
+            session,
+            tenant_id=tenant_id,
+            period_from=period_1_from,
+            period_to=period_1_to,
+        )
     nm_snaps = await load_per_nm_snapshots(
         session,
         tenant_id=tenant_id,
@@ -189,6 +270,7 @@ async def _compute_unit_plan_rows(
         velocity_days=global_cfg.velocity_days,
         buyout_from=period_1_from,
         buyout_to=period_1_to,
+        buyout_override=buyout_override,
     )
 
     # ── Historical snapshots (BA-BF) ──

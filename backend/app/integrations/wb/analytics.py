@@ -93,3 +93,97 @@ async def fetch_nm_report_history(
         if isinstance(items, list):
             return items
     return []
+
+
+def _deep_find_number(obj: Any, keys: tuple[str, ...]) -> float | None:
+    """Рекурсивно ищет первое числовое значение по любому из `keys` (camelCase).
+    WB прячет агрегат в statistics.selectedPeriod/current — точный путь между
+    версиями меняется, поэтому ищем по имени поля."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k in keys and isinstance(v, (int, float)):
+                return float(v)
+        for v in obj.values():
+            r = _deep_find_number(v, keys)
+            if r is not None:
+                return r
+    elif isinstance(obj, list):
+        for v in obj:
+            r = _deep_find_number(v, keys)
+            if r is not None:
+                return r
+    return None
+
+
+async def fetch_funnel_aggregate(
+    client: WbApiClient,
+    nm_ids: list[int],
+    date_from: date,
+    date_to: date,
+) -> dict[int, dict[str, float]]:
+    """Агрегат Воронки за период (НЕ подневка): `% выкупа`, выкупы, заказы,
+    отмены per nm — ровно как в интерактивном отчёте «Воронка».
+
+    Endpoint: `POST /api/analytics/v3/sales-funnel/products` (без /history).
+    Возвращает `{nm_id: {"buyout_pct": 0..100, "buyouts": n, "orders": n,
+    "cancels": n}}`. На ошибку — пустой dict (caller → graceful fallback).
+    """
+    if not nm_ids:
+        return {}
+    body = {
+        "selectedPeriod": {
+            "start": date_from.isoformat(),
+            "end": date_to.isoformat(),
+        },
+        "nmIds": nm_ids,
+        "timezone": "Europe/Moscow",
+    }
+    try:
+        data = await client.post(
+            "/api/analytics/v3/sales-funnel/products",
+            category="analytics",
+            json=body,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "fetch_funnel_aggregate(%d ids, %s..%s) failed: %s",
+            len(nm_ids), date_from, date_to, type(e).__name__,
+        )
+        return {}
+
+    cards: list[Any] = []
+    if isinstance(data, list):
+        cards = data
+    elif isinstance(data, dict):
+        cards = data.get("data") or data.get("items") or data.get("cards") or []
+
+    out: dict[int, dict[str, float]] = {}
+    for card in cards:
+        if not isinstance(card, dict):
+            continue
+        prod = card.get("product") if isinstance(card.get("product"), dict) else card
+        nm = prod.get("nmId") or prod.get("nmID") or card.get("nmId") or card.get("nmID")
+        if not isinstance(nm, int):
+            try:
+                nm = int(nm)
+            except (TypeError, ValueError):
+                continue
+        # Ищем агрегат за выбранный период (избегаем previous-блок, если есть).
+        stats = (
+            card.get("statistics")
+            or card.get("selectedPeriod")
+            or card
+        )
+        bp = _deep_find_number(stats, ("buyoutPercent", "buyoutsPercent"))
+        bc = _deep_find_number(stats, ("buyoutCount", "buyoutsCount"))
+        oc = _deep_find_number(stats, ("orderCount", "ordersCount"))
+        cc = _deep_find_number(stats, ("cancelCount", "cancelsCount"))
+        if bp is None and bc is None:
+            continue
+        out[int(nm)] = {
+            "buyout_pct": bp if bp is not None else 0.0,
+            "buyouts": bc if bc is not None else 0.0,
+            "orders": oc if oc is not None else 0.0,
+            "cancels": cc if cc is not None else 0.0,
+        }
+    return out
