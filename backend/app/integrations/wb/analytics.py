@@ -157,6 +157,21 @@ async def fetch_funnel_aggregate(
     elif isinstance(data, dict):
         cards = data.get("data") or data.get("items") or data.get("cards") or []
 
+    # DEV-087 диагностика: реальная форма ответа агрегата (path/shape неизвестны).
+    try:
+        if isinstance(data, dict):
+            log.info("[funnel-agg] resp dict keys=%s", sorted(data.keys()))
+        else:
+            log.info("[funnel-agg] resp list len=%s", len(cards))
+        if cards and isinstance(cards[0], dict):
+            log.info(
+                "[funnel-agg] card[0] keys=%s sample=%s",
+                sorted(cards[0].keys()),
+                {k: cards[0].get(k) for k in list(cards[0].keys())[:12]},
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
     out: dict[int, dict[str, float]] = {}
     for card in cards:
         if not isinstance(card, dict):
