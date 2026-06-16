@@ -668,7 +668,39 @@ async def get_global_config(
         .limit(1)
     )
     row = (await session.execute(stmt)).scalar_one_or_none()
-    return {"config": _global_config_to_dict(row) if row else None}
+    if row is None:
+        return {"config": None}
+
+    cfg = _global_config_to_dict(row)
+
+    # DEV-087: чипы должны показывать ЭФФЕКТИВНЫЕ значения — те же, по которым
+    # считаются строки. Налог/НДС/ИЛ/ИРП авто-подтягиваются в load_global_config
+    # (из налог-настроек и факт-рекомендаций). Накладываем их поверх сырой строки
+    # и помечаем auto_pulled, чтобы UI отрисовал «авто».
+    auto: list[str] = []
+    try:
+        from datetime import date as _date
+
+        eff = await load_global_config(
+            session, tenant_id=user.tenant_id, on_date=_date.today()
+        )
+        # loader хранит доли (0-1) и коэф; чипы — проценты. tax/vat ×100, коэф as-is.
+        overlay = {
+            "tax_pct": _decimalize(eff.tax_pct * 100),
+            "vat_pct": _decimalize(eff.vat_pct * 100),
+            "vat_mode": eff.vat_mode,
+            "il_coef": _decimalize(eff.il_coef),
+            "irp_coef": _decimalize(eff.irp_coef),
+        }
+        for k, v in overlay.items():
+            if cfg.get(k) != v:
+                auto.append(k)
+            cfg[k] = v
+    except Exception:  # noqa: BLE001 — graceful: показываем сырую строку
+        pass
+
+    cfg["auto_pulled"] = auto
+    return {"config": cfg}
 
 
 @router.put("/global-config", dependencies=[Depends(require_director)])

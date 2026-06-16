@@ -2350,11 +2350,27 @@ function PeriodRow({
 // Sub-components
 // ──────────────────────────────────────────────────────────────────────────
 
-function Chip({ label, value }: { label: string; value: React.ReactNode }) {
+function Chip({
+  label,
+  value,
+  auto,
+}: {
+  label: string;
+  value: React.ReactNode;
+  auto?: boolean;
+}) {
   return (
     <span className="inline-flex items-center gap-1.5 rounded bg-surface-2 px-2 py-1 text-tiny">
       <span className="text-faint uppercase tracking-wide">{label}</span>
       <span className="text-fg font-semibold font-mono">{value}</span>
+      {auto && (
+        <span
+          className="text-success text-[10px] font-semibold"
+          title="Подтянуто автоматически (налог/НДС из настроек, ИЛ/ИРП из факта). Изменить — в настройках."
+        >
+          авто
+        </span>
+      )}
     </span>
   );
 }
@@ -2373,16 +2389,17 @@ function TopConstants({ config }: { config: UnitPlanGlobalConfig | null | undefi
       </div>
     );
   }
+  const auto = new Set(config.auto_pulled || []);
   return (
     <div className="card p-3 flex flex-wrap items-center gap-2">
       <Chip label="WB Клуб" value={`${config.wb_club_pct}%`} />
       <Chip label="СПП" value={`${config.spp_default_pct}%`} />
       <Chip label="Wallet" value={`${config.wb_wallet_pct}%`} />
       <Chip label="Эквайринг" value={`${config.acquiring_pct}%`} />
-      <Chip label="ИЛ-коэф" value={config.il_coef} />
-      <Chip label="ИРП-коэф" value={config.irp_coef} />
+      <Chip label="ИЛ-коэф" value={config.il_coef} auto={auto.has("il_coef")} />
+      <Chip label="ИРП-коэф" value={config.irp_coef} auto={auto.has("irp_coef")} />
       <Chip label="Реклама" value={`${config.marketing_pct}%`} />
-      <Chip label="Налог" value={`${config.tax_pct}%`} />
+      <Chip label="Налог" value={`${config.tax_pct}%`} auto={auto.has("tax_pct")} />
       <Chip
         label="НДС"
         value={`${config.vat_pct}% ${
@@ -2392,6 +2409,7 @@ function TopConstants({ config }: { config: UnitPlanGlobalConfig | null | undefi
             ? "(не вкл.)"
             : "(не плат.)"
         }`}
+        auto={auto.has("vat_pct") || auto.has("vat_mode")}
       />
       <Chip
         label="Приёмка"

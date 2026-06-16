@@ -3389,6 +3389,9 @@ export interface UnitPlanGlobalConfig {
    *  'tariff'  — AG из WB-тарифа короба (методически правильно, default)
    *  'flat_50' — фикс 50 ₽ (как в большинстве rows Excel-эталона) */
   reverse_logistics_mode?: "tariff" | "flat_50";
+  /** DEV-087: ключи, значения которых подтянуты автоматически (налог/НДС из
+   *  налог-настроек, ИЛ/ИРП из факт-рекомендаций), а не заданы вручную. */
+  auto_pulled?: string[];
 }
 
 export type UnitPlanGlobalConfigUpdate = Partial<
