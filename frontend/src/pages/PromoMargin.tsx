@@ -31,15 +31,28 @@ export default function PromoMargin() {
   const to = range.to;
   const [discount, setDiscount] = useState("25");
   const d = Math.max(0, Math.min(99, Number(discount) || 0));
+  const [search, setSearch] = useState("");
+  const [onlyLoss, setOnlyLoss] = useState(false);
+  const [sortKey, setSortKey] = useState<string>("after_pct");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   const q = useQuery<any>({
     queryKey: ["promo-margin-unitplan", from, to, d],
     queryFn: () => api.unitPlanPromoMargin(d, { from, to }),
   });
 
+  const setSort = (key: string, defaultDir: "asc" | "desc" = "desc") => {
+    if (sortKey === key) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSortKey(key);
+      setSortDir(defaultDir);
+    }
+  };
+
   const rows = useMemo(() => {
     const items: any[] = q.data?.items || [];
-    const out = items
+    let out = items
       .filter((r) => Number(r.price_final) > 0)
       .map((r) => {
         const beforeRub = Number(r.profit_rub) || 0;
@@ -62,9 +75,38 @@ export default function PromoMargin() {
           delta_pp: afterPct != null ? afterPct - beforePct : null,
         };
       });
-    out.sort((a, b) => (a.after_pct ?? 0) - (b.after_pct ?? 0));
+
+    // Фильтр: поиск по артикулу/названию/бренду + «только убыточные в акции».
+    const s = search.trim().toLowerCase();
+    if (s) {
+      out = out.filter(
+        (r) =>
+          String(r.nm_id).includes(s) ||
+          (r.vendor_code || "").toLowerCase().includes(s) ||
+          (r.brand || "").toLowerCase().includes(s),
+      );
+    }
+    if (onlyLoss) {
+      out = out.filter((r) => (r.after_rub ?? r.before_rub) < 0);
+    }
+
+    // Сортировка по выбранному столбцу. nulls (нет «после» при скидке 0) — в конец.
+    const dir = sortDir === "asc" ? 1 : -1;
+    out.sort((a: any, b: any) => {
+      if (sortKey === "vendor_code") {
+        const av = (a.vendor_code || String(a.nm_id)).toLowerCase();
+        const bv = (b.vendor_code || String(b.nm_id)).toLowerCase();
+        return av < bv ? -dir : av > bv ? dir : 0;
+      }
+      const av = a[sortKey];
+      const bv = b[sortKey];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1; // null всегда в конец
+      if (bv == null) return -1;
+      return (av - bv) * dir;
+    });
     return out;
-  }, [q.data]);
+  }, [q.data, search, onlyLoss, sortKey, sortDir]);
 
   const negativeAfter = rows.filter((r) => (r.after_rub ?? 0) < 0).length;
 
@@ -95,6 +137,24 @@ export default function PromoMargin() {
             onChange={(e) => setDiscount(e.target.value)}
           />
         </div>
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-muted uppercase">Поиск</span>
+          <input
+            type="text"
+            className="input w-52"
+            placeholder="артикул / название / бренд"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={onlyLoss}
+            onChange={(e) => setOnlyLoss(e.target.checked)}
+          />
+          только убыточные в акции
+        </label>
         <div className="ml-auto text-xs text-muted">
           <div>SKU: <span className="text-fg font-mono">{rows.length}</span></div>
           {negativeAfter > 0 && (
@@ -116,15 +176,31 @@ export default function PromoMargin() {
           <table className="w-full text-sm">
             <thead className="text-muted text-xs uppercase">
               <tr>
-                <th className="text-left p-2">Товар</th>
-                <th className="text-right p-2">Цена ₽</th>
-                <th className="text-right p-2">Маржа/шт ДО ₽</th>
-                <th className="text-right p-2">ДО %</th>
-                <th className="text-right p-2">Цена −{d}%</th>
-                <th className="text-right p-2">Маржа/шт ПОСЛЕ ₽</th>
-                <th className="text-right p-2">ПОСЛЕ %</th>
-                <th className="text-right p-2">Δ ₽/шт</th>
-                <th className="text-right p-2">Δ п.п.</th>
+                {(
+                  [
+                    ["vendor_code", "Товар", "left", "asc"],
+                    ["price_before", "Цена ₽", "right", "desc"],
+                    ["before_rub", "Маржа/шт ДО ₽", "right", "desc"],
+                    ["before_pct", "ДО %", "right", "desc"],
+                    ["price_after", `Цена −${d}%`, "right", "desc"],
+                    ["after_rub", "Маржа/шт ПОСЛЕ ₽", "right", "desc"],
+                    ["after_pct", "ПОСЛЕ %", "right", "desc"],
+                    ["delta_rub", "Δ ₽/шт", "right", "asc"],
+                    ["delta_pp", "Δ п.п.", "right", "asc"],
+                  ] as [string, string, "left" | "right", "asc" | "desc"][]
+                ).map(([key, label, align, defDir]) => (
+                  <th
+                    key={key}
+                    className={`p-2 cursor-pointer select-none whitespace-nowrap text-${align} ${
+                      sortKey === key ? "text-fg" : "hover:text-fg"
+                    }`}
+                    onClick={() => setSort(key, defDir)}
+                    title="Кликни для сортировки"
+                  >
+                    {label}
+                    {sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
