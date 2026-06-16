@@ -2414,6 +2414,7 @@ function TopConstants({ config }: { config: UnitPlanGlobalConfig | null | undefi
       <Chip
         label="Приёмка"
         value={`${config.acceptance_rub_per_liter}₽/л × ${config.acceptance_multiplier}`}
+        auto={auto.has("acceptance_rub_per_liter")}
       />
       <Chip label="Velocity" value={`${config.velocity_days} дн`} />
       <Chip

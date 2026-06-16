@@ -691,6 +691,7 @@ async def get_global_config(
             "vat_mode": eff.vat_mode,
             "il_coef": _decimalize(eff.il_coef),
             "irp_coef": _decimalize(eff.irp_coef),
+            "acceptance_rub_per_liter": _decimalize(eff.acceptance_rub_per_liter),
         }
         for k, v in overlay.items():
             cfg[k] = v
@@ -1807,8 +1808,14 @@ async def coef_recommendations(
     return {
         "il_coef_actual": str(rec.il_coef_actual) if rec.il_coef_actual is not None else None,
         "irp_coef_actual": str(rec.irp_coef_actual) if rec.irp_coef_actual is not None else None,
+        "acceptance_rub_per_liter_actual": (
+            str(rec.acceptance_rub_per_liter_actual)
+            if rec.acceptance_rub_per_liter_actual is not None
+            else None
+        ),
         "rows_used_il": rec.rows_used_il,
         "rows_used_irp": rec.rows_used_irp,
+        "rows_used_acceptance": rec.rows_used_acceptance,
         "period_days": rec.period_days,
         "period_from": rec.period_from.isoformat(),
         "period_to": rec.period_to.isoformat(),

@@ -399,10 +399,15 @@ async def _apply_config_auto_pull(
         rec = await compute_recommended_coefs(
             session, tenant_id=tenant_id, days=cfg.velocity_days or 30
         )
+        # ИЛ — факт логистики; 0 бессмысленен (нет доставки), держим ручной.
         if rec.il_coef_actual is not None and rec.il_coef_actual > 0:
             updates["il_coef"] = rec.il_coef_actual
-        if rec.irp_coef_actual is not None and rec.irp_coef_actual > 0:
+        # ИРП и приёмка — факт платной приёмки; 0 валиден (план=факт, приёмка
+        # не начислялась). None (нет строк в периоде) → держим ручной дефолт.
+        if rec.irp_coef_actual is not None:
             updates["irp_coef"] = rec.irp_coef_actual
+        if rec.acceptance_rub_per_liter_actual is not None:
+            updates["acceptance_rub_per_liter"] = rec.acceptance_rub_per_liter_actual
     except Exception:  # noqa: BLE001
         pass
 

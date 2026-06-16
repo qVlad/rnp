@@ -3328,8 +3328,11 @@ export interface UnitPlanPricesStatus {
 export interface UnitPlanCoefRecommendations {
   il_coef_actual: string | null;
   irp_coef_actual: string | null;
+  /** DEV-087: фактический тариф приёмки ₽/billable-литр (paid_acceptance/литры). */
+  acceptance_rub_per_liter_actual?: string | null;
   rows_used_il: number;
   rows_used_irp: number;
+  rows_used_acceptance?: number;
   period_days: number;
   period_from: string;
   period_to: string;

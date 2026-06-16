@@ -18,6 +18,7 @@ UI в `/settings` отрисует это под полями ИЛ/ИРП как
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
@@ -32,8 +33,14 @@ from app.db.models import Product, WbReportDetail, WbTariffBox
 class CoefRecommendation:
     il_coef_actual: Decimal | None
     irp_coef_actual: Decimal | None
+    # DEV-087: фактический тариф приёмки ₽/billable-литр
+    #   = SUM(paid_acceptance) / SUM(billable_liters), где billable = ceil(V<1).
+    # None — если за период нет строк с известным volume_l (нечем считать) →
+    # держим ручной дефолт; 0 — если приёмка по факту не начислялась (план=факт).
+    acceptance_rub_per_liter_actual: Decimal | None
     rows_used_il: int
     rows_used_irp: int
+    rows_used_acceptance: int
     period_days: int
     period_from: date
     period_to: date
@@ -113,6 +120,10 @@ async def compute_recommended_coefs(
     sum_paid_acceptance = _ZERO
     sum_retail = _ZERO
     rows_used_irp = 0
+    # Acceptance ₽/л accumulator (платная приёмка на billable-литр).
+    sum_paid_acc_for_liter = _ZERO
+    sum_billable_liters = _ZERO
+    rows_used_acceptance = 0
 
     for office, volume_l, qty, delivery_rub, paid_acceptance, retail in (
         await session.execute(stmt)
@@ -122,6 +133,19 @@ async def compute_recommended_coefs(
             sum_paid_acceptance += Decimal(paid_acceptance or 0)
             sum_retail += Decimal(retail)
             rows_used_irp += int(qty or 0)
+
+        # Acceptance ₽/л — нужен volume_l (billable-литры), приёмка может быть 0.
+        if volume_l is not None and paid_acceptance is not None:
+            vol = Decimal(volume_l)
+            if vol > _ZERO:
+                billable_per_unit = (
+                    vol if vol >= _ONE else Decimal(math.ceil(float(vol)))
+                )
+                billable = billable_per_unit * Decimal(qty or 0)
+                if billable > 0:
+                    sum_billable_liters += billable
+                    sum_paid_acc_for_liter += Decimal(paid_acceptance or 0)
+                    rows_used_acceptance += int(qty or 0)
 
         # IL — нужны и volume_l, и tariff для склада.
         if volume_l is None or office is None:
@@ -166,11 +190,18 @@ async def compute_recommended_coefs(
         irp_actual = sum_paid_acceptance / sum_retail
         irp_actual = irp_actual.quantize(Decimal("0.0001"))
 
+    acceptance_actual: Decimal | None = None
+    if sum_billable_liters > 0:
+        acceptance_actual = sum_paid_acc_for_liter / sum_billable_liters
+        acceptance_actual = acceptance_actual.quantize(Decimal("0.0001"))
+
     return CoefRecommendation(
         il_coef_actual=il_actual,
         irp_coef_actual=irp_actual,
+        acceptance_rub_per_liter_actual=acceptance_actual,
         rows_used_il=rows_used_il,
         rows_used_irp=rows_used_irp,
+        rows_used_acceptance=rows_used_acceptance,
         period_days=days,
         period_from=period_from,
         period_to=today,
