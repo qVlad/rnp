@@ -148,7 +148,9 @@ def _global_config_to_dict(g: UnitPlanGlobalConfig) -> dict[str, Any]:
 # Ключ (tenant, from, to) → (expiry_monotonic, {nm: buyout_share}). Чтобы не
 # дёргать WB Analytics на каждый рендер (лимит 3/мин), кэшируем на 15 мин.
 _FUNNEL_AGG_TTL_S = 15 * 60
-_funnel_agg_cache: dict[tuple[int, str, str], tuple[float, dict[int, Decimal]]] = {}
+_funnel_agg_cache: dict[
+    tuple[int, str, str], tuple[float, dict[int, dict[str, float]]]
+] = {}
 
 
 async def _funnel_buyout_override(
@@ -157,10 +159,10 @@ async def _funnel_buyout_override(
     tenant_id: int,
     period_from: date,
     period_to: date,
-) -> dict[int, Decimal]:
-    """Точный % выкупа из агрегата Воронки WB за период (как в интерактивном
-    отчёте). `{nm: доля 0-1}`. Кэш 15 мин. При любой проблеме → {} (graceful —
-    loader откатится на buyouts/orders)."""
+) -> dict[int, dict[str, float]]:
+    """Агрегат Воронки WB за период (как в интерактивном отчёте): per nm
+    `{buyout_pct, buyouts, orders, cancels}`. Кэш 15 мин. При проблеме → {}
+    (graceful — loader откатится на подневные buyouts/orders из БД)."""
     import time as _time
 
     key = (tenant_id, period_from.isoformat(), period_to.isoformat())
@@ -199,19 +201,8 @@ async def _funnel_buyout_override(
         log.warning("funnel aggregate fetch failed: %s", exc)
         return {}
 
-    override: dict[int, Decimal] = {}
-    for nm, stats in agg.items():
-        pct = stats.get("buyout_pct")
-        if pct is None:
-            continue
-        share = Decimal(str(pct)) / Decimal("100")
-        if share < 0:
-            share = Decimal("0")
-        elif share > 1:
-            share = Decimal("1")
-        override[int(nm)] = share
-    _funnel_agg_cache[key] = (_time.monotonic() + _FUNNEL_AGG_TTL_S, override)
-    return override
+    _funnel_agg_cache[key] = (_time.monotonic() + _FUNNEL_AGG_TTL_S, agg)
+    return agg
 
 
 async def _compute_unit_plan_rows(
@@ -258,12 +249,20 @@ async def _compute_unit_plan_rows(
     # и раздувает логистику (амортизация на выкуп). Период: выбранный или 30д.
     bo_from = period_1_from or (on_date - timedelta(days=global_cfg.velocity_days))
     bo_to = period_1_to or on_date
-    buyout_override = await _funnel_buyout_override(
+    funnel_agg = await _funnel_buyout_override(
         session,
         tenant_id=tenant_id,
         period_from=bo_from,
         period_to=bo_to,
     )
+    buyout_override: dict[int, Decimal] = {}
+    for nm, stats in funnel_agg.items():
+        pct = stats.get("buyout_pct")
+        if pct is None:
+            continue
+        share = Decimal(str(pct)) / Decimal("100")
+        share = max(Decimal("0"), min(Decimal("1"), share))
+        buyout_override[int(nm)] = share
     nm_snaps = await load_per_nm_snapshots(
         session,
         tenant_id=tenant_id,
@@ -310,6 +309,21 @@ async def _compute_unit_plan_rows(
             forecast_date=forecast_dt,
             today=on_date,
         )
+        # DEV-087: заказано/выкуплено за период_1 — из агрегата Воронки (точные
+        # счётчики; подневная БД может недобирать, напр. 11 vs 12). Период
+        # агрегата (bo_from/bo_to) == period_1, поэтому счётчики применимы 1:1.
+        if funnel_agg:
+            from dataclasses import replace as _dc_replace
+
+            for _nm, _snap in list(historical_by_nm.items()):
+                _a = funnel_agg.get(int(_nm))
+                if not _a:
+                    continue
+                historical_by_nm[_nm] = _dc_replace(
+                    _snap,
+                    orders_period_1=int(round(_a.get("orders") or 0)),
+                    sold_period_1=int(round(_a.get("buyouts") or 0)),
+                )
 
     ref_cache: dict[tuple[str, str | None], Any] = {}
 
