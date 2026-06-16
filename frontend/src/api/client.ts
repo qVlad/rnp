@@ -2712,6 +2712,32 @@ paymentOrderDelete: (payment_order_id: string) =>
       `/api/unit-plan/rows${tail ? `?${tail}` : ""}`,
     );
   },
+  // DEV-087: маржа до/после акции из /unit-plan (плановая unit-эк). promo_discount_pct
+  // → backend пересчитывает compute_row со сниженной ценой (promo_* поля).
+  unitPlanPromoMargin: (
+    discount: number,
+    period?: { from: string; to: string },
+  ) => {
+    const qs = new URLSearchParams();
+    qs.set("promo_discount_pct", String(discount));
+    if (period) {
+      qs.set("period_1_from", period.from);
+      qs.set("period_1_to", period.to);
+    }
+    return request<{
+      items: Array<{
+        nm_id: number;
+        vendor_code: string | null;
+        brand: string | null;
+        price_final: number;
+        profit_rub: number;
+        margin_pct: number; // доля 0-1
+        promo_price_final?: number;
+        promo_margin_rub?: number;
+        promo_margin_pct?: number; // доля 0-1
+      }>;
+    }>(`/api/unit-plan/rows?${qs.toString()}`);
+  },
   // BUG-DEV-009: backend возвращает `{config: ...}`, разворачиваем здесь.
   unitPlanGlobalConfig: async (): Promise<UnitPlanGlobalConfig | null> => {
     const resp = await request<{ config: UnitPlanGlobalConfig | null }>(

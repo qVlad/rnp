@@ -222,6 +222,7 @@ async def _compute_unit_plan_rows(
     period_3_from: date | None = None,
     period_3_to: date | None = None,
     forecast_date: date | None = None,
+    promo_discount_pct: float = 0.0,
 ) -> dict[str, Any]:
     """Helper: bulk-compute UNIT-plan rows + meta.
 
@@ -383,7 +384,37 @@ async def _compute_unit_plan_rows(
             config=global_cfg,
             historical=historical_by_nm.get(nm),
         )
-        items.append(_row_to_dict(dto))
+        item = _row_to_dict(dto)
+        # DEV-087: маржа ПОСЛЕ вступления в акцию — пересчёт той же compute_row со
+        # сниженной ценой продавца (всё %-зависимое пересчитается, фикс — нет).
+        # Для страницы /promo-margin (база = /unit-plan).
+        if promo_discount_pct and promo_discount_pct > 0:
+            from dataclasses import replace as _dc_replace
+
+            price0 = bundle["price"]
+            if price0.base_price is not None and price0.base_price > 0:
+                price_promo = _dc_replace(
+                    price0,
+                    base_price=price0.base_price
+                    * (Decimal("1") - Decimal(str(promo_discount_pct)) / Decimal("100")),
+                )
+                dto_after = compute_row(
+                    product=product,
+                    price=price_promo,
+                    cogs=bundle["cogs"],
+                    funnel=bundle["funnel"],
+                    stock=bundle["stock"],
+                    refs=refs,
+                    override=override,
+                    config=global_cfg,
+                    historical=historical_by_nm.get(nm),
+                )
+                item["promo_margin_rub"] = float(dto_after.profit_rub)
+                item["promo_margin_pct"] = (
+                    float(dto_after.margin_pct) if dto_after.margin_pct is not None else None
+                )
+                item["promo_price_final"] = float(dto_after.price_final)
+        items.append(item)
 
         if dto.abc_label:
             abc_labels.add(dto.abc_label)
@@ -439,6 +470,7 @@ async def get_rows(
     period_3_from: Annotated[date | None, Query()] = None,
     period_3_to: Annotated[date | None, Query()] = None,
     forecast_date: Annotated[date | None, Query()] = None,
+    promo_discount_pct: Annotated[float, Query(ge=0, le=99)] = 0.0,
     user: CurrentUser = Depends(get_current_user),
     brands: set[str] | None = Depends(current_brands_filter),
     session: AsyncSession = Depends(get_db_tenant_scoped),
@@ -479,6 +511,7 @@ async def get_rows(
         period_3_from=period_3_from,
         period_3_to=period_3_to,
         forecast_date=forecast_date,
+        promo_discount_pct=promo_discount_pct,
     )
     return {
         "meta": {
