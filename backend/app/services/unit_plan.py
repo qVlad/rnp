@@ -195,6 +195,11 @@ class GlobalConfig:
     # TASK-DEV-037 ph3: реальный СПП из card.wb.ru per-nm (доля 0-1).
     # Приоритет ниже per-row override, но выше per-subject / default.
     spp_observed: dict[int, Decimal] = field(default_factory=dict)
+    # DEV-087: ключи, значения которых подтянуты автоматически из источника
+    # (налог/НДС из налог-настроек, ИЛ/ИРП из факт-рекомендаций), а не из
+    # ручного config. Помечается по факту успешного чтения источника (даже
+    # если значение совпало с ручным). Для UI-бейджа «авто».
+    auto_pulled: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

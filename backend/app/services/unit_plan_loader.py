@@ -406,7 +406,11 @@ async def _apply_config_auto_pull(
     except Exception:  # noqa: BLE001
         pass
 
-    return _dc_replace(cfg, **updates) if updates else cfg
+    if not updates:
+        return cfg
+    # auto_pulled — ключи, реально прочитанные из источника (даже если значение
+    # совпало с ручным). Для UI-бейджа «авто».
+    return _dc_replace(cfg, **updates, auto_pulled=tuple(updates.keys()))
 
 
 # ---------------------------------------------------------------------------

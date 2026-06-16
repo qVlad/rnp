@@ -693,9 +693,10 @@ async def get_global_config(
             "irp_coef": _decimalize(eff.irp_coef),
         }
         for k, v in overlay.items():
-            if cfg.get(k) != v:
-                auto.append(k)
             cfg[k] = v
+        # «авто» — по факту успешного чтения источника (loader.auto_pulled),
+        # а не по разнице со значением в БД (ИРП/налог могут совпасть с ручным).
+        auto = list(eff.auto_pulled)
     except Exception:  # noqa: BLE001 — graceful: показываем сырую строку
         pass
 
