@@ -253,14 +253,17 @@ async def _compute_unit_plan_rows(
     # DEV-087: при выбранном периоде тянем ТОЧНЫЙ % выкупа из агрегата Воронки
     # WB (buyouts/(buyouts+cancels), терминальный — как в отчёте). Кэш 15 мин,
     # при сбое WB — graceful откат на buyouts/orders из БД.
-    buyout_override: dict[int, Decimal] = {}
-    if period_1_from is not None and period_1_to is not None:
-        buyout_override = await _funnel_buyout_override(
-            session,
-            tenant_id=tenant_id,
-            period_from=period_1_from,
-            period_to=period_1_to,
-        )
+    # Терминальный % выкупа из агрегата Воронки — ВСЕГДА (и для дефолта, не
+    # только при выбранном периоде), иначе дефолт берёт заниженный buyouts/orders
+    # и раздувает логистику (амортизация на выкуп). Период: выбранный или 30д.
+    bo_from = period_1_from or (on_date - timedelta(days=global_cfg.velocity_days))
+    bo_to = period_1_to or on_date
+    buyout_override = await _funnel_buyout_override(
+        session,
+        tenant_id=tenant_id,
+        period_from=bo_from,
+        period_to=bo_to,
+    )
     nm_snaps = await load_per_nm_snapshots(
         session,
         tenant_id=tenant_id,
