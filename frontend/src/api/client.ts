@@ -2745,6 +2745,7 @@ paymentOrderDelete: (payment_order_id: string) =>
     period?: { from: string; to: string };
     discount_pct?: number;
     discount_by_nm?: Record<number, number>;
+    promo_price_by_nm?: Record<number, number>;
     nm_ids?: number[];
   }) => {
     const payload: Record<string, unknown> = {};
@@ -2754,6 +2755,8 @@ paymentOrderDelete: (payment_order_id: string) =>
     }
     if (body.discount_pct != null) payload.discount_pct = body.discount_pct;
     if (body.discount_by_nm) payload.discount_by_nm = body.discount_by_nm;
+    if (body.promo_price_by_nm)
+      payload.promo_price_by_nm = body.promo_price_by_nm;
     if (body.nm_ids) payload.nm_ids = body.nm_ids;
     return request<{ items: UnitPlanPromoMarginItem[] }>(
       `/api/unit-plan/promo-margin`,
@@ -2971,6 +2974,7 @@ paymentOrderDelete: (payment_order_id: string) =>
         current_discount_pct: number;
         current_price: number;
         promo_price: number;
+        plan_discount_pct?: number;
         participating: boolean;
       }>;
       total: number;
@@ -3353,9 +3357,11 @@ export interface UnitPlanPromoMarginItem {
   vendor_code: string | null;
   brand: string | null;
   price_final: number;
+  price_after_discount?: number; // цена продавца после скидки (O)
   profit_rub: number;
   margin_pct: number;
   promo_price_final?: number;
+  promo_price_seller?: number;
   promo_margin_rub?: number;
   promo_margin_pct?: number;
   promo_discount_pct?: number;

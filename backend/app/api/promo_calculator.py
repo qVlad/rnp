@@ -371,6 +371,13 @@ async def parse_promo_file(
     i_plan = col("плановая цена")
     i_cur = col("текущая розничная")
     i_disc = col("текущая скидка")
+    # «Загружаемая скидка для участия в акции, %» — целевая скидка продавца от
+    # РРЦ для участия (план). Может называться по-разному — пробуем варианты.
+    i_updisc = (
+        col("загружаемая скидка")
+        or col("скидка", "участия")
+        or col("скидка для участия")
+    )
     i_part = col("уже участвует")
     i_name = col("наименование")
     i_vendor = col("артикул поставщика")
@@ -400,6 +407,11 @@ async def parse_promo_file(
         nominal = _num(_cell(r, i_cur))
         disc = _num(_cell(r, i_disc))
         plan = _num(_cell(r, i_plan))
+        # «Загружаемая скидка для участия» из файла; если колонки нет — выводим
+        # из плановой цены и РРЦ: (1 − план/РРЦ)×100.
+        plan_disc = _num(_cell(r, i_updisc)) if i_updisc is not None else 0.0
+        if plan_disc <= 0 and nominal > 0 and 0 < plan < nominal:
+            plan_disc = round((1.0 - plan / nominal) * 100.0, 2)
         current_price = round(nominal * (1.0 - disc / 100.0), 2) if nominal > 0 else 0.0
         part_raw = str(_cell(r, i_part) or "").strip().lower()
         items.append(
@@ -412,6 +424,7 @@ async def parse_promo_file(
                 "current_discount_pct": disc,
                 "current_price": current_price or nominal,
                 "promo_price": plan,
+                "plan_discount_pct": plan_disc,
                 "participating": part_raw in ("да", "yes", "true", "1"),
             }
         )
@@ -437,7 +450,7 @@ async def parse_promo_file(
                 "discount_pct": it["current_discount_pct"],
                 "current_price": it["current_price"],
                 "promo_price": it["promo_price"],
-                "plan_discount_pct": None,
+                "plan_discount_pct": it.get("plan_discount_pct") or None,
                 "source": "excel",
             }
             for it in items

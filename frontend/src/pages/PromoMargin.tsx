@@ -45,7 +45,7 @@ function fmtDate(iso: string | null): string {
 // к плановой цене /unit-plan той же относительной величиной — basis-независимо.
 type FileItems = {
   fileName: string;
-  byNm: Record<number, number>;
+  priceByNm: Record<number, number>; // nm → «Плановая цена для акции» (продавца)
   nmIds: number[];
   count: number;
 };
@@ -54,25 +54,25 @@ type PromoSource =
   | { kind: "wb"; promoId: number | null }
   | { kind: "file"; file: FileItems | null };
 
-/** discount% = (current − promo) / current × 100 по каждой номенклатуре WB. */
-function discountFromNomenclatures(
+/** {nm → «Плановая цена для акции» (promo_price/planPrice)} по номенклатурам WB.
+ *  Используем АБСОЛЮТНУЮ плановую цену продавца (а не дельту скидки) — тогда
+ *  цена продавца в акции совпадает с файлом/ЛК 1:1. */
+function promoPriceFromNomenclatures(
   nomens: Array<Record<string, unknown>>,
-): { byNm: Record<number, number>; nmIds: number[] } {
-  const byNm: Record<number, number> = {};
+): { priceByNm: Record<number, number>; nmIds: number[] } {
+  const priceByNm: Record<number, number> = {};
   const nmIds: number[] = [];
   for (const n of nomens) {
     const num = (v: unknown) => Number((v ?? 0) as number);
     const nm = num(n.nmID ?? n.nmId);
     if (nm <= 0) continue;
-    const base = num(n.base_price ?? n.price);
-    const current = num(n.current_price) || base;
     const promo = num(n.promo_price ?? n.discountedPrice);
-    if (current > 0 && promo > 0 && promo < current) {
-      byNm[nm] = ((current - promo) / current) * 100;
+    if (promo > 0) {
+      priceByNm[nm] = promo;
       nmIds.push(nm);
     }
   }
-  return { byNm, nmIds };
+  return { priceByNm, nmIds };
 }
 
 /** Резолвит источник → параметры /api/unit-plan/promo-margin (async для WB). */
@@ -82,7 +82,7 @@ async function buildParams(
 ): Promise<{
   period: { from: string; to: string };
   discount_pct?: number;
-  discount_by_nm?: Record<number, number>;
+  promo_price_by_nm?: Record<number, number>;
   nm_ids?: number[];
 }> {
   if (source.kind === "manual") {
@@ -91,12 +91,18 @@ async function buildParams(
   if (source.kind === "wb") {
     if (source.promoId == null) return { period, discount_pct: 0 };
     const promo = await api.promoCalculatorGetWbPromotion(source.promoId);
-    const { byNm, nmIds } = discountFromNomenclatures(promo.nomenclatures || []);
-    return { period, discount_by_nm: byNm, nm_ids: nmIds };
+    const { priceByNm, nmIds } = promoPriceFromNomenclatures(
+      promo.nomenclatures || [],
+    );
+    return { period, promo_price_by_nm: priceByNm, nm_ids: nmIds };
   }
   // file
   if (!source.file) return { period, discount_pct: 0 };
-  return { period, discount_by_nm: source.file.byNm, nm_ids: source.file.nmIds };
+  return {
+    period,
+    promo_price_by_nm: source.file.priceByNm,
+    nm_ids: source.file.nmIds,
+  };
 }
 
 function sourceLabel(source: PromoSource, promoName?: string): string {
@@ -108,19 +114,18 @@ function sourceLabel(source: PromoSource, promoName?: string): string {
   return source.file ? `Файл: ${source.file.fileName}` : "Файл (не загружен)";
 }
 
-/** Парсер загруженного Excel акции → byNm/nmIds (через promo-calculator API). */
+/** Парсер Excel акции → {nm: «Плановая цена для акции»} (promo-calculator API). */
 async function parseFile(file: File): Promise<FileItems> {
   const data = await api.promoCalculatorParsePromoFile(file);
-  const byNm: Record<number, number> = {};
+  const priceByNm: Record<number, number> = {};
   const nmIds: number[] = [];
   for (const it of data.items) {
-    const current = it.current_price || it.nominal_price;
-    if (current > 0 && it.promo_price > 0 && it.promo_price < current) {
-      byNm[it.nm_id] = ((current - it.promo_price) / current) * 100;
+    if (it.promo_price > 0) {
+      priceByNm[it.nm_id] = it.promo_price;
       nmIds.push(it.nm_id);
     }
   }
-  return { fileName: file.name, byNm, nmIds, count: nmIds.length };
+  return { fileName: file.name, priceByNm, nmIds, count: nmIds.length };
 }
 
 // ── Переключатель источника (общий для simulate и compare) ───────────────────
@@ -318,9 +323,10 @@ function SingleSimulate({
           vendor_code: r.vendor_code,
           brand: r.brand,
           discount: r.promo_discount_pct ?? null,
-          price_before: Number(r.price_final) || 0,
+          // цены продавца (как в файле/ЛК): текущая O и плановая для акции.
+          price_before: Number(r.price_after_discount ?? r.price_final) || 0,
           price_after:
-            r.promo_price_final != null ? Number(r.promo_price_final) : null,
+            r.promo_price_seller != null ? Number(r.promo_price_seller) : null,
           before_rub: beforeRub,
           before_pct: beforePct,
           after_rub: afterRub,
@@ -419,7 +425,7 @@ function SingleSimulate({
                 {(
                   [
                     ["vendor_code", "Товар", "left", "asc"],
-                    ["price_before", "Цена ₽", "right", "desc"],
+                    ["price_before", "Цена продавца ₽", "right", "desc"],
                     ["before_rub", "Маржа/шт ДО ₽", "right", "desc"],
                     ["before_pct", "ДО %", "right", "desc"],
                     ...(isManual
@@ -852,12 +858,15 @@ export default function PromoMargin() {
       <div className="card text-xs text-muted leading-relaxed">
         <strong>Как считается:</strong> «до» — маржа/шт из плановой unit-экономики
         (/unit-plan) за период (цена с СПП, комиссия, логистика на выкуп, себес,
-        налог). «после» — бэкенд снижает цену продавца на скидку акции (per-SKU из
-        цен WB-акции / файла или единую вручную) и пересчитывает ту же формулу:
-        комиссия WB, эквайринг, реклама и налог масштабируются, а себестоимость,
-        логистика и хранение остаются. <strong>Δ п.п.</strong> — изменение
-        маржинальности в процентных пунктах. Для <strong>автоакций</strong> WB не
-        отдаёт товары по API — загрузите Excel акции из ЛК.
+        налог). «после» — для WB-акции / файла берётся <strong>абсолютная
+        «Плановая цена для акции»</strong> (цена продавца) по каждому SKU: колонка
+        «Цена в акции» совпадает с файлом/ЛК 1:1, а «Скидка %» = «Загружаемая
+        скидка для участия» (от РРЦ). Для ручного режима — единая скидка %.
+        Пересчитывается та же формула: комиссия WB, эквайринг, реклама и налог
+        масштабируются, а себестоимость, логистика и хранение остаются; СПП
+        сохраняется. <strong>Δ п.п.</strong> — изменение маржинальности в
+        процентных пунктах. Для <strong>автоакций</strong> WB не отдаёт товары по
+        API — загрузите Excel акции из ЛК.
       </div>
     </div>
   );

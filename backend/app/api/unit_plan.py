@@ -224,6 +224,7 @@ async def _compute_unit_plan_rows(
     forecast_date: date | None = None,
     promo_discount_pct: float = 0.0,
     promo_discount_by_nm: dict[int, float] | None = None,
+    promo_price_by_nm: dict[int, float] | None = None,
 ) -> dict[str, Any]:
     """Helper: bulk-compute UNIT-plan rows + meta.
 
@@ -386,51 +387,83 @@ async def _compute_unit_plan_rows(
             historical=historical_by_nm.get(nm),
         )
         item = _row_to_dict(dto)
-        # DEV-087: маржа ПОСЛЕ вступления в акцию — пересчёт той же compute_row со
-        # сниженной ценой продавца (всё %-зависимое пересчитается, фикс — нет).
-        # Для страницы /promo-margin (база = /unit-plan).
-        # DEV-088: скидка может быть per-SKU (из реальных цен WB-акции/файла) —
-        # promo_discount_by_nm[nm] приоритетнее единой promo_discount_pct.
-        eff_disc = promo_discount_pct
-        if promo_discount_by_nm is not None and nm in promo_discount_by_nm:
-            eff_disc = promo_discount_by_nm[nm]
-        # clamp [0,99]: ≥100 → отрицательная цена (бессмысленно).
-        eff_disc = min(99.0, max(0.0, float(eff_disc or 0)))
-        if eff_disc > 0:
-            from dataclasses import replace as _dc_replace
+        # DEV-087/088: маржа ПОСЛЕ вступления в акцию — пересчёт той же compute_row
+        # с промо-ценой продавца. Источник цены, по приоритету:
+        #  1) promo_price_by_nm[nm] — АБСОЛЮТНАЯ «Плановая цена для акции» (цена
+        #     продавца после скидки) из WB-акции/файла. Ставим discount_pct так,
+        #     чтобы price_after_discount == плановой 1:1; СПП сохраняем, масштабируя
+        #     наблюдаемую витринную цену пропорционально. Скидка% = (1−план/РРЦ) =
+        #     «Загружаемая скидка для участия в акции».
+        #  2) promo_discount_by_nm[nm] / promo_discount_pct — ручная скидка % (от
+        #     текущей цены): снижаем всю лесенку на k.
+        from dataclasses import replace as _dc_replace
 
-            price0 = bundle["price"]
-            if price0.base_price is not None and price0.base_price > 0:
-                _k = Decimal("1") - Decimal(str(eff_disc)) / Decimal("100")
-                # Снижаем ВСЮ лесенку цены на скидку акции: и base_price, и
-                # наблюдаемую витринную цену (buyer_price_observed) — иначе из-за
-                # СПП-пиннинга итоговая цена не падает (price_final = buyer_observed).
+        price0 = bundle["price"]
+        base0 = price0.base_price
+        price_promo = None
+        eff_disc: float | None = None
+
+        plan_price: Decimal | None = None
+        if promo_price_by_nm is not None and nm in promo_price_by_nm:
+            try:
+                plan_price = Decimal(str(promo_price_by_nm[nm]))
+            except Exception:  # noqa: BLE001
+                plan_price = None
+
+        if plan_price is not None and plan_price > 0 and base0 is not None and base0 > 0:
+            cur_disc = price0.discount_pct or Decimal("0")
+            cur_price_o = base0 * (Decimal("1") - cur_disc)
+            new_disc = Decimal("1") - plan_price / base0
+            new_disc = max(Decimal("0"), min(Decimal("0.99"), new_disc))
+            ratio = (plan_price / cur_price_o) if cur_price_o > 0 else Decimal("1")
+            price_promo = _dc_replace(
+                price0,
+                discount_pct=new_disc,
+                buyer_price_observed=(
+                    price0.buyer_price_observed * ratio
+                    if price0.buyer_price_observed is not None
+                    else None
+                ),
+            )
+            eff_disc = float(new_disc * 100)
+        else:
+            d = promo_discount_pct
+            if promo_discount_by_nm is not None and nm in promo_discount_by_nm:
+                d = promo_discount_by_nm[nm]
+            d = min(99.0, max(0.0, float(d or 0)))  # ≥100 → отрицательная цена
+            if d > 0 and base0 is not None and base0 > 0:
+                _k = Decimal("1") - Decimal(str(d)) / Decimal("100")
                 price_promo = _dc_replace(
                     price0,
-                    base_price=price0.base_price * _k,
+                    base_price=base0 * _k,
                     buyer_price_observed=(
                         price0.buyer_price_observed * _k
                         if price0.buyer_price_observed is not None
                         else None
                     ),
                 )
-                dto_after = compute_row(
-                    product=product,
-                    price=price_promo,
-                    cogs=bundle["cogs"],
-                    funnel=bundle["funnel"],
-                    stock=bundle["stock"],
-                    refs=refs,
-                    override=override,
-                    config=global_cfg,
-                    historical=historical_by_nm.get(nm),
-                )
-                item["promo_margin_rub"] = float(dto_after.profit_rub)
-                item["promo_margin_pct"] = (
-                    float(dto_after.margin_pct) if dto_after.margin_pct is not None else None
-                )
-                item["promo_price_final"] = float(dto_after.price_final)
-                item["promo_discount_pct"] = float(eff_disc)
+                eff_disc = d
+
+        if price_promo is not None:
+            dto_after = compute_row(
+                product=product,
+                price=price_promo,
+                cogs=bundle["cogs"],
+                funnel=bundle["funnel"],
+                stock=bundle["stock"],
+                refs=refs,
+                override=override,
+                config=global_cfg,
+                historical=historical_by_nm.get(nm),
+            )
+            item["promo_margin_rub"] = float(dto_after.profit_rub)
+            item["promo_margin_pct"] = (
+                float(dto_after.margin_pct) if dto_after.margin_pct is not None else None
+            )
+            item["promo_price_final"] = float(dto_after.price_final)  # покупатель
+            # цена продавца после скидки (== «Плановая цена для акции» при источнике 1)
+            item["promo_price_seller"] = float(dto_after.price_after_discount)
+            item["promo_discount_pct"] = eff_disc
         items.append(item)
 
         if dto.abc_label:
@@ -567,6 +600,9 @@ class PromoMarginRequest(BaseModel):
     search: str | None = None
     discount_pct: float = Field(default=0.0, ge=0, le=99)
     discount_by_nm: dict[int, float] | None = None
+    # АБСОЛЮТНАЯ «Плановая цена для акции» (цена продавца) per-SKU — приоритетнее
+    # скидок%; price_after_discount после расчёта совпадёт с ней 1:1.
+    promo_price_by_nm: dict[int, float] | None = None
     nm_ids: list[int] | None = Field(default=None, max_length=2000)
 
 
@@ -597,6 +633,7 @@ async def post_promo_margin(
         period_1_to=body.period_1_to,
         promo_discount_pct=body.discount_pct,
         promo_discount_by_nm=body.discount_by_nm,
+        promo_price_by_nm=body.promo_price_by_nm,
     )
     items = result["items"]
     if body.nm_ids:
