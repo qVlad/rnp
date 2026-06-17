@@ -618,11 +618,11 @@ function CompareView({
     );
   }, [q0.data, q1.data, q2.data]);
 
-  // Итоги per-slot: сумма маржи/шт после + в скольких SKU слот лучший.
+  // Итоги per-slot: сумма маржи/шт после + список SKU, где слот лучший.
   const totals = useMemo(() => {
     const sumAfter = [0, 0, 0];
     const covered = [0, 0, 0];
-    const bestCount = [0, 0, 0];
+    const bestSkus: number[][] = [[], [], []];
     for (const row of table) {
       let bestSlot = -1;
       let bestVal = -Infinity;
@@ -636,9 +636,11 @@ function CompareView({
           }
         }
       });
-      if (bestSlot >= 0) bestCount[bestSlot] += 1;
+      // лучший слот засчитываем, только если их реально несколько с данными.
+      const withData = row.slots.filter((s) => s?.after_rub != null).length;
+      if (bestSlot >= 0 && withData > 1) bestSkus[bestSlot].push(row.nm_id);
     }
-    return { sumAfter, covered, bestCount };
+    return { sumAfter, covered, bestSkus };
   }, [table]);
 
   const anyLoading = queries.some((q) => q.isFetching);
@@ -681,7 +683,10 @@ function CompareView({
                 <th className="p-2 text-left">Товар</th>
                 <th className="p-2 text-right">Маржа/шт ДО</th>
                 {sources.map((s, i) => (
-                  <th key={i} className="p-2 text-right whitespace-nowrap">
+                  <th
+                    key={i}
+                    className="p-2 text-right align-bottom whitespace-normal break-words max-w-[160px]"
+                  >
                     {sourceLabel(s, promoName(s))}
                     <div className="font-normal normal-case text-[10px]">
                       после ₽ · %
@@ -692,15 +697,21 @@ function CompareView({
             </thead>
             <tbody>
               {table.map((row) => {
-                // лучший слот по after_rub
+                // лучший слот по after_rub — подсвечиваем только если есть с чем
+                // сравнивать (≥2 акций с данными по этому SKU).
                 let bestSlot = -1;
                 let bestVal = -Infinity;
+                let withData = 0;
                 row.slots.forEach((s, i) => {
-                  if (s?.after_rub != null && s.after_rub > bestVal) {
-                    bestVal = s.after_rub;
-                    bestSlot = i;
+                  if (s?.after_rub != null) {
+                    withData += 1;
+                    if (s.after_rub > bestVal) {
+                      bestVal = s.after_rub;
+                      bestSlot = i;
+                    }
                   }
                 });
+                if (withData < 2) bestSlot = -1;
                 return (
                   <tr key={row.nm_id} className="border-t border-border">
                     <td className="p-2">
@@ -761,21 +772,30 @@ function CompareView({
               })}
             </tbody>
             <tfoot>
-              <tr className="border-t-2 border-border font-medium">
+              <tr className="border-t-2 border-border font-medium align-top">
                 <td className="p-2">Итого маржа/шт (Σ)</td>
                 <td className="p-2 text-right text-muted">—</td>
                 {totals.sumAfter.map((sum, i) => {
+                  const covered = totals.bestSkus.map((x) => x.length);
                   const bestTotal = Math.max(...totals.sumAfter);
                   const isBest =
-                    totals.covered[i] > 0 && sum === bestTotal && sum !== 0;
+                    totals.covered[i] > 0 &&
+                    sum === bestTotal &&
+                    Math.max(...covered) > 0;
+                  const skus = totals.bestSkus[i];
                   return (
                     <td
                       key={i}
-                      className={`p-2 text-right font-mono ${isBest ? "text-success font-bold" : ""}`}
+                      className={`p-2 text-right font-mono whitespace-normal break-words max-w-[160px] ${
+                        isBest
+                          ? "text-success font-bold bg-success/10"
+                          : ""
+                      }`}
                     >
                       {totals.covered[i] > 0 ? fmtRub(sum) : "—"}
                       <div className="text-[10px] text-muted font-normal">
-                        выгоднее в {totals.bestCount[i]} SKU
+                        выгоднее в {skus.length} SKU
+                        {skus.length > 0 ? `: ${skus.join(", ")}` : ""}
                       </div>
                     </td>
                   );
@@ -799,12 +819,16 @@ export default function PromoMargin() {
     queryFn: () => api.promoCalculatorListWbPromotions(),
     staleTime: 5 * 60_000,
   });
-  // Скрываем бесполезные акции: не-автоматические с 0 товаров (по ним нечего
-  // считать). Автоакции оставляем (товары грузятся файлом), как и обычные с
-  // товарами и с неизвестным числом (null).
-  const promos = ((promosQ.data || []) as PromoItem[]).filter(
-    (p) => p.type === "auto" || p.products_count !== 0,
-  );
+  // Скрываем: (1) завершённые акции (end < сейчас) — по ним участвовать уже
+  // нельзя; (2) не-автоматические с 0 товаров (нечего считать). Автоакции с
+  // товарами и обычные с товарами/неизвестным числом — оставляем.
+  const now = Date.now();
+  const promos = ((promosQ.data || []) as PromoItem[]).filter((p) => {
+    const ended =
+      p.end_date_time != null && new Date(p.end_date_time).getTime() < now;
+    if (ended) return false;
+    return p.type === "auto" || p.products_count !== 0;
+  });
 
   return (
     <div className="space-y-4">

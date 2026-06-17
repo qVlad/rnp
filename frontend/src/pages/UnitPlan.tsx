@@ -55,7 +55,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import PageHeader from "@/components/PageHeader";
 import { UnitPlanDrillDrawer } from "@/components/UnitPlanDrillDrawer";
 import { UnitPlanSnapshotsDrawer } from "@/components/UnitPlanSnapshotsDrawer";
-import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
+import { fmtNum, fmtPct, fmtRub, fmtRub2 } from "@/lib/format";
 import { useTagFilter } from "@/lib/useTagFilter";
 import TagFilterDropdown from "@/components/TagFilterDropdown";
 import { Icon } from "../components/Icon";
@@ -781,7 +781,7 @@ const COLUMNS: ColDef[] = [
     label: "Себест. %",
     visibleByDefault: false,
     render: (r) =>
-      r.cogs_share != null ? fmtPct(r.cogs_share * 100) : "—",
+      r.cogs_share != null ? fmtPct(r.cogs_share * 100, 2) : "—",
   },
   // ── Costs — Marketing ──
   {
@@ -805,7 +805,7 @@ const COLUMNS: ColDef[] = [
     group: "costs",
     label: "Налог ₽",
     visibleByDefault: true,
-    render: (r) => fmtRub(r.tax_rub || 0),
+    render: (r) => fmtRub2(r.tax_rub || 0),
   },
   {
     id: "tax_pct",

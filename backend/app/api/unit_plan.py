@@ -1887,12 +1887,21 @@ async def trigger_prices_sync(
     Прогресс — в SyncStatusIndicator в sidebar или `/api/sync/status`.
     """
     from app.sync.tasks_prices import sync_wb_prices
+    from app.sync.tasks_card_prices import sync_card_prices
 
     try:
         result = sync_wb_prices.delay(user.tenant_id)
+        # СПП тянется из card.wb.ru (отдельная таска) — дёргаем её тоже, иначе
+        # кнопка обновляла только цены продавца, а СПП оставался старым.
+        card_result = sync_card_prices.delay(user.tenant_id)
     except Exception as exc:
         raise HTTPException(503, f"celery broker unavailable: {exc}") from exc
-    return {"task_id": result.id, "queued": True, "tenant_id": user.tenant_id}
+    return {
+        "task_id": result.id,
+        "card_task_id": card_result.id,
+        "queued": True,
+        "tenant_id": user.tenant_id,
+    }
 
 
 @router.get(

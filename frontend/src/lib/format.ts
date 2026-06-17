@@ -5,6 +5,15 @@ export const fmtRub = (v: number | null | undefined) =>
         maximumFractionDigits: 0,
       }).format(v) + " ₽";
 
+/** Рубли с 2 знаками после запятой (точные колонки: налог и т.п.). */
+export const fmtRub2 = (v: number | null | undefined) =>
+  v == null
+    ? "—"
+    : new Intl.NumberFormat("ru-RU", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(v) + " ₽";
+
 export const fmtNum = (v: number | null | undefined) =>
   v == null ? "—" : new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(v);
 
