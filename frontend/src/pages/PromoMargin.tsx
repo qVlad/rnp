@@ -793,7 +793,12 @@ export default function PromoMargin() {
     queryFn: () => api.promoCalculatorListWbPromotions(),
     staleTime: 5 * 60_000,
   });
-  const promos = (promosQ.data || []) as PromoItem[];
+  // Скрываем бесполезные акции: не-автоматические с 0 товаров (по ним нечего
+  // считать). Автоакции оставляем (товары грузятся файлом), как и обычные с
+  // товарами и с неизвестным числом (null).
+  const promos = ((promosQ.data || []) as PromoItem[]).filter(
+    (p) => p.type === "auto" || p.products_count !== 0,
+  );
 
   return (
     <div className="space-y-4">
