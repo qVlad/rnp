@@ -1499,14 +1499,14 @@ function UnitPlanGlobalConfigSection() {
                 }
               />
             </Field>
-            <Field label="Комиссия WB override, % (пусто = тариф)">
+            <Field label="Комиссия override, % (пусто = тариф ВБ по предмету)">
               <input
                 type="number"
                 className="input"
                 step="0.01"
                 min="0"
                 max="100"
-                placeholder="напр. 34.5"
+                placeholder="пусто = тариф"
                 value={draft.commission_override_pct}
                 onChange={(e: any) =>
                   setDraft((d) => ({
@@ -1516,14 +1516,14 @@ function UnitPlanGlobalConfigSection() {
                 }
               />
             </Field>
-            <Field label="Скидка комиссии, % (опции, напр. 0.75)">
+            <Field label="Поправка комиссии, ± % (опции; − вычитает, + прибавляет)">
               <input
                 type="number"
                 className="input"
                 step="0.01"
-                min="0"
+                min="-100"
                 max="100"
-                placeholder="0"
+                placeholder="напр. -0.75"
                 value={draft.commission_discount_pct}
                 onChange={(e: any) =>
                   setDraft((d) => ({

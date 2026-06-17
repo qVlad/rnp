@@ -231,7 +231,8 @@ class UnitPlanRowDTO:
     wb_wallet_pct: Decimal
     price_final: Decimal
     # Commission
-    commission_pct: Decimal
+    commission_base_pct: Decimal  # честная комиссия ВБ из тарифа (до поправки)
+    commission_pct: Decimal  # финальная = база + поправка
     acquiring_pct: Decimal
     commission_total_pct: Decimal
     commission_rub: Decimal
@@ -577,28 +578,33 @@ def compute_row(
             days_to_stockout = stock_effective / velocity_per_day
 
     # --- Commission (U-Y) ---
+    # DEV-090: «честная комиссия ВБ» = тариф WB по предмету. Для FBO (склад WB)
+    # реальная комиссия — `paid_storage_kgvp` (FBO с платным хранением), а НЕ
+    # kgvpMarketplace (`commission_fbo`), который завышен. Для FBS — commission_fbs.
     is_fbs = bool(override.is_fbs) if override.is_fbs is not None else False
     commission_snap = refs.commission
+    commission_base_pct = D0
     if commission_snap is not None:
         if is_fbs:
-            commission_pct = (
+            commission_base_pct = (
                 commission_snap.commission_fbs
                 if commission_snap.commission_fbs is not None
                 else D0
             )
         else:
-            commission_pct = (
-                commission_snap.commission_fbo
-                if commission_snap.commission_fbo is not None
-                else D0
+            # FBO: paid_storage_kgvp (реальная) → fallback commission_fbo.
+            commission_base_pct = (
+                commission_snap.paid_storage_kgvp
+                if commission_snap.paid_storage_kgvp is not None
+                else (commission_snap.commission_fbo or D0)
             )
-    else:
-        commission_pct = D0
-    # DEV-089: ручной override комиссии (тариф WB Tariffs бывает неверным для
-    # категории) + скидка/возврат комиссии (опции продавца, напр. 0.75%).
+    # Ручной override (если задан) заменяет тариф-базу.
     if config.commission_override_pct is not None:
-        commission_pct = config.commission_override_pct
-    commission_pct = commission_pct - config.commission_discount_pct
+        commission_base_pct = config.commission_override_pct
+    # DEV-090: глобальный знаковый поправочный коэффициент (± опции продавца,
+    # напр. −0.75%). Хранится в commission_discount_pct (доля, может быть < 0).
+    # Финальная комиссия = база + поправка.
+    commission_pct = commission_base_pct + config.commission_discount_pct
     if commission_pct < D0:
         commission_pct = D0
     acquiring_pct = config.acquiring_pct
@@ -738,6 +744,7 @@ def compute_row(
         wb_wallet_pct=wb_wallet_pct,
         price_final=_q(price_t),
         # Commission
+        commission_base_pct=commission_base_pct,
         commission_pct=commission_pct,
         acquiring_pct=acquiring_pct,
         commission_total_pct=commission_total_pct,

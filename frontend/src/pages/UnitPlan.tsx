@@ -597,12 +597,20 @@ const COLUMNS: ColDef[] = [
   },
   // ── Costs — Commission ──
   {
+    id: "commission_base_pct",
+    group: "costs",
+    label: "Комиссия ВБ тариф %",
+    visibleByDefault: false,
+    render: (r) =>
+      r.commission_base_pct != null ? fmtPct(r.commission_base_pct * 100, 2) : "—",
+  },
+  {
     id: "commission_pct",
     group: "costs",
     label: "Комиссия %",
     visibleByDefault: true,
     render: (r) =>
-      r.commission_pct != null ? fmtPct(r.commission_pct * 100) : "—",
+      r.commission_pct != null ? fmtPct(r.commission_pct * 100, 2) : "—",
   },
   {
     id: "acquiring_pct",
@@ -2416,14 +2424,17 @@ function TopConstants({ config }: { config: UnitPlanGlobalConfig | null | undefi
         value={`${config.acceptance_rub_per_liter}₽/л × ${config.acceptance_multiplier}`}
         auto={auto.has("acceptance_rub_per_liter")}
       />
+      {config.commission_discount_pct != null &&
+        Number(config.commission_discount_pct) !== 0 && (
+          <Chip
+            label="Поправка комиссии"
+            value={`${Number(config.commission_discount_pct) > 0 ? "+" : ""}${config.commission_discount_pct}%`}
+          />
+        )}
       {config.commission_override_pct != null && (
         <Chip
           label="Комиссия override"
-          value={`${config.commission_override_pct}%${
-            config.commission_discount_pct
-              ? ` − ${config.commission_discount_pct}%`
-              : ""
-          }`}
+          value={`${config.commission_override_pct}%`}
         />
       )}
       <Chip label="Velocity" value={`${config.velocity_days} дн`} />

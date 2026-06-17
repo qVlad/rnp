@@ -3277,6 +3277,7 @@ export interface UnitPlanRow {
   price_after_spp: number | null;
   price_final: number | null;
   // Commission (U-Y)
+  commission_base_pct?: number | null; // честная комиссия ВБ из тарифа (до поправки)
   commission_pct: number | null;
   acquiring_pct: number | null;
   commission_total_pct: number | null;
