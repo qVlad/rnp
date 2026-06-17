@@ -852,13 +852,6 @@ async def put_global_config(
             )
         )
     ).scalar_one_or_none()
-    if existing is not None:
-        raise HTTPException(
-            409,
-            f"global config for effective_date={payload.effective_date.isoformat()} "
-            "already exists",
-        )
-
     # JSONB spp_by_subject — сохраняем как dict[str, float|Decimal]; downstream
     # loader делит на 100 и нормализует.
     spp_map: dict[str, Any] = {}
@@ -866,9 +859,7 @@ async def put_global_config(
         for k, v in payload.spp_by_subject.items():
             spp_map[str(k)] = float(v) if isinstance(v, Decimal) else v
 
-    row = UnitPlanGlobalConfig(
-        tenant_id=user.tenant_id,
-        effective_date=payload.effective_date,
+    fields = dict(
         wb_club_pct=payload.wb_club_pct,
         spp_default_pct=payload.spp_default_pct,
         spp_by_subject=spp_map or None,
@@ -888,15 +879,28 @@ async def put_global_config(
         reverse_logistics_mode=payload.reverse_logistics_mode or "tariff",
         commission_override_pct=payload.commission_override_pct,
         commission_discount_pct=payload.commission_discount_pct,
-        created_by=user.id,
     )
-    session.add(row)
+    # Идемпотентно: правка конфига за ту же дату обновляет строку (не 409).
+    if existing is not None:
+        for k, v in fields.items():
+            setattr(existing, k, v)
+        row = existing
+        action = "update"
+    else:
+        row = UnitPlanGlobalConfig(
+            tenant_id=user.tenant_id,
+            effective_date=payload.effective_date,
+            created_by=user.id,
+            **fields,
+        )
+        session.add(row)
+        action = "create"
     await session.flush()
 
     await audit_log(
         session,
         "unit_plan_global_config",
-        "create",
+        action,
         entity_id=str(row.id),
         after=_global_config_to_dict(row),
         actor=actor_from_request(request),
