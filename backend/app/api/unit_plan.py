@@ -223,6 +223,7 @@ async def _compute_unit_plan_rows(
     period_3_to: date | None = None,
     forecast_date: date | None = None,
     promo_discount_pct: float = 0.0,
+    promo_discount_by_nm: dict[int, float] | None = None,
 ) -> dict[str, Any]:
     """Helper: bulk-compute UNIT-plan rows + meta.
 
@@ -388,12 +389,19 @@ async def _compute_unit_plan_rows(
         # DEV-087: маржа ПОСЛЕ вступления в акцию — пересчёт той же compute_row со
         # сниженной ценой продавца (всё %-зависимое пересчитается, фикс — нет).
         # Для страницы /promo-margin (база = /unit-plan).
-        if promo_discount_pct and promo_discount_pct > 0:
+        # DEV-088: скидка может быть per-SKU (из реальных цен WB-акции/файла) —
+        # promo_discount_by_nm[nm] приоритетнее единой promo_discount_pct.
+        eff_disc = promo_discount_pct
+        if promo_discount_by_nm is not None and nm in promo_discount_by_nm:
+            eff_disc = promo_discount_by_nm[nm]
+        # clamp [0,99]: ≥100 → отрицательная цена (бессмысленно).
+        eff_disc = min(99.0, max(0.0, float(eff_disc or 0)))
+        if eff_disc > 0:
             from dataclasses import replace as _dc_replace
 
             price0 = bundle["price"]
             if price0.base_price is not None and price0.base_price > 0:
-                _k = Decimal("1") - Decimal(str(promo_discount_pct)) / Decimal("100")
+                _k = Decimal("1") - Decimal(str(eff_disc)) / Decimal("100")
                 # Снижаем ВСЮ лесенку цены на скидку акции: и base_price, и
                 # наблюдаемую витринную цену (buyer_price_observed) — иначе из-за
                 # СПП-пиннинга итоговая цена не падает (price_final = buyer_observed).
@@ -422,6 +430,7 @@ async def _compute_unit_plan_rows(
                     float(dto_after.margin_pct) if dto_after.margin_pct is not None else None
                 )
                 item["promo_price_final"] = float(dto_after.price_final)
+                item["promo_discount_pct"] = float(eff_disc)
         items.append(item)
 
         if dto.abc_label:
@@ -531,6 +540,77 @@ async def get_rows(
         },
         "items": result["items"],
         "labels_available": result["labels_available"],
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /promo-margin — маржа/шт до/после акции с per-SKU скидками (DEV-088)
+# ---------------------------------------------------------------------------
+
+
+class PromoMarginRequest(BaseModel):
+    """Параметры расчёта промо-маржи для /promo-margin.
+
+    Скидка задаётся одним из способов (per-SKU приоритетнее):
+    - `discount_pct` — единая скидка на все SKU (быстрая прикидка);
+    - `discount_by_nm` — {nm_id: скидка%} из реальных цен WB-акции/файла.
+    `nm_ids` — если задан, в ответе только эти SKU (товары акции).
+    `period_1_from/to` — окно % выкупа/логистики (как в /unit-plan).
+    """
+
+    period_1_from: date | None = None
+    period_1_to: date | None = None
+    warehouse: str | None = None
+    fbs: bool | None = None
+    monopallet: bool | None = None
+    abc: str | None = None
+    search: str | None = None
+    discount_pct: float = Field(default=0.0, ge=0, le=99)
+    discount_by_nm: dict[int, float] | None = None
+    nm_ids: list[int] | None = Field(default=None, max_length=2000)
+
+
+@router.post("/promo-margin")
+async def post_promo_margin(
+    body: PromoMarginRequest,
+    user: CurrentUser = Depends(get_current_user),
+    brands: set[str] | None = Depends(current_brands_filter),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Маржа/шт ДО и ПОСЛЕ акции по плановой unit-экономике, с per-SKU скидками.
+
+    Источник скидок (WB-акция / Excel-файл / ручная единая %) определяет фронт и
+    шлёт сюда `discount_by_nm` (и/или `discount_pct`). Возвращает те же поля, что
+    GET `/rows`, плюс `promo_margin_rub` / `promo_margin_pct` / `promo_price_final`
+    / `promo_discount_pct` на каждый SKU.
+    """
+    result = await _compute_unit_plan_rows(
+        session=session,
+        tenant_id=user.tenant_id,
+        brands=brands,
+        warehouse=body.warehouse,
+        fbs=body.fbs,
+        monopallet=body.monopallet,
+        abc=body.abc,
+        search=body.search,
+        period_1_from=body.period_1_from,
+        period_1_to=body.period_1_to,
+        promo_discount_pct=body.discount_pct,
+        promo_discount_by_nm=body.discount_by_nm,
+    )
+    items = result["items"]
+    if body.nm_ids:
+        keep = set(body.nm_ids)
+        items = [it for it in items if it.get("nm_id") in keep]
+    return {
+        "meta": {
+            "on_date": result["on_date"].isoformat(),
+            "reference_status": result["reference_status"],
+            "config_version": result["cfg_version"],
+            "total_rows": result["total_rows"],
+            "filtered_rows": len(items),
+        },
+        "items": items,
     }
 
 

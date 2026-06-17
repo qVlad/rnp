@@ -2738,6 +2738,28 @@ paymentOrderDelete: (payment_order_id: string) =>
       }>;
     }>(`/api/unit-plan/rows?${qs.toString()}`);
   },
+  /** DEV-088: промо-маржа с per-SKU скидками (POST). Скидка — единая
+   *  (`discount_pct`) и/или per-SKU (`discount_by_nm` из цен WB-акции/файла).
+   *  `nm_ids` — ограничить ответ товарами акции. */
+  unitPlanPromoMarginV2: (body: {
+    period?: { from: string; to: string };
+    discount_pct?: number;
+    discount_by_nm?: Record<number, number>;
+    nm_ids?: number[];
+  }) => {
+    const payload: Record<string, unknown> = {};
+    if (body.period) {
+      payload.period_1_from = body.period.from;
+      payload.period_1_to = body.period.to;
+    }
+    if (body.discount_pct != null) payload.discount_pct = body.discount_pct;
+    if (body.discount_by_nm) payload.discount_by_nm = body.discount_by_nm;
+    if (body.nm_ids) payload.nm_ids = body.nm_ids;
+    return request<{ items: UnitPlanPromoMarginItem[] }>(
+      `/api/unit-plan/promo-margin`,
+      { method: "POST", body: JSON.stringify(payload) },
+    );
+  },
   // BUG-DEV-009: backend возвращает `{config: ...}`, разворачиваем здесь.
   unitPlanGlobalConfig: async (): Promise<UnitPlanGlobalConfig | null> => {
     const resp = await request<{ config: UnitPlanGlobalConfig | null }>(
@@ -3322,6 +3344,21 @@ export interface UnitPlanPricesStatus {
   spp_rows?: number;
   spp_synced_at?: string | null;
   spp_age_minutes?: number | null;
+}
+
+/** DEV-088: строка промо-маржи (/api/unit-plan/promo-margin). margin_pct/
+ *  promo_margin_pct — доли 0-1. promo_* присутствуют только при скидке > 0. */
+export interface UnitPlanPromoMarginItem {
+  nm_id: number;
+  vendor_code: string | null;
+  brand: string | null;
+  price_final: number;
+  profit_rub: number;
+  margin_pct: number;
+  promo_price_final?: number;
+  promo_margin_rub?: number;
+  promo_margin_pct?: number;
+  promo_discount_pct?: number;
 }
 
 /** Фактические il_coef / irp_coef из истории — подсказка под полями в /settings. */
