@@ -3341,6 +3341,8 @@ export interface UnitPlanReferenceStatus {
 /** TASK-LEAD-074: статус актуальности `wb_prices` для шапки `/unit-plan`. */
 export interface UnitPlanPricesStatus {
   rows: number;
+  /** Всего активных (не архивных) SKU — знаменатель покрытия. */
+  total_active_sku?: number;
   synced_at_min: string | null;
   synced_at_max: string | null;
   age_minutes: number | null;

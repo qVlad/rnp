@@ -2881,9 +2881,12 @@ function PricesHealthBar({
 }) {
   const rows = status?.rows ?? 0;
   const age = status?.age_minutes;
-  // Здоровый: возраст ≤ 60 мин, покрытие ≥ 50%.
+  // Знаменатель покрытия — всего активных SKU (из статуса), НЕ отфильтрованные
+  // строки таблицы (иначе при поиске «90 из 1 SKU, 9000%»). Fallback на totalRows.
+  const denom = status?.total_active_sku ?? totalRows;
+  // Здоровый: возраст ≤ 120 мин, покрытие ≥ 50%.
   const coveragePct =
-    totalRows > 0 ? Math.round((rows / totalRows) * 100) : null;
+    denom > 0 ? Math.round((rows / denom) * 100) : null;
   const isStale = age == null || age > 120;
   const isLowCoverage = coveragePct != null && coveragePct < 50;
   const tone = isStale || isLowCoverage ? "warn" : "success";
@@ -2921,7 +2924,7 @@ function PricesHealthBar({
             <span className="font-mono">
               {rows}
             </span>{" "}
-            из <span className="font-mono">{totalRows}</span> SKU,{" "}
+            из <span className="font-mono">{denom}</span> SKU,{" "}
             <span className="font-mono">{coveragePct}%</span>)
           </>
         )}

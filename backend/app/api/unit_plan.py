@@ -1842,13 +1842,29 @@ async def prices_status(
     Возвращает количество SKU с прайсом из `wb_prices`, минимальный/
     максимальный `synced_at` и возраст самой свежей записи в минутах.
     """
+    # Считаем ТОЛЬКО активные (не архивные) товары — иначе wb_prices тянет
+    # старые/удалённые nm и «90 из N» вводит в заблуждение (в таблице их нет).
+    active_subq = (
+        select(Product.nm_id)
+        .where(
+            Product.tenant_id == user.tenant_id,
+            Product.is_archived.is_(False),
+        )
+        .subquery()
+    )
+    total_active = (
+        await session.execute(select(func.count()).select_from(active_subq))
+    ).scalar_one()
+
     row = (
         await session.execute(
             select(
                 func.count(WbPrice.nm_id),
                 func.min(WbPrice.synced_at),
                 func.max(WbPrice.synced_at),
-            ).where(WbPrice.tenant_id == user.tenant_id)
+            )
+            .where(WbPrice.tenant_id == user.tenant_id)
+            .where(WbPrice.nm_id.in_(select(active_subq.c.nm_id)))
         )
     ).one()
     count, min_synced, max_synced = row
@@ -1863,7 +1879,9 @@ async def prices_status(
             select(
                 func.count(WbCardPrice.nm_id),
                 func.max(WbCardPrice.synced_at),
-            ).where(WbCardPrice.tenant_id == user.tenant_id)
+            )
+            .where(WbCardPrice.tenant_id == user.tenant_id)
+            .where(WbCardPrice.nm_id.in_(select(active_subq.c.nm_id)))
         )
     ).one()
     spp_count, spp_synced = spp_row
@@ -1874,6 +1892,7 @@ async def prices_status(
 
     return {
         "rows": int(count or 0),
+        "total_active_sku": int(total_active or 0),
         "synced_at_min": min_synced.isoformat() if min_synced else None,
         "synced_at_max": max_synced.isoformat() if max_synced else None,
         "age_minutes": age_minutes,

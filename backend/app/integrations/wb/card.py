@@ -10,7 +10,9 @@
   → {products:[{id, sizes:[{price:{basic, product}}]}]}   (копейки)
 
 basic = номинал, product = реальная цена покупателя (с СПП).
-СПП% = (1 − product/basic)×100. Регионально по dest (123585712 = Москва).
+СПП% = (1 − product/basic)×100. Регионально по dest. dest=-1257786 — канонический
+«Москва», совпадает с СПП в WB ЛК «Цены и скидки» (проверено 2026-06-17: для
+nm 467198805 product=7047 ₽ = СПП 21.7% в ЛК; старый 123585712 давал 7137 = 20.7%).
 
 ⚠️ WAF (Angie) на card.wb.ru блокирует TLS/JA3-фингерпринт httpx/Python
 (403 Forbidden), но пропускает curl. Поэтому ходим через `curl` (subprocess) —
@@ -28,7 +30,7 @@ from app.core.logging import get_logger
 
 log = get_logger(__name__)
 
-DEST_MOSCOW = 123585712
+DEST_MOSCOW = -1257786  # канонический dest «Москва» (совпадает с СПП в WB ЛК)
 _BASE = "https://card.wb.ru/cards/v4/detail"
 _CHUNK = 100
 _UA = (
