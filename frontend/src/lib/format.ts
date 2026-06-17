@@ -17,6 +17,21 @@ export const fmtRub2 = (v: number | null | undefined) =>
 export const fmtNum = (v: number | null | undefined) =>
   v == null ? "—" : new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(v);
 
+/** Число с 2 знаками после запятой (для таблиц с точным отображением). */
+export const fmtNum2 = (v: number | null | undefined) =>
+  v == null
+    ? "—"
+    : new Intl.NumberFormat("ru-RU", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(v);
+
+/** Процент с 2 знаками по умолчанию (для таблиц). */
+export const fmtPct2 = (
+  v: number | string | null | undefined,
+  digits = 2,
+) => fmtPct(v, digits);
+
 export const fmtPct = (v: number | string | null | undefined, digits = 1) => {
   if (v == null) return "—";
   const n = typeof v === "number" ? v : Number(v);

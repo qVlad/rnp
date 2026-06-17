@@ -55,7 +55,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import PageHeader from "@/components/PageHeader";
 import { UnitPlanDrillDrawer } from "@/components/UnitPlanDrillDrawer";
 import { UnitPlanSnapshotsDrawer } from "@/components/UnitPlanSnapshotsDrawer";
-import { fmtNum, fmtPct, fmtRub, fmtRub2 } from "@/lib/format";
+import { fmtNum2, fmtPct2, fmtRub2 } from "@/lib/format";
 import { useTagFilter } from "@/lib/useTagFilter";
 import TagFilterDropdown from "@/components/TagFilterDropdown";
 import { Icon } from "../components/Icon";
@@ -466,21 +466,21 @@ const COLUMNS: ColDef[] = [
     group: "stocks",
     label: "Остаток WB",
     visibleByDefault: true,
-    render: (r) => fmtNum(r.stock_wb || 0),
+    render: (r) => fmtNum2(r.stock_wb || 0),
   },
   {
     id: "stock_fbs",
     group: "stocks",
     label: "Остаток FBS",
     visibleByDefault: false,
-    render: (r) => fmtNum(r.stock_fbs || 0),
+    render: (r) => fmtNum2(r.stock_fbs || 0),
   },
   {
     id: "stock_effective",
     group: "stocks",
     label: "С учётом % выкупа",
     visibleByDefault: true,
-    render: (r) => fmtNum(r.stock_effective || 0),
+    render: (r) => fmtNum2(r.stock_effective || 0),
   },
   {
     id: "days_to_stockout",
@@ -501,7 +501,7 @@ const COLUMNS: ColDef[] = [
     visibleByDefault: true,
     render: (r) => (
       <span className="inline-flex items-center gap-1">
-        {fmtRub(r.base_price || 0)}
+        {fmtRub2(r.base_price || 0)}
         <PriceSourceBadge
           source={r.price_source}
           syncedAt={r.price_synced_at}
@@ -515,7 +515,7 @@ const COLUMNS: ColDef[] = [
     label: "Скидка %",
     visibleByDefault: true,
     render: (r) =>
-      r.discount_pct != null ? fmtPct(r.discount_pct * 100) : "—",
+      r.discount_pct != null ? fmtPct2(r.discount_pct * 100) : "—",
   },
   {
     id: "discount_wb_pct",
@@ -523,7 +523,7 @@ const COLUMNS: ColDef[] = [
     label: "Скидка WB %",
     visibleByDefault: false,
     render: (r) =>
-      r.discount_wb_pct != null ? fmtPct(r.discount_wb_pct * 100) : "—",
+      r.discount_wb_pct != null ? fmtPct2(r.discount_wb_pct * 100) : "—",
   },
   {
     id: "discount_match",
@@ -542,7 +542,7 @@ const COLUMNS: ColDef[] = [
     group: "price",
     label: "Цена без СПП",
     visibleByDefault: true,
-    render: (r) => fmtRub(r.price_after_discount || 0),
+    render: (r) => fmtRub2(r.price_after_discount || 0),
   },
   {
     id: "wb_club_pct",
@@ -550,14 +550,14 @@ const COLUMNS: ColDef[] = [
     label: "ВБ Клуб %",
     visibleByDefault: false,
     render: (r) =>
-      r.wb_club_pct != null ? fmtPct(r.wb_club_pct * 100) : "—",
+      r.wb_club_pct != null ? fmtPct2(r.wb_club_pct * 100) : "—",
   },
   {
     id: "price_after_wb_club",
     group: "price",
     label: "Цена с ВБ Клуб",
     visibleByDefault: false,
-    render: (r) => fmtRub(r.price_after_wb_club || 0),
+    render: (r) => fmtRub2(r.price_after_wb_club || 0),
   },
   {
     id: "spp_pct",
@@ -570,7 +570,7 @@ const COLUMNS: ColDef[] = [
         field="spp_pct"
         // В БД храним 0-100, в DTO приходит 0-1 share. Эдитим в 0-100 (% UI).
         value={r.spp_pct != null ? Math.round(r.spp_pct * 10000) / 100 : null}
-        display={r.spp_pct != null ? fmtPct(r.spp_pct * 100) : "—"}
+        display={r.spp_pct != null ? fmtPct2(r.spp_pct * 100) : "—"}
         editor={{ kind: "number", min: 0, max: 80, step: 0.5 }}
         normalize={(s) => {
           if (s.trim() === "") return null;
@@ -586,14 +586,14 @@ const COLUMNS: ColDef[] = [
     group: "price",
     label: "Цена с СПП",
     visibleByDefault: true,
-    render: (r) => fmtRub(r.price_after_spp || 0),
+    render: (r) => fmtRub2(r.price_after_spp || 0),
   },
   {
     id: "price_final",
     group: "price",
     label: "Цена с Wallet",
     visibleByDefault: true,
-    render: (r) => fmtRub(r.price_final || 0),
+    render: (r) => fmtRub2(r.price_final || 0),
   },
   // ── Costs — Commission ──
   {
@@ -602,7 +602,7 @@ const COLUMNS: ColDef[] = [
     label: "Комиссия ВБ тариф %",
     visibleByDefault: false,
     render: (r) =>
-      r.commission_base_pct != null ? fmtPct(r.commission_base_pct * 100, 2) : "—",
+      r.commission_base_pct != null ? fmtPct2(r.commission_base_pct * 100, 2) : "—",
   },
   {
     id: "commission_pct",
@@ -610,7 +610,7 @@ const COLUMNS: ColDef[] = [
     label: "Комиссия %",
     visibleByDefault: true,
     render: (r) =>
-      r.commission_pct != null ? fmtPct(r.commission_pct * 100, 2) : "—",
+      r.commission_pct != null ? fmtPct2(r.commission_pct * 100, 2) : "—",
   },
   {
     id: "acquiring_pct",
@@ -618,7 +618,7 @@ const COLUMNS: ColDef[] = [
     label: "Эквайринг %",
     visibleByDefault: false,
     render: (r) =>
-      r.acquiring_pct != null ? fmtPct(r.acquiring_pct * 100) : "—",
+      r.acquiring_pct != null ? fmtPct2(r.acquiring_pct * 100) : "—",
   },
   {
     id: "commission_total_pct",
@@ -627,7 +627,7 @@ const COLUMNS: ColDef[] = [
     visibleByDefault: false,
     render: (r) =>
       r.commission_total_pct != null
-        ? fmtPct(r.commission_total_pct * 100)
+        ? fmtPct2(r.commission_total_pct * 100)
         : "—",
   },
   {
@@ -635,7 +635,7 @@ const COLUMNS: ColDef[] = [
     group: "costs",
     label: "Комиссия ₽",
     visibleByDefault: true,
-    render: (r) => fmtRub(r.commission_rub || 0),
+    render: (r) => fmtRub2(r.commission_rub || 0),
   },
   {
     id: "is_fbs",
@@ -664,7 +664,7 @@ const COLUMNS: ColDef[] = [
     group: "costs",
     label: "Лог. короб",
     visibleByDefault: false,
-    render: (r) => fmtRub(r.logistics_box_rub || 0),
+    render: (r) => fmtRub2(r.logistics_box_rub || 0),
   },
   {
     id: "is_monopallet",
@@ -698,7 +698,7 @@ const COLUMNS: ColDef[] = [
         field="items_per_monopallet"
         value={r.items_per_monopallet}
         display={
-          r.items_per_monopallet != null ? fmtNum(r.items_per_monopallet) : "—"
+          r.items_per_monopallet != null ? fmtNum2(r.items_per_monopallet) : "—"
         }
         editor={{ kind: "number", min: 0, max: 10000, step: 1 }}
         normalize={(s) => {
@@ -714,7 +714,7 @@ const COLUMNS: ColDef[] = [
     group: "costs",
     label: "Лог. паллет",
     visibleByDefault: false,
-    render: (r) => fmtRub(r.logistics_pallet_rub || 0),
+    render: (r) => fmtRub2(r.logistics_pallet_rub || 0),
   },
   {
     id: "buyout_pct",
@@ -723,7 +723,7 @@ const COLUMNS: ColDef[] = [
     visibleByDefault: true,
     render: (r) => (
       <span className={buyoutColor(r.buyout_pct)}>
-        {r.buyout_pct != null ? fmtPct(r.buyout_pct * 100) : "—"}
+        {r.buyout_pct != null ? fmtPct2(r.buyout_pct * 100) : "—"}
       </span>
     ),
   },
@@ -734,7 +734,7 @@ const COLUMNS: ColDef[] = [
     visibleByDefault: false,
     render: (r) =>
       r.warehouse_coef_pct != null
-        ? fmtPct(r.warehouse_coef_pct * 100)
+        ? fmtPct2(r.warehouse_coef_pct * 100)
         : "—",
   },
   {
@@ -742,14 +742,14 @@ const COLUMNS: ColDef[] = [
     group: "costs",
     label: "Логистика ₽",
     visibleByDefault: true,
-    render: (r) => fmtRub(r.logistics_rub || 0),
+    render: (r) => fmtRub2(r.logistics_rub || 0),
   },
   {
     id: "reverse_logistics_rub",
     group: "costs",
     label: "Обр. лог.",
     visibleByDefault: false,
-    render: (r) => fmtRub(r.reverse_logistics_rub || 0),
+    render: (r) => fmtRub2(r.reverse_logistics_rub || 0),
   },
   {
     id: "logistics_share",
@@ -757,7 +757,7 @@ const COLUMNS: ColDef[] = [
     label: "Лог. %",
     visibleByDefault: false,
     render: (r) =>
-      r.logistics_share != null ? fmtPct(r.logistics_share * 100) : "—",
+      r.logistics_share != null ? fmtPct2(r.logistics_share * 100) : "—",
   },
   // ── Costs — Storage ──
   {
@@ -765,7 +765,7 @@ const COLUMNS: ColDef[] = [
     group: "costs",
     label: "Хранение ₽",
     visibleByDefault: true,
-    render: (r) => fmtRub(r.storage_rub || 0),
+    render: (r) => fmtRub2(r.storage_rub || 0),
   },
   {
     id: "storage_share",
@@ -773,7 +773,7 @@ const COLUMNS: ColDef[] = [
     label: "Хран. %",
     visibleByDefault: false,
     render: (r) =>
-      r.storage_share != null ? fmtPct(r.storage_share * 100) : "—",
+      r.storage_share != null ? fmtPct2(r.storage_share * 100) : "—",
   },
   // ── Costs — COGS ──
   {
@@ -781,7 +781,7 @@ const COLUMNS: ColDef[] = [
     group: "costs",
     label: "Себестоимость",
     visibleByDefault: true,
-    render: (r) => fmtRub(r.cogs_rub || 0),
+    render: (r) => fmtRub2(r.cogs_rub || 0),
   },
   {
     id: "cogs_share",
@@ -789,7 +789,7 @@ const COLUMNS: ColDef[] = [
     label: "Себест. %",
     visibleByDefault: false,
     render: (r) =>
-      r.cogs_share != null ? fmtPct(r.cogs_share * 100, 2) : "—",
+      r.cogs_share != null ? fmtPct2(r.cogs_share * 100, 2) : "—",
   },
   // ── Costs — Marketing ──
   {
@@ -797,7 +797,7 @@ const COLUMNS: ColDef[] = [
     group: "costs",
     label: "Реклама ₽",
     visibleByDefault: true,
-    render: (r) => fmtRub(r.marketing_rub || 0),
+    render: (r) => fmtRub2(r.marketing_rub || 0),
   },
   {
     id: "marketing_pct",
@@ -805,7 +805,7 @@ const COLUMNS: ColDef[] = [
     label: "Реклама %",
     visibleByDefault: false,
     render: (r) =>
-      r.marketing_pct != null ? fmtPct(r.marketing_pct * 100) : "—",
+      r.marketing_pct != null ? fmtPct2(r.marketing_pct * 100) : "—",
   },
   // ── Costs — Tax / VAT ──
   {
@@ -820,21 +820,21 @@ const COLUMNS: ColDef[] = [
     group: "costs",
     label: "Налог %",
     visibleByDefault: false,
-    render: (r) => (r.tax_pct != null ? fmtPct(r.tax_pct * 100) : "—"),
+    render: (r) => (r.tax_pct != null ? fmtPct2(r.tax_pct * 100) : "—"),
   },
   {
     id: "vat_rub",
     group: "costs",
     label: "НДС ₽",
     visibleByDefault: true,
-    render: (r) => fmtRub(r.vat_rub || 0),
+    render: (r) => fmtRub2(r.vat_rub || 0),
   },
   {
     id: "vat_pct",
     group: "costs",
     label: "НДС %",
     visibleByDefault: false,
-    render: (r) => (r.vat_pct != null ? fmtPct(r.vat_pct * 100) : "—"),
+    render: (r) => (r.vat_pct != null ? fmtPct2(r.vat_pct * 100) : "—"),
   },
   // ── Costs — Acceptance ──
   {
@@ -842,7 +842,7 @@ const COLUMNS: ColDef[] = [
     group: "costs",
     label: "Приёмка ₽",
     visibleByDefault: true,
-    render: (r) => fmtRub(r.acceptance_rub || 0),
+    render: (r) => fmtRub2(r.acceptance_rub || 0),
   },
   {
     id: "acceptance_share",
@@ -851,7 +851,7 @@ const COLUMNS: ColDef[] = [
     visibleByDefault: false,
     render: (r) =>
       r.acceptance_share != null
-        ? fmtPct(r.acceptance_share * 100)
+        ? fmtPct2(r.acceptance_share * 100)
         : "—",
   },
   // ── Result ──
@@ -862,7 +862,7 @@ const COLUMNS: ColDef[] = [
     visibleByDefault: true,
     render: (r) => (
       <span className={profitColor(r.profit_rub) + " font-semibold"}>
-        {fmtRub(r.profit_rub || 0)}
+        {fmtRub2(r.profit_rub || 0)}
       </span>
     ),
   },
@@ -877,7 +877,7 @@ const COLUMNS: ColDef[] = [
           marginColor(r.margin_pct) + " font-semibold rounded px-1.5 py-0.5"
         }
       >
-        {r.margin_pct != null ? fmtPct(r.margin_pct * 100) : "—"}
+        {r.margin_pct != null ? fmtPct2(r.margin_pct * 100) : "—"}
       </span>
     ),
   },
@@ -888,7 +888,7 @@ const COLUMNS: ColDef[] = [
     visibleByDefault: true,
     render: (r) => (
       <span className={profitColor(r.roi_pct)}>
-        {r.roi_pct != null ? fmtPct(r.roi_pct * 100) : "—"}
+        {r.roi_pct != null ? fmtPct2(r.roi_pct * 100) : "—"}
       </span>
     ),
   },
@@ -991,7 +991,7 @@ const COLUMNS: ColDef[] = [
     label: "Прибыль нед.1",
     visibleByDefault: false,
     render: (r) =>
-      r.profit_week_1 != null ? fmtRub(r.profit_week_1) : "—",
+      r.profit_week_1 != null ? fmtRub2(r.profit_week_1) : "—",
   },
   {
     id: "orders_period_1",
@@ -999,14 +999,14 @@ const COLUMNS: ColDef[] = [
     label: "Заказано П1",
     visibleByDefault: false,
     render: (r) =>
-      r.orders_period_1 != null ? fmtNum(r.orders_period_1) : "—",
+      r.orders_period_1 != null ? fmtNum2(r.orders_period_1) : "—",
   },
   {
     id: "sold_period_1",
     group: "history",
     label: "Выкуплено П1",
     visibleByDefault: false,
-    render: (r) => (r.sold_period_1 != null ? fmtNum(r.sold_period_1) : "—"),
+    render: (r) => (r.sold_period_1 != null ? fmtNum2(r.sold_period_1) : "—"),
   },
   {
     id: "orders_period_2",
@@ -1014,7 +1014,7 @@ const COLUMNS: ColDef[] = [
     label: "Заказано П2",
     visibleByDefault: false,
     render: (r) =>
-      r.orders_period_2 != null ? fmtNum(r.orders_period_2) : "—",
+      r.orders_period_2 != null ? fmtNum2(r.orders_period_2) : "—",
   },
   {
     id: "orders_period_3",
@@ -1022,7 +1022,7 @@ const COLUMNS: ColDef[] = [
     label: "Заказано П3",
     visibleByDefault: false,
     render: (r) =>
-      r.orders_period_3 != null ? fmtNum(r.orders_period_3) : "—",
+      r.orders_period_3 != null ? fmtNum2(r.orders_period_3) : "—",
   },
   {
     id: "stock_forecast",
@@ -1030,7 +1030,7 @@ const COLUMNS: ColDef[] = [
     label: "Прогноз остатка",
     visibleByDefault: false,
     render: (r) =>
-      r.stock_forecast != null ? fmtNum(Math.round(r.stock_forecast)) : "—",
+      r.stock_forecast != null ? fmtNum2(Math.round(r.stock_forecast)) : "—",
   },
 ];
 
@@ -1985,36 +1985,36 @@ function UnitPlanDesktop() {
                     if (idx === 0 && isFrozen) content = `ИТОГО`;
                     switch (c.id) {
                       case "price_after_discount":
-                        content = fmtRub(totals.revenue);
+                        content = fmtRub2(totals.revenue);
                         break;
                       case "commission_rub":
-                        content = fmtRub(totals.commission);
+                        content = fmtRub2(totals.commission);
                         break;
                       case "logistics_rub":
-                        content = fmtRub(totals.logistics);
+                        content = fmtRub2(totals.logistics);
                         break;
                       case "storage_rub":
-                        content = fmtRub(totals.storage);
+                        content = fmtRub2(totals.storage);
                         break;
                       case "cogs_rub":
-                        content = fmtRub(totals.cogs);
+                        content = fmtRub2(totals.cogs);
                         break;
                       case "marketing_rub":
-                        content = fmtRub(totals.marketing);
+                        content = fmtRub2(totals.marketing);
                         break;
                       case "tax_rub":
-                        content = fmtRub(totals.tax);
+                        content = fmtRub2(totals.tax);
                         break;
                       case "vat_rub":
-                        content = fmtRub(totals.vat);
+                        content = fmtRub2(totals.vat);
                         break;
                       case "acceptance_rub":
-                        content = fmtRub(totals.acceptance);
+                        content = fmtRub2(totals.acceptance);
                         break;
                       case "profit_rub":
                         content = (
                           <span className={profitColor(totals.profit)}>
-                            {fmtRub(totals.profit)}
+                            {fmtRub2(totals.profit)}
                           </span>
                         );
                         break;
@@ -2026,7 +2026,7 @@ function UnitPlanDesktop() {
                               " rounded px-1.5 py-0.5"
                             }
                           >
-                            {fmtPct(totals.avgMargin * 100)}
+                            {fmtPct2(totals.avgMargin * 100)}
                           </span>
                         );
                         break;
