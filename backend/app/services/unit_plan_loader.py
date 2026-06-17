@@ -353,6 +353,14 @@ async def load_global_config(
             if row.reverse_logistics_mode in ("tariff", "flat_50")
             else "tariff"
         ),
+        commission_override_pct=(
+            _pct_to_share(row.commission_override_pct)
+            if getattr(row, "commission_override_pct", None) is not None
+            else None
+        ),
+        commission_discount_pct=_pct_to_share(
+            getattr(row, "commission_discount_pct", None) or D("0")
+        ),
         spp_observed=spp_observed,
     )
     return await _apply_config_auto_pull(session, cfg, tenant_id)

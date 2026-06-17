@@ -1177,6 +1177,8 @@ type UnitPlanConfigDraft = {
   buyout_fallback_pct: string;
   storage_days: string;
   reverse_logistics_mode: "tariff" | "flat_50";
+  commission_override_pct: string;
+  commission_discount_pct: string;
   spp_by_subject: Array<{ subject: string; pct: string }>;
 };
 
@@ -1198,6 +1200,8 @@ const EMPTY_DRAFT: UnitPlanConfigDraft = {
   buyout_fallback_pct: "",
   storage_days: "",
   reverse_logistics_mode: "tariff",
+  commission_override_pct: "",
+  commission_discount_pct: "",
   spp_by_subject: [],
 };
 
@@ -1228,6 +1232,8 @@ function draftFromConfig(c: any): UnitPlanConfigDraft {
     storage_days: c?.storage_days?.toString() ?? "",
     reverse_logistics_mode:
       (c?.reverse_logistics_mode as "tariff" | "flat_50") ?? "tariff",
+    commission_override_pct: c?.commission_override_pct?.toString() ?? "",
+    commission_discount_pct: c?.commission_discount_pct?.toString() ?? "",
     spp_by_subject: Object.entries(sbs).map(([subject, pct]) => ({
       subject,
       pct: String(pct),
@@ -1338,6 +1344,14 @@ function UnitPlanGlobalConfigSection() {
         buyout_fallback_pct: Number(draft.buyout_fallback_pct),
         storage_days: Number(draft.storage_days),
         reverse_logistics_mode: draft.reverse_logistics_mode,
+        commission_override_pct:
+          draft.commission_override_pct.trim() === ""
+            ? null
+            : Number(draft.commission_override_pct),
+        commission_discount_pct:
+          draft.commission_discount_pct.trim() === ""
+            ? null
+            : Number(draft.commission_discount_pct),
       });
     },
     onSuccess: () => {
@@ -1482,6 +1496,40 @@ function UnitPlanGlobalConfigSection() {
                 value={draft.acquiring_pct}
                 onChange={(e: any) =>
                   setDraft((d) => ({ ...d, acquiring_pct: e.target.value }))
+                }
+              />
+            </Field>
+            <Field label="Комиссия WB override, % (пусто = тариф)">
+              <input
+                type="number"
+                className="input"
+                step="0.01"
+                min="0"
+                max="100"
+                placeholder="напр. 34.5"
+                value={draft.commission_override_pct}
+                onChange={(e: any) =>
+                  setDraft((d) => ({
+                    ...d,
+                    commission_override_pct: e.target.value,
+                  }))
+                }
+              />
+            </Field>
+            <Field label="Скидка комиссии, % (опции, напр. 0.75)">
+              <input
+                type="number"
+                className="input"
+                step="0.01"
+                min="0"
+                max="100"
+                placeholder="0"
+                value={draft.commission_discount_pct}
+                onChange={(e: any) =>
+                  setDraft((d) => ({
+                    ...d,
+                    commission_discount_pct: e.target.value,
+                  }))
                 }
               />
             </Field>

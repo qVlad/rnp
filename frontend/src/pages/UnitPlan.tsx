@@ -2416,6 +2416,16 @@ function TopConstants({ config }: { config: UnitPlanGlobalConfig | null | undefi
         value={`${config.acceptance_rub_per_liter}₽/л × ${config.acceptance_multiplier}`}
         auto={auto.has("acceptance_rub_per_liter")}
       />
+      {config.commission_override_pct != null && (
+        <Chip
+          label="Комиссия override"
+          value={`${config.commission_override_pct}%${
+            config.commission_discount_pct
+              ? ` − ${config.commission_discount_pct}%`
+              : ""
+          }`}
+        />
+      )}
       <Chip label="Velocity" value={`${config.velocity_days} дн`} />
       <Chip
         label="Buyout fallback"

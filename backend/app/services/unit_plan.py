@@ -188,6 +188,10 @@ class GlobalConfig:
     velocity_days: int
     buyout_fallback_pct: Decimal  # 0-1 (в БД хранится 0-100; caller конвертирует)
     storage_days: int
+    # DEV-089: ручной override комиссии WB (доля 0-1) — заменяет тариф, если задан.
+    commission_override_pct: Decimal | None = None
+    # Скидка/возврат комиссии (доля 0-1, напр. 0.0075) — вычитается из комиссии.
+    commission_discount_pct: Decimal = Decimal("0")
     # UNIT_PLAN.md §14.5: режим расчёта обратной логистики (AG в Excel).
     #   'tariff'  — AG из WB-тарифа короба (методически правильно, default)
     #   'flat_50' — фиксированная 50 ₽ (как в большинстве rows Excel-эталона)
@@ -589,6 +593,13 @@ def compute_row(
                 else D0
             )
     else:
+        commission_pct = D0
+    # DEV-089: ручной override комиссии (тариф WB Tariffs бывает неверным для
+    # категории) + скидка/возврат комиссии (опции продавца, напр. 0.75%).
+    if config.commission_override_pct is not None:
+        commission_pct = config.commission_override_pct
+    commission_pct = commission_pct - config.commission_discount_pct
+    if commission_pct < D0:
         commission_pct = D0
     acquiring_pct = config.acquiring_pct
     commission_total_pct = commission_pct + acquiring_pct

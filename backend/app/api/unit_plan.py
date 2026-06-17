@@ -135,6 +135,12 @@ def _global_config_to_dict(g: UnitPlanGlobalConfig) -> dict[str, Any]:
         "buyout_fallback_pct": _decimalize(g.buyout_fallback_pct),
         "storage_days": g.storage_days,
         "reverse_logistics_mode": getattr(g, "reverse_logistics_mode", "tariff"),
+        "commission_override_pct": _decimalize(
+            getattr(g, "commission_override_pct", None)
+        ),
+        "commission_discount_pct": _decimalize(
+            getattr(g, "commission_discount_pct", None)
+        ),
         "created_at": g.created_at.isoformat() if g.created_at else None,
         "created_by": g.created_by,
     }
@@ -770,6 +776,9 @@ class GlobalConfigPayload(BaseModel):
     reverse_logistics_mode: str | None = Field(
         default=None, pattern="^(tariff|flat_50)$"
     )
+    # DEV-089: override комиссии (заменяет тариф) + скидка комиссии (опции 0.75%).
+    commission_override_pct: Decimal | None = None
+    commission_discount_pct: Decimal | None = None
 
 
 @router.get("/global-config")
@@ -877,6 +886,8 @@ async def put_global_config(
         buyout_fallback_pct=payload.buyout_fallback_pct,
         storage_days=payload.storage_days,
         reverse_logistics_mode=payload.reverse_logistics_mode or "tariff",
+        commission_override_pct=payload.commission_override_pct,
+        commission_discount_pct=payload.commission_discount_pct,
         created_by=user.id,
     )
     session.add(row)

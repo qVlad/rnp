@@ -3435,6 +3435,10 @@ export interface UnitPlanGlobalConfig {
    *  'tariff'  — AG из WB-тарифа короба (методически правильно, default)
    *  'flat_50' — фикс 50 ₽ (как в большинстве rows Excel-эталона) */
   reverse_logistics_mode?: "tariff" | "flat_50";
+  /** DEV-089: ручной override комиссии WB (%), заменяет тариф если задан. */
+  commission_override_pct?: number | null;
+  /** DEV-089: скидка/возврат комиссии (%, опции продавца) — вычитается. */
+  commission_discount_pct?: number | null;
   /** DEV-087: ключи, значения которых подтянуты автоматически (налог/НДС из
    *  налог-настроек, ИЛ/ИРП из факт-рекомендаций), а не заданы вручную. */
   auto_pulled?: string[];

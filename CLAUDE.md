@@ -144,6 +144,8 @@ docker-compose.yml · .env(.example) · .claude/settings.json (permissions)
 | 0075 | **chart_annotation** — команд-аннотации на дату (DEV-081). 📌-маркеры на timeseries дашборда + панель заметок. `api/annotations.py` (GET все / POST+DELETE director_or_head) |
 | 0076 | **off_platform_stock_movements.warehouse_name** — мульти-склад своих складов (DEV-083). NULL=«Основной». kinds `wh_transfer_out/in` + `POST /api/off-platform/transfer` (межскладское перемещение) + `by_warehouse` в summary |
 | 0077 | **wb_search_position** — полная выдача поиска WB (наши+конкуренты, DEV-085). Расширение шлёт ранг через `POST /api/extension/search-ranking` (анти-спай: пишем только если есть наша карточка). `/jam` «Конкуренты по запросу» (`/jam/competitors`) |
+| 0078 | **wb_funnel_daily.cancel_count** — отмены из Воронки для терминального % выкупа buyouts/(buyouts+cancels) (DEV-087) |
+| 0079 | **unit_plan_global_config.commission_override_pct + commission_discount_pct** — ручной override комиссии WB (тариф бывает неверный для категории) + возврат комиссии (опции, напр. 0.75%), DEV-089. compute_row: commission = (override ?? тариф) − discount |
 
 ## Роли и RBAC
 

@@ -2193,6 +2193,12 @@ class UnitPlanGlobalConfig(Base, TenantScopedMixin):
     velocity_days: Mapped[int | None] = mapped_column(Integer, default=30)
     buyout_fallback_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), default=50)
     storage_days: Mapped[int | None] = mapped_column(Integer, default=60)
+    # DEV-089: ручной override комиссии WB (когда тариф WB Tariffs неверный для
+    # категории). NULL → берём тариф wb_tariff_commission по предмету.
+    commission_override_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    # Возврат/скидка комиссии (опции продавца, напр. 0.75%) — вычитается из
+    # комиссии (override или тарифа). NULL/0 → без скидки.
+    commission_discount_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
     # UNIT_PLAN.md §14.5 — режим обратной логистики:
     #   'tariff'  — AG из WB-тарифа короба (методически правильно, default)
     #   'flat_50' — фиксированная 50 ₽ (как в большинстве rows Excel-эталона)
