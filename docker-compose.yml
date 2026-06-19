@@ -82,6 +82,9 @@ services:
       - ./TRANSIT_CALCULATOR.md:/app/TRANSIT_CALCULATOR.md:ro
       - ./SUPPLY_CALCULATOR.md:/app/SUPPLY_CALCULATOR.md:ro
       - ./RECONCILIATION.md:/app/RECONCILIATION.md:ro
+      # Менеджерские «как пользоваться» для /unit-plan и /promo-margin.
+      - ./UNIT_PLAN_GUIDE.md:/app/UNIT_PLAN_GUIDE.md:ro
+      - ./PROMO_MARGIN_GUIDE.md:/app/PROMO_MARGIN_GUIDE.md:ro
 
   worker-stats:
     image: rnp-app:latest

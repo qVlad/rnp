@@ -1583,6 +1583,12 @@ function UnitPlanDesktop() {
             : undefined
         }
       />
+      <Link
+        to="/docs/unit-plan-guide"
+        className="inline-flex items-center gap-1.5 text-sm text-accent hover:underline w-fit"
+      >
+        📖 Как этим пользоваться
+      </Link>
 
       {isMock && (
         <div className="card bg-warn-subtle border-warn text-warn text-sm">

@@ -24,6 +24,9 @@ router = APIRouter(prefix="/api/doc", tags=["doc-pages"])
 _SLUG_TO_FILE: dict[str, str] = {
     "promo-calculator": "PROMO_CALCULATOR.md",
     "unit-plan": "UNIT_PLAN.md",
+    # Менеджерские «как пользоваться» (user-facing, не методика).
+    "unit-plan-guide": "UNIT_PLAN_GUIDE.md",
+    "promo-margin-guide": "PROMO_MARGIN_GUIDE.md",
     # TASK-LEAD-095 — user-facing методички для /transit-calculator,
     # /supply-calculator, /pnl-reconciliation.
     "transit-calculator": "TRANSIT_CALCULATOR.md",

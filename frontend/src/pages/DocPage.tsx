@@ -13,6 +13,8 @@ import PageHeader from "@/components/PageHeader";
 const TITLES: Record<string, string> = {
   "promo-calculator": "Методика калькулятора WB-акций",
   "unit-plan": "Методика плановой юнит-экономики (UNIT-план)",
+  "unit-plan-guide": "UNIT-план — как пользоваться",
+  "promo-margin-guide": "Маржа в акции — как пользоваться",
   // TASK-LEAD-095
   "transit-calculator": "Методика калькулятора транзитной поставки",
   "supply-calculator": "Методика калькулятора прямой поставки",

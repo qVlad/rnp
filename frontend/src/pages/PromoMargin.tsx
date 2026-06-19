@@ -836,6 +836,12 @@ export default function PromoMargin() {
         title="Маржинальность в акции (до / после)"
         subtitle="на единицу товара, ₽ и %, по плановой unit-экономике (/unit-plan). «После» = пересчёт со сниженной ценой: комиссия/налог/реклама масштабируются, себестоимость/логистика/хранение фиксированы."
       />
+      <Link
+        to="/docs/promo-margin-guide"
+        className="inline-flex items-center gap-1.5 text-sm text-accent hover:underline w-fit"
+      >
+        📖 Как этим пользоваться
+      </Link>
 
       <section className="card flex flex-wrap gap-4 items-center">
         <div className="flex flex-col gap-1">
