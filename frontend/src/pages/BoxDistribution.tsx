@@ -94,6 +94,12 @@ export default function BoxDistribution() {
   const [msg, setMsg] = useState<string | null>(null);
   const [showBoxes, setShowBoxes] = useState(false);
   const [showDistributed, setShowDistributed] = useState(false);
+  const [search, setSearch] = useState("");
+  const [searchDeb, setSearchDeb] = useState("");
+  useEffect(() => {
+    const id = setTimeout(() => setSearchDeb(search.trim()), 250);
+    return () => clearTimeout(id);
+  }, [search]);
 
   const refreshAll = () => {
     qc.invalidateQueries({ queryKey: ["box-dist-status"] });
@@ -190,6 +196,22 @@ export default function BoxDistribution() {
     queryFn: api.boxDistDistributedBoxes,
     enabled: showDistributed,
   });
+  const searchQ = useQuery({
+    queryKey: ["box-dist-search", searchDeb],
+    queryFn: () => api.boxDistSearch(searchDeb),
+    enabled: searchDeb.length > 0,
+  });
+
+  const uploadMut = useMutation({
+    mutationFn: (f: File) => api.boxDistUpload(f),
+    onSuccess: (d) => {
+      setMsg(`✓ Загружено: ${d.boxes} коробов, ${d.rows} строк`);
+      setScanned(null);
+      refreshAll();
+      setTimeout(() => setMsg(null), 4000);
+    },
+    onError: (e) => setMsg(`Ошибка загрузки: ${String((e as Error).message || e)}`),
+  });
 
   const status = statusQ.data;
   const setQty = (wh: string, barcode: string, qty: number, max: number) =>
@@ -226,12 +248,21 @@ export default function BoxDistribution() {
       )}
 
       {status && !status.has_data && (
-        <div className="card text-sm text-muted">
-          Файл «Распределение» не загружен. Загрузите его в{" "}
-          <Link to="/settings" className="underline text-accent">
-            настройках
-          </Link>
-          .
+        <div className="card text-sm space-y-2">
+          <div className="text-muted">Файл «Распределение» не загружен.</div>
+          <label className="btn-primary cursor-pointer inline-block">
+            {uploadMut.isPending ? "Загрузка…" : "Загрузить файл .xlsx"}
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) uploadMut.mutate(f);
+                e.target.value = "";
+              }}
+            />
+          </label>
         </div>
       )}
       {status?.has_data && (
@@ -252,8 +283,48 @@ export default function BoxDistribution() {
 
       {/* Сканер (без ручного ввода) */}
       {status?.has_data && (
-        <div className="card">
+        <div className="card space-y-3">
           <Scanner onDecode={(t) => scanMut.mutate(t)} />
+
+          {/* Ручной поиск короба по части ШК */}
+          <div>
+            <input
+              className="input w-full"
+              placeholder="Поиск короба по части ШК (напр. 119)"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            {searchDeb.length > 0 && (
+              <div className="mt-1 max-h-56 overflow-y-auto border border-border rounded">
+                {searchQ.isFetching && (
+                  <div className="p-2 text-xs text-muted">Поиск…</div>
+                )}
+                {searchQ.data?.boxes.map((b) => (
+                  <button
+                    key={b.src_box_code}
+                    className="flex w-full items-center justify-between px-2 py-1.5 text-left text-sm hover:bg-soft border-t border-border/50"
+                    onClick={() => {
+                      setSearch("");
+                      scanMut.mutate(b.src_box_code);
+                    }}
+                  >
+                    <span className="font-mono text-xs">{b.src_box_code}</span>
+                    <span className="text-xs text-muted">
+                      {b.status === "full"
+                        ? "✓ распределён"
+                        : b.status === "partial"
+                          ? `${b.distributed_qty}/${b.total_qty}`
+                          : `${b.total_qty} шт`}
+                    </span>
+                  </button>
+                ))}
+                {searchQ.data && searchQ.data.boxes.length === 0 && (
+                  <div className="p-2 text-xs text-muted">Ничего не найдено</div>
+                )}
+              </div>
+            )}
+          </div>
+
           {scanErr && <div className="text-danger text-sm mt-2">{scanErr}</div>}
         </div>
       )}
@@ -433,19 +504,45 @@ export default function BoxDistribution() {
         </div>
       )}
 
-      {/* Сброс */}
+      {/* Загрузка новой версии файла + сброс */}
       {status?.has_data && (
-        <div className="card">
-          <button
-            className="btn text-xs text-danger border-danger/40"
-            disabled={resetMut.isPending}
-            onClick={onReset}
-          >
-            ⚠️ Сбросить все раскладки
-          </button>
-          <div className="text-[11px] text-muted mt-1">
-            Удалит все WB-короба и прогресс, счётчик вернётся к началу. Исходный
-            файл останется.
+        <div className="card space-y-3">
+          <div>
+            <label className="btn text-xs cursor-pointer inline-block">
+              {uploadMut.isPending ? "Загрузка…" : "📄 Загрузить новый файл коробов"}
+              <input
+                type="file"
+                accept=".xlsx,.xls"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (
+                    f &&
+                    window.confirm(
+                      "Загрузить новый файл? Текущие WB-короба и прогресс будут очищены (новая сессия).",
+                    )
+                  )
+                    uploadMut.mutate(f);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            <div className="text-[11px] text-muted mt-1">
+              Новая версия заменит текущие данные и начнёт сессию заново.
+            </div>
+          </div>
+          <div>
+            <button
+              className="btn text-xs text-danger border-danger/40"
+              disabled={resetMut.isPending}
+              onClick={onReset}
+            >
+              ⚠️ Сбросить все раскладки
+            </button>
+            <div className="text-[11px] text-muted mt-1">
+              Удалит все WB-короба и прогресс, счётчик вернётся к началу. Исходный
+              файл останется.
+            </div>
           </div>
         </div>
       )}

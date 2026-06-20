@@ -2999,6 +2999,10 @@ paymentOrderDelete: (payment_order_id: string) =>
     request<BoxDistScan>(
       `/api/box-distribution/scan/${encodeURIComponent(code)}`,
     ),
+  boxDistSearch: (q: string) =>
+    request<{ boxes: BoxDistDistributedBox[] }>(
+      `/api/box-distribution/search?q=${encodeURIComponent(q)}`,
+    ),
   boxDistDistribute: (body: {
     src_box_code: string;
     placements: Array<{
@@ -3455,7 +3459,7 @@ export interface BoxDistDistributedBox {
   brand: string | null;
   total_qty: number;
   distributed_qty: number;
-  status: "full" | "partial";
+  status: "full" | "partial" | "none";
 }
 export interface BoxDistWbBox {
   id: number;

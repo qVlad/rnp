@@ -184,13 +184,21 @@ async def status(
             )
         )
     ).scalar_one()
-    distributed_boxes = (
-        await session.execute(
-            select(func.count(func.distinct(BoxDistributionSrc.src_box_code))).where(
-                BoxDistributionSrc.tenant_id == tid,
-                BoxDistributionSrc.distributed.is_(True),
-            )
+    # «Обработан» = полностью разложен (Σdistributed_qty ≥ Σqty). Считаем по
+    # количествам, а не по флагу distributed (его ставит только force-complete).
+    fully_subq = (
+        select(BoxDistributionSrc.src_box_code)
+        .where(BoxDistributionSrc.tenant_id == tid)
+        .group_by(BoxDistributionSrc.src_box_code)
+        .having(func.sum(BoxDistributionSrc.qty) > 0)
+        .having(
+            func.sum(BoxDistributionSrc.distributed_qty)
+            >= func.sum(BoxDistributionSrc.qty)
         )
+        .subquery()
+    )
+    distributed_boxes = (
+        await session.execute(select(func.count()).select_from(fully_subq))
     ).scalar_one()
     wb_open = (
         await session.execute(
@@ -227,6 +235,50 @@ async def status(
 
 
 # ── Scan / distribute ─────────────────────────────────────────────────────────
+
+
+@router.get("/search")
+async def search_boxes(
+    q: str = "",
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Полнотекстовый поиск входящего короба по части ШК (напр. «119» →
+    ALT-001-236-119). До 25 совпадений с прогрессом раскладки."""
+    tid = user.tenant_id
+    qq = q.strip()
+    if not qq:
+        return {"boxes": []}
+    rows = (
+        await session.execute(
+            select(
+                BoxDistributionSrc.src_box_code,
+                func.max(BoxDistributionSrc.brand).label("brand"),
+                func.sum(BoxDistributionSrc.qty).label("total"),
+                func.sum(BoxDistributionSrc.distributed_qty).label("done"),
+            )
+            .where(
+                BoxDistributionSrc.tenant_id == tid,
+                BoxDistributionSrc.src_box_code.ilike(f"%{qq}%"),
+            )
+            .group_by(BoxDistributionSrc.src_box_code)
+            .order_by(BoxDistributionSrc.src_box_code)
+            .limit(25)
+        )
+    ).all()
+    out = []
+    for code, brand, total, done in rows:
+        t, d = int(total or 0), int(done or 0)
+        out.append(
+            {
+                "src_box_code": code,
+                "brand": brand,
+                "total_qty": t,
+                "distributed_qty": d,
+                "status": "full" if d >= t and t > 0 else "partial" if d > 0 else "none",
+            }
+        )
+    return {"boxes": out}
 
 
 @router.get("/scan/{box_code}")
