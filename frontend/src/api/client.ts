@@ -3005,7 +3005,6 @@ paymentOrderDelete: (payment_order_id: string) =>
       warehouse: string;
       items: Array<{ barcode: string; qty: number }>;
     }>;
-    mark_distributed?: boolean;
   }) =>
     request<{ affected_wb_box_ids: number[] }>(
       "/api/box-distribution/distribute",
@@ -3023,6 +3022,15 @@ paymentOrderDelete: (payment_order_id: string) =>
     ),
   boxDistWbBoxes: () =>
     request<{ boxes: BoxDistWbBox[] }>("/api/box-distribution/wb-boxes"),
+  boxDistDistributedBoxes: () =>
+    request<{ boxes: BoxDistDistributedBox[] }>(
+      "/api/box-distribution/distributed-boxes",
+    ),
+  boxDistReset: () =>
+    request<{ ok: boolean; next_wb: number }>(
+      "/api/box-distribution/reset?confirm=true",
+      { method: "POST" },
+    ),
   boxDistPatchItems: (
     boxId: number,
     items: Array<{ barcode: string; qty: number }>,
@@ -3424,7 +3432,9 @@ export interface BoxDistScanItem {
   barcode: string;
   vendor_article: string | null;
   size: string | null;
-  qty_suggested: number;
+  qty: number; // исходное кол-во
+  qty_done: number; // уже разложено
+  qty_suggested: number; // остаток к раскладке
 }
 export interface BoxDistPlacement {
   warehouse: string;
@@ -3435,8 +3445,17 @@ export interface BoxDistPlacement {
 export interface BoxDistScan {
   src_box_code: string;
   brand: string | null;
-  distributed: boolean;
+  fully_distributed: boolean;
+  total_qty: number;
+  distributed_qty: number;
   placements: BoxDistPlacement[];
+}
+export interface BoxDistDistributedBox {
+  src_box_code: string;
+  brand: string | null;
+  total_qty: number;
+  distributed_qty: number;
+  status: "full" | "partial";
 }
 export interface BoxDistWbBox {
   id: number;

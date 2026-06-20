@@ -3117,6 +3117,10 @@ class BoxDistributionSrc(Base, TenantScopedMixin):
     barcode: Mapped[str] = mapped_column(String(64), nullable=False)
     size: Mapped[str | None] = mapped_column(String(64))
     qty: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    # DEV-091: сколько из qty уже разложено (частичная раскладка / запрет повтора).
+    distributed_qty: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
     # warehouse — канонический (после карты алиасов), warehouse_raw — как в файле.
     warehouse: Mapped[str] = mapped_column(String(128), nullable=False)
     warehouse_raw: Mapped[str | None] = mapped_column(String(128))

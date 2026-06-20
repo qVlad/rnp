@@ -147,6 +147,7 @@ docker-compose.yml · .env(.example) · .claude/settings.json (permissions)
 | 0078 | **wb_funnel_daily.cancel_count** — отмены из Воронки для терминального % выкупа buyouts/(buyouts+cancels) (DEV-087) |
 | 0079 | **unit_plan_global_config.commission_override_pct + commission_discount_pct** — ручной override комиссии WB (тариф бывает неверный для категории) + возврат комиссии (опции, напр. 0.75%), DEV-089. compute_row: commission = (override ?? тариф) − discount |
 | 0080 | **box_distribution_src / _wb_box / _wb_item** — мобильный QR-сканер раскладки коробов (DEV-091). Скан ШК короба (ALT-...) → раскладка по складам в WB-короба (WB_1541505000++, накопительно) → экспорт shk-excel. Счётчик/алиасы складов в AppSetting. Парсер 3 листов Ink/Ld/Lk |
+| 0081 | **box_distribution_src.distributed_qty** — трекинг частичной раскладки (DEV-091): остатки на скане, запрет повторной раскладки. Эндпоинты `/reset` (с confirm), `/distributed-boxes`. Экспорт +колонка «Товар с кизом»=да (шаблон page-excel) |
 
 ## Роли и RBAC
 

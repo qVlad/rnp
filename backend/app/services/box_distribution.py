@@ -171,20 +171,30 @@ def parse_distribution_file(
 
 
 def build_shk_xlsx(items: list[dict[str, Any]]) -> bytes:
-    """items: [{barcode, qty, wb_box_code, expiry?}] → xlsx по шаблону shk-excel.
+    """items: [{barcode, qty, wb_box_code, expiry?}] → xlsx по шаблону page-excel.
 
-    Колонки: Баркод товара | Кол-во товаров | ШК короба | Срок годности.
+    Колонки: Баркод товара | Кол-во товаров | ШК короба | Товар с кизом | Срок годности.
+    «Товар с кизом» — всегда «да» (по требованию пользователя); срок годности — пусто.
     """
     wb = Workbook()
     ws = wb.active
     ws.title = "Sheet1"
-    ws.append(["Баркод товара", "Кол-во товаров", "ШК короба", "Срок годности"])
+    ws.append(
+        [
+            "Баркод товара",
+            "Кол-во товаров",
+            "ШК короба",
+            "Товар с кизом",
+            "Срок годности",
+        ]
+    )
     for it in items:
         ws.append(
             [
                 str(it.get("barcode") or ""),
                 int(it.get("qty") or 0),
                 str(it.get("wb_box_code") or ""),
+                "да",
                 it.get("expiry") or "",
             ]
         )

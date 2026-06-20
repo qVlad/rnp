@@ -269,14 +269,41 @@ async def scan_box(
     )
     open_by_wh = {b.warehouse: b for b in open_boxes}
 
-    by_wh: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    # Агрегируем остатки по (склад, баркод): remaining = Σqty − Σdistributed_qty.
+    agg: dict[tuple[str, str], dict[str, Any]] = {}
+    total_qty = 0
+    total_done = 0
     for r in rows:
-        by_wh[r.warehouse].append(
+        total_qty += r.qty
+        total_done += r.distributed_qty
+        k = (r.warehouse, r.barcode)
+        a = agg.setdefault(
+            k,
             {
+                "warehouse": r.warehouse,
                 "barcode": r.barcode,
                 "vendor_article": r.vendor_article,
                 "size": r.size,
-                "qty_suggested": r.qty,
+                "qty": 0,
+                "done": 0,
+            },
+        )
+        a["qty"] += r.qty
+        a["done"] += r.distributed_qty
+
+    by_wh: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for a in agg.values():
+        remaining = a["qty"] - a["done"]
+        if remaining <= 0:
+            continue
+        by_wh[a["warehouse"]].append(
+            {
+                "barcode": a["barcode"],
+                "vendor_article": a["vendor_article"],
+                "size": a["size"],
+                "qty": a["qty"],  # исходное кол-во
+                "qty_done": a["done"],  # уже разложено
+                "qty_suggested": remaining,  # остаток к раскладке
             }
         )
 
@@ -291,10 +318,13 @@ async def scan_box(
                 "items": by_wh[wh],
             }
         )
+    fully = total_done >= total_qty and total_qty > 0
     return {
         "src_box_code": code,
         "brand": rows[0].brand,
-        "distributed": all(r.distributed for r in rows),
+        "fully_distributed": fully or all(r.distributed for r in rows),
+        "total_qty": total_qty,
+        "distributed_qty": total_done,
         "placements": placements,
     }
 
@@ -312,7 +342,42 @@ class DistributePlacement(BaseModel):
 class DistributeRequest(BaseModel):
     src_box_code: str
     placements: list[DistributePlacement]
-    mark_distributed: bool = False
+
+
+async def _record_distributed(
+    session: AsyncSession, tid: int, src_box_code: str, warehouse: str, barcode: str, qty: int
+) -> int:
+    """Записать факт раскладки в src-строки (cap на остаток). Возвращает реально
+    записанное кол-во (≤ остатка) — запрет повторной/избыточной раскладки."""
+    if qty <= 0:
+        return 0
+    rows = (
+        (
+            await session.execute(
+                select(BoxDistributionSrc).where(
+                    BoxDistributionSrc.tenant_id == tid,
+                    BoxDistributionSrc.src_box_code == src_box_code,
+                    BoxDistributionSrc.warehouse == warehouse,
+                    BoxDistributionSrc.barcode == barcode,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    left = qty
+    recorded = 0
+    for r in rows:
+        if left <= 0:
+            break
+        can = r.qty - r.distributed_qty
+        if can <= 0:
+            continue
+        add = min(can, left)
+        r.distributed_qty += add
+        left -= add
+        recorded += add
+    return recorded
 
 
 @router.post("/distribute")
@@ -321,14 +386,23 @@ async def distribute(
     user: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
-    """Разложить товары входящего короба в WB-короба (по складам, накопительно)."""
+    """Разложить товары входящего короба в WB-короба (по складам, накопительно).
+
+    Кол-во capится на остаток (qty − distributed_qty) — нельзя распределить дважды
+    или больше, чем в коробе. В WB-короб уходит реально записанное кол-во."""
     tid = user.tenant_id
     affected: list[int] = []
     for pl in body.placements:
-        items = [(it.barcode, it.qty) for it in pl.items if it.qty > 0]
-        if not items:
+        # реально записываемые позиции (cap на остаток)
+        placed: list[tuple[str, int]] = []
+        for it in pl.items:
+            rec = await _record_distributed(
+                session, tid, body.src_box_code, pl.warehouse, it.barcode, it.qty
+            )
+            if rec > 0:
+                placed.append((it.barcode, rec))
+        if not placed:
             continue
-        # текущий открытый короб склада или новый
         box = (
             await session.execute(
                 select(BoxDistributionWbBox).where(
@@ -345,30 +419,19 @@ async def distribute(
             )
             session.add(box)
             await session.flush()
-        # мёрж по баркоду (+= qty)
-        for barcode, qty in items:
+        for barcode, qty in placed:
             stmt = pg_insert(BoxDistributionWbItem).values(
                 tenant_id=tid, wb_box_id=box.id, barcode=barcode, qty=qty
             )
             stmt = stmt.on_conflict_do_update(
                 index_elements=["wb_box_id", "barcode"],
                 set_={
-                    "qty": BoxDistributionWbItem.__table__.c.qty
-                    + stmt.excluded.qty
+                    "qty": BoxDistributionWbItem.__table__.c.qty + stmt.excluded.qty
                 },
             )
             await session.execute(stmt)
         affected.append(box.id)
 
-    if body.mark_distributed:
-        await session.execute(
-            BoxDistributionSrc.__table__.update()
-            .where(
-                BoxDistributionSrc.tenant_id == tid,
-                BoxDistributionSrc.src_box_code == body.src_box_code,
-            )
-            .values(distributed=True)
-        )
     await session.commit()
     return {"affected_wb_box_ids": affected}
 
@@ -400,18 +463,80 @@ async def mark_distributed(
     user: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
+    """Принудительно завершить короб: distributed=True + distributed_qty=qty
+    (остаток списывается — короб больше не предлагается)."""
     res = await session.execute(
         BoxDistributionSrc.__table__.update()
         .where(
             BoxDistributionSrc.tenant_id == user.tenant_id,
             BoxDistributionSrc.src_box_code == box_code.strip(),
         )
-        .values(distributed=True)
+        .values(distributed=True, distributed_qty=BoxDistributionSrc.__table__.c.qty)
     )
     await session.commit()
     if res.rowcount == 0:
         raise HTTPException(404, f"Короб «{box_code}» не найден")
     return {"src_box_code": box_code.strip(), "distributed": True}
+
+
+@router.get("/distributed-boxes")
+async def distributed_boxes(
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Список уже затронутых раскладкой входящих коробов (full/partial)."""
+    tid = user.tenant_id
+    rows = (
+        await session.execute(
+            select(
+                BoxDistributionSrc.src_box_code,
+                func.max(BoxDistributionSrc.brand).label("brand"),
+                func.sum(BoxDistributionSrc.qty).label("total"),
+                func.sum(BoxDistributionSrc.distributed_qty).label("done"),
+            )
+            .where(BoxDistributionSrc.tenant_id == tid)
+            .group_by(BoxDistributionSrc.src_box_code)
+            .having(func.sum(BoxDistributionSrc.distributed_qty) > 0)
+            .order_by(BoxDistributionSrc.src_box_code)
+        )
+    ).all()
+    return {
+        "boxes": [
+            {
+                "src_box_code": code,
+                "brand": brand,
+                "total_qty": int(total or 0),
+                "distributed_qty": int(done or 0),
+                "status": "full" if int(done or 0) >= int(total or 0) else "partial",
+            }
+            for code, brand, total, done in rows
+        ]
+    }
+
+
+@router.post("/reset")
+async def reset_distribution(
+    confirm: bool = False,
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Сбросить ВСЕ раскладки (WB-короба + distributed_qty) и счётчик к старту.
+    Исходный файл остаётся. Требует confirm=true (доп. подтверждение)."""
+    if not confirm:
+        raise HTTPException(400, "Нужно подтверждение: confirm=true")
+    tid = user.tenant_id
+    await session.execute(
+        delete(BoxDistributionWbBox).where(BoxDistributionWbBox.tenant_id == tid)
+    )
+    await session.execute(
+        BoxDistributionSrc.__table__.update()
+        .where(BoxDistributionSrc.tenant_id == tid)
+        .values(distributed=False, distributed_qty=0)
+    )
+    start = await _get_start_wb(session, tid)
+    await _set_setting(session, tid, _KEY_NEXT_WB, str(start))
+    await session.commit()
+    return {"ok": True, "next_wb": start}
 
 
 # ── WB boxes review / manual edit ─────────────────────────────────────────────

@@ -3,12 +3,11 @@
  *
  * Полноэкранная страница (вне десктоп-Layout, маршрут /box-scan). Работник
  * сканирует QR входящего короба (ШК ALT-...), сервис подсказывает раскладку по
- * складам в WB-короба (накопительно), работник правит количества и жмёт
- * «Распределить» / «Заполнено» / «Распределено». В конце — скачивание shk-excel.
- *
- * Камера требует HTTPS (https://rnp.sellerfriends.ru). При http — предупреждение.
+ * складам в WB-короба (накопительно), показывает ОСТАТКИ при частичной раскладке
+ * и не даёт распределить дважды. «Заполнено» — в списке WB-коробов. В конце —
+ * скачивание shk-excel. Камера требует HTTPS.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Html5Qrcode } from "html5-qrcode";
@@ -90,11 +89,17 @@ export default function BoxDistribution() {
   const qc = useQueryClient();
   const [scanned, setScanned] = useState<BoxDistScan | null>(null);
   const [scanErr, setScanErr] = useState<string | null>(null);
-  const [manual, setManual] = useState("");
   // edited[warehouse][barcode] = qty
   const [edited, setEdited] = useState<Record<string, Record<string, number>>>({});
   const [msg, setMsg] = useState<string | null>(null);
   const [showBoxes, setShowBoxes] = useState(false);
+  const [showDistributed, setShowDistributed] = useState(false);
+
+  const refreshAll = () => {
+    qc.invalidateQueries({ queryKey: ["box-dist-status"] });
+    qc.invalidateQueries({ queryKey: ["box-dist-wb-boxes"] });
+    qc.invalidateQueries({ queryKey: ["box-dist-distributed"] });
+  };
 
   const statusQ = useQuery({
     queryKey: ["box-dist-status"],
@@ -136,8 +141,10 @@ export default function BoxDistribution() {
     },
     onSuccess: () => {
       setMsg("✓ Разложено по WB-коробам");
-      qc.invalidateQueries({ queryKey: ["box-dist-status"] });
-      qc.invalidateQueries({ queryKey: ["box-dist-wb-boxes"] });
+      const code = scanned?.src_box_code;
+      refreshAll();
+      // перечитываем короб — покажет остатки / «распределён полностью»
+      if (code) scanMut.mutate(code);
       setTimeout(() => setMsg(null), 3000);
     },
     onError: (e) => setMsg(`Ошибка: ${String((e as Error).message || e)}`),
@@ -146,9 +153,9 @@ export default function BoxDistribution() {
   const markDistMut = useMutation({
     mutationFn: () => api.boxDistMarkDistributed(scanned!.src_box_code),
     onSuccess: () => {
-      setMsg("✓ Короб отмечен распределённым");
+      setMsg("✓ Короб завершён (остаток списан)");
       setScanned(null);
-      qc.invalidateQueries({ queryKey: ["box-dist-status"] });
+      refreshAll();
       setTimeout(() => setMsg(null), 3000);
     },
   });
@@ -156,12 +163,21 @@ export default function BoxDistribution() {
   const fillMut = useMutation({
     mutationFn: (boxId: number) => api.boxDistFill(boxId),
     onSuccess: () => {
-      setMsg("✓ Короб помечен «Заполнено»");
-      qc.invalidateQueries({ queryKey: ["box-dist-status"] });
-      qc.invalidateQueries({ queryKey: ["box-dist-wb-boxes"] });
-      setScanned(null); // следующий скан подберёт новый открытый короб
+      setMsg("✓ WB-короб помечен «Заполнено»");
+      refreshAll();
       setTimeout(() => setMsg(null), 3000);
     },
+  });
+
+  const resetMut = useMutation({
+    mutationFn: () => api.boxDistReset(),
+    onSuccess: () => {
+      setMsg("✓ Все раскладки сброшены");
+      setScanned(null);
+      refreshAll();
+      setTimeout(() => setMsg(null), 4000);
+    },
+    onError: (e) => setMsg(`Ошибка сброса: ${String((e as Error).message || e)}`),
   });
 
   const wbBoxesQ = useQuery({
@@ -169,19 +185,32 @@ export default function BoxDistribution() {
     queryFn: api.boxDistWbBoxes,
     enabled: showBoxes,
   });
+  const distributedQ = useQuery({
+    queryKey: ["box-dist-distributed"],
+    queryFn: api.boxDistDistributedBoxes,
+    enabled: showDistributed,
+  });
 
   const status = statusQ.data;
-  const setQty = (wh: string, barcode: string, qty: number) =>
+  const setQty = (wh: string, barcode: string, qty: number, max: number) =>
     setEdited((prev) => ({
       ...prev,
-      [wh]: { ...(prev[wh] || {}), [barcode]: Math.max(0, qty) },
+      [wh]: { ...(prev[wh] || {}), [barcode]: Math.max(0, Math.min(max, qty)) },
     }));
 
-  const secureWarn = !window.isSecureContext;
+  const onReset = () => {
+    if (
+      window.confirm(
+        "Сбросить ВСЕ раскладки? Все WB-короба и прогресс удалятся, счётчик вернётся к началу. Исходный файл останется.",
+      ) &&
+      window.confirm("Точно сбросить? Это действие необратимо.")
+    ) {
+      resetMut.mutate();
+    }
+  };
 
   return (
     <div className="min-h-screen bg-bg text-fg p-3 max-w-md mx-auto space-y-4">
-      {/* Шапка */}
       <header className="flex items-center justify-between">
         <h1 className="text-lg font-semibold">Раскладка коробов</h1>
         <Link to="/" className="text-xs text-muted underline">
@@ -189,14 +218,13 @@ export default function BoxDistribution() {
         </Link>
       </header>
 
-      {secureWarn && (
+      {!window.isSecureContext && (
         <div className="card bg-warn-subtle text-warn text-sm">
           ⚠️ Камера работает только по HTTPS. Откройте{" "}
           <b>https://rnp.sellerfriends.ru/box-scan</b> на телефоне.
         </div>
       )}
 
-      {/* Статус */}
       {status && !status.has_data && (
         <div className="card text-sm text-muted">
           Файл «Распределение» не загружен. Загрузите его в{" "}
@@ -207,20 +235,14 @@ export default function BoxDistribution() {
         </div>
       )}
       {status?.has_data && (
-        <div className="card text-sm flex flex-wrap gap-x-4 gap-y-1">
+        <div className="card text-sm flex flex-wrap gap-x-4 gap-y-1 items-center">
           <span>
-            Короба: <b>{status.distributed_boxes}</b>/{status.total_boxes}{" "}
-            распределено
+            Короба: <b>{status.distributed_boxes}</b>/{status.total_boxes}
           </span>
           <span>
-            WB-короба: <b>{status.wb_boxes_open}</b> откр /{" "}
-            {status.wb_boxes_filled} заполн
+            WB: <b>{status.wb_boxes_open}</b> откр / {status.wb_boxes_filled} заполн
           </span>
-          <a
-            href={api.boxDistExportUrl()}
-            className="ml-auto btn text-xs"
-            download
-          >
+          <a href={api.boxDistExportUrl()} className="ml-auto btn text-xs" download>
             ⬇ Скачать файл
           </a>
         </div>
@@ -228,115 +250,147 @@ export default function BoxDistribution() {
 
       {msg && <div className="card text-sm text-success">{msg}</div>}
 
-      {/* Сканер */}
+      {/* Сканер (без ручного ввода) */}
       {status?.has_data && (
-        <div className="card space-y-3">
+        <div className="card">
           <Scanner onDecode={(t) => scanMut.mutate(t)} />
-          <div className="flex gap-2">
-            <input
-              className="input flex-1"
-              placeholder="или ввести ШК короба вручную"
-              value={manual}
-              onChange={(e) => setManual(e.target.value)}
-            />
-            <button
-              className="btn"
-              disabled={!manual.trim() || scanMut.isPending}
-              onClick={() => scanMut.mutate(manual.trim())}
-            >
-              Найти
-            </button>
-          </div>
-          {scanErr && <div className="text-danger text-sm">{scanErr}</div>}
+          {scanErr && <div className="text-danger text-sm mt-2">{scanErr}</div>}
         </div>
       )}
 
       {/* Результат скана */}
       {scanned && (
         <div className="card space-y-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="font-mono font-semibold">{scanned.src_box_code}</div>
-              <div className="text-xs text-muted">
-                {scanned.brand}
-                {scanned.distributed && " · уже распределён"}
-              </div>
+          <div>
+            <div className="font-mono font-semibold">{scanned.src_box_code}</div>
+            <div className="text-xs text-muted">
+              {scanned.brand} · разложено {scanned.distributed_qty}/
+              {scanned.total_qty} шт
             </div>
           </div>
 
-          {scanned.placements.map((p) => (
-            <div key={p.warehouse} className="border border-border rounded-lg p-2">
-              <div className="flex items-center justify-between mb-1">
-                <div className="font-medium">📦 {p.warehouse}</div>
-                <div className="text-xs text-muted">
-                  {p.open_wb_box_code
-                    ? `в ${p.open_wb_box_code}`
-                    : "новый WB-короб"}
-                </div>
-              </div>
-              <table className="w-full text-sm">
-                <tbody>
-                  {p.items.map((it) => (
-                    <tr key={it.barcode} className="border-t border-border/50">
-                      <td className="py-1">
-                        <div className="font-mono text-xs">{it.barcode}</div>
-                        <div className="text-muted text-xs">
-                          {[it.vendor_article, it.size]
-                            .filter(Boolean)
-                            .join(" · ")}
-                        </div>
-                      </td>
-                      <td className="py-1 w-24 text-right">
-                        <input
-                          type="number"
-                          inputMode="numeric"
-                          className="input w-20 text-right"
-                          min={0}
-                          value={edited[p.warehouse]?.[it.barcode] ?? 0}
-                          onChange={(e) =>
-                            setQty(
-                              p.warehouse,
-                              it.barcode,
-                              Math.floor(Number(e.target.value) || 0),
-                            )
-                          }
-                        />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {p.open_wb_box_id != null && (
-                <button
-                  className="btn text-xs mt-2"
-                  onClick={() => fillMut.mutate(p.open_wb_box_id!)}
+          {scanned.fully_distributed ? (
+            <div className="rounded bg-success/10 text-success text-sm p-3">
+              ✓ Короб уже распределён полностью — повторно нельзя.
+            </div>
+          ) : (
+            <>
+              {scanned.placements.map((p) => (
+                <div
+                  key={p.warehouse}
+                  className="border border-border rounded-lg p-2"
                 >
-                  ✓ {p.open_wb_box_code} «Заполнено»
-                </button>
-              )}
-            </div>
-          ))}
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="font-medium">📦 {p.warehouse}</div>
+                    <div className="text-xs text-muted">
+                      {p.open_wb_box_code
+                        ? `в ${p.open_wb_box_code}`
+                        : "новый WB-короб"}
+                    </div>
+                  </div>
+                  <table className="w-full text-sm">
+                    <tbody>
+                      {p.items.map((it) => (
+                        <tr
+                          key={it.barcode}
+                          className="border-t border-border/50"
+                        >
+                          <td className="py-1">
+                            <div className="font-mono text-xs">{it.barcode}</div>
+                            <div className="text-muted text-xs">
+                              {[it.vendor_article, it.size]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </div>
+                            <div className="text-muted text-[11px]">
+                              остаток {it.qty_suggested} из {it.qty}
+                              {it.qty_done > 0 ? ` (разложено ${it.qty_done})` : ""}
+                            </div>
+                          </td>
+                          <td className="py-1 w-24 text-right">
+                            <input
+                              type="number"
+                              inputMode="numeric"
+                              className="input w-20 text-right"
+                              min={0}
+                              max={it.qty_suggested}
+                              value={edited[p.warehouse]?.[it.barcode] ?? 0}
+                              onChange={(e) =>
+                                setQty(
+                                  p.warehouse,
+                                  it.barcode,
+                                  Math.floor(Number(e.target.value) || 0),
+                                  it.qty_suggested,
+                                )
+                              }
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
 
-          <div className="flex gap-2">
-            <button
-              className="btn-primary flex-1 py-3"
-              disabled={distributeMut.isPending}
-              onClick={() => distributeMut.mutate()}
-            >
-              Распределить
-            </button>
-            <button
-              className="btn flex-1 py-3"
-              disabled={markDistMut.isPending}
-              onClick={() => markDistMut.mutate()}
-            >
-              Распределено
-            </button>
-          </div>
+              <div className="flex gap-2">
+                <button
+                  className="btn-primary flex-1 py-3"
+                  disabled={distributeMut.isPending}
+                  onClick={() => distributeMut.mutate()}
+                >
+                  Распределить
+                </button>
+                <button
+                  className="btn flex-1 py-3"
+                  title="Завершить короб, списав остаток (больше не предлагать)"
+                  disabled={markDistMut.isPending}
+                  onClick={() => markDistMut.mutate()}
+                >
+                  Завершить остаток
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
 
-      {/* Обзор WB-коробов */}
+      {/* Список распределённых коробов */}
+      {status?.has_data && (
+        <div className="card">
+          <button
+            className="text-sm text-accent underline"
+            onClick={() => setShowDistributed((v) => !v)}
+          >
+            {showDistributed ? "Скрыть" : "Показать"} распределённые короба (
+            {status.distributed_boxes})
+          </button>
+          {showDistributed && (
+            <div className="mt-3 space-y-1">
+              {distributedQ.data?.boxes.map((b) => (
+                <div
+                  key={b.src_box_code}
+                  className="flex justify-between text-sm border-t border-border py-1"
+                >
+                  <span className="font-mono text-xs">{b.src_box_code}</span>
+                  <span
+                    className={
+                      b.status === "full" ? "text-success" : "text-warn"
+                    }
+                  >
+                    {b.distributed_qty}/{b.total_qty}{" "}
+                    {b.status === "full" ? "✓" : "частично"}
+                  </span>
+                </div>
+              ))}
+              {distributedQ.data && distributedQ.data.boxes.length === 0 && (
+                <div className="text-muted text-sm">Пока ничего не распределено.</div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Обзор WB-коробов + «Заполнено» */}
       {status?.has_data && (
         <div className="card">
           <button
@@ -350,9 +404,9 @@ export default function BoxDistribution() {
             <div className="mt-3 space-y-2">
               {wbBoxesQ.data?.boxes.map((b) => (
                 <div key={b.id} className="border border-border rounded p-2 text-sm">
-                  <div className="flex justify-between">
+                  <div className="flex justify-between items-center">
                     <span className="font-mono">{b.wb_box_code}</span>
-                    <span className="text-muted">
+                    <span className="text-muted text-xs">
                       {b.warehouse} ·{" "}
                       {b.status === "filled" ? "заполнен" : "открыт"}
                     </span>
@@ -361,6 +415,14 @@ export default function BoxDistribution() {
                     {b.items.length} товаров,{" "}
                     {b.items.reduce((s, x) => s + x.qty, 0)} шт
                   </div>
+                  {b.status !== "filled" && (
+                    <button
+                      className="btn text-xs mt-2"
+                      onClick={() => fillMut.mutate(b.id)}
+                    >
+                      ✓ Заполнено
+                    </button>
+                  )}
                 </div>
               ))}
               {wbBoxesQ.data && wbBoxesQ.data.boxes.length === 0 && (
@@ -368,6 +430,23 @@ export default function BoxDistribution() {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Сброс */}
+      {status?.has_data && (
+        <div className="card">
+          <button
+            className="btn text-xs text-danger border-danger/40"
+            disabled={resetMut.isPending}
+            onClick={onReset}
+          >
+            ⚠️ Сбросить все раскладки
+          </button>
+          <div className="text-[11px] text-muted mt-1">
+            Удалит все WB-короба и прогресс, счётчик вернётся к началу. Исходный
+            файл останется.
+          </div>
         </div>
       )}
     </div>
