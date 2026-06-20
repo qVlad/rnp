@@ -25,6 +25,7 @@ from app.api import (
     excel,
     filters as filters_api,
     finance_extra,
+    box_distribution,
     extension,
     extension_lk_jobs,
     external_ad_costs,
@@ -279,5 +280,6 @@ app.include_router(weekly_report.router)
 app.include_router(metric_templates.router)
 app.include_router(leak_report.router)
 app.include_router(promo_calculator.router)
+app.include_router(box_distribution.router)
 app.include_router(reconciliation_4way.router)
 app.include_router(reconciliation_auto.router)

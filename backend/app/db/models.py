@@ -3093,3 +3093,83 @@ class ManagerWeeklyScoreboard(Base):
             "tenant_id",
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Box Distribution — мобильный QR-сканер раскладки коробов (DEV-091, миграция 0080)
+# ---------------------------------------------------------------------------
+
+
+class BoxDistributionSrc(Base, TenantScopedMixin):
+    """Распарсенная строка исходного файла «Распределение» (вход).
+
+    Один входящий короб поставщика (`src_box_code` = ШК короба, напр.
+    `ALT-001-ORD001-120`) содержит товар (`barcode`) на склад `warehouse`.
+    Один короб обычно раскидан по нескольким складам (несколько строк).
+    """
+
+    __tablename__ = "box_distribution_src"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    brand: Mapped[str | None] = mapped_column(String(64))
+    src_box_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    vendor_article: Mapped[str | None] = mapped_column(String(255))
+    barcode: Mapped[str] = mapped_column(String(64), nullable=False)
+    size: Mapped[str | None] = mapped_column(String(64))
+    qty: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    # warehouse — канонический (после карты алиасов), warehouse_raw — как в файле.
+    warehouse: Mapped[str] = mapped_column(String(128), nullable=False)
+    warehouse_raw: Mapped[str | None] = mapped_column(String(128))
+    distributed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    uploaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_box_dist_src_tenant_box", "tenant_id", "src_box_code"),
+        Index("ix_box_dist_src_tenant", "tenant_id"),
+    )
+
+
+class BoxDistributionWbBox(Base, TenantScopedMixin):
+    """Выходной WB-короб (отгрузочный). Накопительная модель: один открытый
+    короб на склад наполняется из разных входящих коробов, пока не `filled`."""
+
+    __tablename__ = "box_distribution_wb_box"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    wb_box_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    warehouse: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'open'")
+    )  # 'open' | 'filled'
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_box_dist_wb_tenant_wh_status", "tenant_id", "warehouse", "status"),
+        UniqueConstraint("tenant_id", "wb_box_code", name="uq_box_dist_wb_code"),
+    )
+
+
+class BoxDistributionWbItem(Base, TenantScopedMixin):
+    """Содержимое WB-короба: товар (barcode) и количество. Мёрж по баркоду."""
+
+    __tablename__ = "box_distribution_wb_item"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    wb_box_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("box_distribution_wb_box.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    barcode: Mapped[str] = mapped_column(String(64), nullable=False)
+    qty: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+
+    __table_args__ = (
+        UniqueConstraint("wb_box_id", "barcode", name="uq_box_dist_wb_item"),
+    )

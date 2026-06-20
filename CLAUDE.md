@@ -146,6 +146,7 @@ docker-compose.yml · .env(.example) · .claude/settings.json (permissions)
 | 0077 | **wb_search_position** — полная выдача поиска WB (наши+конкуренты, DEV-085). Расширение шлёт ранг через `POST /api/extension/search-ranking` (анти-спай: пишем только если есть наша карточка). `/jam` «Конкуренты по запросу» (`/jam/competitors`) |
 | 0078 | **wb_funnel_daily.cancel_count** — отмены из Воронки для терминального % выкупа buyouts/(buyouts+cancels) (DEV-087) |
 | 0079 | **unit_plan_global_config.commission_override_pct + commission_discount_pct** — ручной override комиссии WB (тариф бывает неверный для категории) + возврат комиссии (опции, напр. 0.75%), DEV-089. compute_row: commission = (override ?? тариф) − discount |
+| 0080 | **box_distribution_src / _wb_box / _wb_item** — мобильный QR-сканер раскладки коробов (DEV-091). Скан ШК короба (ALT-...) → раскладка по складам в WB-короба (WB_1541505000++, накопительно) → экспорт shk-excel. Счётчик/алиасы складов в AppSetting. Парсер 3 листов Ink/Ld/Lk |
 
 ## Роли и RBAC
 
@@ -235,6 +236,7 @@ summary/ad-campaigns). `ids` валидируются по `user_tenant_access`
 | `/api/promo-calculator/simulate` | brands-filter | Калькулятор рентабельности WB-акций (baseline из wb_report_detail) |
 | `/api/leak-report` | director_or_head | Аудит-артефакт «найдено N₽» (5 источников + recon trust-badge) |
 | `/api/deductions`, `/operations`, `/stocks/by-warehouse`, `/ad-campaigns/analytics`, `/business-summary`, `/finance-reference` | director_or_head | TrueStats-разделы (TASK-DEV-039..046): Прочие удержания / Операции / Склады / Аналитика РК / Сводный по бизнесу / справочники. `api/finance_extra.py` |
+| `/api/box-distribution/*` | director_or_head | Раскладка коробов (DEV-091): upload файла, scan/{шк}, distribute, wb-box/{id}/fill, src/{шк}/distributed, wb-boxes, warehouses(+aliases), export.xlsx. Мобильная страница `/box-scan`. `api/box_distribution.py` |
 | `/api/version`, `/whoami`, `/health` | публ. | служебные |
 
 ## Инварианты корректности (НЕ нарушать)

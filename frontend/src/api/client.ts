@@ -2981,6 +2981,69 @@ paymentOrderDelete: (payment_order_id: string) =>
     }>;
   },
 
+  // ── Box Distribution (DEV-091): мобильный QR-сканер раскладки коробов ──
+  boxDistUpload: async (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const resp = await fetch("/api/box-distribution/upload", {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    return resp.json() as Promise<BoxDistUploadResult>;
+  },
+  boxDistStatus: () =>
+    request<BoxDistStatus>("/api/box-distribution/status"),
+  boxDistScan: (code: string) =>
+    request<BoxDistScan>(
+      `/api/box-distribution/scan/${encodeURIComponent(code)}`,
+    ),
+  boxDistDistribute: (body: {
+    src_box_code: string;
+    placements: Array<{
+      warehouse: string;
+      items: Array<{ barcode: string; qty: number }>;
+    }>;
+    mark_distributed?: boolean;
+  }) =>
+    request<{ affected_wb_box_ids: number[] }>(
+      "/api/box-distribution/distribute",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  boxDistFill: (boxId: number) =>
+    request<{ id: number; status: string }>(
+      `/api/box-distribution/wb-box/${boxId}/fill`,
+      { method: "POST" },
+    ),
+  boxDistMarkDistributed: (code: string) =>
+    request<{ src_box_code: string; distributed: boolean }>(
+      `/api/box-distribution/src/${encodeURIComponent(code)}/distributed`,
+      { method: "POST" },
+    ),
+  boxDistWbBoxes: () =>
+    request<{ boxes: BoxDistWbBox[] }>("/api/box-distribution/wb-boxes"),
+  boxDistPatchItems: (
+    boxId: number,
+    items: Array<{ barcode: string; qty: number }>,
+  ) =>
+    request<{ id: number; ok: boolean }>(
+      `/api/box-distribution/wb-box/${boxId}/items`,
+      { method: "PATCH", body: JSON.stringify({ items }) },
+    ),
+  boxDistWarehouses: () =>
+    request<{
+      warehouses: Array<{ warehouse: string; rows: number; raw_names: string[] }>;
+      aliases: Record<string, string>;
+      seed_aliases: Record<string, string>;
+    }>("/api/box-distribution/warehouses"),
+  boxDistPutAliases: (aliases: Record<string, string>) =>
+    request<{ ok: boolean; rows_renormalized: number }>(
+      "/api/box-distribution/warehouses/aliases",
+      { method: "PUT", body: JSON.stringify({ aliases }) },
+    ),
+  boxDistExportUrl: () => "/api/box-distribution/export.xlsx",
+
   // TASK-DEV-030: матрица сравнения «текущие продажи vs N акций».
   promoCalculatorCompare: (body: {
     promotions: Array<{
@@ -3340,6 +3403,49 @@ export interface UnitPlanReferenceStatus {
 }
 
 /** TASK-LEAD-074: статус актуальности `wb_prices` для шапки `/unit-plan`. */
+// ── Box Distribution (DEV-091) ──
+export interface BoxDistUploadResult {
+  rows: number;
+  boxes: number;
+  sheets: string[];
+  skipped: string[];
+  warehouses: Array<{ warehouse: string; rows: number; raw_names: string[] }>;
+}
+export interface BoxDistStatus {
+  has_data: boolean;
+  total_boxes: number;
+  distributed_boxes: number;
+  wb_boxes_open: number;
+  wb_boxes_filled: number;
+  uploaded_at: string | null;
+  next_wb: string | null;
+}
+export interface BoxDistScanItem {
+  barcode: string;
+  vendor_article: string | null;
+  size: string | null;
+  qty_suggested: number;
+}
+export interface BoxDistPlacement {
+  warehouse: string;
+  open_wb_box_id: number | null;
+  open_wb_box_code: string | null;
+  items: BoxDistScanItem[];
+}
+export interface BoxDistScan {
+  src_box_code: string;
+  brand: string | null;
+  distributed: boolean;
+  placements: BoxDistPlacement[];
+}
+export interface BoxDistWbBox {
+  id: number;
+  wb_box_code: string;
+  warehouse: string;
+  status: string;
+  items: Array<{ id: number; barcode: string; qty: number }>;
+}
+
 export interface UnitPlanPricesStatus {
   rows: number;
   /** Всего активных (не архивных) SKU — знаменатель покрытия. */

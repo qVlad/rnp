@@ -40,6 +40,7 @@ import AuditLog from "./pages/AuditLog";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import Legal from "./pages/Legal";
+import BoxDistribution from "./pages/BoxDistribution";
 import Users from "./pages/Users";
 import Brands from "./pages/Brands";
 import Glossary from "./pages/Glossary";
@@ -131,6 +132,15 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
         <Route path="/legal" element={<Legal />} />
+        {/* DEV-091: мобильный сканер раскладки — полноэкранный, без сайдбара */}
+        <Route
+          path="/box-scan"
+          element={
+            <ProtectedRoute>
+              <BoxDistribution />
+            </ProtectedRoute>
+          }
+        />
         <Route
           element={
             <ProtectedRoute>

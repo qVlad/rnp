@@ -1,7 +1,7 @@
 {
   "name": "rnp-frontend",
   "private": true,
-  "version": "0.80.0",
+  "version": "0.81.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -16,6 +16,7 @@
     "@tanstack/react-table": "^8.20.6",
     "cmdk": "^1.1.1",
     "html2canvas": "^1.4.1",
+    "html5-qrcode": "^2.3.8",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.460.0",
     "react": "^18.3.1",
