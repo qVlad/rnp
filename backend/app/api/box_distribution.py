@@ -94,7 +94,40 @@ async def _get_start_wb(session: AsyncSession, tenant_id: int) -> int:
         return _DEFAULT_START_WB
 
 
-async def _next_wb_code(session: AsyncSession, tenant_id: int) -> str:
+_KEY_CITY_WB = "box_distribution.city_wb"  # JSON {город: {start,end,next}}
+
+
+async def _get_city_wb(session: AsyncSession, tenant_id: int) -> dict[str, dict[str, int]]:
+    raw = await _get_setting(session, tenant_id, _KEY_CITY_WB)
+    if not raw:
+        return {}
+    try:
+        d = json.loads(raw)
+        return d if isinstance(d, dict) else {}
+    except (ValueError, TypeError):
+        return {}
+
+
+async def _next_wb_code(
+    session: AsyncSession, tenant_id: int, warehouse: str | None = None
+) -> str:
+    """Следующий WB-номер. Если для города (warehouse) задан диапазон
+    (box_distribution.city_wb) — берём из него; иначе глобальный счётчик."""
+    if warehouse:
+        city_wb = await _get_city_wb(session, tenant_id)
+        ent = city_wb.get(warehouse)
+        if ent is not None:
+            nxt = int(ent.get("next", ent.get("start", 0)))
+            end = int(ent.get("end", nxt))
+            if nxt <= end:
+                ent["next"] = nxt + 1
+                city_wb[warehouse] = ent
+                await _set_setting(
+                    session, tenant_id, _KEY_CITY_WB,
+                    json.dumps(city_wb, ensure_ascii=False),
+                )
+                return f"WB_{nxt}"
+            # диапазон исчерпан → fallback на глобальный счётчик
     raw = await _get_setting(session, tenant_id, _KEY_NEXT_WB)
     try:
         cur = int(raw) if raw else await _get_start_wb(session, tenant_id)
@@ -465,7 +498,7 @@ async def distribute(
             )
         ).scalar_one_or_none()
         if box is None:
-            code = await _next_wb_code(session, tid)
+            code = await _next_wb_code(session, tid, pl.warehouse)
             box = BoxDistributionWbBox(
                 tenant_id=tid, wb_box_code=code, warehouse=pl.warehouse, status="open"
             )
@@ -587,6 +620,14 @@ async def reset_distribution(
     )
     start = await _get_start_wb(session, tid)
     await _set_setting(session, tid, _KEY_NEXT_WB, str(start))
+    # сбрасываем per-city счётчики выдачи к началу их диапазонов
+    city_wb = await _get_city_wb(session, tid)
+    if city_wb:
+        for ent in city_wb.values():
+            ent["next"] = int(ent.get("start", ent.get("next", 0)))
+        await _set_setting(
+            session, tid, _KEY_CITY_WB, json.dumps(city_wb, ensure_ascii=False)
+        )
     await session.commit()
     return {"ok": True, "next_wb": start}
 
@@ -754,6 +795,78 @@ async def put_aliases(
         r.warehouse = normalize_warehouse(r.warehouse_raw or r.warehouse, body.aliases)
     await session.commit()
     return {"ok": True, "rows_renormalized": len(rows)}
+
+
+# ── WB-диапазоны по городам (DEV-091) ───────────────────────────────────────────
+
+
+class WbRangesPut(BaseModel):
+    cities: list[str]
+    start: int = _DEFAULT_START_WB
+    per_city: int = 300
+
+
+@router.put("/wb-ranges")
+async def put_wb_ranges(
+    body: WbRangesPut,
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Зафиксировать диапазоны WB-номеров по городам: каждому городу — блок
+    из `per_city` номеров подряд, начиная с `start`. WB-короб города берётся из
+    его блока. Сбрасывает текущий прогресс выдачи (next=start блока)."""
+    ranges: dict[str, dict[str, int]] = {}
+    n = int(body.start)
+    for city in body.cities:
+        ranges[city] = {"start": n, "end": n + body.per_city - 1, "next": n}
+        n += body.per_city
+    await _set_setting(
+        session, user.tenant_id, _KEY_CITY_WB,
+        json.dumps(ranges, ensure_ascii=False),
+    )
+    await session.commit()
+    return {"ok": True, "ranges": ranges}
+
+
+@router.get("/wb-ranges")
+async def get_wb_ranges(
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    return {"ranges": await _get_city_wb(session, user.tenant_id)}
+
+
+@router.get("/wb-ranges.xlsx")
+async def export_wb_ranges_xlsx(
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> Response:
+    """Excel: WB-короб → город отгрузки (все зарезервированные номера)."""
+    from openpyxl import Workbook
+
+    ranges = await _get_city_wb(session, user.tenant_id)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "WB короба"
+    ws.append(["WB короб", "Город отгрузки"])
+    for city, r in ranges.items():
+        for n in range(int(r["start"]), int(r["end"]) + 1):
+            ws.append([f"WB_{n}", city])
+    ws2 = wb.create_sheet("Диапазоны")
+    ws2.append(["Город", "С", "По", "Кол-во"])
+    for city, r in ranges.items():
+        ws2.append(
+            [city, f"WB_{r['start']}", f"WB_{r['end']}", int(r["end"]) - int(r["start"]) + 1]
+        )
+    import io as _io
+
+    buf = _io.BytesIO()
+    wb.save(buf)
+    return Response(
+        content=buf.getvalue(),
+        media_type=XLSX_MIME,
+        headers={"Content-Disposition": 'attachment; filename="wb-boxes-by-city.xlsx"'},
+    )
 
 
 # ── Export ─────────────────────────────────────────────────────────────────────

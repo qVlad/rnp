@@ -30,6 +30,17 @@ export default function BoxDistributionSettings() {
     onError: (e) => setInfo(`Ошибка: ${String((e as Error).message || e)}`),
   });
 
+  const rangesMut = useMutation({
+    mutationFn: () =>
+      api.boxDistPutWbRanges({
+        cities: (whQ.data?.warehouses || []).map((w) => w.warehouse),
+        start: 1541505000,
+        per_city: 300,
+      }),
+    onSuccess: () => setInfo("✓ WB-диапазоны зафиксированы (300 на город)"),
+    onError: (e) => setInfo(`Ошибка: ${String((e as Error).message || e)}`),
+  });
+
   const aliasMut = useMutation({
     mutationFn: () => {
       // строим карту raw→canonical из текущих слияний
@@ -138,6 +149,28 @@ export default function BoxDistributionSettings() {
           >
             Применить объединение
           </button>
+
+          <div className="mt-4 border-t border-border pt-3">
+            <div className="text-sm font-medium mb-1">
+              WB-короба по городам (300 номеров на город)
+            </div>
+            <div className="text-xs text-muted mb-2">
+              Фиксирует диапазоны WB-номеров с WB_1541505000 (по 300 на каждый
+              город). Сервис выдаёт короба города из его диапазона.
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <button
+                className="btn"
+                disabled={rangesMut.isPending}
+                onClick={() => rangesMut.mutate()}
+              >
+                Зафиксировать диапазоны
+              </button>
+              <a className="btn text-xs" href={api.boxDistWbRangesUrl()} download>
+                ⬇ Excel «WB-короб → город»
+              </a>
+            </div>
+          </div>
         </div>
       )}
     </section>

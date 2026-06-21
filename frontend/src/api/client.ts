@@ -3055,6 +3055,20 @@ paymentOrderDelete: (payment_order_id: string) =>
       { method: "PUT", body: JSON.stringify({ aliases }) },
     ),
   boxDistExportUrl: () => "/api/box-distribution/export.xlsx",
+  boxDistWbRanges: () =>
+    request<{ ranges: Record<string, { start: number; end: number; next: number }> }>(
+      "/api/box-distribution/wb-ranges",
+    ),
+  boxDistPutWbRanges: (body: {
+    cities: string[];
+    start?: number;
+    per_city?: number;
+  }) =>
+    request<{ ok: boolean; ranges: Record<string, any> }>(
+      "/api/box-distribution/wb-ranges",
+      { method: "PUT", body: JSON.stringify(body) },
+    ),
+  boxDistWbRangesUrl: () => "/api/box-distribution/wb-ranges.xlsx",
 
   // TASK-DEV-030: матрица сравнения «текущие продажи vs N акций».
   promoCalculatorCompare: (body: {
