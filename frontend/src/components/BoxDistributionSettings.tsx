@@ -19,10 +19,11 @@ export default function BoxDistributionSettings() {
   });
 
   const uploadMut = useMutation({
-    mutationFn: (f: File) => api.boxDistUpload(f),
+    mutationFn: ({ f, mode }: { f: File; mode: "replace" | "append" }) =>
+      api.boxDistUpload(f, mode),
     onSuccess: (d) => {
       setInfo(
-        `✓ Загружено: ${d.boxes} коробов, ${d.rows} строк. Листы: ${d.sheets.join(", ")}.`,
+        `✓ ${d.mode === "append" ? "Добавлено" : "Загружено"}: ${d.boxes} коробов, ${d.rows} строк. Листы: ${d.sheets.join(", ")}.`,
       );
       qc.invalidateQueries({ queryKey: ["box-dist-warehouses"] });
       qc.invalidateQueries({ queryKey: ["box-dist-status"] });
@@ -82,14 +83,33 @@ export default function BoxDistributionSettings() {
 
       <div className="flex items-center gap-3 flex-wrap">
         <label className="btn cursor-pointer">
-          {uploadMut.isPending ? "Загрузка…" : "Загрузить файл .xlsx"}
+          {uploadMut.isPending ? "…" : "Загрузить файл (новая сессия)"}
           <input
             type="file"
             accept=".xlsx,.xls"
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0];
-              if (f) uploadMut.mutate(f);
+              if (
+                f &&
+                window.confirm(
+                  "Заменить все данные новой сессией? Текущий прогресс и WB-короба будут очищены.",
+                )
+              )
+                uploadMut.mutate({ f, mode: "replace" });
+              e.target.value = "";
+            }}
+          />
+        </label>
+        <label className="btn cursor-pointer">
+          {uploadMut.isPending ? "…" : "➕ Добавить коробы (append)"}
+          <input
+            type="file"
+            accept=".xlsx,.xls"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) uploadMut.mutate({ f, mode: "append" });
               e.target.value = "";
             }}
           />

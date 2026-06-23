@@ -93,6 +93,7 @@ export default function BoxDistribution() {
   const [edited, setEdited] = useState<Record<string, Record<string, number>>>({});
   const [msg, setMsg] = useState<string | null>(null);
   const [showBoxes, setShowBoxes] = useState(false);
+  const [wbFilter, setWbFilter] = useState<"all" | "open">("all");
   const [showDistributed, setShowDistributed] = useState(false);
   const [search, setSearch] = useState("");
   const [searchDeb, setSearchDeb] = useState("");
@@ -132,8 +133,12 @@ export default function BoxDistribution() {
   });
 
   const distributeMut = useMutation({
-    mutationFn: () => {
-      const placements = (scanned?.placements || []).map((p) => ({
+    // warehouse задан → раскладываем только этот город; иначе все сразу.
+    mutationFn: (warehouse?: string) => {
+      const src = (scanned?.placements || []).filter(
+        (p) => !warehouse || p.warehouse === warehouse,
+      );
+      const placements = src.map((p) => ({
         warehouse: p.warehouse,
         items: Object.entries(edited[p.warehouse] || {}).map(([barcode, qty]) => ({
           barcode,
@@ -400,16 +405,23 @@ export default function BoxDistribution() {
                       ))}
                     </tbody>
                   </table>
+                  <button
+                    className="btn-primary w-full mt-2 py-2"
+                    disabled={distributeMut.isPending}
+                    onClick={() => distributeMut.mutate(p.warehouse)}
+                  >
+                    Распределить в {p.warehouse}
+                  </button>
                 </div>
               ))}
 
               <div className="flex gap-2">
                 <button
-                  className="btn-primary flex-1 py-3"
+                  className="btn flex-1 py-3"
                   disabled={distributeMut.isPending}
-                  onClick={() => distributeMut.mutate()}
+                  onClick={() => distributeMut.mutate(undefined)}
                 >
-                  Распределить
+                  Распределить всё
                 </button>
                 <button
                   className="btn flex-1 py-3"
@@ -464,16 +476,39 @@ export default function BoxDistribution() {
       {/* Обзор WB-коробов + «Заполнено» */}
       {status?.has_data && (
         <div className="card">
-          <button
-            className="text-sm text-accent underline"
-            onClick={() => setShowBoxes((v) => !v)}
-          >
-            {showBoxes ? "Скрыть" : "Показать"} WB-короба (
-            {(status.wb_boxes_open || 0) + (status.wb_boxes_filled || 0)})
-          </button>
+          <div className="flex flex-wrap gap-3">
+            <button
+              className="text-sm text-accent underline"
+              onClick={() => {
+                if (showBoxes && wbFilter === "all") setShowBoxes(false);
+                else {
+                  setShowBoxes(true);
+                  setWbFilter("all");
+                }
+              }}
+            >
+              {showBoxes && wbFilter === "all" ? "Скрыть" : "Показать"} WB-короба (
+              {(status.wb_boxes_open || 0) + (status.wb_boxes_filled || 0)})
+            </button>
+            <button
+              className="text-sm text-accent underline"
+              onClick={() => {
+                if (showBoxes && wbFilter === "open") setShowBoxes(false);
+                else {
+                  setShowBoxes(true);
+                  setWbFilter("open");
+                }
+              }}
+            >
+              {showBoxes && wbFilter === "open" ? "Скрыть" : "Показать"} открытые
+              WB-короба ({status.wb_boxes_open || 0})
+            </button>
+          </div>
           {showBoxes && (
             <div className="mt-3 space-y-2">
-              {wbBoxesQ.data?.boxes.map((b) => (
+              {(wbBoxesQ.data?.boxes || [])
+                .filter((b) => wbFilter === "all" || b.status !== "filled")
+                .map((b) => (
                 <div key={b.id} className="border border-border rounded p-2 text-sm">
                   <div className="flex justify-between items-center">
                     <span className="font-mono">{b.wb_box_code}</span>

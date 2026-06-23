@@ -2982,14 +2982,13 @@ paymentOrderDelete: (payment_order_id: string) =>
   },
 
   // ── Box Distribution (DEV-091): мобильный QR-сканер раскладки коробов ──
-  boxDistUpload: async (file: File) => {
+  boxDistUpload: async (file: File, mode: "replace" | "append" = "replace") => {
     const fd = new FormData();
     fd.append("file", file);
-    const resp = await fetch("/api/box-distribution/upload", {
-      method: "POST",
-      body: fd,
-      credentials: "include",
-    });
+    const resp = await fetch(
+      `/api/box-distribution/upload?mode=${mode}`,
+      { method: "POST", body: fd, credentials: "include" },
+    );
     if (!resp.ok) throw new Error(await resp.text());
     return resp.json() as Promise<BoxDistUploadResult>;
   },
@@ -3431,6 +3430,7 @@ export interface UnitPlanReferenceStatus {
 /** TASK-LEAD-074: статус актуальности `wb_prices` для шапки `/unit-plan`. */
 // ── Box Distribution (DEV-091) ──
 export interface BoxDistUploadResult {
+  mode?: string;
   rows: number;
   boxes: number;
   sheets: string[];

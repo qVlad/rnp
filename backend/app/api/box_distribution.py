@@ -143,11 +143,15 @@ async def _next_wb_code(
 @router.post("/upload")
 async def upload_distribution(
     file: UploadFile = File(...),
+    mode: str = "replace",
     user: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
-    """Загрузить файл «Распределение» — НОВАЯ сессия: чистим прошлые данные,
-    сбрасываем счётчик WB к стартовому, парсим листы брендов."""
+    """Загрузить файл «Распределение».
+
+    mode=replace (по умолч.) — НОВАЯ сессия: чистим прошлые данные, сбрасываем
+    счётчик. mode=append — ДОБАВИТЬ коробы к существующим, НИЧЕГО не удаляя и не
+    сбрасывая (прогресс раскладки/WB-короба/диапазоны сохраняются)."""
     content = await file.read()
     aliases = await _get_aliases(session, user.tenant_id)
     try:
@@ -163,16 +167,41 @@ async def upload_distribution(
         )
 
     tid = user.tenant_id
-    # Чистим прошлую сессию (короба + содержимое каскадом).
-    await session.execute(
-        delete(BoxDistributionWbBox).where(BoxDistributionWbBox.tenant_id == tid)
-    )
-    await session.execute(
-        delete(BoxDistributionSrc).where(BoxDistributionSrc.tenant_id == tid)
-    )
-    # Сброс счётчика к стартовому.
-    start = await _get_start_wb(session, tid)
-    await _set_setting(session, tid, _KEY_NEXT_WB, str(start))
+    new_boxes = {r["src_box_code"] for r in rows}
+    if mode == "append":
+        # Коллизия кодов коробов с существующими → запрет (чтобы не смешать).
+        existing = set(
+            (
+                await session.execute(
+                    select(BoxDistributionSrc.src_box_code)
+                    .where(
+                        BoxDistributionSrc.tenant_id == tid,
+                        BoxDistributionSrc.src_box_code.in_(new_boxes),
+                    )
+                    .distinct()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if existing:
+            raise HTTPException(
+                409,
+                f"Коробы уже есть ({len(existing)}): {sorted(existing)[:5]}… "
+                "append отменён, чтобы не задвоить.",
+            )
+        # НЕ удаляем, НЕ сбрасываем счётчики/диапазоны.
+    else:
+        # Чистим прошлую сессию (короба + содержимое каскадом).
+        await session.execute(
+            delete(BoxDistributionWbBox).where(BoxDistributionWbBox.tenant_id == tid)
+        )
+        await session.execute(
+            delete(BoxDistributionSrc).where(BoxDistributionSrc.tenant_id == tid)
+        )
+        # Сброс счётчика к стартовому.
+        start = await _get_start_wb(session, tid)
+        await _set_setting(session, tid, _KEY_NEXT_WB, str(start))
 
     payload = [{"tenant_id": tid, **r} for r in rows]
     for i in range(0, len(payload), 1000):
@@ -182,8 +211,9 @@ async def upload_distribution(
     await session.commit()
 
     return {
+        "mode": mode,
         "rows": len(rows),
-        "boxes": len({r["src_box_code"] for r in rows}),
+        "boxes": len(new_boxes),
         "sheets": parsed["sheets"],
         "skipped": parsed["skipped"],
         "warehouses": _warehouse_summary(rows),
