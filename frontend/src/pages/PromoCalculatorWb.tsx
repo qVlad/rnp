@@ -943,6 +943,12 @@ export default function PromoCalculatorWb() {
           </>
         }
       />
+      <Link
+        to="/docs/promo-calculator-wb"
+        className="inline-flex items-center gap-1.5 text-sm text-accent hover:underline w-fit"
+      >
+        📖 Как этим пользоваться
+      </Link>
 
       {/* Переключатель режима (TASK-DEV-030) */}
       <div className="flex gap-2 text-sm">

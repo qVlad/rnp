@@ -11,7 +11,8 @@ import MarkdownLite from "@/components/MarkdownLite";
 import PageHeader from "@/components/PageHeader";
 
 const TITLES: Record<string, string> = {
-  "promo-calculator": "Методика калькулятора WB-акций",
+  "promo-calculator": "Калькулятор рентабельности участия в акциях",
+  "promo-calculator-wb": "Калькулятор рентабельности WB-акций",
   "unit-plan": "Методика плановой юнит-экономики (UNIT-план)",
   "unit-plan-guide": "UNIT-план — как пользоваться",
   "promo-margin-guide": "Маржа в акции — как пользоваться",

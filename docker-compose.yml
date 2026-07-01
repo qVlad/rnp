@@ -77,6 +77,7 @@ services:
       - ./USER_GUIDE.md:/app/USER_GUIDE.md:ro
       # Markdown-доки рендерящиеся на /docs/:slug страницах.
       - ./PROMO_CALCULATOR.md:/app/PROMO_CALCULATOR.md:ro
+      - ./PROMO_CALCULATOR_WB.md:/app/PROMO_CALCULATOR_WB.md:ro
       - ./UNIT_PLAN.md:/app/UNIT_PLAN.md:ro
       # TASK-LEAD-095 — методички для калькуляторов и сверки.
       - ./TRANSIT_CALCULATOR.md:/app/TRANSIT_CALCULATOR.md:ro
