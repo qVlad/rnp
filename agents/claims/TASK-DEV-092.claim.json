@@ -1,0 +1,7 @@
+{
+  "task_id": "TASK-DEV-092",
+  "agent": "Claude Fable 5 — main session",
+  "started_at": "2026-07-02T12:59:50Z",
+  "expected_minutes": 180,
+  "notes": "Мульти-кабинет WB: api/tenants.py, client.ts, main.py, models.py, миграция 0082, FEATURES/CLAUDE.md, VERSION"
+}
