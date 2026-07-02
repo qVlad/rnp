@@ -11,7 +11,7 @@
 
 > Lead заполняет этот файл из `ROADMAP.md`, запросов пользователя, найденных багов QA.
 
-### TASK-DEV-092: Мульти-кабинет WB — подключение кабинетов из UI + свод по умолчанию — В работе — 2026-07-02 — Claude Fable 5 (main session)
+### TASK-DEV-092: Мульти-кабинет WB — подключение кабинетов из UI + свод по умолчанию — Выполнено — 2026-07-02 (v0.86.0)
 - **Тип:** feature · запрос пользователя 2026-07-02. План: `.claude-work/plans/synthetic-dreaming-sunrise.md`.
 - **Что:** один сервис-аккаунт → 5–10 WB-кабинетов. Настройки → секция «Кабинеты WB»
   (как TrueStats: таблица + модалка «название + токен»), rename / замена токена /
@@ -24,6 +24,13 @@
   `resolve_store_scope` default-all; фиксы BUG-DEV-028/029/030.
 - **Frontend:** `components/CabinetsSection.tsx` в /settings, client.ts методы,
   FilterContext/GlobalFilterBar «Все кабинеты», бейдж «Свод: N кабинетов».
+- **✅ Итог (v0.86.0):** задеплоено; pytest на проде 20/20 (новые + multi-cabinet),
+  282 passed всего (10 failed — pre-existing: sync_tariffs data-dependent,
+  unit_plan MissingGreenlet/excel-contract, задокументированы в CONTINUE_HERE).
+  Смоук на проде: свод default (P&L consolidated=2, полный налог), stores=1
+  сужение, скрытие/возврат, invalid token → 400 без мусорных строк, данные
+  tenant 1 нетронуты (257 012 строк wb_report_detail). UI: секция «Кабинеты WB»
+  + модалка — проверены визуально. Смоук-tenant id=151 оставлен скрытым.
 
 
 > Полный аудит TS↔РНП проведён 2026-06-13 (2 inventory-агента + 1 verify-агент).

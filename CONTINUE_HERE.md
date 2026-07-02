@@ -37,6 +37,35 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## 2026-07-02 — **Мульти-кабинет WB: кабинеты из UI + свод по умолчанию** (TASK-DEV-092, v0.86.0)
+
+Один сервис-аккаунт → N кабинетов WB (по образцу TrueStats, скрины UX сняты с
+mirror-app.truestats.ru). Что сделано:
+- **`/settings` → «Кабинеты WB»** (`CabinetsSection.tsx`): таблица + модалка
+  «Добавить кабинет» (название+токен, «Проверить», 409 duplicate_seller+force),
+  rename / замена токена / отключение токена / скрытие-возврат / доступы.
+  Удаления кабинета нет — только отключение+архив (`tenants.hidden_at`,
+  миграция 0082), данные не теряются.
+- **Router `api/tenants.py`** + общий `services/wb_token.py` (вынос из
+  tenant_settings/signup). POST: ping ДО создания, репликация доступов всем
+  user'ам кабинета, авто-sync 90д.
+- **Свод по умолчанию:** director/head с ≥2 кабинетами видит сумму по всем без
+  выбора; фильтр «Магазины» сужает. P&L/Dashboard-профит в своде —
+  `build_pnl_consolidated` (полный P&L per-tenant со своими налогами/OPEX +
+  сумма, обход pitfall #16), ответы содержат `consolidated: N`, бейдж
+  «Свод: N каб.» в GlobalFilterBar.
+- **Фиксы:** BUG-DEV-028 (tenant_settings по активному кабинету), BUG-DEV-029
+  (create_user → UserTenantAccess + backfill в 0082), BUG-DEV-030
+  (get_current_user → effective_role/active_tenant_id с legacy-fallback).
+- **Проверено на проде:** pytest 20/20 новых+multi-cabinet (282 passed всего;
+  10 failed — pre-existing, см. записи 2026-05-20), API-смоук свода/скрытия,
+  UI-смоук. Смоук-tenant id=151 «Смоук DEV-092» оставлен скрытым. Данные
+  tenant 1 нетронуты. На проде 3 «чужих» изолированных кабинета (1/17/18) —
+  можно связать в один аккаунт через `/api/tenants/{tid}/access`.
+- **Не сделано (backlog):** stores-фильтр на funnel/inventory/cash-flow/
+  operations; BUG-DEV-025 (COGS-коллапс) в SKU-своде units/abc остаётся
+  (в P&L/Dashboard уже обойдён per-tenant циклом).
+
 ## 2026-05-21 — **OPEX many-to-many распределение (backend)** (TASK-LEAD-030)
 
 **Backend полностью готов**; UI отложен в TASK-LEAD-047. Что сделано:

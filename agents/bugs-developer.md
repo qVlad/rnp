@@ -33,9 +33,9 @@
 - **Причина:** все эндпоинты `api/tenant_settings.py` берут `session.get(Tenant, user.tenant_id)` (домашний tenant из JWT), игнорируя `request.state.active_tenant_id`. Director, переключившийся в кабинет B, сохранением токена перезапишет токен кабинета A и запустит авто-sync не туда.
 - **Затронутые файлы:** `api/tenant_settings.py:68,97,137-151,187`
 - **Критерии исправления:**
-  - [ ] Все эндпоинты используют `get_active_tenant_id(request) or user.tenant_id`.
-  - [ ] Авто-sync триггерится для активного tenant.
-- **Статус:** В работе — 2026-07-02 (в рамках TASK-DEV-092)
+  - [x] Все эндпоинты используют `get_active_tenant_id(request) or user.tenant_id`.
+  - [x] Авто-sync триггерится для активного tenant.
+- **Статус:** Исправлено — 2026-07-02 (v0.86.0, TASK-DEV-092)
 
 ## BUG-DEV-029: create_user не создаёт UserTenantAccess → 403-локаут нового юзера
 
@@ -45,9 +45,9 @@
 - **Причина:** `api/users.py:create_user` создаёт только `User`; запись `user_tenant_access` создают лишь bootstrap/signup. Middleware `active_tenant` не находит доступов → 403 «tenant_forbidden» на все запросы нового юзера.
 - **Затронутые файлы:** `api/users.py:104-143`
 - **Критерии исправления:**
-  - [ ] После flush создаётся `UserTenantAccess(user_id, active_tid, role, granted_by)`.
-  - [ ] Backfill: existing users без UTA получают запись из users.tenant_id/role (однократный скрипт или в миграции 0082).
-- **Статус:** В работе — 2026-07-02 (в рамках TASK-DEV-092)
+  - [x] После flush создаётся `UserTenantAccess(user_id, active_tid, role, granted_by)`.
+  - [x] Backfill: existing users без UTA получают запись из users.tenant_id/role (в миграции 0082).
+- **Статус:** Исправлено — 2026-07-02 (v0.86.0, TASK-DEV-092)
 
 ## BUG-DEV-030: /api/auth/me и guard'ы игнорируют активный tenant / effective_role
 
@@ -57,9 +57,9 @@
 - **Причина:** `get_current_user` кладёт в CurrentUser легаси `users.role`/`users.tenant_id`; per-tenant роль из `user_tenant_access.role` (middleware пишет в `request.state.effective_role`) guard'ами не читается. `/me` после switch отдаёт tenant_name/wb_token_set домашнего кабинета.
 - **Затронутые файлы:** `services/auth.py:get_current_user`, `api/auth.py:274-301`
 - **Критерии исправления:**
-  - [ ] `get_current_user` использует `effective_role`/`active_tenant_id` с fallback на легаси (Celery/Bearer-пути без middleware).
-  - [ ] `/me` отдаёт данные активного кабинета.
-- **Статус:** В работе — 2026-07-02 (в рамках TASK-DEV-092)
+  - [x] `get_current_user` использует `effective_role`/`active_tenant_id` с fallback на легаси (Celery/Bearer-пути без middleware).
+  - [x] `/me` отдаёт данные активного кабинета.
+- **Статус:** Исправлено — 2026-07-02 (v0.86.0, TASK-DEV-092)
 
 ## BUG-DEV-023: Кросс-tenant RBAC-leak в мульти-магазине (DEV-062 Phase C)
 
