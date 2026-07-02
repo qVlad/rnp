@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import User
+from app.db.models import User, UserTenantAccess
 from app.db.session import get_db
 from app.services.audit import audit_log, snapshot
 from app.services.auth import get_db_tenant_scoped
@@ -132,6 +132,17 @@ async def create_user(
     )
     session.add(user)
     await session.flush()
+    # BUG-DEV-029: без записи в user_tenant_access middleware active_tenant
+    # возвращает новому юзеру 403 на всё. Tenant берём тот же, что before_flush
+    # проставил юзеру (активный кабинет director'а).
+    session.add(
+        UserTenantAccess(
+            user_id=user.id,
+            tenant_id=user.tenant_id,
+            role=user.role,
+            granted_by=actor.id,
+        )
+    )
     await audit_log(
         session, "users", "create",
         entity_id=str(user.id),
@@ -167,6 +178,18 @@ async def update_user(
         if payload.role not in ROLES:
             raise HTTPException(400, f"unknown role; allowed: {list(ROLES)}")
         user.role = payload.role
+        # Per-tenant роль (user_tenant_access) этого кабинета — синхронно,
+        # иначе effective_role (BUG-DEV-030) останется старой.
+        uta = (
+            await session.execute(
+                select(UserTenantAccess).where(
+                    UserTenantAccess.user_id == user.id,
+                    UserTenantAccess.tenant_id == user.tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if uta is not None:
+            uta.role = payload.role
     if payload.full_name is not None:
         user.full_name = payload.full_name
     if payload.is_active is not None:

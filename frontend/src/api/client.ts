@@ -80,6 +80,19 @@ export type AvailableTenant = {
   last_active_at: string | null;
 };
 
+// DEV-092 — управление кабинетами WB (Настройки → «Кабинеты WB»)
+export type TenantCabinet = {
+  tenant_id: number;
+  name: string;
+  slug: string;
+  role: "director" | "head_of_sales" | "manager" | "bookkeeper";
+  token_set: boolean;
+  seller_id: string | null;
+  validated_at: string | null;
+  hidden: boolean;
+  last_active_at: string | null;
+};
+
 // TASK-LEAD-061 — Multi-manager scoreboard в /weekly-report для head/director
 export interface WeeklyReportByManager {
   manager_user_id: number;
@@ -197,6 +210,58 @@ export const api = {
       "/api/auth/switch-tenant",
       { method: "POST", body: JSON.stringify({ tenant_id }) },
     ),
+
+  // ── Кабинеты WB (мульти-кабинет, DEV-092) ──
+  listTenants: () =>
+    request<{ items: TenantCabinet[] }>("/api/tenants"),
+  createTenant: (p: { name: string; token: string; force?: boolean }) =>
+    request<{
+      tenant_id: number;
+      name: string;
+      slug: string;
+      seller_id: string | null;
+      role: string;
+      access_replicated: number;
+      auto_sync_triggered: string[];
+    }>("/api/tenants", { method: "POST", body: JSON.stringify(p) }),
+  patchTenant: (id: number, p: { name?: string; hidden?: boolean }) =>
+    request<{ ok: boolean; name: string; hidden: boolean }>(
+      `/api/tenants/${id}`,
+      { method: "PATCH", body: JSON.stringify(p) },
+    ),
+  setTenantToken: (id: number, token: string) =>
+    request<{
+      set: boolean;
+      seller_id: string | null;
+      validated_at: string;
+      auto_sync_triggered: string[];
+    }>(`/api/tenants/${id}/wb-token`, {
+      method: "PUT",
+      body: JSON.stringify({ token }),
+    }),
+  clearTenantToken: (id: number) =>
+    request<{ cleared: boolean }>(`/api/tenants/${id}/wb-token`, {
+      method: "DELETE",
+    }),
+  tenantAccessList: (id: number) =>
+    request<{
+      items: Array<{
+        user_id: number;
+        username: string;
+        full_name: string | null;
+        role: string;
+        granted_at: string | null;
+      }>;
+    }>(`/api/tenants/${id}/access`),
+  grantTenantAccess: (id: number, p: { user_id: number; role: string }) =>
+    request<{ ok: boolean; user_id: number; role: string }>(
+      `/api/tenants/${id}/access`,
+      { method: "POST", body: JSON.stringify(p) },
+    ),
+  revokeTenantAccess: (id: number, userId: number) =>
+    request<{ ok: boolean }>(`/api/tenants/${id}/access/${userId}`, {
+      method: "DELETE",
+    }),
 
   // ── Tenant WB token ──
   getWbTokenStatus: () =>
@@ -846,7 +911,7 @@ export const api = {
     }>(`/api/pnl/by-brand?${qs.toString()}`);
   },
 
-  pnlTimeseries: (days: number = 30) =>
+  pnlTimeseries: (days: number = 30, filters?: Record<string, string>) =>
     request<{
       days: number;
       rows: Array<{
@@ -862,7 +927,7 @@ export const api = {
         profit: number;
         cash_flow: number;
       }>;
-    }>(`/api/pnl/timeseries?days=${days}`),
+    }>(`/api/pnl/timeseries?days=${days}${filterSuffix(filters)}`),
 
   listSupplies: (filters: {
     nm_id?: number;

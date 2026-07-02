@@ -43,6 +43,10 @@ class Tenant(Base):
     wb_token_validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Seller ID извлечённый из токена (sid claim в JWT) — для отображения.
     wb_token_seller_id: Mapped[str | None] = mapped_column(String(64))
+    # Скрытие кабинета (DEV-092): NOT NULL → кабинет «в архиве» — исключается
+    # из available-tenants / фильтра «Магазины» / свода / sync-диспетчеров.
+    # Данные НЕ удаляются; возврат = hidden_at → NULL.
+    hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

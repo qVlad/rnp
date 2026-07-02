@@ -98,6 +98,17 @@ def get_tenant(session: AsyncSession | Session) -> int | None:
 _SESSION_INFO_KEY_FILTER = "tenant_filter_ids"
 
 
+def get_tenant_filter(session: AsyncSession | Session) -> list[int] | None:
+    """Текущий мульти-магазин фильтр (list tenant_id) или None."""
+    info = (
+        session.sync_session.info  # type: ignore[union-attr]
+        if isinstance(session, AsyncSession)
+        else session.info
+    )
+    ids = info.get(_SESSION_INFO_KEY_FILTER)
+    return list(ids) if ids else None
+
+
 def set_tenant_filter(session: AsyncSession | Session, tenant_ids: list[int] | None) -> None:
     """Расширить ORM-SELECT-фильтр на набор tenant'ов (мульти-магазин, read-only).
 

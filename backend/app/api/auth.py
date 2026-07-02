@@ -125,16 +125,6 @@ async def bootstrap(
 # ─── Signup (новая компания + директор) ───────────────────────────────────
 
 
-def _slugify(name: str) -> str:
-    """Простая генерация slug для tenant'а из company_name."""
-    import re
-
-    s = name.strip().lower()
-    s = re.sub(r"[^a-z0-9а-я]+", "-", s)
-    s = s.strip("-") or "tenant"
-    return s[:64]
-
-
 @router.post("/signup", dependencies=[Depends(rate_limit_signup)])
 async def signup(
     payload: SignupPayload,
@@ -162,15 +152,10 @@ async def signup(
     if (await session.execute(select(User).where(User.username == username))).scalar_one_or_none():
         raise HTTPException(409, "username уже занят — выберите другой")
 
-    # Уникальный slug. Если совпадение — дописываем числовой суффикс.
-    base_slug = _slugify(company_name)
-    slug = base_slug
-    n = 1
-    while (
-        await session.execute(select(Tenant).where(Tenant.slug == slug))
-    ).scalar_one_or_none():
-        n += 1
-        slug = f"{base_slug}-{n}"
+    # Уникальный slug. Если совпадение — дописывается числовой суффикс.
+    from app.services.wb_token import make_unique_slug
+
+    slug = await make_unique_slug(session, company_name)
 
     tenant = Tenant(name=company_name, slug=slug)
     session.add(tenant)
@@ -330,7 +315,10 @@ async def available_tenants(
         await session.execute(
             select(UserTenantAccess, Tenant.name)
             .join(Tenant, UserTenantAccess.tenant_id == Tenant.id)
-            .where(UserTenantAccess.user_id == user.id)
+            .where(
+                UserTenantAccess.user_id == user.id,
+                Tenant.hidden_at.is_(None),  # скрытые кабинеты — не в dropdown
+            )
             .order_by(
                 UserTenantAccess.last_active_at.desc().nullslast(),
                 UserTenantAccess.tenant_id.asc(),

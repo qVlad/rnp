@@ -11,7 +11,21 @@
 
 > Lead заполняет этот файл из `ROADMAP.md`, запросов пользователя, найденных багов QA.
 
-### TS-parity аудит (запрос пользователя 2026-06-13): постраничное сравнение функционала
+### TASK-DEV-092: Мульти-кабинет WB — подключение кабинетов из UI + свод по умолчанию — В работе — 2026-07-02 — Claude Fable 5 (main session)
+- **Тип:** feature · запрос пользователя 2026-07-02. План: `.claude-work/plans/synthetic-dreaming-sunrise.md`.
+- **Что:** один сервис-аккаунт → 5–10 WB-кабинетов. Настройки → секция «Кабинеты WB»
+  (как TrueStats: таблица + модалка «название + токен»), rename / замена токена /
+  отключение токена / скрытие (архив, данные не удаляются). Свод по всем кабинетам
+  ПО УМОЛЧАНИЮ (фильтр «Магазины» сужает); P&L/KPI в своде — per-tenant loop + сумма
+  (обход pitfall #16). Данные существующего tenant 1 не затрагиваются.
+- **Backend:** миграция 0082 `tenants.hidden_at`; `services/wb_token.py` (вынос
+  ping/sid/store/initial-sync из tenant_settings); router `api/tenants.py`
+  (GET/POST /api/tenants, PATCH rename+hidden, PUT/DELETE wb-token, access CRUD);
+  `resolve_store_scope` default-all; фиксы BUG-DEV-028/029/030.
+- **Frontend:** `components/CabinetsSection.tsx` в /settings, client.ts методы,
+  FilterContext/GlobalFilterBar «Все кабинеты», бейдж «Свод: N кабинетов».
+
+
 > Полный аудит TS↔РНП проведён 2026-06-13 (2 inventory-агента + 1 verify-агент).
 > Итоговая таблица — `TS_VS_RNP_COMPARISON.md` §«Постраничное соответствие». Из
 > by-design исключений (НЕ гэпы): Ozon/ЯМ мульти-маркетплейс, биллинг/тарифы,

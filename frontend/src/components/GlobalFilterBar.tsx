@@ -85,13 +85,23 @@ export function GlobalFilterBar() {
   return (
     <div className="flex flex-wrap items-center gap-2">
       {tenants.length > 1 && (
-        <MultiDropdown
-          title="Магазины"
-          options={tenants.map((t) => ({ value: t.tenant_id, label: t.name }))}
-          selected={filters.stores}
-          onChange={(v) => setFilters({ ...filters, stores: v as number[] })}
-          hint="Выберите ≥2 кабинета для свода по магазинам"
-        />
+        <>
+          <MultiDropdown
+            title={filters.stores.length ? "Магазины" : `Магазины · Все ${tenants.length}`}
+            options={tenants.map((t) => ({ value: t.tenant_id, label: t.name }))}
+            selected={filters.stores}
+            onChange={(v) => setFilters({ ...filters, stores: v as number[] })}
+            hint="Пустой выбор = свод по всем кабинетам"
+          />
+          {filters.stores.length !== 1 && (
+            <span
+              className="text-[11px] px-2 py-0.5 rounded-full bg-accent/10 text-accent whitespace-nowrap"
+              title="Данные суммируются по кабинетам. Настройки/записи — в активном кабинете (сайдбар)."
+            >
+              Свод: {filters.stores.length === 0 ? `все ${tenants.length}` : filters.stores.length} каб.
+            </span>
+          )}
+        </>
       )}
       <MultiDropdown
         title="Бренды"

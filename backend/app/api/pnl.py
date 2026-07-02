@@ -16,7 +16,7 @@ from app.services.auth import (
 )
 from app.services.filter_scope import resolve_nm_scope, resolve_store_scope
 from app.services.tenant_context import set_tenant_filter
-from app.services.pnl_builder import build_pnl
+from app.services.pnl_builder import build_pnl, build_pnl_consolidated
 from app.services.pnl_reconciliation import build_reconciliation
 
 router = APIRouter(prefix="/api/pnl", tags=["pnl"])
@@ -64,13 +64,11 @@ async def get_pnl(
     if date_from is None:
         date_from = date_to - timedelta(days=29)
 
-    # DEV-062 Phase C: свод по магазинам (≥2 кабинета) → расширить ORM-фильтр.
+    # DEV-062 Phase C / DEV-092: свод по кабинетам. Без выбранных магазинов
+    # у director/head с ≥2 кабинетами — свод по ВСЕМ (default, как TrueStats).
     store_ids = await resolve_store_scope(
         session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id, rbac_brands=brands,
     )
-    multi_store = bool(store_ids)
-    if store_ids:
-        set_tenant_filter(session, store_ids)
 
     rbac_brands = brands  # RBAC-ограничение роли (None = без ограничений)
 
@@ -98,19 +96,35 @@ async def get_pnl(
                 # Если intersect пуст → manager попросил чужие бренды → пустой
                 # brand-set, build_pnl отдаст нули. Не 403 чтобы UI не падал.
 
-    out = await build_pnl(
-        session,
-        date_from=date_from,
-        date_to=date_to,
-        granularity=granularity,
-        brands=eff_brands,
-        nm_ids=nm_ids,
-        multi_store=multi_store,
-        reporting_mode=reporting_mode,
-    )
+    if store_ids:
+        # DEV-092: свод = ПОЛНЫЙ P&L per-tenant + сумма (каждый кабинет со
+        # своими налогами/OPEX — pitfall #16), не contribution-margin.
+        out = await build_pnl_consolidated(
+            session,
+            store_ids=store_ids,
+            date_from=date_from,
+            date_to=date_to,
+            granularity=granularity,
+            brands=eff_brands,
+            nm_ids=nm_ids,
+            reporting_mode=reporting_mode,
+        )
+    else:
+        out = await build_pnl(
+            session,
+            date_from=date_from,
+            date_to=date_to,
+            granularity=granularity,
+            brands=eff_brands,
+            nm_ids=nm_ids,
+            reporting_mode=reporting_mode,
+        )
+    # Свод больше НЕ урезает P&L → scope="company" пока нет nm/brand-фильтра.
     out["scope"] = (
-        "brands" if (eff_brands is not None or nm_ids is not None or multi_store) else "company"
+        "brands" if (eff_brands is not None or nm_ids is not None) else "company"
     )
+    if store_ids:
+        out["consolidated"] = len(store_ids)
     out["reporting_mode"] = reporting_mode
     if requested_brands is not None:
         out["filter_brands"] = sorted(eff_brands) if eff_brands else []
@@ -121,16 +135,27 @@ async def get_pnl(
         n_days = (date_to - date_from).days
         prev_to = date_from - timedelta(days=1)
         prev_from = prev_to - timedelta(days=n_days)
-        prev = await build_pnl(
-            session,
-            date_from=prev_from,
-            date_to=prev_to,
-            granularity=granularity,
-            brands=eff_brands,
-            nm_ids=nm_ids,
-            multi_store=multi_store,
-            reporting_mode=reporting_mode,
-        )
+        if store_ids:
+            prev = await build_pnl_consolidated(
+                session,
+                store_ids=store_ids,
+                date_from=prev_from,
+                date_to=prev_to,
+                granularity=granularity,
+                brands=eff_brands,
+                nm_ids=nm_ids,
+                reporting_mode=reporting_mode,
+            )
+        else:
+            prev = await build_pnl(
+                session,
+                date_from=prev_from,
+                date_to=prev_to,
+                granularity=granularity,
+                brands=eff_brands,
+                nm_ids=nm_ids,
+                reporting_mode=reporting_mode,
+            )
         # Не возвращаем `rows` для прошлого периода — UI рисует только totals
         # в дополнительной колонке. Это бережёт payload и кеш.
         out["previous"] = {
@@ -179,9 +204,6 @@ async def get_pnl_yoy(
     store_ids = await resolve_store_scope(
         session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id, rbac_brands=brands,
     )
-    multi_store = bool(store_ids)
-    if store_ids:
-        set_tenant_filter(session, store_ids)
     nm_ids = None
     if any([glob_brands, categories, groups, articles]):
         nm_ids = await resolve_nm_scope(
@@ -190,26 +212,36 @@ async def get_pnl_yoy(
         )
     eff_brands = None if nm_ids is not None else brands
 
-    cur = await build_pnl(
-        session,
-        date_from=cur_from,
-        date_to=cur_to,
-        granularity="month",
-        brands=eff_brands,
-        nm_ids=nm_ids,
-        multi_store=multi_store,
-    )
-    prev = await build_pnl(
-        session,
-        date_from=prev_from,
-        date_to=prev_to,
-        granularity="month",
-        brands=eff_brands,
-        nm_ids=nm_ids,
-        multi_store=multi_store,
-    )
+    if store_ids:
+        # DEV-092: свод — полный P&L per-tenant + сумма.
+        cur = await build_pnl_consolidated(
+            session, store_ids=store_ids, date_from=cur_from, date_to=cur_to,
+            granularity="month", brands=eff_brands, nm_ids=nm_ids,
+        )
+        prev = await build_pnl_consolidated(
+            session, store_ids=store_ids, date_from=prev_from, date_to=prev_to,
+            granularity="month", brands=eff_brands, nm_ids=nm_ids,
+        )
+    else:
+        cur = await build_pnl(
+            session,
+            date_from=cur_from,
+            date_to=cur_to,
+            granularity="month",
+            brands=eff_brands,
+            nm_ids=nm_ids,
+        )
+        prev = await build_pnl(
+            session,
+            date_from=prev_from,
+            date_to=prev_to,
+            granularity="month",
+            brands=eff_brands,
+            nm_ids=nm_ids,
+        )
     return {
-        "scope": "brands" if (eff_brands is not None or nm_ids is not None or multi_store) else "company",
+        "scope": "brands" if (eff_brands is not None or nm_ids is not None) else "company",
+        "consolidated": len(store_ids) if store_ids else None,
         "current": {
             "year": year,
             "from": cur_from.isoformat(),
@@ -230,24 +262,36 @@ async def get_pnl_yoy(
 @router.get("/timeseries")
 async def get_pnl_timeseries(
     days: int = Query(default=30, ge=1, le=365),
+    stores: str | None = Query(default=None, description="DEV-092: tenant-id магазинов (CSV) для свода"),
     session: AsyncSession = Depends(get_db_tenant_scoped),
     brands: set[str] | None = Depends(current_brands_filter),
+    user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     """Per-day P&L line items for dashboard drill-down (profit, gross_profit,
     revenue_after_vat, commercial_expenses, administrative_expenses, tax).
 
     Тонкая обёртка над `build_pnl(granularity="day")` — возвращает только
     то, что нужно для drill-down графиков (без жирного rows-payload'а).
+    DEV-092: при ≥2 кабинетах — полный P&L-свод (per-tenant + сумма).
     """
     today = date.today()
     date_from = today - timedelta(days=days - 1)
-    out = await build_pnl(
-        session,
-        date_from=date_from,
-        date_to=today,
-        granularity="day",
-        brands=brands,
+    store_ids = await resolve_store_scope(
+        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id, rbac_brands=brands,
     )
+    if store_ids:
+        out = await build_pnl_consolidated(
+            session, store_ids=store_ids, date_from=date_from, date_to=today,
+            granularity="day", brands=brands,
+        )
+    else:
+        out = await build_pnl(
+            session,
+            date_from=date_from,
+            date_to=today,
+            granularity="day",
+            brands=brands,
+        )
     keep = (
         "period_start",
         "revenue_after_vat",

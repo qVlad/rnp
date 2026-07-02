@@ -148,6 +148,7 @@ docker-compose.yml · .env(.example) · .claude/settings.json (permissions)
 | 0079 | **unit_plan_global_config.commission_override_pct + commission_discount_pct** — ручной override комиссии WB (тариф бывает неверный для категории) + возврат комиссии (опции, напр. 0.75%), DEV-089. compute_row: commission = (override ?? тариф) − discount |
 | 0080 | **box_distribution_src / _wb_box / _wb_item** — мобильный QR-сканер раскладки коробов (DEV-091). Скан ШК короба (ALT-...) → раскладка по складам в WB-короба (WB_1541505000++, накопительно) → экспорт shk-excel. Счётчик/алиасы складов в AppSetting. Парсер 3 листов Ink/Ld/Lk |
 | 0081 | **box_distribution_src.distributed_qty** — трекинг частичной раскладки (DEV-091): остатки на скане, запрет повторной раскладки. Эндпоинты `/reset` (с confirm), `/distributed-boxes`. Экспорт +колонка «Товар с кизом»=да (шаблон page-excel) |
+| 0082 | **tenants.hidden_at** — скрытие кабинета (архив, DEV-092): выпадает из available-tenants/свода/sync, данные живут. + backfill user_tenant_access для users без записи (BUG-DEV-029) |
 
 ## Роли и RBAC
 
@@ -189,15 +190,19 @@ fallback (первый по `last_active_at DESC NULLS LAST`). Forbidden tenant 
 Фазе D). Frontend: AuthContext + Layout dropdown «Кабинет ▼» + `removeQueries()`
 при switch.
 
-**Мульти-магазин «свод» (DEV-062 Phase C):** глобальный фильтр «Магазины» (≥2
-кабинета) → `tenant_context.set_tenant_filter(session, ids)` ставит в `session.info`
-доп. ключ `tenant_filter_ids`; ORM-listener тогда фильтрует `tenant_id IN (ids)`
-вместо `== primary`. **Primary tenant сохраняется** (`set_tenant`) — используется
-для `AppSetting` (pitfall #16) и `before_flush` (writes → primary, без leak), поэтому
-режим **только для read-only аналитики** (GET dashboard/pnl/units/abc/deductions/
-summary/ad-campaigns). `ids` валидируются по `user_tenant_access`
-(`filter_scope.resolve_store_scope`). P&L в своде → contribution-margin
-(`build_pnl(multi_store=True)`: OPEX/налоги per-tenant не агрегируются).
+**Мульти-магазин «свод» (DEV-062 Phase C + DEV-092):** у director/head с ≥2
+видимыми кабинетами свод — **ПО УМОЛЧАНИЮ** (как TrueStats): `stores` не передан →
+`resolve_store_scope` возвращает все не-hidden кабинеты; фильтр «Магазины» сужает
+(выбран 1 → только он). SKU-уровень — `tenant_context.set_tenant_filter(session,
+ids)` (`tenant_filter_ids` → ORM-listener `tenant_id IN (ids)`); **primary tenant
+сохраняется** (`set_tenant`) для `AppSetting` (pitfall #16) и `before_flush`
+(writes → primary), режим только для read-only аналитики. **Финансовые агрегаты
+(P&L / Dashboard net_profit) в своде — `pnl_builder.build_pnl_consolidated`:**
+цикл по кабинетам (set_tenant → полный P&L со СВОИМИ налогами/OPEX) → сумма
+raw-полей + пересчёт `*_pct` — свод даёт ПОЛНЫЙ P&L (scope=company), не
+contribution-margin. Ответы получают `consolidated: N` (UI-бейдж «Свод: N каб.»).
+Manager/bookkeeper — без свода. Управление кабинетами (добавить/скрыть/токены/
+доступы) — `/settings` → «Кабинеты WB», `api/tenants.py` (см. таблицу API).
 
 ## API endpoints (по группам)
 
@@ -221,7 +226,8 @@ summary/ad-campaigns). `ids` валидируются по `user_tenant_access`
 | `/api/ads/*` | brands-filter | heatmap (DRR/spent/revenue/orders/clicks) |
 | `/api/brands*`, `/product-groups*` | director_or_head | назначения + группы |
 | `/api/users*`, `/audit-log*`, `/audit/imports` | director | RBAC + лог |
-| `/api/settings*`, `/wb-token`, `/tenant-modules*` | director | timeline налогов, Excel I/O, sync trigger, WB-токен (Fernet), модули |
+| `/api/settings*`, `/wb-token`, `/tenant-modules*` | director | timeline налогов, Excel I/O, sync trigger, WB-токен (Fernet) АКТИВНОГО кабинета, модули |
+| `/api/tenants*` | director (per-cabinet) | **Кабинеты WB (DEV-092)**: список/создание (name+token, 409 duplicate_seller+force, репликация доступов, авто-sync 90д), rename/скрытие (`hidden`), PUT/DELETE `/{tid}/wb-token`, доступы `/{tid}/access`. Удаления кабинета нет — только отключение токена + архив. `api/tenants.py`, общая логика `services/wb_token.py` |
 | `/api/tax-report*`, `/-ausn`, `/-usn`, `/payment-orders/*`, `/buybacks` | director_head_or_bookkeeper | налоги + платёжки + выкупы |
 | `/api/audit-mode*` | bookkeeper (read), director_or_head (write) | 3-source сверка для бухгалтерии |
 | `/api/supplies*` | director_or_head | закупки → weighted-avg COGS |

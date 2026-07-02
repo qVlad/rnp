@@ -15,12 +15,17 @@ from app.services.tenant_context import set_tenant
 
 
 async def get_active_tenants(session: AsyncSession) -> list[int]:
-    """Список tenant_id у которых установлен непустой WB-токен."""
+    """Список tenant_id у которых установлен непустой WB-токен.
+
+    Скрытые кабинеты (hidden_at, DEV-092) не синкаются — «отключение»
+    кабинета без потери данных.
+    """
     rows = (
         await session.execute(
             select(Tenant.id).where(
                 Tenant.wb_token.isnot(None),
                 Tenant.wb_token != "",
+                Tenant.hidden_at.is_(None),
             )
         )
     ).all()

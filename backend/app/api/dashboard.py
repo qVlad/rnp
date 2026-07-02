@@ -63,9 +63,11 @@ async def _resolve_global_filter(
 async def _apply_store_filter(
     session: AsyncSession, *, stores: str | None, user: CurrentUser,
     rbac_brands: set[str] | None,
-) -> bool:
-    """DEV-062 Phase C: если выбрано ≥2 магазина — расширить ORM-фильтр на их
-    tenant'ы (свод по кабинетам). Возврат: True если мульти-магазин активен.
+) -> list[int] | None:
+    """DEV-062 Phase C / DEV-092: свод по кабинетам. Без выбранных магазинов
+    у director/head с ≥2 видимыми кабинетами — свод по ВСЕМ (default, как
+    TrueStats). Расширяет ORM-фильтр (`tenant_id IN`) и возвращает список
+    tenant'ов свода (None = обычный single-tenant).
     BUG-DEV-023: для brand-scoped роли (manager) свод запрещён (RBAC по
     brand-name утёк бы кросс-tenant) — `rbac_brands` прокидываем в резолвер."""
     store_ids = await resolve_store_scope(
@@ -74,8 +76,8 @@ async def _apply_store_filter(
     )
     if store_ids:
         set_tenant_filter(session, store_ids)
-        return True
-    return False
+        return store_ids
+    return None
 
 
 def _resolve_period(
@@ -114,20 +116,24 @@ async def get_dashboard(
     brands: set[str] | None = Depends(current_brands_filter),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
-    multi_store = await _apply_store_filter(session, stores=stores, user=user, rbac_brands=brands)
+    store_ids = await _apply_store_filter(session, stores=stores, user=user, rbac_brands=brands)
     nm_ids = await _resolve_global_filter(
         session, glob_brands=glob_brands, categories=categories, groups=groups,
         articles=articles, rbac_brands=brands,
     )
-    return await compute_dashboard(
+    out = await compute_dashboard(
         session,
         _resolve_period(period, start_date, end_date),
         brands=None if nm_ids is not None else brands,
         nm_ids=nm_ids,
         mode=mode,
         reporting_mode=reporting_mode,
-        multi_store=multi_store,
+        multi_store=bool(store_ids),
+        store_ids=store_ids,
     )
+    if store_ids:
+        out["consolidated"] = len(store_ids)  # DEV-092: бейдж «Свод: N кабинетов»
+    return out
 
 
 @router.get("/timeseries")
@@ -347,7 +353,7 @@ async def get_today_vs_yesterday(
     p_today = period_from_range(today, today)
     p_yesterday = period_from_range(yesterday, yesterday)
 
-    multi_store = await _apply_store_filter(session, stores=stores, user=user, rbac_brands=brands)
+    store_ids = await _apply_store_filter(session, stores=stores, user=user, rbac_brands=brands)
     nm_ids = await _resolve_global_filter(
         session, glob_brands=glob_brands, categories=categories, groups=groups,
         articles=articles, rbac_brands=brands,
@@ -355,11 +361,11 @@ async def get_today_vs_yesterday(
     eff_brands = None if nm_ids is not None else brands
     d_today = await compute_dashboard(
         session, p_today, brands=eff_brands, nm_ids=nm_ids, mode=mode,
-        reporting_mode=reporting_mode, multi_store=multi_store,
+        reporting_mode=reporting_mode, multi_store=bool(store_ids), store_ids=store_ids,
     )
     d_yesterday = await compute_dashboard(
         session, p_yesterday, brands=eff_brands, nm_ids=nm_ids, mode=mode,
-        reporting_mode=reporting_mode, multi_store=multi_store,
+        reporting_mode=reporting_mode, multi_store=bool(store_ids), store_ids=store_ids,
     )
 
     # Build delta KPIs zip-aligned by `.key`

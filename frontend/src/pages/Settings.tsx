@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import CustomMetricsSection from "@/components/CustomMetricsSection";
 import BoxDistributionSettings from "@/components/BoxDistributionSettings";
+import CabinetsSection from "@/components/CabinetsSection";
 import { Icon } from "../components/Icon";
 import PageHeader from "@/components/PageHeader";
 
@@ -177,11 +178,14 @@ export default function Settings() {
 
       <CustomMetricsSection />
 
+      {/* DEV-092: мульти-кабинет — управление кабинетами WB. */}
+      <CabinetsSection />
+
       {/* Новый multi-tenant блок: WB-токен per-tenant хранится в БД,
           вводится через UI. Старый блок ниже («Подключение через .env»)
-          — диагностика. */}
+          — диагностика. Работает с АКТИВНЫМ кабинетом (BUG-DEV-028). */}
       <section className="card">
-        <h2 className="font-medium mb-3">Подключение к WB</h2>
+        <h2 className="font-medium mb-3">Подключение к WB (активный кабинет)</h2>
         <div className="text-sm text-muted mb-3">
           Вставьте сюда свой WB API-токен — сервис подтянет вашу аналитику.{" "}
           Токен хранится в БД, привязан к вашей компании. Только директор может

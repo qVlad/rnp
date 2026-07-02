@@ -11,6 +11,7 @@ import {
   YAxis,
 } from "recharts";
 import { api } from "@/api/client";
+import { useFilters, filterKey } from "@/contexts/FilterContext";
 import { fmtNum, fmtRub, fmtPct, fmtCompact } from "@/lib/format";
 import { GRID_PROPS, AXIS_PROPS, TOOLTIP_STYLE } from "@/lib/chartTheme";
 import { Icon } from "./Icon";
@@ -111,14 +112,17 @@ export default function MetricDrilldownModal({
   // profit uses the heavier pnl-timeseries endpoint (per-day full P&L).
   // Остальные метрики — дешёвый /dashboard/timeseries.
   const isPnl = metric === "profit";
+  // DEV-092: свод/сужение по кабинетам — те же глобальные фильтры, что и дашборд.
+  const { filters: gFilters, toParams: gToParams } = useFilters();
+  const gfk = filterKey(gFilters);
   const tsQ = useQuery({
-    queryKey: ["timeseries", days, mode],
-    queryFn: () => api.timeseries(days, mode),
+    queryKey: ["timeseries", days, mode, gfk],
+    queryFn: () => api.timeseries(days, mode, undefined, gToParams()),
     enabled: !isPnl,
   });
   const pnlQ = useQuery({
-    queryKey: ["pnl-timeseries", days],
-    queryFn: () => api.pnlTimeseries(days),
+    queryKey: ["pnl-timeseries", days, gfk],
+    queryFn: () => api.pnlTimeseries(days, gToParams()),
     enabled: isPnl,
   });
   const data = isPnl ? pnlQ.data : tsQ.data;

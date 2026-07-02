@@ -393,7 +393,7 @@ export default function Layout() {
                 htmlFor="sidebar-cabinet"
                 className="block text-faint uppercase tracking-wider text-[10px] mb-1"
               >
-                Кабинет
+                Активный кабинет
               </label>
               <select
                 id="sidebar-cabinet"
@@ -408,7 +408,7 @@ export default function Layout() {
                     });
                   }
                 }}
-                title="Переключение WB-кабинета. Все данные перезагружаются для выбранного tenant'а."
+                title="Кабинет для настроек/налогов/ручных записей. Аналитика по умолчанию — свод по всем кабинетам (фильтр «Магазины»)."
               >
                 {availableTenants.map((t) => (
                   <option key={t.tenant_id} value={t.tenant_id}>

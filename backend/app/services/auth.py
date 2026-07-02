@@ -199,12 +199,18 @@ async def get_current_user(
     user = await session.get(User, uid)
     if user is None or not user.is_active:
         raise HTTPException(401, "user not found or disabled")
+    # Multi-cabinet (BUG-DEV-030): роль и tenant — от АКТИВНОГО кабинета
+    # (middleware active_tenant пишет их в request.state). Fallback на
+    # легаси users.role/users.tenant_id — для путей без middleware
+    # (Celery, public-paths, Bearer-extension до резолва).
+    eff_role = getattr(request.state, "effective_role", None)
+    active_tid = getattr(request.state, "active_tenant_id", None)
     return CurrentUser(
         id=user.id,
         username=user.username,
-        role=user.role,
+        role=eff_role or user.role,
         full_name=user.full_name,
-        tenant_id=int(user.tenant_id),
+        tenant_id=int(active_tid or user.tenant_id),
     )
 
 

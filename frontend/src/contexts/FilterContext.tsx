@@ -52,14 +52,15 @@ export function FilterProvider({ children }: { children: ReactNode }) {
     if (filters.categories.length) p.categories = filters.categories.join(",");
     if (filters.groups.length) p.groups = filters.groups.join(",");
     if (filters.articles.length) p.articles = filters.articles.join(",");
-    // Phase C: ≥2 магазина = свод (1 магазин фильтрует через активный кабинет, не через stores).
-    if (filters.stores.length >= 2) p.stores = filters.stores.join(",");
+    // DEV-092: пустой выбор = свод по ВСЕМ кабинетам (backend default);
+    // любой выбор (в т.ч. один магазин) — явное сужение через stores.
+    if (filters.stores.length) p.stores = filters.stores.join(",");
     return p;
   }, [filters]);
 
   const active =
     filters.brands.length + filters.categories.length + filters.groups.length +
-    filters.articles.length > 0 || filters.stores.length >= 2;
+    filters.articles.length + filters.stores.length > 0;
 
   return (
     <FilterCtx.Provider value={{ filters, setFilters, clear, toParams, active }}>

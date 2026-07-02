@@ -965,6 +965,174 @@ async def build_pnl(
     }
 
 
+# Сырые (линейно-суммируемые) поля P&L-строки. Используются и в _totals,
+# и в суммировании свода по кабинетам (build_pnl_consolidated, DEV-092).
+_RAW_SUM_FIELDS = (
+    "revenue_gross",
+    "revenue_returns",
+    "selfbuy_adjustment",
+    "dbs_revenue",
+    "revenue_net",
+    "vat",
+    "commission",
+    "delivery",
+    "storage",
+    "penalty",
+    "deduction",
+    "acquiring",
+    "additional",
+    "ad_cost",
+    "external_ad_cost",
+    "contractor_fees",
+    "cogs",
+    "opex_operating",
+    "opex_cashflow_only",
+    "other_costs",
+    "tax",
+    "tax_for_fns",
+    "ppvz_for_pay",
+    "ppvz_vw_net",
+    "ppvz_vw_nds_net",
+    "paid_acceptance_total",
+    "rebill_logistic_total",
+    "retail_amt_net",
+    "profit",
+    "cash_flow",
+)
+
+
+def _recompute_derived(out: dict[str, float]) -> None:
+    """Пересчитать ОПиУ-подытоги и маржи из сырых сумм (in-place).
+
+    Формулы 1:1 с PnLRow properties / _totals — иначе page-to-page drift.
+    """
+    revenue_after_vat = out["revenue_net"] - out["vat"]
+    gross_profit = revenue_after_vat - out["cogs"]
+    commercial_expenses = (
+        out["commission"]
+        + out["delivery"]
+        + out["storage"]
+        + out["penalty"]
+        + out["deduction"]
+        + out["acquiring"]
+        + out["ad_cost"]
+        + out["external_ad_cost"]
+        + out["contractor_fees"]
+    )
+    administrative_expenses = out["opex_operating"] + out["other_costs"]
+    profit_from_sales = gross_profit - commercial_expenses
+    operating_profit = profit_from_sales - administrative_expenses
+    ebitda = operating_profit  # ==EBIT until D&A is separated
+    profit_before_tax = operating_profit
+
+    def _pct(num: float) -> float:
+        if revenue_after_vat <= 0:
+            return 0.0
+        return num / revenue_after_vat * 100.0
+
+    out.update(
+        {
+            "revenue_after_vat": round(revenue_after_vat, 2),
+            "gross_profit": round(gross_profit, 2),
+            "commercial_expenses": round(commercial_expenses, 2),
+            "administrative_expenses": round(administrative_expenses, 2),
+            "profit_from_sales": round(profit_from_sales, 2),
+            "operating_profit": round(operating_profit, 2),
+            "ebitda": round(ebitda, 2),
+            "profit_before_tax": round(profit_before_tax, 2),
+            "gross_margin_pct": round(_pct(gross_profit), 2),
+            "profit_from_sales_margin_pct": round(_pct(profit_from_sales), 2),
+            "operating_margin_pct": round(_pct(operating_profit), 2),
+            "ebitda_margin_pct": round(_pct(ebitda), 2),
+            "net_margin_pct": round(_pct(out["profit"]), 2),
+        }
+    )
+
+
+async def build_pnl_consolidated(
+    session: AsyncSession,
+    *,
+    store_ids: list[int],
+    date_from: date,
+    date_to: date,
+    granularity: Granularity = "day",
+    brands: set[str] | None = None,
+    nm_ids: set[int] | None = None,
+    reporting_mode: "ReportingMode" = "operational",
+) -> dict[str, Any]:
+    """DEV-092: ПОЛНЫЙ P&L свода по кабинетам — per-tenant loop + сумма.
+
+    В отличие от `build_pnl(multi_store=True)` (contribution-margin через
+    `tenant_id IN (...)`), здесь каждый кабинет считается ОТДЕЛЬНО в своём
+    tenant-контексте — его собственные AppSetting-налоги (pitfall #16),
+    OPEX, COGS (заодно нет коллапса COGS по одинаковым nm_id, BUG-DEV-025)
+    — и строки суммируются. Итог = «вся компания по N кабинетам».
+
+    Если задан nm/brand-скоуп — каждый кабинет отдаёт contribution-margin
+    (как и в single-режиме), сумма остаётся contribution-margin.
+
+    Session: любые tenant_filter/tenant сессии сохраняются и восстанавливаются.
+    """
+    from app.services.tenant_context import (
+        get_tenant,
+        get_tenant_filter,
+        set_tenant,
+        set_tenant_filter,
+    )
+
+    orig_tenant = get_tenant(session)
+    orig_filter = get_tenant_filter(session)
+
+    merged_rows: dict[tuple[str, str], dict[str, float]] = {}
+    merged_totals: dict[str, float] = {f: 0.0 for f in _RAW_SUM_FIELDS}
+    try:
+        set_tenant_filter(session, None)  # per-tenant режим — IN-фильтр мешает
+        for tid in store_ids:
+            set_tenant(session, int(tid))
+            one = await build_pnl(
+                session,
+                date_from=date_from,
+                date_to=date_to,
+                granularity=granularity,
+                brands=brands,
+                nm_ids=nm_ids,
+                multi_store=False,
+                reporting_mode=reporting_mode,
+            )
+            for row in one["rows"]:
+                key = (row["period_start"], row["period_end"])
+                acc = merged_rows.get(key)
+                if acc is None:
+                    acc = {f: 0.0 for f in _RAW_SUM_FIELDS}
+                    acc["period_start"] = row["period_start"]  # type: ignore[assignment]
+                    acc["period_end"] = row["period_end"]  # type: ignore[assignment]
+                    merged_rows[key] = acc
+                for f in _RAW_SUM_FIELDS:
+                    acc[f] = round(acc[f] + float(row.get(f, 0) or 0), 2)
+            one_totals = one.get("totals", {})
+            for f in _RAW_SUM_FIELDS:
+                merged_totals[f] = round(
+                    merged_totals[f] + float(one_totals.get(f, 0) or 0), 2
+                )
+    finally:
+        set_tenant(session, orig_tenant)
+        set_tenant_filter(session, orig_filter)
+
+    rows_out = [merged_rows[k] for k in sorted(merged_rows.keys())]
+    for r in rows_out:
+        _recompute_derived(r)  # type: ignore[arg-type]
+    _recompute_derived(merged_totals)
+
+    return {
+        "granularity": granularity,
+        "from": date_from.isoformat(),
+        "to": date_to.isoformat(),
+        "rows": rows_out,
+        "totals": merged_totals,
+        "consolidated_stores": [int(t) for t in store_ids],
+    }
+
+
 def _totals(rows: list[PnLRow]) -> dict[str, float]:
     fields = (
         "revenue_gross",

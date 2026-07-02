@@ -65,6 +65,7 @@ from app.api import (
     transit_tariffs,
     tenant_modules,
     tenant_settings,
+    tenants as tenants_api,
     unit_plan,
     units,
     users,
@@ -250,6 +251,7 @@ app.include_router(auth_api.router)
 app.include_router(users.router)
 app.include_router(brands.router)
 app.include_router(tenant_settings.router)
+app.include_router(tenants_api.router)
 app.include_router(tenant_modules.router)
 app.include_router(audit_mode.router)
 app.include_router(chargebacks.router)

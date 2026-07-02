@@ -795,6 +795,7 @@ async def compute_dashboard(
     reporting_mode: ReportingMode = "operational",
     nm_ids: set[int] | None = None,
     multi_store: bool = False,
+    store_ids: list[int] | None = None,
 ) -> dict[str, Any]:
     """Build dashboard KPIs.
 
@@ -937,20 +938,32 @@ async def compute_dashboard(
     # wb_report_detail независимо от режима дашборда, так что результат
     # одинаков для preliminary/final. Lazy import чтобы не было кругового
     # импорта (pnl_builder сам импортирует metrics в reconciliation).
-    from app.services.pnl_builder import build_pnl  # noqa: WPS433
+    from app.services.pnl_builder import build_pnl, build_pnl_consolidated  # noqa: WPS433
 
     pnl_from = period.start.date()
     pnl_to = (period.end - timedelta(days=1)).date()
-    pnl_curr = await build_pnl(
-        session, date_from=pnl_from, date_to=pnl_to, granularity="month",
-        brands=brands, nm_ids=nm_ids, multi_store=multi_store, reporting_mode=reporting_mode,
-    )
     pnl_prev_from = period.prev_start.date()
     pnl_prev_to = (period.prev_end - timedelta(days=1)).date()
-    pnl_prev = await build_pnl(
-        session, date_from=pnl_prev_from, date_to=pnl_prev_to, granularity="month",
-        brands=brands, nm_ids=nm_ids, multi_store=multi_store, reporting_mode=reporting_mode,
-    )
+    if store_ids:
+        # DEV-092: свод — полный P&L (per-tenant налоги/OPEX, pitfall #16),
+        # а не contribution-margin по tenant_id IN.
+        pnl_curr = await build_pnl_consolidated(
+            session, store_ids=store_ids, date_from=pnl_from, date_to=pnl_to,
+            granularity="month", brands=brands, nm_ids=nm_ids, reporting_mode=reporting_mode,
+        )
+        pnl_prev = await build_pnl_consolidated(
+            session, store_ids=store_ids, date_from=pnl_prev_from, date_to=pnl_prev_to,
+            granularity="month", brands=brands, nm_ids=nm_ids, reporting_mode=reporting_mode,
+        )
+    else:
+        pnl_curr = await build_pnl(
+            session, date_from=pnl_from, date_to=pnl_to, granularity="month",
+            brands=brands, nm_ids=nm_ids, multi_store=multi_store, reporting_mode=reporting_mode,
+        )
+        pnl_prev = await build_pnl(
+            session, date_from=pnl_prev_from, date_to=pnl_prev_to, granularity="month",
+            brands=brands, nm_ids=nm_ids, multi_store=multi_store, reporting_mode=reporting_mode,
+        )
     net_profit = _f(pnl_curr.get("totals", {}).get("profit", 0))
     prev_net_profit = _f(pnl_prev.get("totals", {}).get("profit", 0))
 

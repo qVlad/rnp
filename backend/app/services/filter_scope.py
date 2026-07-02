@@ -28,12 +28,17 @@ async def resolve_store_scope(
     fallback_tenant_id: int,
     rbac_brands: set[str] | None = "__unset__",  # type: ignore[assignment]
 ) -> list[int] | None:
-    """DEV-062 Phase C: валидировать выбранные магазины (кабинеты) против
-    `user_tenant_access`.
+    """DEV-062 Phase C / DEV-092: свод по кабинетам.
 
-    Возврат: `list[int]` из ≥2 разрешённых tenant'ов (режим «свод по магазинам»)
-    или `None` (0/1 магазин ИЛИ нет доступа → обычный single-tenant активный
-    кабинет). Защита: показываем только tenant'ы, к которым у user есть доступ.
+    Возврат:
+      * `stores` НЕ передан → все видимые (не hidden) кабинеты user'а, если их
+        ≥2 — **свод по умолчанию** (как TrueStats); один кабинет → None
+        (обычный single-tenant режим).
+      * `stores` передан → validated-список выбранных (включая ровно один —
+        явное сужение до конкретного магазина); мусор/чужие id отбрасываются,
+        если ничего валидного не осталось → None.
+    Защита: только tenant'ы из `user_tenant_access`, скрытые (hidden_at)
+    исключаются. `None` = caller оставляет обычный активный кабинет.
 
     **BUG-DEV-023:** brand-scoped роль (manager, `rbac_brands` — непустой set ИЛИ
     пустой) НЕ допускается к кросс-tenant своду: RBAC задан по brand-name в
@@ -45,17 +50,27 @@ async def resolve_store_scope(
     """
     if rbac_brands is not None and rbac_brands != "__unset__":
         return None  # manager (brand-scope) — без кросс-tenant свода
-    ids = [int(x) for x in _csv(stores) if x.lstrip("-").isdigit()]
-    if len(ids) < 2:
-        return None  # 0/1 магазин → обычный активный кабинет (без расширения)
     acc = (
         await session.execute(
-            text("select tenant_id from user_tenant_access where user_id = :u"),
+            text(
+                "select a.tenant_id from user_tenant_access a "
+                "join tenants t on t.id = a.tenant_id "
+                "where a.user_id = :u and t.hidden_at is null"
+            ),
             {"u": user_id},
         )
     ).all()
     allowed = {int(r[0]) for r in acc} or {int(fallback_tenant_id)}
+    ids = [int(x) for x in _csv(stores) if x.lstrip("-").isdigit()]
+    if not ids:
+        # DEV-092: свод ПО УМОЛЧАНИЮ (как TrueStats) — без выбранных магазинов
+        # director/head видит сумму по ВСЕМ своим видимым кабинетам.
+        # Один кабинет → обычный single-tenant режим (None).
+        all_ids = sorted(allowed)
+        return all_ids if len(all_ids) >= 2 else None
     validated = [t for t in ids if t in allowed]
+    if len(validated) == 1:
+        return validated  # выбран один магазин — явное сужение до него
     return validated if len(validated) >= 2 else None
 
 
