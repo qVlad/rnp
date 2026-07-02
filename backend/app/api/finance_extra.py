@@ -109,6 +109,27 @@ async def create_finance_reference(
     return {"id": obj.id, "ref_type": obj.ref_type, "name": obj.name, "extra": obj.extra or {}}
 
 
+@router.put("/api/finance-reference/{ref_id}", dependencies=[Depends(require_director_or_head)])
+async def update_finance_reference(
+    ref_id: int,
+    payload: dict[str, Any] = Body(...),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Правка справочника (DEV-093): rename и/или extra (op_type/activity у статей)."""
+    obj = await session.get(FinanceReference, ref_id)
+    if obj is None:
+        raise HTTPException(404, "запись не найдена")
+    if payload.get("name") is not None:
+        name = str(payload["name"]).strip()
+        if not name:
+            raise HTTPException(400, "name не может быть пустым")
+        obj.name = name
+    if payload.get("extra") is not None:
+        obj.extra = {**(obj.extra or {}), **(payload["extra"] or {})}
+    await session.commit()
+    return {"id": obj.id, "ref_type": obj.ref_type, "name": obj.name, "extra": obj.extra or {}}
+
+
 @router.delete("/api/finance-reference/{ref_id}", dependencies=[Depends(require_director_or_head)])
 async def delete_finance_reference(
     ref_id: int,
@@ -119,43 +140,224 @@ async def delete_finance_reference(
     return {"status": "deleted", "id": ref_id}
 
 
+def _op_row(r: ManualOperation, ref_names: dict[int, str], acc_names: dict[int, str]) -> dict[str, Any]:
+    return {
+        "id": r.id,
+        "op_date": r.op_date.isoformat(),
+        "alloc_date": r.alloc_date.isoformat() if r.alloc_date else None,
+        "direction": r.direction,
+        "op_kind": r.op_kind,
+        "amount": float(r.amount or 0),
+        "category": r.category,
+        "counterparty": r.counterparty,
+        "account": r.account,
+        "comment": r.comment,
+        "is_planned": bool(r.is_planned),
+        # DEV-093
+        "account_id": r.account_id,
+        "account_name": acc_names.get(r.account_id) or r.account,
+        "transfer_account_id": r.transfer_account_id,
+        "transfer_account_name": acc_names.get(r.transfer_account_id),
+        "article_id": r.article_id,
+        "article_name": ref_names.get(r.article_id) or r.category,
+        "counterparty_id": r.counterparty_id,
+        "counterparty_name": ref_names.get(r.counterparty_id) or r.counterparty,
+        "official_expense": bool(r.official_expense),
+        "source": r.source,
+        "raw_description": r.raw_description,
+        "doc_number": r.doc_number,
+        "applied_rule_id": r.applied_rule_id,
+    }
+
+
+async def _ref_and_acc_names(session: AsyncSession) -> tuple[dict[int, str], dict[int, str]]:
+    from app.db.models import FinanceAccount  # noqa: WPS433
+
+    ref_names = {
+        rid: rname
+        for rid, rname in (
+            await session.execute(select(FinanceReference.id, FinanceReference.name))
+        ).all()
+    }
+    acc_names = {
+        rid: rname
+        for rid, rname in (
+            await session.execute(select(FinanceAccount.id, FinanceAccount.name))
+        ).all()
+    }
+    return ref_names, acc_names
+
+
+@router.post("/api/finance-reference/import-opex", dependencies=[Depends(require_director_or_head)])
+async def import_articles_from_opex(
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """DEV-093: скопировать OPEX-категории в статьи операций (идемпотентно).
+    kind (expense|income) → extra.op_type; cf_section → extra.activity."""
+    cats = (await session.execute(select(OpexCategory))).scalars().all()
+    existing = {
+        (r.name or "").strip().lower()
+        for r in (
+            await session.execute(
+                select(FinanceReference).where(
+                    FinanceReference.ref_type == "expense_category"
+                )
+            )
+        ).scalars()
+    }
+    created = 0
+    for c in cats:
+        name = (c.name or "").strip()
+        if not name or name.lower() in existing:
+            continue
+        session.add(
+            FinanceReference(
+                tenant_id=get_tenant(session),
+                ref_type="expense_category",
+                name=name,
+                extra={
+                    "op_type": "income" if c.kind == "income" else "expense",
+                    "activity": c.cf_section or "operating",
+                },
+            )
+        )
+        existing.add(name.lower())
+        created += 1
+    await session.commit()
+    return {"created": created, "total_opex_categories": len(cats)}
+
+
 @router.get("/api/manual-operations", dependencies=[Depends(require_director_or_head)])
 async def list_manual_operations(
     start_date: Annotated[date, Query()],
     end_date: Annotated[date, Query()],
+    account_id: Annotated[int | None, Query()] = None,
+    article_id: Annotated[int | None, Query()] = None,
+    counterparty_id: Annotated[int | None, Query()] = None,
+    op_kind: Annotated[str | None, Query()] = None,
+    source: Annotated[str | None, Query()] = None,
+    official: Annotated[bool | None, Query()] = None,
+    no_article: Annotated[bool, Query()] = False,
+    q: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    offset: Annotated[int, Query(ge=0)] = 0,
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
-    """Ручные операции (TASK-DEV-048) за период."""
+    """Операции (TASK-DEV-048 → DEV-093): лента всех source за период с
+    фильтрами. Totals: переводы (op_kind=transfer) НЕ входят в доход/расход."""
+    preds = [ManualOperation.op_date >= start_date, ManualOperation.op_date <= end_date]
+    if account_id:
+        preds.append(
+            (ManualOperation.account_id == account_id)
+            | (ManualOperation.transfer_account_id == account_id)
+        )
+    if article_id:
+        preds.append(ManualOperation.article_id == article_id)
+    if counterparty_id:
+        preds.append(ManualOperation.counterparty_id == counterparty_id)
+    if op_kind in ("income", "expense", "transfer"):
+        preds.append(ManualOperation.op_kind == op_kind)
+    if source in ("manual", "import", "auto_plan"):
+        preds.append(ManualOperation.source == source)
+    if official is not None:
+        preds.append(ManualOperation.official_expense.is_(official))
+    if no_article:
+        preds.append(ManualOperation.article_id.is_(None))
+        preds.append(ManualOperation.op_kind != "transfer")
+    if q:
+        like = f"%{q.strip()}%"
+        preds.append(
+            ManualOperation.raw_description.ilike(like)
+            | ManualOperation.comment.ilike(like)
+            | ManualOperation.counterparty.ilike(like)
+        )
+
+    total_count = (
+        await session.execute(
+            select(func.count(ManualOperation.id)).where(*preds)
+        )
+    ).scalar()
     rows = (
         await session.execute(
             select(ManualOperation)
-            .where(ManualOperation.op_date >= start_date, ManualOperation.op_date <= end_date)
+            .where(*preds)
             .order_by(ManualOperation.op_date.desc(), ManualOperation.id.desc())
+            .limit(limit)
+            .offset(offset)
         )
     ).scalars().all()
-    items = [
-        {
-            "id": r.id,
-            "op_date": r.op_date.isoformat(),
-            "direction": r.direction,
-            "amount": float(r.amount or 0),
-            "category": r.category,
-            "counterparty": r.counterparty,
-            "account": r.account,
-            "comment": r.comment,
-            "is_planned": bool(r.is_planned),
-        }
-        for r in rows
-    ]
-    # Факт (не planned) — в доход/расход; planned — в обязательства.
-    income = sum(x["amount"] for x in items if x["direction"] == "income" and not x["is_planned"])
-    expense = sum(x["amount"] for x in items if x["direction"] == "expense" and not x["is_planned"])
-    planned_in = sum(x["amount"] for x in items if x["direction"] == "income" and x["is_planned"])
-    planned_out = sum(x["amount"] for x in items if x["direction"] == "expense" and x["is_planned"])
-    return {"items": items, "totals": {
+    ref_names, acc_names = await _ref_and_acc_names(session)
+    items = [_op_row(r, ref_names, acc_names) for r in rows]
+
+    # Totals по ВСЕМУ отфильтрованному набору (не странице). Переводы — вне
+    # дохода/расхода (иначе задвоение), плановые — отдельно.
+    tot_rows = (
+        await session.execute(
+            select(
+                ManualOperation.op_kind,
+                ManualOperation.is_planned,
+                func.coalesce(func.sum(ManualOperation.amount), 0),
+            )
+            .where(*preds)
+            .group_by(ManualOperation.op_kind, ManualOperation.is_planned)
+        )
+    ).all()
+    income = expense = planned_in = planned_out = 0.0
+    for kind, planned, amt in tot_rows:
+        amt = float(amt or 0)
+        if kind == "transfer":
+            continue
+        if planned:
+            if kind == "income":
+                planned_in += amt
+            else:
+                planned_out += amt
+        else:
+            if kind == "income":
+                income += amt
+            else:
+                expense += amt
+    return {"items": items, "total": int(total_count or 0), "totals": {
         "income": round(income, 2), "expense": round(expense, 2), "net": round(income - expense, 2),
         "planned_in": round(planned_in, 2), "planned_out": round(planned_out, 2),
     }}
+
+
+def _parse_op_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Общий разбор полей операции для POST/PUT (DEV-093)."""
+    out: dict[str, Any] = {}
+    if "op_kind" in payload or "direction" in payload:
+        op_kind = str(payload.get("op_kind") or payload.get("direction") or "")
+        if op_kind not in {"income", "expense", "transfer"}:
+            raise HTTPException(400, "op_kind ∈ income|expense|transfer")
+        out["op_kind"] = op_kind
+        # legacy direction держим в синхроне (income|expense|transfer)
+        out["direction"] = op_kind
+    if "op_date" in payload:
+        try:
+            out["op_date"] = date.fromisoformat(str(payload.get("op_date")))
+        except Exception:
+            raise HTTPException(400, "op_date YYYY-MM-DD обязателен")
+    if "alloc_date" in payload:
+        v = payload.get("alloc_date")
+        out["alloc_date"] = date.fromisoformat(str(v)) if v else None
+    if "amount" in payload:
+        try:
+            out["amount"] = float(payload.get("amount") or 0)
+        except Exception:
+            raise HTTPException(400, "amount должен быть числом")
+    for k in ("category", "counterparty", "account", "comment",
+              "raw_description", "doc_number"):
+        if k in payload:
+            out[k] = payload.get(k) or None
+    for k in ("account_id", "transfer_account_id", "article_id", "counterparty_id"):
+        if k in payload:
+            out[k] = int(payload[k]) if payload.get(k) else None
+    if "official_expense" in payload:
+        out["official_expense"] = bool(payload.get("official_expense"))
+    if "is_planned" in payload:
+        out["is_planned"] = bool(payload.get("is_planned"))
+    return out
 
 
 @router.post("/api/manual-operations", dependencies=[Depends(require_director_or_head)])
@@ -163,32 +365,64 @@ async def create_manual_operation(
     payload: dict[str, Any] = Body(...),
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
-    direction = str(payload.get("direction") or "")
-    if direction not in {"income", "expense"}:
-        raise HTTPException(400, "direction ∈ income|expense")
-    try:
-        op_date = date.fromisoformat(str(payload.get("op_date")))
-    except Exception:
+    fields = _parse_op_payload(payload)
+    if "op_kind" not in fields:
+        raise HTTPException(400, "op_kind ∈ income|expense|transfer")
+    if "op_date" not in fields:
         raise HTTPException(400, "op_date YYYY-MM-DD обязателен")
-    try:
-        amount = float(payload.get("amount") or 0)
-    except Exception:
-        raise HTTPException(400, "amount должен быть числом")
+    if fields["op_kind"] == "transfer" and not fields.get("transfer_account_id"):
+        raise HTTPException(400, "для перевода нужен transfer_account_id (счёт-получатель)")
     obj = ManualOperation(
         tenant_id=get_tenant(session),
-        op_date=op_date,
-        direction=direction,
-        amount=amount,
-        category=(payload.get("category") or None),
-        counterparty=(payload.get("counterparty") or None),
-        account=(payload.get("account") or None),
-        comment=(payload.get("comment") or None),
-        is_planned=bool(payload.get("is_planned")),
+        source="manual",
+        **fields,
     )
     session.add(obj)
     await session.commit()
     await session.refresh(obj)
     return {"id": obj.id}
+
+
+@router.put("/api/manual-operations/{op_id}", dependencies=[Depends(require_director_or_head)])
+async def update_manual_operation(
+    op_id: int,
+    payload: dict[str, Any] = Body(...),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Inline-редактирование операции (DEV-093): любая комбинация полей,
+    в т.ч. только article_id (клик по «без статьи» в ленте)."""
+    obj = await session.get(ManualOperation, op_id)
+    if obj is None:
+        raise HTTPException(404, "операция не найдена")
+    fields = _parse_op_payload(payload)
+    if not fields:
+        raise HTTPException(400, "нечего менять")
+    for k, v in fields.items():
+        setattr(obj, k, v)
+    await session.commit()
+    ref_names, acc_names = await _ref_and_acc_names(session)
+    return _op_row(obj, ref_names, acc_names)
+
+
+@router.patch("/api/manual-operations/bulk", dependencies=[Depends(require_director_or_head)])
+async def bulk_set_article(
+    payload: dict[str, Any] = Body(...),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Массовое проставление статьи: {ids: [...], article_id: int}."""
+    ids = [int(x) for x in (payload.get("ids") or []) if str(x).isdigit()]
+    article_id = payload.get("article_id")
+    if not ids or not article_id:
+        raise HTTPException(400, "ids и article_id обязательны")
+    rows = (
+        await session.execute(
+            select(ManualOperation).where(ManualOperation.id.in_(ids))
+        )
+    ).scalars().all()
+    for r in rows:
+        r.article_id = int(article_id)
+    await session.commit()
+    return {"updated": len(rows)}
 
 
 @router.delete("/api/manual-operations/{op_id}", dependencies=[Depends(require_director_or_head)])
@@ -864,20 +1098,24 @@ async def cashflow_calendar(
     end_date: Annotated[date, Query()],
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
-    """ДДС-копия TrueStats (TASK-DEV-049): дневной календарь движения денег из
-    ручных операций (ManualOperation). Структура как у TS /v1/cashflow/
-    payment-calendar: per-day income/expense/balance/обязательства. Обязательства
-    (planned) пока 0 — у нас нет флага планируемых операций."""
+    """ДДС-календарь (TASK-DEV-049 → DEV-093): per-day income/expense/balance/
+    обязательства из операций. Переводы между счетами (op_kind=transfer)
+    исключаются — общий баланс они не меняют, в доход/расход не входят.
+    Баланс стартует от Σ initial_balance счетов + сальдо операций до периода."""
     rows = (
         await session.execute(
             select(
                 ManualOperation.op_date,
-                ManualOperation.direction,
+                ManualOperation.op_kind,
                 ManualOperation.is_planned,
                 func.coalesce(func.sum(ManualOperation.amount), 0).label("amt"),
             )
-            .where(ManualOperation.op_date >= start_date, ManualOperation.op_date <= end_date)
-            .group_by(ManualOperation.op_date, ManualOperation.direction, ManualOperation.is_planned)
+            .where(
+                ManualOperation.op_date >= start_date,
+                ManualOperation.op_date <= end_date,
+                ManualOperation.op_kind != "transfer",
+            )
+            .group_by(ManualOperation.op_date, ManualOperation.op_kind, ManualOperation.is_planned)
         )
     ).all()
     by_day: dict[str, dict[str, float]] = {}
@@ -887,13 +1125,44 @@ async def cashflow_calendar(
         amt = float(r.amt or 0)
         if r.is_planned:
             # planned → обязательство (как TS obligationReceivable/Payable), вне баланса
-            slot["obl_in" if r.direction == "income" else "obl_out"] += amt
+            slot["obl_in" if r.op_kind == "income" else "obl_out"] += amt
         else:
-            slot["income" if r.direction == "income" else "expense"] += amt
+            slot["income" if r.op_kind == "income" else "expense"] += amt
+
+    # Стартовый баланс: Σ initial_balance активных счетов + сальдо факт-операций
+    # ДО начала периода (DEV-093 — календарь показывает реальный остаток).
+    from app.db.models import FinanceAccount  # noqa: WPS433
+
+    initial_total = (
+        await session.execute(
+            select(func.coalesce(func.sum(FinanceAccount.initial_balance), 0)).where(
+                FinanceAccount.archived.is_(False)
+            )
+        )
+    ).scalar()
+    before_net = (
+        await session.execute(
+            select(
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (ManualOperation.op_kind == "income", ManualOperation.amount),
+                            (ManualOperation.op_kind == "expense", -ManualOperation.amount),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                )
+            ).where(
+                ManualOperation.is_planned.is_(False),
+                ManualOperation.op_date < start_date,
+            )
+        )
+    ).scalar()
 
     # Полный список дней с накопительным балансом (только факт, planned — отдельно).
     out = []
-    balance = 0.0
+    balance = float(initial_total or 0) + float(before_net or 0)
     cur = start_date
     from datetime import timedelta as _td
 

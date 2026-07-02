@@ -29,6 +29,7 @@ from app.api import (
     extension,
     extension_lk_jobs,
     external_ad_costs,
+    finance_ops,
     features_doc,
     user_guide_doc,
     doc_pages,
@@ -225,6 +226,7 @@ app.include_router(annotations.router)
 app.include_router(pnl.router)
 app.include_router(units.router)
 app.include_router(finance_extra.router)
+app.include_router(finance_ops.router)
 app.include_router(filters_api.router)
 app.include_router(unit_plan.router)
 app.include_router(ads.router)

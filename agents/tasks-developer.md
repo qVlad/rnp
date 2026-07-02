@@ -11,6 +11,21 @@
 
 > Lead заполняет этот файл из `ROADMAP.md`, запросов пользователя, найденных багов QA.
 
+### TASK-DEV-093: Финансы в стиле TrueStats — счета, банк-операции, импорт выписок, ДДС-матрица — В работе — 2026-07-02 — Claude Fable 5 (main session)
+- **Тип:** feature · запрос пользователя 2026-07-02. План: `.claude-work/plans/synthetic-dreaming-sunrise.md`.
+- **Что:** паритет раздела «Финансы» с TrueStats (осмотрен живой mirror-app):
+  счета с балансами (`finance_account`), эволюция ManualOperation (op_kind
+  income/expense/**transfer**, FK на счета/статьи/контрагентов, official_expense,
+  source manual/import/auto_plan), импорт банковской выписки (1С
+  1CClientBankExchange cp1251 + Excel-шаблон, журнал+дедуп), автоправила
+  категоризации, ДДС-матрица статьи×месяцы (3 вкладки + «Управленческий
+  (WB+OPEX)» — старая ДДС сохраняется), календарь операций с балансом дня,
+  статьи с типом/видом деятельности, плановые операции из WB-отчётов.
+- **Миграции:** 0083 (finance_account + ALTER manual_operation + backfill),
+  0084 (finance_import_batch), 0085 (finance_auto_rule). Append-only.
+- **Решения пользователя:** банк-API (Т-Банк) — позже; старая ДДС — вкладкой;
+  всё одним релизом.
+
 ### TASK-DEV-092: Мульти-кабинет WB — подключение кабинетов из UI + свод по умолчанию — Выполнено — 2026-07-02 (v0.86.0)
 - **Тип:** feature · запрос пользователя 2026-07-02. План: `.claude-work/plans/synthetic-dreaming-sunrise.md`.
 - **Что:** один сервис-аккаунт → 5–10 WB-кабинетов. Настройки → секция «Кабинеты WB»

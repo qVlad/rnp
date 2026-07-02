@@ -149,6 +149,9 @@ docker-compose.yml · .env(.example) · .claude/settings.json (permissions)
 | 0080 | **box_distribution_src / _wb_box / _wb_item** — мобильный QR-сканер раскладки коробов (DEV-091). Скан ШК короба (ALT-...) → раскладка по складам в WB-короба (WB_1541505000++, накопительно) → экспорт shk-excel. Счётчик/алиасы складов в AppSetting. Парсер 3 листов Ink/Ld/Lk |
 | 0081 | **box_distribution_src.distributed_qty** — трекинг частичной раскладки (DEV-091): остатки на скане, запрет повторной раскладки. Эндпоинты `/reset` (с confirm), `/distributed-boxes`. Экспорт +колонка «Товар с кизом»=да (шаблон page-excel) |
 | 0082 | **tenants.hidden_at** — скрытие кабинета (архив, DEV-092): выпадает из available-tenants/свода/sync, данные живут. + backfill user_tenant_access для users без записи (BUG-DEV-029) |
+| 0083 | **finance_account + эволюция manual_operation** (DEV-093, Финансы TS-стиль): счета с балансами (текущий вычисляется); операция получает op_kind (income/expense/**transfer**), alloc_date, FK account/article/counterparty, official_expense, source (manual/import/auto_plan), поля импорта + dedup partial-unique. Backfill legacy-строк в справочники/FK |
+| 0084 | **finance_import_batch** — журнал импортов банковских выписок (1С 1CClientBankExchange cp1251 / Excel / CSV): статусы uploaded/needs_mapping/imported/error, mapping+payload JSONB |
+| 0085 | **finance_auto_rule** — автоправила категоризации операций: conditions (AND) → actions (статья/контрагент/официальный расход), прогон при импорте + apply-existing |
 
 ## Роли и RBAC
 
@@ -223,6 +226,7 @@ Manager/bookkeeper — без свода. Управление кабинета�
 | `/api/products/{nm_id}/photo` | публ. | proxy WB CDN, Redis-кеш 24h/1h |
 | `/api/plans*`, `/season-plan*` | brands (read), CUD = director_or_head | план-факт + сезонность |
 | `/api/cash-flow`, `/opex`, `/external-ad-costs`, `/artificial-orders`, `/off-platform` | director_or_head | non-SKU финансы + календарь платежей |
+| `/api/finance-accounts`, `/cash-flow/matrix`, `/finance-imports*`, `/finance-rules*`, `/finance-settings`, `/finance-plan/sync-wb-payouts` | director_or_head | **Финансы TS-стиль (DEV-093)**: счета с балансами, ДДС-матрица статьи×месяцы (article/activity/counterparty), импорт банковских выписок (1С/Excel, дедуп), автоправила, плановые операции из ожидаемых выплат WB. `api/finance_ops.py`, сервисы `finance_accounts/cash_flow_matrix/bank_statement/finance_rules` |
 | `/api/ads/*` | brands-filter | heatmap (DRR/spent/revenue/orders/clicks) |
 | `/api/brands*`, `/product-groups*` | director_or_head | назначения + группы |
 | `/api/users*`, `/audit-log*`, `/audit/imports` | director | RBAC + лог |

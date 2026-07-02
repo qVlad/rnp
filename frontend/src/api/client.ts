@@ -80,6 +80,71 @@ export type AvailableTenant = {
   last_active_at: string | null;
 };
 
+// DEV-093 — Финансы TS-стиль
+export type FinanceOperation = {
+  id: number;
+  op_date: string;
+  alloc_date: string | null;
+  direction: string;
+  op_kind: "income" | "expense" | "transfer";
+  amount: number;
+  category: string | null;
+  counterparty: string | null;
+  account: string | null;
+  comment: string | null;
+  is_planned: boolean;
+  account_id: number | null;
+  account_name: string | null;
+  transfer_account_id: number | null;
+  transfer_account_name: string | null;
+  article_id: number | null;
+  article_name: string | null;
+  counterparty_id: number | null;
+  counterparty_name: string | null;
+  official_expense: boolean;
+  source: "manual" | "import" | "auto_plan";
+  raw_description: string | null;
+  doc_number: string | null;
+  applied_rule_id: number | null;
+};
+
+export type FinanceAccount = {
+  id: number;
+  name: string;
+  initial_balance: number;
+  initial_balance_date: string | null;
+  archived: boolean;
+  current_balance: number;
+};
+
+export type CashFlowMatrixCell = { month: string; amount: number; pct: number };
+export type CashFlowMatrix = {
+  months: string[];
+  group_by: string;
+  opening_balance: number;
+  accounts_balance: { total: number; per_account: Array<{ id: number; name: string; balance: number }> };
+  counters: { ops_without_article: number; import_errors: number };
+  rows: Array<{ section: "income" | "expense"; key: number | string | null; label: string; cells: CashFlowMatrixCell[]; total: number }>;
+  undistributed: Partial<Record<"income" | "expense", { cells: CashFlowMatrixCell[]; total: number }>>;
+  transfer: { cells: CashFlowMatrixCell[] };
+  saldo: Array<{ month: string; amount: number }>;
+  cumulative: Array<{ month: string; amount: number }>;
+};
+
+export type FinanceImportRow = {
+  op_date: string; op_kind: string; amount: number;
+  counterparty: string | null; raw_description: string | null; doc_number: string | null;
+};
+
+export type FinanceRule = {
+  id: number;
+  name: string;
+  enabled: boolean;
+  priority: number;
+  conditions: Array<{ field: string; op: string; value: unknown }>;
+  actions: { article_id?: number; counterparty_id?: number; official_expense?: boolean };
+};
+
 // DEV-092 — управление кабинетами WB (Настройки → «Кабинеты WB»)
 export type TenantCabinet = {
   tenant_id: number;
@@ -1428,14 +1493,19 @@ paymentOrderDelete: (payment_order_id: string) =>
       articles: Array<{ value: number; label: string; brand: string | null }>;
     }>(`/api/filters/options?${new URLSearchParams(filters || {})}`),
 
-  manualOpsList: (start: string, end: string) =>
-    request<{ totals: { income: number; expense: number; net: number; planned_in: number; planned_out: number };
-      items: Array<{ id: number; op_date: string; direction: string; amount: number;
-        category: string | null; counterparty: string | null; account: string | null; comment: string | null; is_planned: boolean }> }>(
-      `/api/manual-operations?start_date=${start}&end_date=${end}`,
+  manualOpsList: (start: string, end: string, filters?: Record<string, string>) =>
+    request<{ total: number; totals: { income: number; expense: number; net: number; planned_in: number; planned_out: number };
+      items: FinanceOperation[] }>(
+      `/api/manual-operations?${new URLSearchParams({ start_date: start, end_date: end, ...(filters || {}) })}`,
     ),
   manualOpsCreate: (body: Record<string, unknown>) =>
     request<{ id: number }>(`/api/manual-operations`, { method: "POST", body: JSON.stringify(body) }),
+  manualOpsUpdate: (id: number, body: Record<string, unknown>) =>
+    request<FinanceOperation>(`/api/manual-operations/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  manualOpsBulkArticle: (ids: number[], article_id: number) =>
+    request<{ updated: number }>(`/api/manual-operations/bulk`, {
+      method: "PATCH", body: JSON.stringify({ ids, article_id }),
+    }),
   manualOpsDelete: (id: number) =>
     request<{ status: string }>(`/api/manual-operations/${id}`, { method: "DELETE" }),
 
@@ -1448,8 +1518,97 @@ paymentOrderDelete: (payment_order_id: string) =>
       method: "POST",
       body: JSON.stringify({ ref_type, name, extra }),
     }),
+  financeRefUpdate: (id: number, body: { name?: string; extra?: Record<string, unknown> }) =>
+    request<{ id: number; ref_type: string; name: string; extra: Record<string, unknown> }>(
+      `/api/finance-reference/${id}`,
+      { method: "PUT", body: JSON.stringify(body) },
+    ),
   financeRefDelete: (id: number) =>
     request<{ status: string }>(`/api/finance-reference/${id}`, { method: "DELETE" }),
+  financeRefImportOpex: () =>
+    request<{ created: number }>(`/api/finance-reference/import-opex`, { method: "POST" }),
+
+  // ── Финансы TS-стиль (DEV-093): счета / ДДС-матрица / импорт / правила ──
+  financeAccounts: () =>
+    request<{ items: FinanceAccount[]; total_balance: number }>(`/api/finance-accounts`),
+  financeAccountCreate: (body: Record<string, unknown>) =>
+    request<{ id: number }>(`/api/finance-accounts`, { method: "POST", body: JSON.stringify(body) }),
+  financeAccountUpdate: (id: number, body: Record<string, unknown>) =>
+    request<{ ok: boolean }>(`/api/finance-accounts/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  financeAccountDelete: (id: number) =>
+    request<{ ok: boolean }>(`/api/finance-accounts/${id}`, { method: "DELETE" }),
+
+  cashFlowMatrix: (from: string, to: string, opts?: {
+    group_by?: string; accounts?: string; articles?: string; include_planned?: boolean;
+  }) =>
+    request<CashFlowMatrix>(
+      `/api/cash-flow/matrix?${new URLSearchParams({
+        from, to,
+        group_by: opts?.group_by || "article",
+        ...(opts?.accounts ? { accounts: opts.accounts } : {}),
+        ...(opts?.articles ? { articles: opts.articles } : {}),
+        ...(opts?.include_planned ? { include_planned: "true" } : {}),
+      })}`,
+    ),
+
+  financeImportUpload: async (file: File, accountId?: number) => {
+    // Raw fetch: request() форсит Content-Type: application/json, а multipart
+    // должен выставить boundary сам браузер (паттерн auditPreviewBookkeeper).
+    const fd = new FormData();
+    fd.append("file", file);
+    const resp = await fetch(
+      `/api/finance-imports${accountId ? `?account_id=${accountId}` : ""}`,
+      { method: "POST", body: fd, credentials: "include" },
+    );
+    if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
+    return resp.json() as Promise<{
+      batch_id: number; status: string; detected_format: string;
+      columns: string[]; mapping_suggest: Record<string, string>;
+      rows_total: number; preview: FinanceImportRow[]; our_accounts: string[];
+    }>;
+  },
+  financeImportCommit: (batchId: number, body: { account_id: number; mapping?: Record<string, string> }) =>
+    request<{ imported: number; skipped_duplicates: number; rules_applied: number }>(
+      `/api/finance-imports/${batchId}/commit`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  financeImportsList: () =>
+    request<{ items: Array<{
+      id: number; filename: string; file_format: string; account_id: number | null;
+      status: string; rows_total: number; rows_imported: number; rows_skipped: number;
+      error: string | null; imported_by: string | null; created_at: string | null;
+    }> }>(`/api/finance-imports`),
+  financeImportDelete: (id: number, withOperations: boolean) =>
+    request<{ ok: boolean; operations_deleted: number }>(
+      `/api/finance-imports/${id}?with_operations=${withOperations}`,
+      { method: "DELETE" },
+    ),
+
+  financeRulesList: () =>
+    request<{ items: FinanceRule[] }>(`/api/finance-rules`),
+  financeRuleCreate: (body: Record<string, unknown>) =>
+    request<FinanceRule>(`/api/finance-rules`, { method: "POST", body: JSON.stringify(body) }),
+  financeRuleUpdate: (id: number, body: Record<string, unknown>) =>
+    request<FinanceRule>(`/api/finance-rules/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  financeRuleDelete: (id: number) =>
+    request<{ ok: boolean }>(`/api/finance-rules/${id}`, { method: "DELETE" }),
+  financeRuleApply: (id: number) =>
+    request<{ matched: number; updated: number }>(`/api/finance-rules/${id}/apply-existing`, { method: "POST" }),
+
+  financeSettings: () =>
+    request<{ finance_auto_confirm_planned: boolean; finance_auto_plan_wb_payouts: boolean }>(
+      `/api/finance-settings`,
+    ),
+  financeSettingsPut: (body: Record<string, boolean>) =>
+    request<{ finance_auto_confirm_planned: boolean; finance_auto_plan_wb_payouts: boolean }>(
+      `/api/finance-settings`,
+      { method: "PUT", body: JSON.stringify(body) },
+    ),
+  financeSyncWbPayouts: () =>
+    request<{ created: number; updated: number; removed: number }>(
+      `/api/finance-plan/sync-wb-payouts`,
+      { method: "POST" },
+    ),
 
   businessSummary: (start: string, end: string, reporting_mode = "financial") =>
     request<{ reporting_mode: string; published_through: string | null; estimated_from: string | null;

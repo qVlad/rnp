@@ -2835,22 +2835,104 @@ class FinanceReference(Base, TenantScopedMixin):
     )
 
 
-class ManualOperation(Base, TenantScopedMixin):
-    """Ручная финоперация (TASK-DEV-048, миграция 0071).
+class FinanceAccount(Base, TenantScopedMixin):
+    """Счёт (банковский/касса/карта) — TASK-DEV-093, миграция 0083.
 
-    Аналог TrueStats «Финансы → Операции» (ручной ввод). Доход/расход с датой,
-    суммой, статьёй/контрагентом/счётом (ссылки на FinanceReference по имени —
-    свободный текст, чтобы не ломаться при удалении справочника).
-    direction ∈ income | expense. is_planned=True → обязательство (planned, как
-    TS obligationReceivable/Payable): не входит в баланс, показывается отдельно
-    (TASK-DEV-054, миграция 0073).
+    Аналог TrueStats «Финансы → Дополнительно → Счета». Текущий баланс НЕ
+    хранится — вычисляется: initial_balance + Σ факт-операций по счёту
+    (op_date >= initial_balance_date, если задана). `bank_meta` — задел под
+    прямую банк-интеграцию (Т-Банк API, отдельная задача).
+    """
+
+    __tablename__ = "finance_account"
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_finance_account_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128))
+    initial_balance: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0, server_default="0")
+    initial_balance_date: Mapped[date | None] = mapped_column(Date)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    bank_meta: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class FinanceImportBatch(Base, TenantScopedMixin):
+    """Журнал импортов банковских выписок (TASK-DEV-093, миграция 0084).
+
+    Аналог TS «Импорт операций»: файл → (маппинг колонок для excel/csv) →
+    превью → commit. `payload` хранит распарсенные строки между preview и
+    commit (обнуляется после импорта, чтобы не пухла таблица).
+    """
+
+    __tablename__ = "finance_import_batch"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    file_format: Mapped[str] = mapped_column(String(16))  # 1c | excel | csv
+    account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("finance_account.id", ondelete="SET NULL")
+    )
+    # uploaded | needs_mapping | imported | error
+    status: Mapped[str] = mapped_column(String(16), default="uploaded")
+    mapping: Mapped[dict | None] = mapped_column(JSONB)
+    payload: Mapped[dict | None] = mapped_column(JSONB)
+    rows_total: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    rows_imported: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    rows_skipped: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    error: Mapped[str | None] = mapped_column(Text)
+    imported_by: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class FinanceAutoRule(Base, TenantScopedMixin):
+    """Автоправило категоризации операций (TASK-DEV-093, миграция 0085).
+
+    Аналог TS «Автоправила»: условия (AND-список) → действия (проставить
+    статью/контрагента/официальный расход). Прогоняется при импорте выписки
+    и по кнопке «применить к существующим».
+      conditions: [{"field": counterparty|raw_description|amount|op_kind,
+                    "op": equals|contains|gte|lte, "value": ...}]
+      actions: {"article_id": int?, "counterparty_id": int?,
+                "official_expense": bool?, "stores": [...] (резерв)}
+    """
+
+    __tablename__ = "finance_auto_rule"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    priority: Mapped[int] = mapped_column(Integer, default=100, server_default="100")
+    conditions: Mapped[list | dict] = mapped_column(JSONB, default=list)
+    actions: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class ManualOperation(Base, TenantScopedMixin):
+    """Финансовая операция (TASK-DEV-048 → TASK-DEV-093, миграции 0071/0073/0083).
+
+    Исторически «ручная операция»; с DEV-093 — универсальная банковская
+    операция (аналог TS «Финансы → Операции»): source ∈ manual | import
+    (банковская выписка) | auto_plan (ожидаемая выплата WB).
+
+    `direction` (income|expense) — legacy, остаётся для старых читателей;
+    канон — `op_kind` ∈ income | expense | transfer (перевод между счетами,
+    в сальдо ДДС не входит). category/counterparty/account-строки — legacy
+    свободный текст; канон — FK article_id/counterparty_id/account_id.
+    is_planned=True → обязательство (не входит в баланс, отдельная строка).
+    ДДС группирует по coalesce(alloc_date, op_date) («дата распределения»).
     """
 
     __tablename__ = "manual_operation"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     op_date: Mapped[date] = mapped_column(Date, index=True)
-    direction: Mapped[str] = mapped_column(String(16))  # income | expense
+    direction: Mapped[str] = mapped_column(String(16))  # income | expense (legacy)
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     category: Mapped[str | None] = mapped_column(String(255))
     counterparty: Mapped[str | None] = mapped_column(String(255))
@@ -2860,6 +2942,34 @@ class ManualOperation(Base, TenantScopedMixin):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    # ── DEV-093 (миграция 0083) ──
+    op_kind: Mapped[str] = mapped_column(
+        String(16), default="expense", server_default="expense"
+    )  # income | expense | transfer
+    alloc_date: Mapped[date | None] = mapped_column(Date)
+    account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("finance_account.id", ondelete="SET NULL")
+    )
+    transfer_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("finance_account.id", ondelete="SET NULL")
+    )  # счёт-получатель для op_kind='transfer'
+    article_id: Mapped[int | None] = mapped_column(
+        ForeignKey("finance_reference.id", ondelete="SET NULL")
+    )
+    counterparty_id: Mapped[int | None] = mapped_column(
+        ForeignKey("finance_reference.id", ondelete="SET NULL")
+    )
+    official_expense: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
+    source: Mapped[str] = mapped_column(
+        String(16), default="manual", server_default="manual"
+    )  # manual | import | auto_plan
+    import_batch_id: Mapped[int | None] = mapped_column(BigInteger)  # FK в 0084
+    raw_description: Mapped[str | None] = mapped_column(Text)
+    doc_number: Mapped[str | None] = mapped_column(String(64))
+    dedup_hash: Mapped[str | None] = mapped_column(String(64))
+    applied_rule_id: Mapped[int | None] = mapped_column(Integer)  # FK в 0085
 
 
 class MetricPlan(Base, TenantScopedMixin):

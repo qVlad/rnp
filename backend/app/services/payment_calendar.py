@@ -53,14 +53,28 @@ async def build_payment_calendar(
 
     # ── 1. Начальный остаток ──
     if initial_balance is None:
-        s = await session.execute(
-            select(AppSetting.value).where(AppSetting.key == "bank_balance_current")
-        )
-        raw = s.scalar_one_or_none()
-        try:
-            initial_balance = float(raw) if raw else 0.0
-        except (TypeError, ValueError):
-            initial_balance = 0.0
+        # DEV-093: по умолчанию — сумма текущих балансов счетов (finance_account).
+        from app.services.finance_accounts import account_balances  # noqa: WPS433
+
+        balances = await account_balances(session)
+        if balances["items"]:
+            initial_balance = balances["total_balance"]
+        else:
+            # Fallback — легаси-настройка. Pitfall #16: AppSetting composite PK,
+            # ОБЯЗАТЕЛЕН явный tenant-фильтр (раньше тут был кросс-tenant баг).
+            from app.services.tenant_context import get_tenant  # noqa: WPS433
+
+            s = await session.execute(
+                select(AppSetting.value).where(
+                    AppSetting.tenant_id == get_tenant(session),
+                    AppSetting.key == "bank_balance_current",
+                )
+            )
+            raw = s.scalar_one_or_none()
+            try:
+                initial_balance = float(raw) if raw else 0.0
+            except (TypeError, ValueError):
+                initial_balance = 0.0
 
     # ── 2. Ожидаемые WB-выплаты ──
     # Берём report_detail rows с rr_dt в недавнем прошлом или будущем,
