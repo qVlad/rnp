@@ -122,13 +122,10 @@ def upgrade() -> None:
     op.add_column(
         "manual_operation", sa.Column("applied_rule_id", sa.Integer(), nullable=True)
     )
-    op.create_index(
-        "ix_manual_operation_tenant_date", "manual_operation", ["tenant_id", "op_date"]
-    )
-    op.create_index(
-        "ix_manual_operation_tenant_account",
-        "manual_operation",
-        ["tenant_id", "account_id"],
+    # ix_manual_operation_tenant_date уже создан миграцией 0071 — не дублируем.
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_manual_operation_tenant_account "
+        "ON manual_operation (tenant_id, account_id)"
     )
     # Дедуп импорта: один и тот же платёж из выписки не задваивается при
     # повторной загрузке файла. Только для source='import' — ручные операции
@@ -263,8 +260,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS uq_manual_operation_import_dedup")
-    op.drop_index("ix_manual_operation_tenant_account", table_name="manual_operation")
-    op.drop_index("ix_manual_operation_tenant_date", table_name="manual_operation")
+    op.execute("DROP INDEX IF EXISTS ix_manual_operation_tenant_account")
+    # ix_manual_operation_tenant_date принадлежит 0071 — здесь не трогаем.
     for col in (
         "applied_rule_id", "dedup_hash", "doc_number", "raw_description",
         "import_batch_id", "source", "official_expense", "counterparty_id",
