@@ -37,6 +37,32 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## 2026-07-02 — **Финансы в стиле TrueStats: счета, банк-операции, импорт выписок, ДДС-матрица** (TASK-DEV-093, v0.87.0)
+
+Раздел «Финансы» приведён к TS-виду (живой осмотр mirror-app.truestats.ru):
+- **Миграции 0083-0085** (append-only + backfill): `finance_account` (балансы
+  вычисляются из операций), эволюция `manual_operation` (op_kind income/expense/
+  **transfer**, alloc_date, FK счета/статьи/контрагенты, official_expense,
+  source manual/import/auto_plan, dedup), `finance_import_batch`,
+  `finance_auto_rule`. ⚠️ Урок: 0071 уже создавала `ix_manual_operation_tenant_date`
+  — первая накатка 0083 упала на дубле, чинено `IF NOT EXISTS`.
+- **Импорт выписки**: 1С 1CClientBankExchange (cp1251-каскад) + Excel/CSV с
+  мастером маппинга; дедуп sha256(счёт+дата+сумма+№дока+назначение); журнал.
+- **/cash-flow** — ДДС-матрица статьи×месяцы (По статьям / По виду деятельности /
+  По контрагентам) + «Остаток на счетах» per-счёт; старый управленческий ДДС —
+  вкладка «Управленческий (WB+OPEX)», `GET /api/cash-flow` не менялся.
+- **/operations** — лента всех операций (фильтры, inline-статья, бейджи,
+  переводы), Таблица/Календарь (баланс дня), импорт/шаблон/экспорт, журнал.
+  Пункт меню «ДДС (как в TS)» убран (роут жив).
+- **/finance-extras** — Статьи (тип+вид деятельности, импорт из OPEX) /
+  Контрагенты / Счета / Настройки (плановые из WB: `POST
+  /api/finance-plan/sync-wb-payouts`) / Автоправила (⚡ apply-existing).
+- Попутные фиксы: transfer исключён из totals/cashflow-calendar (было бы
+  задвоение), payment_calendar initial = Σ балансов счетов + tenant-фильтр
+  на AppSetting `bank_balance_current` (был кросс-tenant, pitfall #16).
+- Проверено на проде: pytest 21/21 новых (293 passed всего), смоук в скрытом
+  кабинете 151 (балансы/дедуп/правила), UI-смоук 3 страниц.
+
 ## 2026-07-02 — **Мульти-кабинет WB: кабинеты из UI + свод по умолчанию** (TASK-DEV-092, v0.86.0)
 
 Один сервис-аккаунт → N кабинетов WB (по образцу TrueStats, скрины UX сняты с
