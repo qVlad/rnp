@@ -151,10 +151,39 @@ async def build_summary_report(
             a.sold += int(e.sold)
             a.ret += int(e.ret)
 
-    # Заказы per nm за период (по order_dt, без отменённых) — DEV-094.
-    # Источник wb_orders («Лента заказов») — тот же, что у TS ordersCount.
-    # Фильтруем по nm_scope (не по acc!) и добавляем order-only SKU нулевыми
-    # строками — заказы без продаж должны попадать и в таблицу, и в totals.
+    # Заказы per nm за период — DEV-094. Приоритетный источник — ВОРОНКА
+    # (wb_funnel_daily): TS «Заказы» = ordersCount Воронки (включает рассрочку),
+    # сверено с живым TS 22-28.06 копейка-в-копейку. Для SKU без funnel-строк
+    # (Воронка копится с 22.05.2026) — fallback wb_orders («Лента»).
+    # Терминальный % выкупа (buyouts/(buyouts+cancels)) — тоже отсюда.
+    from app.db.models import WbFunnelDaily  # noqa: WPS433
+
+    funnel_preds = [WbFunnelDaily.dt >= start_date, WbFunnelDaily.dt <= end_date]
+    if nm_scope is not None:
+        funnel_preds.append(WbFunnelDaily.nm_id.in_(nm_scope))
+    fun_rows = (
+        await session.execute(
+            select(
+                WbFunnelDaily.nm_id,
+                func.coalesce(func.sum(WbFunnelDaily.orders_count), 0).label("cnt"),
+                func.coalesce(func.sum(WbFunnelDaily.orders_sum_rub), 0).label("amt"),
+                func.coalesce(func.sum(WbFunnelDaily.buyouts_count), 0).label("b"),
+                func.coalesce(func.sum(WbFunnelDaily.cancel_count), 0).label("c"),
+            )
+            .where(*funnel_preds)
+            .group_by(WbFunnelDaily.nm_id)
+        )
+    ).all()
+    orders_map: dict[int, tuple[int, float]] = {
+        int(r.nm_id): (int(r.cnt), _f(r.amt)) for r in fun_rows if r.nm_id
+    }
+    buyout_map: dict[int, float | None] = {
+        int(r.nm_id): (int(r.b) / (int(r.b) + int(r.c)) * 100 if (int(r.b) + int(r.c)) > 0 else None)
+        for r in fun_rows if r.nm_id
+    }
+    buyout_b_total = sum(int(r.b) for r in fun_rows)
+    buyout_c_total = sum(int(r.c) for r in fun_rows)
+
     orders_preds = [
         func.date(WbOrder.order_dt) >= start_date,
         func.date(WbOrder.order_dt) <= end_date,
@@ -173,7 +202,9 @@ async def build_summary_report(
             .group_by(WbOrder.nm_id)
         )
     ).all()
-    orders_map = {int(o.nm_id): (int(o.cnt), _f(o.amt)) for o in orows if o.nm_id}
+    for o in orows:
+        if o.nm_id and int(o.nm_id) not in orders_map:
+            orders_map[int(o.nm_id)] = (int(o.cnt), _f(o.amt))
     for nm in orders_map:
         if nm not in acc:
             acc[nm] = SimpleNamespace(nm_id=nm, realisation=0.0, sales=0.0, to_transfer=0.0,
@@ -275,18 +306,38 @@ async def build_summary_report(
         extra_map = {int(e.nm_id): e for e in erows}
 
     # Номинальная комиссия WB (тариф по предмету, SCD2 as-of конца периода).
+    # Честная ставка = paid_storage_kgvp (FBO, DEV-090: 34.5%, НЕ commission_fbo
+    # 38%) минус возврат за опции (unit_plan_global_config.commission_discount_pct,
+    # DEV-089, у пользователя 0.75%) → 33.75% — сверено с TS 22-28.06 в процент.
+    from app.db.models import UnitPlanGlobalConfig  # noqa: WPS433
+
+    discount = _f(
+        (
+            await session.execute(
+                select(UnitPlanGlobalConfig.commission_discount_pct)
+                .order_by(UnitPlanGlobalConfig.id.desc())
+                .limit(1)
+            )
+        ).scalar()
+    )
     nominal_rate_by_subject: dict[str, float] = {}
     trows = (
         await session.execute(
-            select(WbTariffCommission.subject_name, WbTariffCommission.commission_fbo, WbTariffCommission.effective_from)
+            select(
+                WbTariffCommission.subject_name,
+                WbTariffCommission.paid_storage_kgvp,
+                WbTariffCommission.commission_fbo,
+                WbTariffCommission.effective_from,
+            )
             .where(WbTariffCommission.effective_from <= end_date)
             .order_by(WbTariffCommission.subject_name, WbTariffCommission.effective_from.desc())
         )
     ).all()
     for t in trows:
         key = (t.subject_name or "").strip().lower()
-        if key and key not in nominal_rate_by_subject and t.commission_fbo is not None:
-            nominal_rate_by_subject[key] = float(t.commission_fbo)
+        base_rate = t.paid_storage_kgvp if t.paid_storage_kgvp is not None else t.commission_fbo
+        if key and key not in nominal_rate_by_subject and base_rate is not None:
+            nominal_rate_by_subject[key] = max(float(base_rate) - discount, 0.0)
 
     # Ставка налога (АУСН/УСН доход) — pitfall #16: явный tenant-фильтр.
     tid = get_tenant(session)
@@ -522,7 +573,13 @@ async def build_summary_report(
             "returned": int(r.ret),
             "orders_count": ocnt,
             "orders_sum": round(oamt, 2),
-            "buyout_pct": round(sales / oamt * 100, 2) if oamt else 0.0,
+            # % выкупа — терминальный из Воронки (buyouts/(buyouts+cancels),
+            # как TS); fallback — продажи/заказы при отсутствии funnel.
+            "buyout_pct": round(
+                buyout_map.get(nm) if buyout_map.get(nm) is not None
+                else (sales / oamt * 100 if oamt else 0.0),
+                2,
+            ),
             "avg_price_before_spp": round(realisation / net_sold, 2) if net_sold else 0.0,
             "avg_price_sale": round(sales / net_sold, 2) if net_sold else 0.0,
             "avg_logistics_per_unit": round(_f(r.logistics) / net_sold, 2) if net_sold else 0.0,
@@ -640,7 +697,11 @@ async def build_summary_report(
         "total_drr_pct": _pct(ad_t + promo_ad_total),
         "orders_count": orders_cnt_t or None,
         "orders_sum": round(orders_sum_t, 2),
-        "buyout_pct": round(sales_t / orders_sum_t * 100, 2) if orders_sum_t else 0.0,
+        # Терминальный % выкупа из Воронки (как TS); fallback продажи/заказы.
+        "buyout_pct": round(
+            buyout_b_total / (buyout_b_total + buyout_c_total) * 100, 2
+        ) if (buyout_b_total + buyout_c_total) > 0
+        else (round(sales_t / orders_sum_t * 100, 2) if orders_sum_t else 0.0),
         "drr_pct": _pct(ad_t),
         "drrz_pct": round(ad_t / orders_sum_t * 100, 2) if orders_sum_t else 0.0,
         "avg_price_sale": round(sales_t / sold_t, 2) if sold_t else 0.0,
