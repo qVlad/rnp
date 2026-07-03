@@ -445,16 +445,19 @@ async def summary_report(
     groups: Annotated[str | None, Query()] = None,
     articles: Annotated[str | None, Query()] = None,
     stores: Annotated[str | None, Query()] = None,
+    group_by: Annotated[str, Query()] = "sku",
+    include_prev: Annotated[bool, Query()] = False,
     session: AsyncSession = Depends(get_db_tenant_scoped),
     user=Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Сводный отчёт per-SKU 1:1 с TrueStats (TASK-DEV-039/047): реализация=retail_price
-    (до СПП), продажи=retail_amount (после СПП) по rr_dt, COGS, логистика, прибыль.
-    Раньше брали из /units (sale_dt) — расходилось с TS на per-SKU.
+    """Сводный отчёт per-SKU 1:1 с TrueStats (TASK-DEV-039/047 → DEV-094).
 
-    DEV-062: глобальные фильтры brands/categories/groups/articles → nm_scope.
-    Когда фильтр пуст — nm_scope=None, поведение прежнее (parity сохраняется).
-    Phase C: ≥2 магазина → свод per-SKU по выбранным кабинетам."""
+    Движок вынесен в `services/summary_metrics.build_summary_report` (реюз в
+    /api/dashboard/extended-kpis и экспорте). DEV-094: ~55 колонок per-SKU,
+    `group_by=imt` (склейки), `include_prev` (дельты к прошлому периоду).
+    """
+    if group_by not in ("sku", "imt"):
+        raise HTTPException(400, "group_by ∈ sku|imt")
     store_ids = await resolve_store_scope(
         session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id, rbac_brands=None,
     )
@@ -463,532 +466,101 @@ async def summary_report(
     nm_scope = await resolve_nm_scope(
         session, brands=brands, categories=categories, groups=groups, articles=articles
     )
-    # Предикат сужения по nm_id (пусто = без сужения). Пустой scope → нет данных.
-    nm_pred = [WbReportDetail.nm_id.in_(nm_scope)] if nm_scope is not None else []
-    dcol = _date_col(reporting_mode)
-    is_sale = WbReportDetail.supplier_oper_name == "Продажа"
-    is_ret = WbReportDetail.supplier_oper_name == "Возврат"
+    from app.services.summary_metrics import build_summary_report
 
-    def net(col):
-        return func.coalesce(
-            func.sum(case((is_sale, col), else_=0)) - func.sum(case((is_ret, col), else_=0)),
-            0,
-        )
-
-    rd_rows = (
-        await session.execute(
-            select(
-                WbReportDetail.nm_id,
-                net(WbReportDetail.retail_price).label("realisation"),
-                net(WbReportDetail.retail_amount).label("sales"),
-                net(WbReportDetail.ppvz_for_pay).label("to_transfer"),
-                net(WbReportDetail.acquiring_fee).label("acquiring"),
-                func.coalesce(func.sum(case((is_sale, WbReportDetail.quantity), else_=0)), 0).label("sold"),
-                func.coalesce(func.sum(case((is_ret, WbReportDetail.quantity), else_=0)), 0).label("ret"),
-                func.coalesce(func.sum(WbReportDetail.delivery_rub), 0).label("logistics"),
-                func.coalesce(func.sum(WbReportDetail.storage_fee), 0).label("storage"),
-            )
-            .where(func.date(dcol) >= start_date, func.date(dcol) <= end_date, WbReportDetail.nm_id.isnot(None), *nm_pred)
-            .group_by(WbReportDetail.nm_id)
-        )
-    ).all()
-
-    # Per-nm аккумулятор (фин-отчёт WB). SimpleNamespace → существующий items-loop
-    # читает .realisation/.sales/... без изменений.
-    acc: dict[int, Any] = {}
-    for r in rd_rows:
-        acc[int(r.nm_id)] = SimpleNamespace(
-            nm_id=int(r.nm_id),
-            realisation=float(r.realisation or 0), sales=float(r.sales or 0),
-            to_transfer=float(r.to_transfer or 0), acquiring=float(r.acquiring or 0),
-            sold=int(r.sold), ret=int(r.ret),
-            logistics=float(r.logistics or 0), storage=float(r.storage or 0),
-        )
-
-    # DEV-058: «живой хвост» — дни периода, за которые WB ещё НЕ опубликовал
-    # фин-отчёт. TS заполняет их операционной оценкой; повторяем по wb_sales
-    # (подтверждённые выкупы). Закрытые/опубликованные периоды НЕ затрагиваются
-    # (estimated_from=None) → байт-в-байт прежнее поведение. Помечаем `estimated`.
-    published_max = (
-        await session.execute(
-            select(func.max(func.date(dcol))).where(
-                func.date(dcol) >= start_date, func.date(dcol) <= end_date
-            )
-        )
-    ).scalar()
-    est_start = (published_max + timedelta(days=1)) if published_max else start_date
-    estimated_from = est_start if est_start <= end_date else None
-    if estimated_from is not None:
-        sret = WbSale.is_return
-        srows = (
-            await session.execute(
-                select(
-                    WbSale.nm_id,
-                    # realisation (до СПП) = price_with_disc (после скидки продавца,
-                    # до СПП), НЕ total_price (полная розница). sales (после СПП) =
-                    # finished_price. to_transfer = for_pay. Совпадает с маппингом
-                    # фин-отчёта (retail_price→realisation) по величине.
-                    func.coalesce(func.sum(case((~sret, WbSale.price_with_disc), else_=0)), 0).label("realisation"),
-                    func.coalesce(func.sum(case((~sret, WbSale.finished_price), else_=0)), 0).label("sales"),
-                    func.coalesce(func.sum(case((~sret, WbSale.for_pay), else_=0)), 0).label("to_transfer"),
-                    func.coalesce(func.sum(case((~sret, 1), else_=0)), 0).label("sold"),
-                    func.coalesce(func.sum(case((sret, 1), else_=0)), 0).label("ret"),
-                )
-                .where(func.date(WbSale.sale_dt) >= est_start, func.date(WbSale.sale_dt) <= end_date, WbSale.nm_id.isnot(None))
-                .group_by(WbSale.nm_id)
-            )
-        ).all()
-        for e in srows:
-            nm = int(e.nm_id)
-            a = acc.get(nm)
-            if a is None:
-                a = SimpleNamespace(nm_id=nm, realisation=0.0, sales=0.0, to_transfer=0.0,
-                                    acquiring=0.0, sold=0, ret=0, logistics=0.0, storage=0.0)
-                acc[nm] = a
-            # Операционный хвост: реализация/продажи/к перечислению/выкупы.
-            # Логистика/хранение/эквайринг в выписке выкупов отсутствуют (0).
-            a.realisation += float(e.realisation or 0)
-            a.sales += float(e.sales or 0)
-            a.to_transfer += float(e.to_transfer or 0)
-            a.sold += int(e.sold)
-            a.ret += int(e.ret)
-
-    rows = list(acc.values())
-    nm_ids = list(acc.keys())
-    # DEV-073 (НЕ фиксим — by design): хранение оставляем из report_detail.storage_fee
-    # per-nm. Попытка взять paid_storage by-nm недосчитывает (storage начисляется на
-    # ВСЕ хранимые SKU, а summary знает только проданные → суммировалось ~11k вместо
-    # ~25.8k). paid_storage TOTAL = TS точно, но per-nm-консистентность ломается.
-    # Итог: storage_fee per-nm = 25 812.72 vs TS 25 812.76 — расхождение 0.04₽
-    # (округление между двумя валидными источниками WB), неустранимо без потери
-    # консистентности «итог = сумма строк». Оставляем как есть.
-    # COGS — себестоимость, ДЕЙСТВОВАВШАЯ в периоде (valid_from <= end_date),
-    # последняя из таких. DEV-060: важно для versioning — TS меняет себестоимость
-    # датой (напр. −11₽/шт с 25.05); брать абсолютный latest ломало бы прошлые
-    # недели (18-24 должна остаться на старой цене). Берём версию as-of периода.
-    cogs_map: dict[int, float] = {}
-    if nm_ids:
-        crows = (
-            await session.execute(
-                select(Cogs.nm_id, Cogs.cost_rub, Cogs.packaging_rub, Cogs.fulfillment_rub, Cogs.valid_from)
-                .where(Cogs.nm_id.in_(nm_ids), Cogs.valid_from <= end_date)
-                .order_by(Cogs.nm_id, Cogs.valid_from.desc())
-            )
-        ).all()
-        for c in crows:
-            if int(c.nm_id) not in cogs_map:
-                cogs_map[int(c.nm_id)] = float(c.cost_rub or 0) + float(c.packaging_rub or 0) + float(c.fulfillment_rub or 0)
-    # Реклама per nm.
-    ad_map: dict[int, float] = {}
-    if nm_ids:
-        arows = (
-            await session.execute(
-                select(WbAdStatsDaily.nm_id, func.coalesce(func.sum(WbAdStatsDaily.sum_spent), 0))
-                .where(WbAdStatsDaily.stat_date >= start_date, WbAdStatsDaily.stat_date <= end_date, WbAdStatsDaily.nm_id.isnot(None))
-                .group_by(WbAdStatsDaily.nm_id)
-            )
-        ).all()
-        ad_map = {int(n): float(s or 0) for n, s in arows}
-    # Товары (имена/фото).
-    prod_map: dict[int, Any] = {}
-    if nm_ids:
-        prows = (
-            await session.execute(
-                select(Product.nm_id, Product.vendor_code, Product.brand, Product.subject, Product.photo_url).where(Product.nm_id.in_(nm_ids))
-            )
-        ).all()
-        prod_map = {int(p.nm_id): p for p in prows}
-    # Ставка налога (АУСН доход) из настроек tenant.
-    tid = get_tenant(session)
-    tr_stmt = select(AppSetting.value).where(AppSetting.key == "tax_rate")
-    if tid is not None:
-        tr_stmt = tr_stmt.where(AppSetting.tenant_id == tid)
-    tax_rate = float((await session.execute(tr_stmt)).scalar() or 0)
-
-    # Компанейский OPEX (операционный) за период → аллокация по SKU пропорц.
-    # реализации (как TS распределяет expense на товары). DEV-052.
-    opex_total = float(
-        (
-            await session.execute(
-                select(func.coalesce(func.sum(OpexEntry.amount), 0))
-                .join(OpexCategory, OpexEntry.category_id == OpexCategory.id)
-                .where(
-                    OpexEntry.entry_date >= start_date,
-                    OpexEntry.entry_date <= end_date,
-                    OpexCategory.kind == "expense",
-                    OpexCategory.in_operating.is_(True),
-                )
-            )
-        ).scalar()
-        or 0
-    )
-    total_realisation = sum(float(r.realisation or 0) for r in rows) or 1.0
-
-    # «Прочие удержания» (deduction/приёмка/доплаты, БЕЗ штрафов), «Штрафы»
-    # (penalty) и «Реклама из финотчёта» (WB Продвижение) за период — DEV-058.
-    # Прочие удержания вычитаются из прибыли (TS-parity: TS otherDeduction входит
-    # в profit), аллокация по SKU пропорц. реализации (как OPEX). Штрафы — отдельной
-    # плиткой, в прибыль НЕ входят. «WB Продвижение» исключаем из прочих удержаний
-    # (TS относит её к рекламе, не к otherDeduction) — see _PROMO_BONUS_LIKE.
-    is_promo = func.coalesce(WbReportDetail.bonus_type_name, "").ilike(_PROMO_BONUS_LIKE)
-    ded_row = (
-        await session.execute(
-            select(
-                func.coalesce(func.sum(case((~is_promo, WbReportDetail.deduction), else_=0)), 0).label("deduction"),
-                func.coalesce(func.sum(WbReportDetail.paid_acceptance), 0).label("acceptance"),
-                func.coalesce(func.sum(WbReportDetail.additional_payment), 0).label("additional"),
-                func.coalesce(func.sum(WbReportDetail.penalty), 0).label("penalty"),
-                func.coalesce(func.sum(case((is_promo, WbReportDetail.deduction), else_=0)), 0).label("promo_ad"),
-                # Компенсации (TS `compensation`): деньги, которые WB доплачивает по
-                # non-core операциям («Добровольная компенсация», «Возмещение…») —
-                # сидят в ppvz_for_pay этих строк (не в Продаже/Возврате). ДОБАВЛЯЮТСЯ
-                # к прибыли. Сверено 25-31: 1905 = TS compensation 1904.72.
-                func.coalesce(func.sum(WbReportDetail.ppvz_for_pay), 0).label("comp_ppvz"),
-            ).where(
-                func.date(dcol) >= start_date,
-                func.date(dcol) <= end_date,
-                WbReportDetail.supplier_oper_name.notin_(_CORE_OPS),
-                *nm_pred,
-            )
-        )
-    ).one()
-    # «Прочие удержания» (otherDeduction TS) — вычитаются: удержание(без промо) + приёмка.
-    prochie_total = float(ded_row.deduction or 0) + float(ded_row.acceptance or 0)
-    acceptance_total = float(ded_row.acceptance or 0)  # «Плат. приемка» отдельной плиткой
-    fines_total = float(ded_row.penalty or 0)
-    promo_ad_total = float(ded_row.promo_ad or 0)  # WB Продвижение из финотчёта (как TS — не в прибыль здесь)
-    # Компенсации — добавляются к прибыли (доплаты + ppvz компенсационных операций).
-    compensation_total = float(ded_row.comp_ppvz or 0) + float(ded_row.additional or 0)
-    # DEV-061: «Итоговое вознаграждение ВБ» (база УПД/НДС) — по рекомендации анализа
-    # считаем от РЕАЛЬНОГО поля вознаграждения ВБ `ppvz_vw` (+НДС), net Продажа−Возврат,
-    # плюс WB-услуги (логистика/хранение/приёмка/штрафы/удержания) − компенсации.
-    # Это документная метрика (УПД); точная per-line NDS-сверка TS не воспроизводится
-    # из агрегатов — остаётся небольшой остаток (см. TASK-DEV-061).
-    # База УПД — вознаграждение ВБ БЕЗ НДС (`ppvz_vw`): на неё НДС начисляется,
-    # поэтому сам НДС в базу НЕ входит (vw_nds исключён). Сверка 25-31: даёт Δ~1%.
-    vw_row = (
-        await session.execute(
-            select(net(WbReportDetail.ppvz_vw).label("vw"))
-            .where(func.date(dcol) >= start_date, func.date(dcol) <= end_date, *nm_pred)
-        )
-    ).one()
-    vw_reward = float(vw_row.vw or 0)
-    # Детализация логистики по 5 категориям WB (DEV-060): дискриминатор —
-    # bonus_type_name на строках «Логистика» (К клиенту при отмене/продаже,
-    # От клиента при отмене/возврате, Возврат брака). Сверено с TS «в рубль».
-    log_rows = (
-        await session.execute(
-            select(
-                func.coalesce(WbReportDetail.bonus_type_name, "—").label("cat"),
-                func.coalesce(func.sum(WbReportDetail.delivery_rub), 0).label("amt"),
-            )
-            .where(
-                func.date(dcol) >= start_date,
-                func.date(dcol) <= end_date,
-                WbReportDetail.supplier_oper_name == "Логистика",
-                *nm_pred,
-            )
-            .group_by(WbReportDetail.bonus_type_name)
-        )
-    ).all()
-    logistics_breakdown = [
-        {"category": r.cat, "amount": round(float(r.amt or 0), 2)}
-        for r in log_rows if abs(float(r.amt or 0)) >= 0.005
-    ]
-    logistics_breakdown.sort(key=lambda x: abs(x["amount"]), reverse=True)
-
-    # Штрафы — расшифровка по bonus_type_name (DEV-060).
-    fine_rows = (
-        await session.execute(
-            select(
-                func.coalesce(WbReportDetail.bonus_type_name, "—").label("cat"),
-                func.coalesce(func.sum(WbReportDetail.penalty), 0).label("amt"),
-            )
-            .where(
-                func.date(dcol) >= start_date,
-                func.date(dcol) <= end_date,
-                WbReportDetail.penalty != 0,
-                *nm_pred,
-            )
-            .group_by(WbReportDetail.bonus_type_name)
-        )
-    ).all()
-    fines_breakdown = [
-        {"category": r.cat, "amount": round(float(r.amt or 0), 2)}
-        for r in fine_rows if abs(float(r.amt or 0)) >= 0.005
-    ]
-    fines_breakdown.sort(key=lambda x: abs(x["amount"]), reverse=True)
-
-    # Компенсации — расшифровка по supplier_oper_name (ppvz компенсационных операций).
-    comp_rows = (
-        await session.execute(
-            select(
-                func.coalesce(WbReportDetail.supplier_oper_name, "—").label("cat"),
-                func.coalesce(func.sum(WbReportDetail.ppvz_for_pay), 0).label("amt"),
-            )
-            .where(
-                func.date(dcol) >= start_date,
-                func.date(dcol) <= end_date,
-                WbReportDetail.supplier_oper_name.notin_(_CORE_OPS),
-                WbReportDetail.ppvz_for_pay != 0,
-                *nm_pred,
-            )
-            .group_by(WbReportDetail.supplier_oper_name)
-        )
-    ).all()
-    compensation_breakdown = [
-        {"category": r.cat, "amount": round(float(r.amt or 0), 2)}
-        for r in comp_rows if abs(float(r.amt or 0)) >= 0.005
-    ]
-    compensation_breakdown.sort(key=lambda x: abs(x["amount"]), reverse=True)
-
-    # Возвраты ₽ (gross retail возвратов) — для плитки «Возвраты».
-    returns_rub = float(
-        (
-            await session.execute(
-                select(func.coalesce(func.sum(WbReportDetail.retail_price), 0)).where(
-                    func.date(dcol) >= start_date,
-                    func.date(dcol) <= end_date,
-                    WbReportDetail.supplier_oper_name == "Возврат",
-                    *nm_pred,
-                )
-            )
-        ).scalar()
-        or 0
+    return await build_summary_report(
+        session,
+        start_date=start_date,
+        end_date=end_date,
+        reporting_mode=reporting_mode,
+        nm_scope=nm_scope,
+        group_by=group_by,
+        include_prev=include_prev,
     )
 
-    def _f(v: Any) -> float:
-        return float(v or 0)
 
-    items = []
-    for r in rows:
-        nm = int(r.nm_id)
-        sales = _f(r.sales)
-        # net-выкупы (Продажа − Возврат) — как TS totalSales; COGS на них же.
-        net_sold = int(r.sold) - int(r.ret)
-        cogs = cogs_map.get(nm, 0.0) * net_sold
-        ad = ad_map.get(nm, 0.0)
-        tax = sales * tax_rate / 100.0
-        share = _f(r.realisation) / total_realisation
-        opex = opex_total * share
-        prochie = prochie_total * share
-        compensation = compensation_total * share
-        # прибыль = к перечислению − логистика − хранение − COGS − налог −
-        # реклама − OPEX − прочие удержания + компенсации (TS-parity, account 25143).
-        # Штрафы (penalty) — отдельно, в прибыль НЕ входят (как TS).
-        profit = _f(r.to_transfer) - _f(r.logistics) - _f(r.storage) - cogs - tax - ad - opex - prochie + compensation
-        p = prod_map.get(nm)
-        items.append({
-            "nm_id": nm,
-            "vendor_code": p.vendor_code if p else None,
-            "brand": p.brand if p else None,
-            "subject": p.subject if p else None,
-            "photo_url": p.photo_url if p else None,
-            "realisation": round(_f(r.realisation), 2),
-            "sales": round(sales, 2),
-            "to_transfer": round(_f(r.to_transfer), 2),
-            "commission": round(sales - _f(r.to_transfer) - _f(r.acquiring), 2),
-            "acquiring": round(_f(r.acquiring), 2),
-            "logistics": round(_f(r.logistics), 2),
-            "storage": round(_f(r.storage), 2),
-            "cogs": round(cogs, 2),
-            "ad": round(ad, 2),
-            "tax": round(tax, 2),
-            "opex": round(opex, 2),
-            "deductions": round(prochie, 2),
-            "sold": net_sold,
-            "returned": int(r.ret),
-            "profit": round(profit, 2),
-            "margin_pct": round(profit / sales * 100, 2) if sales > 0 else 0.0,
-            "roi_pct": round(profit / cogs * 100, 2) if cogs > 0 else 0.0,
-        })
-    items.sort(key=lambda x: x["realisation"], reverse=True)
-    # Заказы / % выкупа — preliminary (по order_dt, как TS «Заказы»=ordersCount).
-    # DEV-058: при частичном покрытии funnel compute_dashboard теперь сам
-    # делает fallback на полный wb_orders (фикс _funnel_covers_period).
-    pre = await compute_dashboard(session, period_from_range(start_date, end_date), mode="preliminary")
-    pmap = {k["key"]: k.get("value") for k in pre.get("kpis", [])}
-
-    # Остатки + капитализация (DEV-060 Phase 2): последний снапшот WbStockSnapshot.
-    # Остатки(шт) = склад + в пути к/от клиента (как TS stockBalance). Капитализация
-    # по себес = Σ qty×cogs_unit; по рознице = Σ qty×price(после скидки).
-    last_snap = (
-        await session.execute(select(func.max(WbStockSnapshot.snapshot_dt)))
-    ).scalar()
-    stock_wh = stock_to = stock_from = 0
-    cap_cost = cap_price = 0.0
-    if last_snap is not None:
-        srows = (
-            await session.execute(
-                select(
-                    WbStockSnapshot.nm_id,
-                    func.coalesce(func.sum(WbStockSnapshot.quantity), 0).label("qty"),
-                    func.coalesce(func.sum(WbStockSnapshot.in_way_to_client), 0).label("to_c"),
-                    func.coalesce(func.sum(WbStockSnapshot.in_way_from_client), 0).label("from_c"),
-                )
-                .where(WbStockSnapshot.snapshot_dt == last_snap)
-                .group_by(WbStockSnapshot.nm_id)
-            )
-        ).all()
-        # Капитализация по рознице ≈ остаток × витринная цена покупателя (buyer_price,
-        # после СПП) из wb_card_price (миграция 0069). NB: точного паритета с TS
-        # capitalizationByPrice нет — TS юзает внутреннюю «set price» между ценой до/
-        # после СПП, а сама плитка завязана на ТЕКУЩИЙ снапшот остатков (наш ≠ снапшот
-        # TS). basic_price (RRP до скидок) завышает в ~2-3× — НЕ используем.
-        snap_nm0 = [int(s.nm_id) for s in srows if s.nm_id]
-        price_map: dict[int, float] = {}
-        if snap_nm0:
-            prows = (
-                await session.execute(
-                    select(WbCardPrice.nm_id, WbCardPrice.buyer_price).where(
-                        WbCardPrice.nm_id.in_(snap_nm0), WbCardPrice.buyer_price.isnot(None)
-                    )
-                )
-            ).all()
-            price_map = {int(n): float(p or 0) for n, p in prows}
-        # COGS as-of сегодня (для капитализации берём текущую себестоимость).
-        cogs_now: dict[int, float] = {}
-        snap_nm = [int(s.nm_id) for s in srows if s.nm_id]
-        if snap_nm:
-            ccur = (
-                await session.execute(
-                    select(Cogs.nm_id, Cogs.cost_rub, Cogs.packaging_rub, Cogs.fulfillment_rub)
-                    .where(Cogs.nm_id.in_(snap_nm), Cogs.valid_from <= end_date)
-                    .order_by(Cogs.nm_id, Cogs.valid_from.desc())
-                )
-            ).all()
-            for c in ccur:
-                if int(c.nm_id) not in cogs_now:
-                    cogs_now[int(c.nm_id)] = float(c.cost_rub or 0) + float(c.packaging_rub or 0) + float(c.fulfillment_rub or 0)
-        for s in srows:
-            qty = int(s.qty)
-            stock_wh += qty
-            stock_to += int(s.to_c)
-            stock_from += int(s.from_c)
-            total_units = qty + int(s.to_c) + int(s.from_c)
-            cap_cost += total_units * cogs_now.get(int(s.nm_id), 0.0)
-            cap_price += total_units * price_map.get(int(s.nm_id), 0.0)
-    stock_total = stock_wh + stock_to + stock_from
-    period_days = (end_date - start_date).days + 1
-
-    def _s(f: str) -> float:
-        return round(sum(x[f] for x in items), 2)
-
-    realisation_t, sales_t, cogs_t = _s("realisation"), _s("sales"), _s("cogs")
-    logistics_t, storage_t = _s("logistics"), _s("storage")
-    commission_t, acquiring_t = _s("commission"), _s("acquiring")
-    profit_t, opex_t = _s("profit"), _s("opex")
-    ad_t = _s("ad")
-    sold_t = sum(x["sold"] for x in items)
-    rev_gross = pmap.get("revenue_gross") or 0
-    profit_wo_opex_t = round(profit_t + opex_t, 2)
-    R = realisation_t or 1.0  # знаменатель долей = реализация (как TS *Share)
-
-    def _pct(v: float) -> float:
-        return round(v / R * 100, 2)
-
-    tot = {
-        "realisation": realisation_t,
-        "sales": sales_t,
-        "to_transfer": _s("to_transfer"),
-        "cogs": cogs_t,
-        "cogs_pct": _pct(cogs_t),  # costOfSalesShare
-        "ad": ad_t,
-        "tax": _s("tax"),
-        "tax_pct": _pct(_s("tax")),
-        "tax_base": sales_t,  # наша налоговая база = продажи (×ставку)
-        "opex": opex_t,
-        "opex_pct": _pct(opex_t),
-        "profit": profit_t,
-        "profit_wo_opex": profit_wo_opex_t,
-        # Маржа = прибыль / реализация (как TS marginality), НЕ /продажи.
-        "margin_pct": round(profit_t / R * 100, 2),
-        "margin_wo_opex_pct": round(profit_wo_opex_t / R * 100, 2),
-        "sold": sold_t,
-        "returned": sum(x["returned"] for x in items),
-        "returns_rub": round(returns_rub, 2),
-        "logistics": logistics_t,
-        "logistics_pct": _pct(logistics_t),  # logisticsShare
-        "storage": storage_t,
-        "storage_pct": _pct(storage_t),  # storageShare
-        # «Комиссия» у TS = комиссия WB + эквайринг (подтверждено сверкой).
-        "commission": round(commission_t + acquiring_t, 2),
-        "commission_pct": _pct(commission_t + acquiring_t),  # commissionShare
-        "acquiring": acquiring_t,
-        "roi_pct": round(profit_t / cogs_t * 100, 2) if cogs_t else 0.0,
-        # «Прочие удержания» — операционные (БЕЗ штрафов, вычитаются из прибыли);
-        # «Штрафы» — penalty; «Плат. приемка»; «Компенсации» (+ к прибыли). DEV-060.
-        "deductions": round(prochie_total, 2),
-        "deductions_pct": _pct(prochie_total),
-        "fines": round(fines_total, 2),
-        "acceptance": round(acceptance_total, 2),
-        "acceptance_pct": _pct(acceptance_total),
-        "compensation": round(compensation_total, 2),
-        "compensation_pct": _pct(compensation_total),
-        "promo_ad": round(promo_ad_total, 2),  # WB Продвижение из финотчёта (справочно)
-        "orders_count": pmap.get("orders"),
-        "orders_sum": round(rev_gross, 2),
-        # Выкуп% = выкуплено(₽)/заказано(₽) — как TS averageRedemption (НЕ funnel count).
-        "buyout_pct": round(sales_t / rev_gross * 100, 2) if rev_gross else 0.0,
-        # ДРР = реклама/реализация; ДРРз = реклама/заказы (как TS drr / drrz).
-        "drr_pct": _pct(ad_t),
-        "drrz_pct": round(ad_t / rev_gross * 100, 2) if rev_gross else 0.0,
-        # Средние (как TS averages).
-        "avg_price_sale": round(sales_t / sold_t, 2) if sold_t else 0.0,
-        "avg_price_before_spp": round(realisation_t / sold_t, 2) if sold_t else 0.0,
-        "avg_logistics_per_unit": round(logistics_t / sold_t, 2) if sold_t else 0.0,
-        "avg_profit_per_unit": round(profit_t / sold_t, 2) if sold_t else 0.0,
-        # Остатки + капитализация + оборачиваемость (DEV-060 Phase 2, как TS).
-        "stock_total": stock_total,
-        "stock_wh": stock_wh,           # На складах МП
-        "stock_to_client": stock_to,    # В пути к клиентам
-        "stock_from_client": stock_from,  # В пути от клиентов
-        "cap_by_cost": round(cap_cost, 2),    # Капитализация по себестоимости
-        "cap_by_price": round(cap_price, 2),  # Капитализация по рознице
-        # Оборачиваемость (дн.) = остаток / (продано|заказано в день).
-        "turnover_sales_days": round(stock_total / (sold_t / period_days), 2) if sold_t else None,
-        "turnover_orders_days": round(stock_total / ((pmap.get("orders") or 0) / period_days), 2) if pmap.get("orders") else None,
-        # GMROI у TS = null на недельном окне (нужен годовой расчёт) — отдаём null.
-        "gmroi": None,
-        # Итоговое вознаграждение ВБ (база УПД/НДС, DEV-061) — информационная метрика
-        # для разделения операций ВБ на «с НДС»/«без НДС». База = РЕАЛЬНОЕ вознагр. ВБ
-        # `ppvz_vw`(+НДС) net Продажа−Возврат + WB-услуги (логистика/хранение/приёмка/
-        # штрафы/прочие) − компенсации. На эту сумму ВБ выставляет УПД и начисляет НДС.
-        # NB: точная per-line NDS-сверка TS не воспроизводится из агрегатов (остаток —
-        # см. TASK-DEV-061: документная метрика, авторитет = WbOffsetAct.total_sum).
-        "wb_final_reward": round(
-            vw_reward + logistics_t + storage_t
-            + acceptance_total + fines_total + prochie_total - compensation_total,
-            2,
-        ),
-        # «Мои склады» (off-platform) — у этого продавца 0 (как TS).
-        "own_stock_units": 0,
-        "own_stock_cap": 0.0,
-    }
-    return {
-        "reporting_mode": reporting_mode,
-        "tax_rate": tax_rate,
-        "items": items,
-        "totals": tot,
-        # Детализации для выпадашек на плитках (DEV-060).
-        "logistics_breakdown": [
-            {**b, "pct": _pct(b["amount"])} for b in logistics_breakdown
-        ],
-        "fines_breakdown": [
-            {**b, "pct": _pct(b["amount"])} for b in fines_breakdown
-        ],
-        "compensation_breakdown": [
-            {**b, "pct": _pct(b["amount"])} for b in compensation_breakdown
-        ],
-        # Фин-отчёт WB опубликован по этот день включительно; дни после —
-        # операционная оценка по выкупам (estimated_from). None = весь период
-        # опубликован (закрытая неделя, без оценки).
-        "published_through": published_max.isoformat() if published_max else None,
-        "estimated_from": estimated_from.isoformat() if estimated_from else None,
-    }
+# Человекочитаемые колонки экспорта «Исходной таблицы» (DEV-094).
+_SUMMARY_EXPORT_COLUMNS: list[tuple[str, str]] = [
+    ("nm_id", "Артикул WB"), ("vendor_code", "Артикул продавца"), ("store", "Магазин"),
+    ("brand", "Бренд"), ("category", "Категория"), ("group_name", "Группа"),
+    ("subject", "Предмет"), ("realisation", "Реализация ₽"), ("sales", "Продажи ₽"),
+    ("to_transfer", "К перечислению ₽"), ("commission", "Факт комиссия ₽"),
+    ("nominal_commission", "Номинальная комиссия ₽"), ("acquiring", "Эквайринг ₽"),
+    ("wb_reward", "Вознаграждение ВБ ₽"), ("logistics", "Логистика ₽"),
+    ("avg_logistics_per_unit", "Логистика на 1 шт ₽"), ("storage", "Хранение ₽"),
+    ("cogs", "Себестоимость ₽"), ("cogs_unit", "Себестоимость 1 шт ₽"),
+    ("ad", "Реклама ₽"), ("promo_ad", "Реклама с бонусов ₽"), ("total_ad", "Реклама всего ₽"),
+    ("drr_sales_pct", "ДРР по продажам %"), ("drrz_pct", "ДРР по заказам %"),
+    ("total_drr_pct", "Общая ДРР %"), ("tax", "Налог ₽"), ("opex", "Опер. расходы ₽"),
+    ("deductions", "Прочие удержания ₽"), ("fines", "Штрафы ₽"),
+    ("acceptance", "Платная приёмка ₽"), ("compensation", "Компенсации ₽"),
+    ("sold", "Продано шт"), ("returned", "Возвраты шт"),
+    ("orders_count", "Заказы шт"), ("orders_sum", "Заказы ₽"), ("buyout_pct", "% выкупа"),
+    ("avg_price_before_spp", "Ср. цена до СПП ₽"), ("avg_price_sale", "Ср. цена продажи ₽"),
+    ("profit", "Прибыль ₽"), ("profit_wo_opex", "Прибыль без опер. расх. ₽"),
+    ("avg_profit_per_unit", "Прибыль на 1 шт ₽"), ("margin_pct", "Маржа %"),
+    ("margin_wo_opex_pct", "Маржа без опер. расх. %"), ("roi_pct", "ROI %"),
+    ("revenue_share_pct", "Доля выручки %"), ("abc_profit", "ABC по прибыли"),
+    ("abc_revenue", "ABC по выручке"), ("stock_wh", "Остатки МП шт"),
+    ("stock_to_client", "В пути к клиенту шт"), ("stock_from_client", "В пути от клиента шт"),
+    ("stock_total", "Остатки всего шт"), ("cap_by_cost", "Капитализация по себес ₽"),
+    ("cap_by_price", "Капитализация по розн. ₽"), ("turnover_sales_days", "Оборач. по прод., дн"),
+    ("turnover_orders_days", "Оборач. по зак., дн"), ("gmroi_pct", "GMROI %"),
+    ("gmroi_annual_pct", "Годовой GMROI %"),
+]
 
 
-# Метрики, доступные для план-факта (slug = ключ KPI дашборда → человекочит. label).
+@router.get("/api/summary-report/export.xlsx", dependencies=[Depends(require_director_or_head)])
+async def summary_report_export(
+    start_date: Annotated[date, Query()],
+    end_date: Annotated[date, Query()],
+    reporting_mode: Annotated[str, Query()] = "financial",
+    brands: Annotated[str | None, Query()] = None,
+    categories: Annotated[str | None, Query()] = None,
+    groups: Annotated[str | None, Query()] = None,
+    articles: Annotated[str | None, Query()] = None,
+    stores: Annotated[str | None, Query()] = None,
+    group_by: Annotated[str, Query()] = "sku",
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    user=Depends(get_current_user),
+):
+    """XLSX-экспорт «Исходной таблицы» (DEV-094, как TS «Экспорт»)."""
+    import io as _io
+
+    from fastapi.responses import StreamingResponse
+    from openpyxl import Workbook
+
+    store_ids = await resolve_store_scope(
+        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id, rbac_brands=None,
+    )
+    if store_ids:
+        set_tenant_filter(session, store_ids)
+    nm_scope = await resolve_nm_scope(
+        session, brands=brands, categories=categories, groups=groups, articles=articles
+    )
+    from app.services.summary_metrics import build_summary_report
+
+    data = await build_summary_report(
+        session, start_date=start_date, end_date=end_date,
+        reporting_mode=reporting_mode, nm_scope=nm_scope, group_by=group_by,
+    )
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Исходная таблица"
+    ws.append([label for _, label in _SUMMARY_EXPORT_COLUMNS])
+    for item in data["items"]:
+        ws.append([item.get(key) for key, _ in _SUMMARY_EXPORT_COLUMNS])
+    buf = _io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="summary-report.xlsx"'},
+    )
+
+
+
 _PLAN_METRICS = {
     "revenue_gross": "Выручка (заказы)",
     "orders": "Заказы",
@@ -996,7 +568,9 @@ _PLAN_METRICS = {
     "buyout_pct": "Выкуп %",
     "net_profit": "Чистая прибыль",
     "margin_pct": "Маржа %",
-    "drr_pct": "ДРР %",
+    # drr_pct у нас считается ОТ ЗАКАЗОВ — это TS «Реклама/ДРРз» (DEV-094).
+    "drr_pct": "ДРР по заказам (ДРРз) %",
+    "drr_sales_pct": "ДРР по продажам %",
     "ad_cost": "Реклама",
 }
 
@@ -1090,6 +664,158 @@ async def delete_metric_plan(
     await session.execute(sa_delete(MetricPlan).where(MetricPlan.id == plan_id))
     await session.commit()
     return {"status": "deleted", "id": plan_id}
+
+
+# Аддитивные метрики плана (распределяются по дням); остальные — процентные
+# (план-значение одинаково в каждом бакете). DEV-094.
+_PLAN_ADDITIVE = {"revenue_gross", "orders", "returns", "net_profit", "ad_cost"}
+
+
+@router.get("/api/metric-plans/{plan_id}/breakdown", dependencies=[Depends(require_director_or_head)])
+async def metric_plan_breakdown(
+    plan_id: int,
+    granularity: Annotated[str, Query()] = "week",
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Разбивка план/факт по дням/неделям/месяцам (DEV-094, TS-стиль).
+
+    План: аддитивные метрики — равномерно по дням; процентные — константа.
+    Факт: аддитивные и лёгкие процентные — прямыми day-запросами; тяжёлые
+    (net_profit / margin_pct) — compute_dashboard per-бакет только для
+    week/month (для day слишком дорого → null).
+    """
+    from datetime import timedelta as _td
+
+    from app.db.models import WbAdStatsDaily as _Ad, WbFunnelDaily as _Fun, WbOrder as _O, WbSale as _S
+
+    if granularity not in ("day", "week", "month"):
+        raise HTTPException(400, "granularity ∈ day|week|month")
+    plan = await session.get(MetricPlan, plan_id)
+    if plan is None:
+        raise HTTPException(404, "план не найден")
+    targets = (
+        await session.execute(
+            select(MetricPlanTarget).where(MetricPlanTarget.plan_id == plan_id)
+        )
+    ).scalars().all()
+    tmap = {t.metric_slug: float(t.plan_value or 0) for t in targets}
+    plan_days = (plan.finished_at - plan.started_at).days + 1
+
+    # Бакеты.
+    buckets: list[tuple[date, date]] = []
+    cur = plan.started_at
+    while cur <= plan.finished_at:
+        if granularity == "day":
+            b_end = cur
+        elif granularity == "week":
+            b_end = min(cur + _td(days=6 - cur.weekday()), plan.finished_at)
+        else:
+            nxt = date(cur.year + (cur.month == 12), (cur.month % 12) + 1, 1)
+            b_end = min(nxt - _td(days=1), plan.finished_at)
+        buckets.append((cur, b_end))
+        cur = b_end + _td(days=1)
+
+    # Day-series фактов одним заходом.
+    orows = (
+        await session.execute(
+            select(
+                func.date(_O.order_dt).label("d"),
+                func.count(_O.srid).label("cnt"),
+                func.coalesce(func.sum(func.coalesce(_O.price_with_disc, _O.total_price)), 0).label("amt"),
+            )
+            .where(func.date(_O.order_dt) >= plan.started_at, func.date(_O.order_dt) <= plan.finished_at,
+                   _O.is_cancel.is_(False))
+            .group_by(func.date(_O.order_dt))
+        )
+    ).all()
+    day_orders = {r.d: (int(r.cnt), float(r.amt or 0)) for r in orows}
+    rrows = (
+        await session.execute(
+            select(func.date(_S.sale_dt).label("d"), func.count().label("cnt"))
+            .where(func.date(_S.sale_dt) >= plan.started_at, func.date(_S.sale_dt) <= plan.finished_at,
+                   _S.is_return.is_(True))
+            .group_by(func.date(_S.sale_dt))
+        )
+    ).all()
+    day_returns = {r.d: int(r.cnt) for r in rrows}
+    adrows = (
+        await session.execute(
+            select(_Ad.stat_date.label("d"), func.coalesce(func.sum(_Ad.sum_spent), 0).label("amt"))
+            .where(_Ad.stat_date >= plan.started_at, _Ad.stat_date <= plan.finished_at)
+            .group_by(_Ad.stat_date)
+        )
+    ).all()
+    day_ad = {r.d: float(r.amt or 0) for r in adrows}
+    frows = (
+        await session.execute(
+            select(
+                _Fun.dt.label("d"),
+                func.coalesce(func.sum(_Fun.buyouts_count), 0).label("b"),
+                func.coalesce(func.sum(_Fun.cancel_count), 0).label("c"),
+            )
+            .where(_Fun.dt >= plan.started_at, _Fun.dt <= plan.finished_at)
+            .group_by(_Fun.dt)
+        )
+    ).all()
+    day_fun = {r.d: (int(r.b), int(r.c)) for r in frows}
+
+    today_d = date.today()
+    heavy_ok = granularity in ("week", "month") and len(buckets) <= 8
+
+    out_buckets = []
+    for b_from, b_to in buckets:
+        b_days = (b_to - b_from).days + 1
+        plan_vals: dict[str, float] = {}
+        for slug, v in tmap.items():
+            plan_vals[slug] = round(v * b_days / plan_days, 2) if slug in _PLAN_ADDITIVE else v
+        fact_vals: dict[str, float | None] = {}
+        if b_from <= today_d:
+            dd = b_from
+            o_cnt = o_amt = ret = ad_amt = b_sum = c_sum = 0.0
+            while dd <= min(b_to, today_d):
+                oc, oa = day_orders.get(dd, (0, 0.0))
+                o_cnt += oc
+                o_amt += oa
+                ret += day_returns.get(dd, 0)
+                ad_amt += day_ad.get(dd, 0.0)
+                fb, fc = day_fun.get(dd, (0, 0))
+                b_sum += fb
+                c_sum += fc
+                dd += _td(days=1)
+            fact_vals = {
+                "orders": o_cnt,
+                "revenue_gross": round(o_amt, 2),
+                "returns": ret,
+                "ad_cost": round(ad_amt, 2),
+                "drr_pct": round(ad_amt / o_amt * 100, 2) if o_amt else 0.0,
+                "buyout_pct": round(b_sum / (b_sum + c_sum) * 100, 2) if (b_sum + c_sum) else None,
+            }
+            if heavy_ok and any(s in tmap for s in ("net_profit", "margin_pct", "drr_sales_pct")):
+                fin = await compute_dashboard(
+                    session, period_from_range(b_from, min(b_to, today_d)),
+                    mode="final", reporting_mode="financial",
+                )
+                fmap = {k["key"]: k.get("value") for k in fin.get("kpis", [])}
+                for s in ("net_profit", "margin_pct", "drr_sales_pct"):
+                    if s in tmap:
+                        fact_vals[s] = fmap.get(s)
+        done: dict[str, float | None] = {}
+        for slug, pv in plan_vals.items():
+            fv = fact_vals.get(slug)
+            done[slug] = round(float(fv) / pv * 100, 1) if (fv is not None and pv) else None
+        out_buckets.append({
+            "from": b_from.isoformat(),
+            "to": b_to.isoformat(),
+            "plan": plan_vals,
+            "fact": {k: v for k, v in fact_vals.items() if k in tmap},
+            "done_pct": done,
+        })
+    return {
+        "plan_id": plan_id,
+        "granularity": granularity,
+        "metrics": {s: _PLAN_METRICS.get(s, s) for s in tmap},
+        "buckets": out_buckets,
+    }
 
 
 @router.get("/api/cashflow-calendar", dependencies=[Depends(require_director_or_head)])
@@ -1579,6 +1305,22 @@ async def stocks_by_warehouse(
         ).all()
         names = {int(p.nm_id): {"vendor_code": p.vendor_code, "brand": p.brand} for p in prods}
 
+    # DEV-094: капитализация per склад/SKU = qty × COGS as-of сегодня.
+    cogs_now: dict[int, float] = {}
+    if nm_ids:
+        crows = (
+            await session.execute(
+                select(Cogs.nm_id, Cogs.cost_rub, Cogs.packaging_rub, Cogs.fulfillment_rub)
+                .where(Cogs.nm_id.in_(nm_ids), Cogs.valid_from <= date.today())
+                .order_by(Cogs.nm_id, Cogs.valid_from.desc())
+            )
+        ).all()
+        for c in crows:
+            if int(c.nm_id) not in cogs_now:
+                cogs_now[int(c.nm_id)] = (
+                    float(c.cost_rub or 0) + float(c.packaging_rub or 0) + float(c.fulfillment_rub or 0)
+                )
+
     items = [
         {
             "warehouse": r.wh,
@@ -1588,16 +1330,22 @@ async def stocks_by_warehouse(
             "qty": int(r.qty),
             "in_way_to_client": int(r.to_client),
             "in_way_from_client": int(r.from_client),
+            "cap_by_cost": round(int(r.qty) * cogs_now.get(int(r.nm_id), 0.0), 2),
         }
         for r in rows
     ]
     items.sort(key=lambda x: x["qty"], reverse=True)
-    # Сводка по складам.
-    wh_totals: dict[str, int] = {}
+    # Сводка по складам (+ капитализация, DEV-094).
+    wh_totals: dict[str, dict[str, float]] = {}
     for it in items:
-        wh_totals[it["warehouse"] or "—"] = wh_totals.get(it["warehouse"] or "—", 0) + it["qty"]
+        slot = wh_totals.setdefault(it["warehouse"] or "—", {"qty": 0, "cap": 0.0})
+        slot["qty"] += it["qty"]
+        slot["cap"] += it["cap_by_cost"]
     warehouses = sorted(
-        ({"warehouse": k, "qty": v} for k, v in wh_totals.items()),
+        (
+            {"warehouse": k, "qty": int(v["qty"]), "cap_by_cost": round(v["cap"], 2)}
+            for k, v in wh_totals.items()
+        ),
         key=lambda x: x["qty"],
         reverse=True,
     )

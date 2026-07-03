@@ -404,8 +404,61 @@ export default function OffPlatformStock() {
         )}
       </section>
 
+      {/* DEV-094: «Соответствие товаров» (как TS Склады → Соответствие). */}
+      <MappingsSection />
+
       <style>{`.input { background: #13161d; border: 1px solid #262a35; border-radius: 6px; padding: 8px 10px; font-size: 14px; color: white; width: 100%; }`}</style>
     </div>
+  );
+}
+
+// DEV-094 — маппинг артикулов своего учёта на карточки WB.
+function MappingsSection() {
+  const qc = useQueryClient();
+  const [ownSku, setOwnSku] = useState("");
+  const [nmId, setNmId] = useState("");
+  const q = useQuery({ queryKey: ["mp-mappings"], queryFn: () => api.offPlatformMappings() });
+  const create = useMutation({
+    mutationFn: () => api.offPlatformMappingCreate({ own_sku: ownSku.trim(), nm_id: Number(nmId) }),
+    onSuccess: () => { setOwnSku(""); setNmId(""); qc.invalidateQueries({ queryKey: ["mp-mappings"] }); },
+  });
+  const del = useMutation({
+    mutationFn: (id: number) => api.offPlatformMappingDelete(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["mp-mappings"] }),
+  });
+  return (
+    <section className="card">
+      <h2 className="font-medium mb-2">Соответствие товаров</h2>
+      <div className="text-xs text-muted mb-3">
+        Маппинг артикула вашего учёта (накладные/1С) на карточку WB — используется
+        при импорте остатков своих складов.
+      </div>
+      <div className="flex flex-wrap gap-2 mb-3">
+        <input className="input max-w-[220px]" placeholder="Артикул своего учёта"
+          value={ownSku} onChange={(e) => setOwnSku(e.target.value)} />
+        <input className="input max-w-[180px]" type="number" placeholder="nm_id WB"
+          value={nmId} onChange={(e) => setNmId(e.target.value)} />
+        <button className="btn" disabled={!ownSku.trim() || !nmId || create.isPending}
+          onClick={() => create.mutate()}>+ Сопоставить</button>
+      </div>
+      <table className="w-full text-sm">
+        <tbody>
+          {(q.data?.items ?? []).map((m) => (
+            <tr key={m.id} className="border-t border-border/50">
+              <td className="p-2">{m.own_sku}</td>
+              <td className="p-2 text-muted">→</td>
+              <td className="p-2">{m.vendor_code || m.nm_id} <span className="text-xs text-muted">({m.nm_id})</span></td>
+              <td className="p-2 text-right">
+                <button className="text-xs text-danger hover:underline" onClick={() => del.mutate(m.id)}>удалить</button>
+              </td>
+            </tr>
+          ))}
+          {q.data && q.data.items.length === 0 && (
+            <tr><td className="p-2 text-sm text-muted">Сопоставлений пока нет.</td></tr>
+          )}
+        </tbody>
+      </table>
+    </section>
   );
 }
 

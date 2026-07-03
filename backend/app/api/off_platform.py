@@ -187,3 +187,108 @@ async def get_summary(
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     return await off_platform.summary(session, as_of=as_of)
+
+
+# ── «Соответствие товаров» (DEV-094, миграция 0088) ─────────────────────────
+
+
+class MappingPayload(BaseModel):
+    own_sku: str
+    nm_id: int
+    note: str | None = None
+
+
+@router.get("/mappings")
+async def list_mappings(
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Маппинг own_sku → nm_id (как TS «Склады → Соответствие товаров»)."""
+    from sqlalchemy import select
+
+    from app.db.models import Product, ProductMpMapping
+
+    rows = (
+        await session.execute(
+            select(ProductMpMapping).order_by(ProductMpMapping.own_sku)
+        )
+    ).scalars().all()
+    nm_ids = [r.nm_id for r in rows]
+    names: dict[int, str | None] = {}
+    if nm_ids:
+        prows = (
+            await session.execute(
+                select(Product.nm_id, Product.vendor_code).where(Product.nm_id.in_(nm_ids))
+            )
+        ).all()
+        names = {int(p.nm_id): p.vendor_code for p in prows}
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "own_sku": r.own_sku,
+                "nm_id": r.nm_id,
+                "vendor_code": names.get(int(r.nm_id)),
+                "note": r.note,
+            }
+            for r in rows
+        ]
+    }
+
+
+@router.post("/mappings")
+async def create_mapping(
+    payload: MappingPayload,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    from sqlalchemy import select
+
+    from app.db.models import ProductMpMapping
+    from app.services.tenant_context import get_tenant
+
+    own_sku = payload.own_sku.strip()
+    if not own_sku:
+        raise HTTPException(400, "own_sku обязателен")
+    dup = (
+        await session.execute(
+            select(ProductMpMapping).where(ProductMpMapping.own_sku == own_sku)
+        )
+    ).scalar_one_or_none()
+    if dup is not None:
+        raise HTTPException(409, f"артикул «{own_sku}» уже сопоставлен (nm {dup.nm_id})")
+    obj = ProductMpMapping(
+        tenant_id=get_tenant(session),
+        own_sku=own_sku,
+        nm_id=payload.nm_id,
+        note=payload.note,
+    )
+    session.add(obj)
+    await session.flush()
+    await audit_log(
+        session, "product_mp_mapping", "create", entity_id=str(obj.id),
+        after={"own_sku": own_sku, "nm_id": payload.nm_id},
+        actor=actor_from_request(request),
+    )
+    await session.commit()
+    return {"id": obj.id}
+
+
+@router.delete("/mappings/{mapping_id}")
+async def delete_mapping(
+    mapping_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    from app.db.models import ProductMpMapping
+
+    obj = await session.get(ProductMpMapping, mapping_id)
+    if obj is None:
+        raise HTTPException(404, "маппинг не найден")
+    await session.delete(obj)
+    await audit_log(
+        session, "product_mp_mapping", "delete", entity_id=str(mapping_id),
+        before={"own_sku": obj.own_sku, "nm_id": obj.nm_id},
+        actor=actor_from_request(request),
+    )
+    await session.commit()
+    return {"ok": True}

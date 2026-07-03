@@ -26,6 +26,7 @@ import { fmtNum, fmtPct, fmtRub } from "@/lib/format";
 import { GRID_PROPS, AXIS_PROPS, TOOLTIP_STYLE } from "@/lib/chartTheme";
 import { usePeriod } from "@/contexts/PeriodContext";
 import PageHeader from "@/components/PageHeader";
+import CommentThread from "@/components/CommentThread";
 
 function Kpi({
   label,
@@ -100,7 +101,11 @@ export default function ProductPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Карточка товара" subtitle={`nm ${nm}`} />
+      <PageHeader
+        title="Карточка товара"
+        subtitle={`nm ${nm}`}
+        actions={<CommentThread entityType="sku" entityKey={String(nm)} />}
+      />
 
       {/* Шапка: фото + идентификация + ссылки */}
       <section className="card flex gap-4 items-start">

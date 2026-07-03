@@ -228,8 +228,10 @@ function AccountsTab() {
 function SettingsTab() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["finance-settings"], queryFn: () => api.financeSettings() });
+  const accountsQ = useQuery({ queryKey: ["finance-accounts"], queryFn: () => api.financeAccounts() });
+  const [email, setEmail] = useState<{ host: string; login: string; password: string; account_id: string } | null>(null);
   const put = useMutation({
-    mutationFn: (body: Record<string, boolean>) => api.financeSettingsPut(body),
+    mutationFn: (body: Record<string, boolean | string>) => api.financeSettingsPut(body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["finance-settings"] }),
   });
   const syncPlans = useMutation({
@@ -240,27 +242,82 @@ function SettingsTab() {
     },
   });
   const s = q.data;
+  const em = email ?? {
+    host: s?.finance_email_host ?? "",
+    login: s?.finance_email_login ?? "",
+    password: "",
+    account_id: s?.finance_email_account_id ?? "",
+  };
   return (
-    <div className="card flex flex-col gap-4 max-w-2xl">
-      <h3 className="font-medium">Платежный календарь</h3>
-      <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={s?.finance_auto_confirm_planned ?? false}
-          onChange={(e) => put.mutate({ finance_auto_confirm_planned: e.target.checked })} />
-        Автоматически подтверждать плановые операции
-        <span className="text-xs text-muted">— план гасится при появлении факта из выписки</span>
-      </label>
-      <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={s?.finance_auto_plan_wb_payouts ?? false}
-          onChange={(e) => {
-            put.mutate({ finance_auto_plan_wb_payouts: e.target.checked });
-            if (e.target.checked) syncPlans.mutate();
-          }} />
-        Создавать плановые операции из отчётов маркетплейсов
-        <span className="text-xs text-muted">— ожидаемые выплаты WB появятся как плановые доходы</span>
-      </label>
-      <button className="btn w-fit" onClick={() => syncPlans.mutate()} disabled={syncPlans.isPending}>
-        Обновить плановые выплаты WB сейчас
-      </button>
+    <div className="flex flex-col gap-4 max-w-2xl">
+      <div className="card flex flex-col gap-4">
+        <h3 className="font-medium">Платежный календарь</h3>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={s?.finance_auto_confirm_planned ?? false}
+            onChange={(e) => put.mutate({ finance_auto_confirm_planned: e.target.checked })} />
+          Автоматически подтверждать плановые операции
+          <span className="text-xs text-muted">— план гасится при появлении факта из выписки</span>
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={s?.finance_auto_plan_wb_payouts ?? false}
+            onChange={(e) => {
+              put.mutate({ finance_auto_plan_wb_payouts: e.target.checked });
+              if (e.target.checked) syncPlans.mutate();
+            }} />
+          Создавать плановые операции из отчётов маркетплейсов
+          <span className="text-xs text-muted">— ожидаемые выплаты WB появятся как плановые доходы</span>
+        </label>
+        <button className="btn w-fit" onClick={() => syncPlans.mutate()} disabled={syncPlans.isPending}>
+          Обновить плановые выплаты WB сейчас
+        </button>
+      </div>
+
+      {/* DEV-094: приём банковских выписок по email (как TS email_import_*). */}
+      <div className="card flex flex-col gap-3">
+        <h3 className="font-medium">Приём выписок по email</h3>
+        <div className="text-xs text-muted">
+          Настройте в банке отправку выписки (формат 1С .txt или Excel) на выделенный
+          почтовый ящик — сервис каждые 30 минут забирает новые письма и импортирует
+          операции автоматически (дубли отсекаются). Журнал — на странице «Файлы».
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={s?.finance_email_enabled ?? false}
+            onChange={(e) => put.mutate({ finance_email_enabled: e.target.checked })} />
+          Включить приём по email
+        </label>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          <input className="input" placeholder="IMAP-хост (напр. imap.yandex.ru:993)"
+            value={em.host} onChange={(e) => setEmail({ ...em, host: e.target.value })} />
+          <input className="input" placeholder="Логин (адрес ящика)"
+            value={em.login} onChange={(e) => setEmail({ ...em, login: e.target.value })} />
+          <input className="input" type="password"
+            placeholder={s?.finance_email_password_set ? "Пароль задан — введите для замены" : "Пароль приложения"}
+            value={em.password} onChange={(e) => setEmail({ ...em, password: e.target.value })} />
+          <select className="input" value={em.account_id}
+            onChange={(e) => setEmail({ ...em, account_id: e.target.value })}>
+            <option value="">Счёт для операций…</option>
+            {(accountsQ.data?.items ?? []).filter((a) => !a.archived).map((a) => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </select>
+        </div>
+        <button className="btn w-fit" disabled={put.isPending || !em.host || !em.login}
+          onClick={() => {
+            put.mutate({
+              finance_email_host: em.host,
+              finance_email_login: em.login,
+              finance_email_account_id: em.account_id,
+              ...(em.password ? { finance_email_password: em.password } : {}),
+            });
+            setEmail(null);
+          }}>
+          Сохранить настройки email
+        </button>
+        <div className="text-[11px] text-muted">
+          Пароль хранится в зашифрованном виде (Fernet). Письма не удаляются —
+          помечаются прочитанными. Для Яндекс/Gmail используйте пароль приложения.
+        </div>
+      </div>
     </div>
   );
 }

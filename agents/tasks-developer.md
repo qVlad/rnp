@@ -11,6 +11,23 @@
 
 > Lead заполняет этот файл из `ROADMAP.md`, запросов пользователя, найденных багов QA.
 
+### TASK-DEV-094: Полный TS-паритет 1:1 (кроме Ozon/ЯМ) — В работе — 2026-07-03 — Claude Fable 5 (main session)
+- **Тип:** feature-пакет · запрос пользователя 2026-07-02. План: `.claude-work/plans/synthetic-dreaming-sunrise.md`.
+- **Аудит:** репо-доки + живой обход mirror-app.truestats.ru (2026-07-02). 5 из 6
+  «открытых» гэпов старого аудита оказались уже сделаны (inventory, compare,
+  plan_distribute, PWA, contribution_margin).
+- **Блоки (один релиз, деплой в конце):** A хвосты (маркер «Сегодня», «Итого к
+  оплате», drrz) · B Dashboard 37 KPI + «Исходная таблица» ~55 колонок
+  (рефактор summary_report → services/summary_metrics.py; GMROI, номинальная
+  комиссия, ДРР бонусов, own_stock_cap) · C комментарии-треды (0086 comments,
+  батч-счётчики, 💬 на плитках/SKU) · D РНП-матрица метрики×дни
+  (services/rnp_matrix.py, типы кампаний, 0087 rnp_sku_selection,
+  /rnp-settings) · E план-факт (breakdown день/неделя/месяц, карточки с %) ·
+  F склады (капитализация per склад, 0088 product_mp_mapping) + /files
+  (UNION журналов) + email-приём выписок (IMAP beat → bank_statement).
+- **Решения пользователя:** email-выписки — да; комментарии — да; всё одним
+  релизом; Ozon/ЯМ/биллинг/ЭДО — не делаем.
+
 ### TASK-DEV-093: Финансы в стиле TrueStats — счета, банк-операции, импорт выписок, ДДС-матрица — Выполнено — 2026-07-02 (v0.87.0)
 - **Тип:** feature · запрос пользователя 2026-07-02. План: `.claude-work/plans/synthetic-dreaming-sunrise.md`.
 - **Что:** паритет раздела «Финансы» с TrueStats (осмотрен живой mirror-app):

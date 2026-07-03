@@ -136,6 +136,61 @@ async def get_dashboard(
     return out
 
 
+@router.get("/extended-kpis")
+async def get_extended_kpis(
+    start_date: Annotated[date, Query()],
+    end_date: Annotated[date, Query()],
+    reporting_mode: Literal["operational", "financial"] = "financial",
+    categories: Annotated[str | None, Query()] = None,
+    groups: Annotated[str | None, Query()] = None,
+    articles: Annotated[str | None, Query()] = None,
+    glob_brands: Annotated[str | None, Query(alias="brands")] = None,
+    stores: Annotated[str | None, Query()] = None,
+    include_prev: Annotated[bool, Query()] = True,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """DEV-094 (TS-паритет, 37 плиток): расширенные KPI из движка сводного
+    отчёта — вознаграждение ВБ, факт/номинальная комиссия, эквайринг,
+    налоговая база, капитализации ×3, остатки ×4, GMROI ×2, оборачиваемость ×2,
+    средние ×4, ДРР бонусов/общая, приёмка, компенсации, штрафы.
+
+    Только director/head (движок summary_report — не brand-scoped);
+    manager получает 403 через RBAC ниже.
+    """
+    if brands is not None:
+        raise HTTPException(403, "extended-kpis доступен director/head")
+    store_ids = await resolve_store_scope(
+        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id,
+        rbac_brands=brands,
+    )
+    if store_ids:
+        set_tenant_filter(session, store_ids)
+    nm_scope = await resolve_nm_scope(
+        session, brands=glob_brands, categories=categories, groups=groups,
+        articles=articles, rbac_brands=brands,
+    )
+    from app.services.summary_metrics import build_summary_report  # noqa: WPS433
+
+    data = await build_summary_report(
+        session, start_date=start_date, end_date=end_date,
+        reporting_mode=reporting_mode, nm_scope=nm_scope,
+        include_prev=include_prev,
+    )
+    return {
+        "totals": data["totals"],
+        "prev_totals": data.get("prev_totals"),
+        "prev_period": data.get("prev_period"),
+        "logistics_breakdown": data["logistics_breakdown"],
+        "fines_breakdown": data["fines_breakdown"],
+        "compensation_breakdown": data["compensation_breakdown"],
+        "published_through": data["published_through"],
+        "estimated_from": data["estimated_from"],
+        "consolidated": len(store_ids) if store_ids else None,
+    }
+
+
 @router.get("/timeseries")
 async def get_timeseries(
     days: Annotated[int, Query(ge=1, le=365)] = 30,

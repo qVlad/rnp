@@ -39,6 +39,7 @@ import ManagerPlanProgressCard from "@/components/ManagerPlanProgressCard";
 import CustomMetricsCard from "@/components/CustomMetricsCard";
 import OwnerCockpitView from "@/components/OwnerCockpitView";
 import { useAuth } from "@/contexts/AuthContext";
+import { ExtendedKpiSection, SourceTableSection } from "@/components/ExtendedKpiSection";
 import {
   ColumnVisibilityButton,
   useColumnVisibility,
@@ -182,6 +183,16 @@ export default function Dashboard() {
       : { start: mode.start, end: mode.end };
   const rangeKey =
     mode.kind === "preset" ? `p:${mode.period}` : `c:${mode.start}:${mode.end}`;
+  // DEV-094: явные даты для расширенных KPI / Исходной таблицы (движок
+  // summary-report принимает только даты; пресеты аппроксимируем окном).
+  const extRange =
+    mode.kind === "custom"
+      ? { from: mode.start, to: mode.end }
+      : mode.period === "day"
+        ? { from: today(), to: today() }
+        : mode.period === "week"
+          ? { from: daysAgo(6), to: today() }
+          : { from: daysAgo(29), to: today() };
 
   const dashQ = useQuery({
     queryKey: ["dashboard", rangeKey, dataMode, reportingMode, gfk],
@@ -515,6 +526,15 @@ export default function Dashboard() {
       {dashQ.isLoading && <div className="text-muted">Загрузка…</div>}
       {dashQ.data && !compareOpen && (
         <DashboardKpiGrid kpis={dashQ.data.kpis} mode={dataMode} range={range} />
+      )}
+
+      {/* DEV-094 (TS-паритет): 37 расширенных KPI + «Исходная таблица» —
+          collapsed, лениво; только director/head. */}
+      {user?.role !== "manager" && user?.role !== "bookkeeper" && (
+        <>
+          <ExtendedKpiSection from={extRange.from} to={extRange.to} />
+          <SourceTableSection from={extRange.from} to={extRange.to} />
+        </>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">

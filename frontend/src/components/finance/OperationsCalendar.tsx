@@ -50,6 +50,7 @@ function MonthGrid({ month, days }: { month: string; days: Day[] }) {
   const lead = (first.getDay() + 6) % 7; // Пн=0
   const byDate = new Map(days.map((d) => [d.date, d]));
   const daysInMonth = new Date(y, m, 0).getDate();
+  const todayIso = new Date().toISOString().slice(0, 10); // маркер «Сегодня» (TS-parity, DEV-094)
   const cells: Array<Day | null> = [];
   for (let i = 0; i < lead; i++) cells.push(null);
   for (let day = 1; day <= daysInMonth; day++) {
@@ -68,16 +69,21 @@ function MonthGrid({ month, days }: { month: string; days: Day[] }) {
           {cells.map((d, i) => {
             const dayNum = i - lead + 1;
             const inMonth = dayNum >= 1 && dayNum <= daysInMonth;
+            const iso = `${month}-${String(dayNum).padStart(2, "0")}`;
+            const isToday = inMonth && iso === todayIso;
             return (
               <div
                 key={i}
                 className={`min-h-[76px] p-1.5 border-b border-r border-border/50 text-right ${
                   inMonth && d && (d.income || d.expense) ? "bg-success/5" : ""
-                }`}
+                } ${isToday ? "ring-2 ring-accent ring-inset rounded-sm" : ""}`}
+                title={isToday ? "Сегодня" : undefined}
               >
                 {inMonth && (
                   <>
-                    <div className="text-xs text-muted">{dayNum}</div>
+                    <div className={`text-xs ${isToday ? "text-accent font-semibold" : "text-muted"}`}>
+                      {dayNum}{isToday ? " · сегодня" : ""}
+                    </div>
                     {d && (
                       <>
                         <div className="text-[11px] font-mono" title="Остаток на конец дня">

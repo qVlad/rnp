@@ -27,8 +27,10 @@ from app.api import (
     finance_extra,
     box_distribution,
     extension,
+    comments as comments_api,
     extension_lk_jobs,
     external_ad_costs,
+    files as files_api,
     finance_ops,
     features_doc,
     user_guide_doc,
@@ -56,6 +58,7 @@ from app.api import (
     reconciliation_4way,
     reconciliation_auto,
     redistribution,
+    rnp as rnp_api,
     season_plan,
     settings,
     supplies,
@@ -227,6 +230,9 @@ app.include_router(pnl.router)
 app.include_router(units.router)
 app.include_router(finance_extra.router)
 app.include_router(finance_ops.router)
+app.include_router(comments_api.router)
+app.include_router(rnp_api.router)
+app.include_router(files_api.router)
 app.include_router(filters_api.router)
 app.include_router(unit_plan.router)
 app.include_router(ads.router)

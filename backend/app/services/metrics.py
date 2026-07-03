@@ -1101,11 +1101,12 @@ async def compute_dashboard(
             "Формула: Σ wb_report_detail.storage_fee.\n"
             "Совпадает со столбцом «Хранение» в WB-кабинете.\n"
             "Доступно только в Final режиме."),
-        KPI("payout_to_account", "Деньги на счёт", fin["payout_to_account"],
+        KPI("payout_to_account", "Итого к оплате", fin["payout_to_account"],
             prev_fin["payout_to_account"] if mode in ("final", "hybrid") else None,
             _pct_change(fin["payout_to_account"], prev_fin["payout_to_account"]) if mode in ("final", "hybrid") else None,
             "₽",
-            "Деньги, которые WB реально переведёт на расчётный счёт за период.\n"
+            "«Итого к оплате» (терминология TrueStats; ранее «Деньги на счёт») — "
+            "деньги, которые WB реально переведёт на расчётный счёт за период.\n"
             "Формула: ppvz_net − логистика − хранение − штрафы − удержания + доплаты.\n"
             "Совпадает со строкой «Итог по товарам» в WB-кабинете.\n"
             "Это «то, что физически придёт на банк» — не путать с маржой и не путать с чистой выручкой.\n"

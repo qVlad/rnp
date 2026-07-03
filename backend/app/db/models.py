@@ -2835,6 +2835,64 @@ class FinanceReference(Base, TenantScopedMixin):
     )
 
 
+class Comment(Base, TenantScopedMixin):
+    """Комментарии-треды на сущностях (TASK-DEV-094, миграция 0086).
+
+    Аналог TrueStats: счётчики 💬 на KPI-плитках дашборда, колонка
+    «Комментарии» у артикулов, заметки на складах/планах/строках РНП.
+    entity_type ∈ kpi | sku | warehouse | rnp_row | plan | report;
+    entity_key — строковый ключ сущности ('net_profit' / '172650047' / …).
+    Кросс-секционность: один тред виден везде, где встречается сущность.
+    """
+
+    __tablename__ = "comments"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    entity_type: Mapped[str] = mapped_column(String(32), index=True)
+    entity_key: Mapped[str] = mapped_column(String(128), index=True)
+    body: Mapped[str] = mapped_column(Text)
+    author_name: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class ProductMpMapping(Base, TenantScopedMixin):
+    """«Соответствие товаров» (TASK-DEV-094, миграция 0088, как TS Склады →
+    Соответствие товаров): маппинг артикула своего учёта (own_sku из
+    накладных/1С) на карточку маркетплейса (nm_id). Используется при импорте
+    остатков своих складов.
+    """
+
+    __tablename__ = "product_mp_mapping"
+    __table_args__ = (UniqueConstraint("tenant_id", "own_sku", name="uq_product_mp_mapping"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    own_sku: Mapped[str] = mapped_column(String(128))
+    nm_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class RnpSkuSelection(Base, TenantScopedMixin):
+    """Настройки РНП (TASK-DEV-094, миграция 0087): какие артикулы показывать
+    в модуле РНП (аналог TS «Настройки РНП»). Нет строк у tenant'а = показывать
+    все SKU; есть строки = показывать только enabled.
+    """
+
+    __tablename__ = "rnp_sku_selection"
+    __table_args__ = (UniqueConstraint("tenant_id", "nm_id", name="uq_rnp_sku_selection"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    nm_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class FinanceAccount(Base, TenantScopedMixin):
     """Счёт (банковский/касса/карта) — TASK-DEV-093, миграция 0083.
 

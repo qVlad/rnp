@@ -17,6 +17,7 @@ celery_app = Celery(
         "app.sync.tasks_funnel",
         "app.sync.tasks_product_volume",
         "app.sync.tasks_scoreboard",
+        "app.sync.tasks_email",
         "app.sync.event_consumers",
     ],
 )
@@ -122,6 +123,12 @@ celery_app.conf.update(
         "sync-orders": {
             "task": "app.sync.tasks.sync_orders",
             "schedule": crontab(hour="0,3,6,9,12,15,18,21", minute=10),
+        },
+        # DEV-094: приём банковских выписок с email (IMAP), каждые 30 мин.
+        # Не WB API — лимиты не тратит; tenant'ы без настройки пропускаются.
+        "poll-email-statements": {
+            "task": "app.sync.tasks_email.poll_email_statements",
+            "schedule": crontab(minute="7,37"),
         },
         "sync-sales": {
             "task": "app.sync.tasks.sync_sales",

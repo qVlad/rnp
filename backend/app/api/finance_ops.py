@@ -701,6 +701,23 @@ async def apply_rule_existing(
 # ─── Настройки плановых операций ──────────────────────────────────────────
 
 _SETTING_KEYS = ("finance_auto_confirm_planned", "finance_auto_plan_wb_payouts")
+# Email-приём выписок (DEV-094): текстовые настройки + пароль (Fernet).
+_EMAIL_TEXT_KEYS = (
+    "finance_email_enabled", "finance_email_host",
+    "finance_email_login", "finance_email_account_id", "finance_email_folder",
+)
+
+
+async def _upsert_setting(session: AsyncSession, tid: int, key: str, value: str) -> None:
+    existing = (
+        await session.execute(
+            select(AppSetting).where(AppSetting.tenant_id == tid, AppSetting.key == key)
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        session.add(AppSetting(tenant_id=tid, key=key, value=value))
+    else:
+        existing.value = value
 
 
 @router.get("/api/finance-settings")
@@ -709,15 +726,22 @@ async def get_finance_settings(
 ) -> dict[str, Any]:
     # pitfall #16: AppSetting — composite PK, ОБЯЗАТЕЛЕН явный tenant-фильтр.
     tid = get_tenant(session)
+    keys = list(_SETTING_KEYS) + list(_EMAIL_TEXT_KEYS) + ["finance_email_password"]
     rows = (
         await session.execute(
             select(AppSetting.key, AppSetting.value).where(
-                AppSetting.tenant_id == tid, AppSetting.key.in_(_SETTING_KEYS)
+                AppSetting.tenant_id == tid, AppSetting.key.in_(keys)
             )
         )
     ).all()
-    vals = {k: (v == "1") for k, v in rows}
-    return {k: vals.get(k, False) for k in _SETTING_KEYS}
+    vals = {k: (v or "") for k, v in rows}
+    out: dict[str, Any] = {k: vals.get(k) == "1" for k in _SETTING_KEYS}
+    for k in _EMAIL_TEXT_KEYS:
+        out[k] = vals.get(k, "")
+    out["finance_email_enabled"] = vals.get("finance_email_enabled") == "1"
+    # Пароль наружу не отдаём — только флаг «задан».
+    out["finance_email_password_set"] = bool(vals.get("finance_email_password"))
+    return out
 
 
 @router.put("/api/finance-settings")
@@ -726,25 +750,28 @@ async def put_finance_settings(
     session: AsyncSession = Depends(get_db_tenant_scoped),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
+    from app.services.secrets_crypto import encrypt
+
     tid = get_tenant(session)
     for key in _SETTING_KEYS:
-        if key not in payload:
-            continue
-        value = "1" if payload[key] else "0"
-        existing = (
-            await session.execute(
-                select(AppSetting).where(
-                    AppSetting.tenant_id == tid, AppSetting.key == key
-                )
-            )
-        ).scalar_one_or_none()
-        if existing is None:
-            session.add(AppSetting(tenant_id=tid, key=key, value=value))
-        else:
-            existing.value = value
+        if key in payload:
+            await _upsert_setting(session, tid, key, "1" if payload[key] else "0")
+    for key in _EMAIL_TEXT_KEYS:
+        if key in payload:
+            if key == "finance_email_enabled":
+                value = "1" if payload[key] else "0"
+            else:
+                value = str(payload[key] or "").strip()
+            await _upsert_setting(session, tid, key, value)
+    if payload.get("finance_email_password"):
+        # Пароль храним только зашифрованным (Fernet, как WB-токены).
+        await _upsert_setting(
+            session, tid, "finance_email_password",
+            encrypt(str(payload["finance_email_password"])),
+        )
     await audit_log(
         session, "settings", "update", entity_id="finance-settings",
-        after={k: bool(payload.get(k)) for k in _SETTING_KEYS if k in payload},
+        after={k: payload.get(k) for k in (*_SETTING_KEYS, *_EMAIL_TEXT_KEYS) if k in payload},
         actor=user.username,
     )
     await session.commit()

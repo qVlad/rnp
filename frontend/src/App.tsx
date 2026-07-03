@@ -72,6 +72,8 @@ import AdCampaignsAnalytics from "./pages/AdCampaignsAnalytics";
 import BusinessSummary from "./pages/BusinessSummary";
 import FinanceExtras from "./pages/FinanceExtras";
 import RnpModule from "./pages/RnpModule";
+import RnpSettings from "./pages/RnpSettings";
+import Files from "./pages/Files";
 import CashflowCalendar from "./pages/CashflowCalendar";
 import MetricPlanFact from "./pages/MetricPlanFact";
 
@@ -158,6 +160,8 @@ export default function App() {
           <Route path="business-summary" element={<DirectorOrHead><BusinessSummary /></DirectorOrHead>} />
           <Route path="finance-extras" element={<DirectorOrHead><FinanceExtras /></DirectorOrHead>} />
           <Route path="rnp-module" element={<RnpModule />} />
+          <Route path="rnp-settings" element={<DirectorOrHead><RnpSettings /></DirectorOrHead>} />
+          <Route path="files" element={<DirectorOrHead><Files /></DirectorOrHead>} />
           <Route path="cashflow-calendar" element={<DirectorOrHead><CashflowCalendar /></DirectorOrHead>} />
           <Route path="metric-plan-fact" element={<DirectorOrHead><MetricPlanFact /></DirectorOrHead>} />
           <Route path="pnl-reconciliation" element={<PnLReconciliation />} />

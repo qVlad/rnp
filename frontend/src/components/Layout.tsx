@@ -128,6 +128,7 @@ const GROUPS: Group[] = [
     label: "Реклама / РНП",
     items: [
       { to: "/rnp-module", label: "Модуль РНП" },
+      { to: "/rnp-settings", label: "Настройки РНП", directorOrHead: true },
       { to: "/ad-campaigns", label: "Аналитика РК", directorOrHead: true },
       { to: "/ads-heatmap", label: "Тепловая карта" },
       { to: "/abtest", label: "A/B тесты" },
@@ -143,6 +144,7 @@ const GROUPS: Group[] = [
       { to: "/checklist", label: "Чек-лист" },
       { to: "/brands", label: "Бренды", directorOrHead: true },
       { to: "/box-scan", label: "Раскладка коробов (QR)", directorOrHead: true },
+      { to: "/files", label: "Файлы", directorOrHead: true },
     ],
   },
   {

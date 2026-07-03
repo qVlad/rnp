@@ -276,6 +276,51 @@ export const api = {
       { method: "POST", body: JSON.stringify({ tenant_id }) },
     ),
 
+  // ── Модуль РНП: матрица метрики×дни + настройки (DEV-094) ──
+  rnpMatrix: (from: string, to: string, filters?: Record<string, string>) =>
+    request<{
+      from: string; to: string; days: string[];
+      rows: Array<{ key: string; label: string; group: string; format: "rub" | "pct" | "num"; values: Array<number | null>; total: number | null }>;
+      notes: { forecast: string; campaign_types: string };
+    }>(`/api/rnp/matrix?${new URLSearchParams({ from, to, ...(filters || {}) })}`),
+  rnpSkuSelectionList: () =>
+    request<{ has_selection: boolean; items: Array<{
+      nm_id: number; vendor_code: string | null; brand: string | null;
+      category: string | null; subject: string | null; photo_url: string | null; enabled: boolean;
+    }> }>(`/api/rnp/sku-selection`),
+  rnpSkuSelectionSave: (items: Array<{ nm_id: number; enabled: boolean }>) =>
+    request<{ updated: number }>(`/api/rnp/sku-selection`, {
+      method: "PUT", body: JSON.stringify({ items }),
+    }),
+
+  // ── Расширенные KPI дашборда (DEV-094, 37 плиток TS) ──
+  dashboardExtendedKpis: (from: string, to: string, filters?: Record<string, string>) =>
+    request<{
+      totals: Record<string, number | null>;
+      prev_totals: Record<string, number | null> | null;
+      prev_period: { from: string; to: string } | null;
+      logistics_breakdown: Array<{ category: string; amount: number; pct: number }>;
+      fines_breakdown: Array<{ category: string; amount: number; pct: number }>;
+      compensation_breakdown: Array<{ category: string; amount: number; pct: number }>;
+      published_through: string | null;
+      estimated_from: string | null;
+      consolidated: number | null;
+    }>(`/api/dashboard/extended-kpis?${new URLSearchParams({ start_date: from, end_date: to, ...(filters || {}) })}`),
+
+  // ── Комментарии-треды (DEV-094, TS-паритет) ──
+  commentsList: (entityType: string, entityKey: string) =>
+    request<{ items: Array<{ id: number; body: string; author_name: string; created_at: string | null }> }>(
+      `/api/comments?entity_type=${encodeURIComponent(entityType)}&entity_key=${encodeURIComponent(entityKey)}`,
+    ),
+  commentCounts: (entityType: string, keys: (string | number)[]) =>
+    request<Record<string, number>>(
+      `/api/comments/counts?entity_type=${encodeURIComponent(entityType)}&keys=${encodeURIComponent(keys.join(","))}`,
+    ),
+  commentCreate: (body: { entity_type: string; entity_key: string; body: string }) =>
+    request<{ id: number }>(`/api/comments`, { method: "POST", body: JSON.stringify(body) }),
+  commentDelete: (id: number) =>
+    request<{ ok: boolean }>(`/api/comments/${id}`, { method: "DELETE" }),
+
   // ── Кабинеты WB (мульти-кабинет, DEV-092) ──
   listTenants: () =>
     request<{ items: TenantCabinet[] }>("/api/tenants"),
@@ -1465,6 +1510,17 @@ paymentOrderDelete: (payment_order_id: string) =>
     request<{ id: number }>(`/api/metric-plans`, { method: "POST", body: JSON.stringify(body) }),
   metricPlanDelete: (id: number) =>
     request<{ status: string }>(`/api/metric-plans/${id}`, { method: "DELETE" }),
+  metricPlanBreakdown: (id: number, granularity: "day" | "week" | "month") =>
+    request<{
+      plan_id: number; granularity: string;
+      metrics: Record<string, string>;
+      buckets: Array<{
+        from: string; to: string;
+        plan: Record<string, number>;
+        fact: Record<string, number | null>;
+        done_pct: Record<string, number | null>;
+      }>;
+    }>(`/api/metric-plans/${id}/breakdown?granularity=${granularity}`),
 
   cashflowCalendar: (start: string, end: string) =>
     request<{ totals: { income: number; expense: number; balance: number; obligation_receivable: number; obligation_payable: number };
@@ -1596,14 +1652,35 @@ paymentOrderDelete: (payment_order_id: string) =>
     request<{ matched: number; updated: number }>(`/api/finance-rules/${id}/apply-existing`, { method: "POST" }),
 
   financeSettings: () =>
-    request<{ finance_auto_confirm_planned: boolean; finance_auto_plan_wb_payouts: boolean }>(
-      `/api/finance-settings`,
-    ),
-  financeSettingsPut: (body: Record<string, boolean>) =>
-    request<{ finance_auto_confirm_planned: boolean; finance_auto_plan_wb_payouts: boolean }>(
+    request<{
+      finance_auto_confirm_planned: boolean;
+      finance_auto_plan_wb_payouts: boolean;
+      finance_email_enabled: boolean;
+      finance_email_host: string;
+      finance_email_login: string;
+      finance_email_account_id: string;
+      finance_email_folder: string;
+      finance_email_password_set: boolean;
+    }>(`/api/finance-settings`),
+  financeSettingsPut: (body: Record<string, boolean | string>) =>
+    request<Record<string, unknown>>(
       `/api/finance-settings`,
       { method: "PUT", body: JSON.stringify(body) },
     ),
+  filesList: () =>
+    request<{ items: Array<{
+      kind: string; page: string; filename: string | null; status: string;
+      is_error: boolean; comment: string | null; rows: number | null;
+      by: string | null; created_at: string | null;
+    }> }>(`/api/files`),
+  offPlatformMappings: () =>
+    request<{ items: Array<{ id: number; own_sku: string; nm_id: number; vendor_code: string | null; note: string | null }> }>(
+      `/api/off-platform/mappings`,
+    ),
+  offPlatformMappingCreate: (body: { own_sku: string; nm_id: number; note?: string }) =>
+    request<{ id: number }>(`/api/off-platform/mappings`, { method: "POST", body: JSON.stringify(body) }),
+  offPlatformMappingDelete: (id: number) =>
+    request<{ ok: boolean }>(`/api/off-platform/mappings/${id}`, { method: "DELETE" }),
   financeSyncWbPayouts: () =>
     request<{ created: number; updated: number; removed: number }>(
       `/api/finance-plan/sync-wb-payouts`,
