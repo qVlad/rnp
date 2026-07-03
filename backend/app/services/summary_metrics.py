@@ -177,12 +177,23 @@ async def build_summary_report(
     orders_map: dict[int, tuple[int, float]] = {
         int(r.nm_id): (int(r.cnt), _f(r.amt)) for r in fun_rows if r.nm_id
     }
-    buyout_map: dict[int, float | None] = {
-        int(r.nm_id): (int(r.b) / (int(r.b) + int(r.c)) * 100 if (int(r.b) + int(r.c)) > 0 else None)
-        for r in fun_rows if r.nm_id
-    }
+    # % выкупа: терминальный buyouts/(buyouts+cancels), НО cancel_count
+    # заполняется только с DEV-087 (конец июня 2026) — на периодах без него
+    # fallback buyouts/orders (иначе 100% при cancels=NULL).
+    buyout_map: dict[int, float | None] = {}
+    for r in fun_rows:
+        if not r.nm_id:
+            continue
+        b, c, o = int(r.b), int(r.c), int(r.cnt)
+        if c > 0 and (b + c) > 0:
+            buyout_map[int(r.nm_id)] = b / (b + c) * 100
+        elif o > 0:
+            buyout_map[int(r.nm_id)] = b / o * 100
+        else:
+            buyout_map[int(r.nm_id)] = None
     buyout_b_total = sum(int(r.b) for r in fun_rows)
     buyout_c_total = sum(int(r.c) for r in fun_rows)
+    buyout_o_total = sum(int(r.cnt) for r in fun_rows)
 
     orders_preds = [
         func.date(WbOrder.order_dt) >= start_date,
@@ -337,7 +348,9 @@ async def build_summary_report(
         key = (t.subject_name or "").strip().lower()
         base_rate = t.paid_storage_kgvp if t.paid_storage_kgvp is not None else t.commission_fbo
         if key and key not in nominal_rate_by_subject and base_rate is not None:
-            nominal_rate_by_subject[key] = max(float(base_rate) - discount, 0.0)
+            # Поправка ЗНАКОВАЯ (в конфиге -0.75 = возврат за опции):
+            # rate = тариф + поправка → 34.5 + (-0.75) = 33.75 (как TS/unit-plan).
+            nominal_rate_by_subject[key] = max(float(base_rate) + discount, 0.0)
 
     # Ставка налога (АУСН/УСН доход) — pitfall #16: явный tenant-фильтр.
     tid = get_tenant(session)
@@ -697,11 +710,15 @@ async def build_summary_report(
         "total_drr_pct": _pct(ad_t + promo_ad_total),
         "orders_count": orders_cnt_t or None,
         "orders_sum": round(orders_sum_t, 2),
-        # Терминальный % выкупа из Воронки (как TS); fallback продажи/заказы.
-        "buyout_pct": round(
-            buyout_b_total / (buyout_b_total + buyout_c_total) * 100, 2
-        ) if (buyout_b_total + buyout_c_total) > 0
-        else (round(sales_t / orders_sum_t * 100, 2) if orders_sum_t else 0.0),
+        # % выкупа: терминальный из Воронки → buyouts/orders (нет cancel-данных)
+        # → продажи/заказы (нет Воронки).
+        "buyout_pct": (
+            round(buyout_b_total / (buyout_b_total + buyout_c_total) * 100, 2)
+            if buyout_c_total > 0
+            else round(buyout_b_total / buyout_o_total * 100, 2)
+            if buyout_o_total > 0
+            else (round(sales_t / orders_sum_t * 100, 2) if orders_sum_t else 0.0)
+        ),
         "drr_pct": _pct(ad_t),
         "drrz_pct": round(ad_t / orders_sum_t * 100, 2) if orders_sum_t else 0.0,
         "avg_price_sale": round(sales_t / sold_t, 2) if sold_t else 0.0,
