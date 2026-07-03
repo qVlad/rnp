@@ -1,0 +1,7 @@
+{
+  "task_id": "TASK-DEV-094",
+  "agent": "Claude Fable 5 — main session",
+  "started_at": "2026-07-03T10:02:20Z",
+  "expected_minutes": 480,
+  "notes": "TS-паритет: dashboard KPI/исходная таблица, комментарии, РНП-матрица, план-факт, склады, /files, email-выписки"
+}
