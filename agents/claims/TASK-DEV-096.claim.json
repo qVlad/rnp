@@ -1,0 +1,7 @@
+{
+  "task_id": "TASK-DEV-096",
+  "agent": "Claude Fable 5 — main session",
+  "started_at": "2026-07-04T16:45:56Z",
+  "expected_minutes": 120,
+  "notes": "TS-паритет пакет 2: /truestats профиль, недельный свод, постатейный OPEX, аналитика РК, миграция 0090 (models.py, client.ts, Layout, main.py)"
+}
