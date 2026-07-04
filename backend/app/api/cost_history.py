@@ -31,7 +31,7 @@ from app.services.audit import actor_from_request, audit_log, snapshot
 from app.services.auth import current_brands_filter
 from app.services.tenant_context import get_tenant
 
-_COGS_FIELDS = ["id", "nm_id", "valid_from", "cost_rub", "packaging_rub", "fulfillment_rub"]
+_COGS_FIELDS = ["id", "nm_id", "valid_from", "cost_rub", "packaging_rub", "fulfillment_rub", "vat_rub"]
 
 router = APIRouter(prefix="/api/cost-history", tags=["cost-history"])
 
@@ -42,6 +42,7 @@ class CogsIn(BaseModel):
     cost_rub: float = 0
     packaging_rub: float = 0
     fulfillment_rub: float = 0
+    vat_rub: float = 0
 
 
 def _row(c: Cogs) -> dict[str, Any]:
@@ -52,6 +53,7 @@ def _row(c: Cogs) -> dict[str, Any]:
         "cost_rub": float(c.cost_rub or 0),
         "packaging_rub": float(c.packaging_rub or 0),
         "fulfillment_rub": float(c.fulfillment_rub or 0),
+        "vat_rub": float(c.vat_rub or 0),
         "total_unit_cost": float((c.cost_rub or 0) + (c.packaging_rub or 0) + (c.fulfillment_rub or 0)),
     }
 
@@ -150,6 +152,7 @@ async def add_history(
         cost_rub=payload.cost_rub,
         packaging_rub=payload.packaging_rub,
         fulfillment_rub=payload.fulfillment_rub,
+        vat_rub=payload.vat_rub,
     )
     session.add(obj)
     await session.flush()
@@ -180,6 +183,7 @@ async def update_history(
     obj.cost_rub = payload.cost_rub
     obj.packaging_rub = payload.packaging_rub
     obj.fulfillment_rub = payload.fulfillment_rub
+    obj.vat_rub = payload.vat_rub
     await audit_log(
         session, "cogs", "update",
         entity_id=str(obj.id),

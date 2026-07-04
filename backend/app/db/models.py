@@ -119,6 +119,9 @@ class Cogs(Base, TenantScopedMixin):
     cost_rub: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     packaging_rub: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     fulfillment_rub: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
+    # НДС в себестоимости единицы (DEV-096, миграция 0090) — справочная колонка
+    # TS-паритета; в расчёт прибыли не входит.
+    vat_rub: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     product: Mapped[Product] = relationship(back_populates="cogs_entries")

@@ -479,6 +479,101 @@ async def summary_report(
     )
 
 
+@router.get("/api/summary-report/weekly", dependencies=[Depends(require_director_or_head)])
+async def summary_report_weekly(
+    start_date: Annotated[date, Query()],
+    end_date: Annotated[date, Query()],
+    reporting_mode: Annotated[str, Query()] = "financial",
+    brands: Annotated[str | None, Query()] = None,
+    categories: Annotated[str | None, Query()] = None,
+    groups: Annotated[str | None, Query()] = None,
+    articles: Annotated[str | None, Query()] = None,
+    stores: Annotated[str | None, Query()] = None,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    user=Depends(get_current_user),
+) -> dict[str, Any]:
+    """Сводный отчёт «По неделям» (TASK-DEV-096, как TS /week): строки —
+    ISO-недели (пн-вс), пересекающие период, + «Итого за период». Колонки —
+    totals движка summary_metrics (те же формулы, что per-SKU-вид).
+
+    Закрытые недели неизменны между ночными пересинками → Redis-кэш 6ч
+    (ключ учитывает tenant-скоуп и фильтры). Текущая неделя всегда live.
+    """
+    import hashlib
+    import json as _json
+
+    import redis.asyncio as redis_async
+
+    from app.core.config import settings as cfg
+    from app.services.summary_metrics import build_summary_report
+
+    store_ids = await resolve_store_scope(
+        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id, rbac_brands=None,
+    )
+    if store_ids:
+        set_tenant_filter(session, store_ids)
+    nm_scope = await resolve_nm_scope(
+        session, brands=brands, categories=categories, groups=groups, articles=articles
+    )
+
+    # ISO-недели (пн-вс), новейшая первой; guard на объём.
+    first_monday = start_date - timedelta(days=start_date.weekday())
+    weeks: list[tuple[date, date]] = []
+    cur = first_monday
+    while cur <= end_date:
+        weeks.append((cur, cur + timedelta(days=6)))
+        cur += timedelta(days=7)
+    if len(weeks) > 54:
+        raise HTTPException(400, "период больше года — сузьте диапазон")
+    weeks.reverse()
+
+    scope_sig = hashlib.sha1(
+        f"{sorted(store_ids or [])}|{sorted(nm_scope) if nm_scope is not None else 'all'}|{reporting_mode}".encode()
+    ).hexdigest()[:16]
+    today = date.today()
+    r = redis_async.from_url(cfg.redis_url, decode_responses=True)
+
+    async def week_totals(w_from: date, w_to: date) -> dict[str, Any]:
+        closed = w_to < today
+        key = f"summary:week:{scope_sig}:{w_from.isoformat()}"
+        if closed:
+            cached = await r.get(key)
+            if cached:
+                return _json.loads(cached)
+        rep = await build_summary_report(
+            session, start_date=w_from, end_date=min(w_to, end_date),
+            reporting_mode=reporting_mode, nm_scope=nm_scope,
+        )
+        totals = rep["totals"]
+        if closed:
+            await r.set(key, _json.dumps(totals), ex=6 * 3600)
+        return totals
+
+    try:
+        rows = []
+        for w_from, w_to in weeks:
+            iso = w_from.isocalendar()
+            rows.append({
+                "week_from": w_from.isoformat(),
+                "week_to": w_to.isoformat(),
+                "label": f"{iso.week} неделя ({w_from.strftime('%d.%m.%Y')} - {w_to.strftime('%d.%m.%Y')})",
+                "closed": w_to < today,
+                "totals": await week_totals(w_from, w_to),
+            })
+        period_rep = await build_summary_report(
+            session, start_date=start_date, end_date=end_date,
+            reporting_mode=reporting_mode, nm_scope=nm_scope,
+        )
+    finally:
+        await r.aclose()
+
+    return {
+        "reporting_mode": reporting_mode,
+        "period_totals": period_rep["totals"],
+        "weeks": rows,
+    }
+
+
 # Человекочитаемые колонки экспорта «Исходной таблицы» (DEV-094).
 _SUMMARY_EXPORT_COLUMNS: list[tuple[str, str]] = [
     ("nm_id", "Артикул WB"), ("vendor_code", "Артикул продавца"), ("store", "Магазин"),
@@ -1212,6 +1307,7 @@ async def ad_campaigns_analytics(
                 func.coalesce(func.sum(WbAdStatsDaily.sum_spent), 0).label("spent"),
                 func.coalesce(func.sum(WbAdStatsDaily.atbs), 0).label("atbs"),
                 func.coalesce(func.sum(WbAdStatsDaily.orders), 0).label("orders"),
+                func.coalesce(func.sum(WbAdStatsDaily.shks), 0).label("shks"),
                 func.coalesce(func.sum(WbAdStatsDaily.sum_price), 0).label("revenue"),
             )
             .where(
@@ -1231,39 +1327,205 @@ async def ad_campaigns_analytics(
     def _f(v: Any) -> float:
         return float(v or 0)
 
+    # DEV-096: цены до/после СПП и остатки per кампания — через nm-состав
+    # кампании за период (какие карточки реально крутились в РК).
+    nm_by_camp_rows = (
+        await session.execute(
+            select(WbAdStatsDaily.advert_id, WbAdStatsDaily.nm_id)
+            .where(
+                WbAdStatsDaily.stat_date >= start_date,
+                WbAdStatsDaily.stat_date <= end_date,
+                WbAdStatsDaily.nm_id.isnot(None),
+                *nm_pred,
+            )
+            .group_by(WbAdStatsDaily.advert_id, WbAdStatsDaily.nm_id)
+        )
+    ).all()
+    nm_by_camp: dict[int, set[int]] = {}
+    all_nm: set[int] = set()
+    for r in nm_by_camp_rows:
+        nm_by_camp.setdefault(int(r.advert_id), set()).add(int(r.nm_id))
+        all_nm.add(int(r.nm_id))
+
+    prices: dict[int, tuple[float, float]] = {}
+    stocks: dict[int, int] = {}
+    if all_nm:
+        from app.db.models import WbCardPrice
+
+        price_rows = (
+            await session.execute(
+                select(WbCardPrice.nm_id, WbCardPrice.basic_price, WbCardPrice.buyer_price)
+                .where(WbCardPrice.nm_id.in_(all_nm))
+            )
+        ).all()
+        prices = {int(r.nm_id): (_f(r.basic_price), _f(r.buyer_price)) for r in price_rows}
+        last_dt = (
+            await session.execute(select(func.max(WbStockSnapshot.snapshot_dt)))
+        ).scalar_one_or_none()
+        if last_dt is not None:
+            st_rows = (
+                await session.execute(
+                    select(
+                        WbStockSnapshot.nm_id,
+                        func.coalesce(func.sum(WbStockSnapshot.quantity_full), 0).label("q"),
+                    )
+                    .where(WbStockSnapshot.snapshot_dt == last_dt, WbStockSnapshot.nm_id.in_(all_nm))
+                    .group_by(WbStockSnapshot.nm_id)
+                )
+            ).all()
+            stocks = {int(r.nm_id): int(r.q) for r in st_rows}
+
+    def _camp_extras(advert_id: int) -> dict[str, Any]:
+        nms = nm_by_camp.get(advert_id, set())
+        pr = [prices[n] for n in nms if n in prices and prices[n][0] > 0]
+        before = sum(x[0] for x in pr) / len(pr) if pr else None
+        after_list = [x[1] for x in pr if x[1] > 0]
+        after = sum(after_list) / len(after_list) if after_list else None
+        return {
+            "nm_count": len(nms),
+            "price_before_spp": round(before, 2) if before else None,
+            "price_after_spp": round(after, 2) if after else None,
+            "spp_pct": round((1 - after / before) * 100, 2) if before and after else None,
+            "stock_wh": sum(stocks.get(n, 0) for n in nms) or None,
+        }
+
+    # Зона показа (как TS «По зонам показа»): 6=Поиск; 4,5,7,8=Полки+Каталог;
+    # 9=Единая — та же группировка, что в РНП-матрице.
+    def _zone(ctype: int | None) -> str:
+        if ctype == 6:
+            return "Поиск"
+        if ctype == 9:
+            return "Единая"
+        if ctype in (4, 5, 7, 8):
+            return "Полки + Каталог"
+        return "Прочее"
+
     items = []
     for r in rows:
         views, clicks, spent = int(r.views), int(r.clicks), _f(r.spent)
         orders, revenue = int(r.orders), _f(r.revenue)
+        atbs, shks = int(r.atbs), int(r.shks)
         c = camps.get(r.advert_id)
         items.append(
             {
                 "advert_id": r.advert_id,
                 "name": (c.name if c else None) or f"РК {r.advert_id}",
                 "type": _ADV_TYPE.get(c.type if c else None, "—"),
+                "zone": _zone(c.type if c else None),
                 "status": _ADV_STATUS.get(c.status if c else None, "—"),
                 "views": views,
                 "clicks": clicks,
                 "ctr": round(clicks / views * 100, 2) if views else 0.0,
                 "cpc": round(spent / clicks, 2) if clicks else 0.0,
+                "cpm": round(spent / views * 1000, 2) if views else 0.0,
                 "spent": round(spent, 2),
-                "atbs": int(r.atbs),
+                "atbs": atbs,
+                "atb_pct": round(atbs / clicks * 100, 2) if clicks else 0.0,
                 "orders": orders,
+                "order_pct": round(orders / atbs * 100, 2) if atbs else 0.0,
+                "shks": shks,
                 "cr": round(orders / clicks * 100, 2) if clicks else 0.0,
+                "cpo": round(spent / orders, 2) if orders else 0.0,
+                "cpl": round(spent / atbs, 2) if atbs else 0.0,
+                "cps": round(spent / shks, 2) if shks else 0.0,
                 "revenue": round(revenue, 2),
                 "drr": round(spent / revenue * 100, 2) if revenue else 0.0,
+                **_camp_extras(int(r.advert_id)),
             }
         )
     items.sort(key=lambda x: x["spent"], reverse=True)
+
+    # DEV-096: свод «По зонам показа».
+    zones: dict[str, dict[str, Any]] = {}
+    for x in items:
+        z = zones.setdefault(x["zone"], {
+            "zone": x["zone"], "campaigns": 0, "views": 0, "clicks": 0,
+            "spent": 0.0, "atbs": 0, "orders": 0, "shks": 0, "revenue": 0.0,
+        })
+        z["campaigns"] += 1
+        for f in ("views", "clicks", "atbs", "orders", "shks"):
+            z[f] += x[f]
+        z["spent"] = round(z["spent"] + x["spent"], 2)
+        z["revenue"] = round(z["revenue"] + x["revenue"], 2)
+    for z in zones.values():
+        z["ctr"] = round(z["clicks"] / z["views"] * 100, 2) if z["views"] else 0.0
+        z["cpc"] = round(z["spent"] / z["clicks"], 2) if z["clicks"] else 0.0
+        z["cpm"] = round(z["spent"] / z["views"] * 1000, 2) if z["views"] else 0.0
+        z["atb_pct"] = round(z["atbs"] / z["clicks"] * 100, 2) if z["clicks"] else 0.0
+        z["order_pct"] = round(z["orders"] / z["atbs"] * 100, 2) if z["atbs"] else 0.0
+        z["cr"] = round(z["orders"] / z["clicks"] * 100, 2) if z["clicks"] else 0.0
+        z["cpo"] = round(z["spent"] / z["orders"], 2) if z["orders"] else 0.0
+        z["cpl"] = round(z["spent"] / z["atbs"], 2) if z["atbs"] else 0.0
+        z["cps"] = round(z["spent"] / z["shks"], 2) if z["shks"] else 0.0
+        z["drr"] = round(z["spent"] / z["revenue"] * 100, 2) if z["revenue"] else 0.0
+
     tot = {
         "spent": round(sum(x["spent"] for x in items), 2),
         "revenue": round(sum(x["revenue"] for x in items), 2),
         "orders": sum(x["orders"] for x in items),
         "clicks": sum(x["clicks"] for x in items),
         "views": sum(x["views"] for x in items),
+        "atbs": sum(x["atbs"] for x in items),
+        "shks": sum(x["shks"] for x in items),
     }
     tot["drr"] = round(tot["spent"] / tot["revenue"] * 100, 2) if tot["revenue"] else 0.0
-    return {"items": items, "totals": tot}
+    zone_order = {"Поиск": 0, "Полки + Каталог": 1, "Единая": 2, "Прочее": 3}
+    return {
+        "items": items,
+        "totals": tot,
+        "zones": sorted(zones.values(), key=lambda z: zone_order.get(z["zone"], 9)),
+    }
+
+
+@router.get("/api/ad-campaigns/analytics/daily", dependencies=[Depends(require_director_or_head)])
+async def ad_campaign_daily(
+    advert_id: Annotated[int, Query()],
+    start_date: Annotated[date, Query()],
+    end_date: Annotated[date, Query()],
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Drill «Показать по дням» для кампании (DEV-096, как TS)."""
+    rows = (
+        await session.execute(
+            select(
+                WbAdStatsDaily.stat_date,
+                func.coalesce(func.sum(WbAdStatsDaily.views), 0).label("views"),
+                func.coalesce(func.sum(WbAdStatsDaily.clicks), 0).label("clicks"),
+                func.coalesce(func.sum(WbAdStatsDaily.sum_spent), 0).label("spent"),
+                func.coalesce(func.sum(WbAdStatsDaily.atbs), 0).label("atbs"),
+                func.coalesce(func.sum(WbAdStatsDaily.orders), 0).label("orders"),
+                func.coalesce(func.sum(WbAdStatsDaily.shks), 0).label("shks"),
+                func.coalesce(func.sum(WbAdStatsDaily.sum_price), 0).label("revenue"),
+            )
+            .where(
+                WbAdStatsDaily.advert_id == advert_id,
+                WbAdStatsDaily.stat_date >= start_date,
+                WbAdStatsDaily.stat_date <= end_date,
+            )
+            .group_by(WbAdStatsDaily.stat_date)
+            .order_by(WbAdStatsDaily.stat_date.desc())
+        )
+    ).all()
+    days = []
+    for r in rows:
+        views, clicks, spent = int(r.views), int(r.clicks), float(r.spent or 0)
+        atbs, orders, shks, revenue = int(r.atbs), int(r.orders), int(r.shks), float(r.revenue or 0)
+        days.append({
+            "date": r.stat_date.isoformat(),
+            "views": views, "clicks": clicks, "spent": round(spent, 2),
+            "atbs": atbs, "orders": orders, "shks": shks, "revenue": round(revenue, 2),
+            "ctr": round(clicks / views * 100, 2) if views else 0.0,
+            "cpc": round(spent / clicks, 2) if clicks else 0.0,
+            "cpm": round(spent / views * 1000, 2) if views else 0.0,
+            "atb_pct": round(atbs / clicks * 100, 2) if clicks else 0.0,
+            "order_pct": round(orders / atbs * 100, 2) if atbs else 0.0,
+            "cr": round(orders / clicks * 100, 2) if clicks else 0.0,
+            "cpo": round(spent / orders, 2) if orders else 0.0,
+            "cpl": round(spent / atbs, 2) if atbs else 0.0,
+            "cps": round(spent / shks, 2) if shks else 0.0,
+            "drr": round(spent / revenue * 100, 2) if revenue else 0.0,
+        })
+    return {"advert_id": advert_id, "days": days}
 
 
 @router.get("/api/stocks/by-warehouse", dependencies=[Depends(require_director_or_head)])

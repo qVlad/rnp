@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { PeriodProvider } from "@/contexts/PeriodContext";
@@ -125,7 +126,19 @@ function DirectorOrHead({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-export default function App() {
+export default 
+// TASK-DEV-096: /truestats — включает UX-профиль меню «TrueStats» (только
+// разделы, эквивалентные TS) и ведёт на дашборд. Hard-reload, чтобы Layout
+// перечитал профиль из localStorage.
+function TruestatsEntry() {
+  useEffect(() => {
+    try { localStorage.setItem("sidebar.profile.v1", "truestats"); } catch {}
+    window.location.replace("/");
+  }, []);
+  return null;
+}
+
+function App() {
   return (
     <AuthProvider>
       <PeriodProvider>
@@ -164,6 +177,7 @@ export default function App() {
           <Route path="rnp-settings" element={<DirectorOrHead><RnpSettings /></DirectorOrHead>} />
           <Route path="files" element={<DirectorOrHead><Files /></DirectorOrHead>} />
           <Route path="data-revisions" element={<DirectorOrHead><DataRevisions /></DirectorOrHead>} />
+          <Route path="truestats" element={<TruestatsEntry />} />
           <Route path="cashflow-calendar" element={<DirectorOrHead><CashflowCalendar /></DirectorOrHead>} />
           <Route path="metric-plan-fact" element={<DirectorOrHead><MetricPlanFact /></DirectorOrHead>} />
           <Route path="pnl-reconciliation" element={<PnLReconciliation />} />

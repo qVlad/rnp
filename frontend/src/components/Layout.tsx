@@ -178,7 +178,7 @@ const PROFILE_KEY = "sidebar.profile.v1";
 // «rop» — РОП-обзор: сводки + плановость + scoreboard'ы по менеджерам.
 // «manager» — узкое меню менеджера (SKU + Plans read).
 // «bookkeeper» — эмуляция bookkeeper-режима (для director/head — посмотреть глазами бухгалтера).
-type Profile = "full" | "owner" | "rop" | "manager" | "bookkeeper";
+type Profile = "full" | "owner" | "rop" | "manager" | "bookkeeper" | "truestats";
 
 const PROFILE_LABELS: Record<Profile, string> = {
   full: "Полный",
@@ -186,6 +186,7 @@ const PROFILE_LABELS: Record<Profile, string> = {
   rop: "РОП",
   manager: "Менеджер",
   bookkeeper: "Бухгалтер",
+  truestats: "TrueStats",
 };
 
 // Whitelist of paths visible in each profile. «full» — no extra filter.
@@ -238,6 +239,29 @@ const PROFILE_WHITELIST: Record<Exclude<Profile, "full">, Set<string>> = {
     "/docs",
     "/features",
   ]),
+  // TASK-DEV-096: разделы, эквивалентные TrueStats (группы Оцифровка/Финансы/
+  // Товары/Реклама-РНП совпадают с TS по смыслу). Роут /truestats включает
+  // этот профиль. Наши уникальные фичи (сверки, налоги, юнит-план, A/B и т.д.)
+  // остаются в «Полном».
+  truestats: new Set([
+    "/",
+    "/summary-report",
+    "/pnl",
+    "/business-summary",
+    "/metric-plan-fact",
+    "/deductions",
+    "/cash-flow",
+    "/operations",
+    "/finance-extras",
+    "/files",
+    "/cost-history",
+    "/product-groups",
+    "/stocks",
+    "/rnp-module",
+    "/rnp-settings",
+    "/ad-campaigns",
+    "/ads-heatmap",
+  ]),
 };
 
 function readProfile(): Profile {
@@ -245,7 +269,7 @@ function readProfile(): Profile {
     const v = localStorage.getItem(PROFILE_KEY);
     if (
       v === "full" || v === "owner" || v === "rop" ||
-      v === "manager" || v === "bookkeeper"
+      v === "manager" || v === "bookkeeper" || v === "truestats"
     ) {
       return v;
     }

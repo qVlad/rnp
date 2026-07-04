@@ -13,7 +13,7 @@ from fastapi import APIRouter, Body, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Product, RnpSkuSelection
+from app.db.models import AppSetting, Product, RnpSkuSelection
 from app.services.auth import (
     CurrentUser,
     current_brands_filter,
@@ -123,3 +123,54 @@ async def set_sku_selection(
         updated += 1
     await session.commit()
     return {"updated": updated}
+
+
+_FORECAST_KEY = "rnp_forecast_window"  # "7" | "28" | "period"
+
+
+@router.get("/forecast-window", dependencies=[Depends(require_director_or_head)])
+async def get_forecast_window(
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Окно усреднения прогнозных коэффициентов РНП (DEV-096, как TS 7/28 дней).
+
+    "7"/"28" — последние полные календарные недели с финотчётом;
+    "period" — коэффициенты по выбранному в матрице периоду (наше поведение
+    по умолчанию до DEV-096).
+    """
+    tid = get_tenant(session)
+    # pitfall #16: AppSetting без tenant-mixin — фильтруем явно.
+    row = (
+        await session.execute(
+            select(AppSetting.value).where(
+                AppSetting.tenant_id == tid, AppSetting.key == _FORECAST_KEY
+            )
+        )
+    ).scalar_one_or_none()
+    return {"window": row if row in ("7", "28", "period") else "period"}
+
+
+@router.put("/forecast-window", dependencies=[Depends(require_director_or_head)])
+async def set_forecast_window(
+    payload: dict[str, Any] = Body(...),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    window = str(payload.get("window") or "")
+    if window not in ("7", "28", "period"):
+        from fastapi import HTTPException
+
+        raise HTTPException(422, "window ∈ 7|28|period")
+    tid = get_tenant(session)
+    row = (
+        await session.execute(
+            select(AppSetting).where(
+                AppSetting.tenant_id == tid, AppSetting.key == _FORECAST_KEY
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        session.add(AppSetting(tenant_id=tid, key=_FORECAST_KEY, value=window))
+    else:
+        row.value = window
+    await session.commit()
+    return {"window": window}

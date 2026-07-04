@@ -12,6 +12,7 @@ const blank = () => ({
   cost_rub: 0,
   packaging_rub: 0,
   fulfillment_rub: 0,
+  vat_rub: 0,
 });
 
 export default function CostHistory() {
@@ -44,6 +45,7 @@ export default function CostHistory() {
         cost_rub: Number(form.cost_rub) || 0,
         packaging_rub: Number(form.packaging_rub) || 0,
         fulfillment_rub: Number(form.fulfillment_rub) || 0,
+        vat_rub: Number(form.vat_rub) || 0,
       };
       return editingId
         ? api.updateCostHistory(editingId, payload)
@@ -92,6 +94,29 @@ export default function CostHistory() {
               value={filterNm}
               onChange={(e: any) => setFilterNm(e.target.value)}
             />
+            <a className="btn text-xs" href={api.excelExportUrl("cogs")}>⭳ Экспорт</a>
+            <label className="btn text-xs cursor-pointer">
+              ⭱ Импорт
+              <input
+                type="file"
+                accept=".xlsx"
+                className="hidden"
+                onChange={async (e: any) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  try {
+                    const res = await api.excelImport("cogs", f);
+                    alert(`Импортировано: создано ${(res as any).created ?? 0}, обновлено ${(res as any).updated ?? 0}`);
+                    qc.invalidateQueries({ queryKey: ["cost-history"] });
+                    qc.invalidateQueries({ queryKey: ["cost-history-missing"] });
+                  } catch (err) {
+                    alert(`Ошибка импорта: ${(err as Error).message}`);
+                  } finally {
+                    e.target.value = "";
+                  }
+                }}
+              />
+            </label>
           </div>
         }
       />
@@ -144,7 +169,7 @@ export default function CostHistory() {
         <h2 className="font-medium mb-3">
           {editingId ? `Редактировать запись #${editingId}` : "Добавить запись"}
         </h2>
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
           <Field label="nmId">
             <input
               className="input"
@@ -192,6 +217,15 @@ export default function CostHistory() {
               step="0.01"
             />
           </Field>
+          <Field label="НДС, ₽ (справочно)">
+            <input
+              type="number"
+              className="input"
+              value={form.vat_rub}
+              onChange={(e: any) => setForm({ ...form, vat_rub: e.target.value })}
+              step="0.01"
+            />
+          </Field>
         </div>
         <div className="flex gap-2 mt-4">
           <button
@@ -229,6 +263,7 @@ export default function CostHistory() {
                     <th className="text-right p-2">Себ-сть</th>
                     <th className="text-right p-2">Упаковка</th>
                     <th className="text-right p-2">ФФ</th>
+                    <th className="text-right p-2">НДС</th>
                     <th className="text-right p-2">Итого/ед.</th>
                     <th className="p-2"></th>
                   </tr>
@@ -244,6 +279,9 @@ export default function CostHistory() {
                       <td className="p-2 text-right font-mono">
                         {fmtRub(r.fulfillment_rub)}
                       </td>
+                      <td className="p-2 text-right font-mono text-muted">
+                        {fmtRub(r.vat_rub || 0)}
+                      </td>
                       <td className="p-2 text-right font-mono font-semibold">
                         {fmtRub(r.total_unit_cost)}
                       </td>
@@ -257,6 +295,7 @@ export default function CostHistory() {
                               cost_rub: r.cost_rub,
                               packaging_rub: r.packaging_rub,
                               fulfillment_rub: r.fulfillment_rub,
+                              vat_rub: r.vat_rub || 0,
                             });
                             setEditingId(r.id);
                             window.scrollTo({ top: 0, behavior: "smooth" });

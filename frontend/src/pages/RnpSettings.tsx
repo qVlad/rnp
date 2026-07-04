@@ -65,6 +65,9 @@ export default function RnpSettings() {
         title="Настройки РНП"
         subtitle="Какие артикулы показывать в модуле РНП. Пока выбор не сделан — показываются все."
       />
+
+      {/* DEV-096: окно усреднения прогнозных коэффициентов (как TS «Настройки расчёта») */}
+      <ForecastWindowCard />
       <div className="flex flex-wrap items-center gap-2">
         <input className="input" placeholder="Поиск по артикулу…" value={q} onChange={(e) => setQ(e.target.value)} />
         <select className="input" value={brand} onChange={(e) => setBrand(e.target.value)}>
@@ -115,6 +118,47 @@ export default function RnpSettings() {
             {shown.length === 0 && <tr><td colSpan={5} className="p-4 text-center text-muted">Ничего не найдено.</td></tr>}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+
+// DEV-096: настройка расчёта прогноза (окно усреднения коэффициентов).
+function ForecastWindowCard() {
+  const qc = useQueryClient();
+  const q = useQuery({
+    queryKey: ["rnp-forecast-window"],
+    queryFn: () => api.rnpForecastWindow(),
+  });
+  const save = useMutation({
+    mutationFn: (w: "7" | "28" | "period") => api.rnpForecastWindowSave(w),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["rnp-forecast-window"] });
+      qc.invalidateQueries({ queryKey: ["rnp-matrix"] });
+    },
+  });
+  const cur = q.data?.window ?? "period";
+  return (
+    <div className="card p-4 flex flex-col gap-2">
+      <div className="text-sm font-medium">Настройки расчёта прогноза</div>
+      <div className="text-xs text-muted max-w-2xl">
+        Прогнозные маржинальность/прибыль/ROI в матрице РНП считаются по средним
+        коэффициентам (выкуп, себестоимость, налог, OPEX на день). Окно усреднения:
+        «7 дней» — последняя полная неделя (быстрее реагирует), «28 дней» — последние
+        4 полные недели (сглаживает колебания), «Период матрицы» — по выбранному периоду.
+      </div>
+      <div className="flex gap-2">
+        {([["7", "7 дней"], ["28", "28 дней"], ["period", "Период матрицы"]] as const).map(([k, label]) => (
+          <button
+            key={k}
+            className={`btn text-xs ${cur === k ? "btn-primary" : ""}`}
+            disabled={save.isPending}
+            onClick={() => save.mutate(k)}
+          >
+            {label}
+          </button>
+        ))}
       </div>
     </div>
   );

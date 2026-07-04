@@ -57,7 +57,7 @@ from app.db.models import (
 
 SCHEMAS: dict[str, list[str]] = {
     "products": ["nm_id", "vendor_code", "subject", "brand", "category", "is_archived"],
-    "cogs": ["nm_id", "valid_from", "cost_rub", "packaging_rub", "fulfillment_rub"],
+    "cogs": ["nm_id", "valid_from", "cost_rub", "packaging_rub", "fulfillment_rub", "vat_rub"],
     "opex_categories": ["name", "kind", "is_fixed", "in_operating", "cf_section"],
     "opex_entries": ["id", "entry_date", "category_name", "amount", "contractor", "comment"],
     "artificial_orders": [
@@ -238,7 +238,7 @@ async def _export_cogs(session: AsyncSession) -> list[list[Any]]:
     rows = (
         await session.execute(select(Cogs).order_by(Cogs.nm_id, Cogs.valid_from))
     ).scalars().all()
-    return [[c.nm_id, c.valid_from, c.cost_rub, c.packaging_rub, c.fulfillment_rub] for c in rows]
+    return [[c.nm_id, c.valid_from, c.cost_rub, c.packaging_rub, c.fulfillment_rub, c.vat_rub] for c in rows]
 
 
 async def _import_cogs(
@@ -256,6 +256,7 @@ async def _import_cogs(
             cost = _to_decimal(r.get("cost_rub")) or Decimal(0)
             pack = _to_decimal(r.get("packaging_rub")) or Decimal(0)
             ful = _to_decimal(r.get("fulfillment_rub")) or Decimal(0)
+            vat = _to_decimal(r.get("vat_rub")) or Decimal(0)
             await session.execute(
                 pg_insert(Product)
                 .values(tenant_id=get_tenant(session), nm_id=nm_id)
@@ -268,11 +269,12 @@ async def _import_cogs(
                 existing.cost_rub = cost
                 existing.packaging_rub = pack
                 existing.fulfillment_rub = ful
+                existing.vat_rub = vat
                 updated += 1
             else:
                 session.add(Cogs(
                     nm_id=nm_id, valid_from=valid_from,
-                    cost_rub=cost, packaging_rub=pack, fulfillment_rub=ful,
+                    cost_rub=cost, packaging_rub=pack, fulfillment_rub=ful, vat_rub=vat,
                 ))
                 inserted += 1
         except Exception as e:

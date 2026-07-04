@@ -70,6 +70,21 @@ export default function ProductPage() {
     queryFn: () => api.unitPlanDetail(nm),
     enabled: Number.isFinite(nm) && nm > 0,
   });
+  // DEV-096 (TS-паритет карточки): аналитика по размерам + наличие по складам.
+  const sizesQ = useQuery<any>({
+    queryKey: ["product-sizes", nm, from, to],
+    queryFn: () => api.unitSizes(nm, { start: from, end: to }),
+    enabled: Number.isFinite(nm) && nm > 0,
+  });
+  const whQ = useQuery({
+    queryKey: ["stocks-by-warehouse"],
+    queryFn: () => api.stocksByWarehouse(),
+    enabled: Number.isFinite(nm) && nm > 0,
+  });
+  const whRows = useMemo(
+    () => (whQ.data?.items ?? []).filter((x: any) => Number(x.nm_id) === nm && x.qty > 0),
+    [whQ.data, nm],
+  );
 
   const row = useMemo(() => {
     const items: any[] = unitsQ.data?.items || unitsQ.data?.rows || [];
@@ -312,6 +327,80 @@ export default function ProductPage() {
           )}
         </section>
       </div>
+
+      {/* DEV-096: аналитика артикула по размерам (как TS) */}
+      <section className="card">
+        <h3 className="text-sm font-semibold mb-2">Аналитика по размерам</h3>
+        {sizesQ.isLoading && <div className="text-muted text-sm">Загружаю…</div>}
+        {sizesQ.data && (sizesQ.data.sizes ?? []).length === 0 && (
+          <div className="text-muted text-sm">Нет данных по размерам за период.</div>
+        )}
+        {sizesQ.data && (sizesQ.data.sizes ?? []).length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-muted text-xs border-b border-border">
+                  <th className="p-2">Размер</th>
+                  <th className="p-2 text-right">Заказы</th>
+                  <th className="p-2 text-right">Продано, шт</th>
+                  <th className="p-2 text-right">Возвраты, шт</th>
+                  <th className="p-2 text-right">% выкупа</th>
+                  <th className="p-2 text-right">Выручка</th>
+                  <th className="p-2 text-right">К перечислению</th>
+                  <th className="p-2 text-right">Остаток</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sizesQ.data.sizes.map((sz: any) => (
+                  <tr key={sz.tech_size} className="border-b border-border/50">
+                    <td className="p-2 font-mono">{sz.tech_size || "—"}</td>
+                    <td className="p-2 text-right">{fmtNum(sz.orders)}</td>
+                    <td className="p-2 text-right">{fmtNum(sz.qty_sale)}</td>
+                    <td className="p-2 text-right">{fmtNum(sz.qty_return)}</td>
+                    <td className="p-2 text-right">{fmtPct(sz.buyout_pct)}</td>
+                    <td className="p-2 text-right">{fmtRub(sz.revenue_net)}</td>
+                    <td className="p-2 text-right">{fmtRub(sz.ppvz_net)}</td>
+                    <td className="p-2 text-right">{fmtNum(sz.stock)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* DEV-096: наличие товара на складах WB (как TS) */}
+      <section className="card">
+        <h3 className="text-sm font-semibold mb-2">Наличие на складах</h3>
+        {whQ.isLoading && <div className="text-muted text-sm">Загружаю…</div>}
+        {!whQ.isLoading && whRows.length === 0 && (
+          <div className="text-muted text-sm">Остатков на складах WB нет.</div>
+        )}
+        {whRows.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-muted text-xs border-b border-border">
+                  <th className="p-2">Склад</th>
+                  <th className="p-2 text-right">Остаток, шт</th>
+                  <th className="p-2 text-right">К клиенту</th>
+                  <th className="p-2 text-right">От клиента</th>
+                </tr>
+              </thead>
+              <tbody>
+                {whRows.map((w: any) => (
+                  <tr key={w.warehouse} className="border-b border-border/50">
+                    <td className="p-2">{w.warehouse}</td>
+                    <td className="p-2 text-right">{fmtNum(w.qty)}</td>
+                    <td className="p-2 text-right">{fmtNum(w.in_way_to_client)}</td>
+                    <td className="p-2 text-right">{fmtNum(w.in_way_from_client)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </div>
   );
 }

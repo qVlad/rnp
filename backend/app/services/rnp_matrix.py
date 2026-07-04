@@ -229,11 +229,34 @@ async def build_rnp_matrix(
         slot["ad_orders"] += _f(r.ad_orders)
         slot["shks"] += _f(r.shks)
 
-    # ── Коэффициенты прибыли периода (с опер.расходами) из summary-движка ──
+    # ── Коэффициенты прибыли (с опер.расходами) из summary-движка ─────────
+    # DEV-096 (как TS «Настройки расчёта»): окно усреднения — «7»/«28» дней
+    # по последним ПОЛНЫМ календарным неделям (пн-вс) либо «period» (по
+    # выбранному периоду матрицы, наше поведение по умолчанию).
+    from app.db.models import AppSetting  # noqa: WPS433
     from app.services.summary_metrics import build_summary_report  # noqa: WPS433
+    from app.services.tenant_context import get_tenant  # noqa: WPS433
+
+    coef_from, coef_to = date_from, date_to
+    tid = get_tenant(session)
+    if tid is not None:
+        # pitfall #16: AppSetting без tenant-mixin — фильтруем явно.
+        window = (
+            await session.execute(
+                select(AppSetting.value).where(
+                    AppSetting.tenant_id == tid,
+                    AppSetting.key == "rnp_forecast_window",
+                )
+            )
+        ).scalar_one_or_none()
+        if window in ("7", "28"):
+            today = date.today()
+            last_sunday = today - timedelta(days=today.weekday() + 1)
+            coef_to = last_sunday
+            coef_from = coef_to - timedelta(days=int(window) - 1)
 
     summ = await build_summary_report(
-        session, start_date=date_from, end_date=date_to,
+        session, start_date=coef_from, end_date=coef_to,
         reporting_mode="operational", nm_scope=nm_scope,
     )
     st = summ["totals"]

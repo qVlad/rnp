@@ -14,6 +14,7 @@ import { useFilters, filterKey } from "@/contexts/FilterContext";
 import PageHeader from "@/components/PageHeader";
 import SummaryTiles from "@/components/SummaryTiles";
 import SummaryTable from "@/components/SummaryTable";
+import WeeklySummaryTable from "@/components/WeeklySummaryTable";
 import CommentThread from "@/components/CommentThread";
 
 // Предыдущий период той же длины, идущий встык перед основным.
@@ -31,6 +32,14 @@ export default function SummaryReport() {
   const { range, setPeriod } = usePeriod();
   const autoCmp = useMemo(() => prevPeriod(range.from, range.to), [range.from, range.to]);
   const [cmpOverride, setCmpOverride] = useState<{ from: string; to: string } | null>(null);
+  // DEV-096: вид «По неделям» (как TS /week) — строки-недели вместо per-SKU.
+  const [view, setView] = useState<"sku" | "weeks">(() =>
+    (localStorage.getItem("summaryReport.view.v1") as "sku" | "weeks") || "sku",
+  );
+  const switchView = (v: "sku" | "weeks") => {
+    setView(v);
+    try { localStorage.setItem("summaryReport.view.v1", v); } catch {}
+  };
   const cmp = cmpOverride ?? autoCmp;
 
   const { filters, toParams } = useFilters();
@@ -60,8 +69,16 @@ export default function SummaryReport() {
           }}
         />
         <GlobalFilterBar />
+        <div className="ml-auto flex gap-1">
+          {([["sku", "По артикулам"], ["weeks", "По неделям"]] as const).map(([k, label]) => (
+            <button key={k} className={`btn text-xs ${view === k ? "btn-primary" : ""}`} onClick={() => switchView(k)}>
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
-      {q.isLoading && <div className="text-muted text-sm">Загружаю…</div>}
+      {view === "weeks" && <WeeklySummaryTable from={range.from} to={range.to} />}
+      {view === "sku" && q.isLoading && <div className="text-muted text-sm">Загружаю…</div>}
       {q.error && <div className="text-danger text-sm">Ошибка: {String(q.error)}</div>}
 
       {q.data?.estimated_from && (
@@ -72,7 +89,7 @@ export default function SummaryReport() {
         </div>
       )}
 
-      {q.data && (
+      {view === "sku" && q.data && (
         <>
           <div className="flex items-center gap-2 text-sm font-medium">
             Общие показатели

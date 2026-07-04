@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
@@ -212,6 +212,15 @@ export default function PnL() {
       api.pnl(from, to, granularity, compare, null, reportingMode, pnlFilters) as Promise<any>,
   });
 
+  // DEV-096: постатейная детализация OPEX (как TS «Сводный по бизнесу») —
+  // ленивая, грузится при раскрытии строки OPEX.
+  const [opexOpen, setOpexOpen] = useState(false);
+  const qOpex = useQuery({
+    queryKey: ["pnl-opex-breakdown", from, to, granularity, gfk],
+    queryFn: () => api.pnlOpexBreakdown(from, to, granularity, pnlFilters.stores),
+    enabled: opexOpen,
+  });
+
   const isBrandsScope = q.data?.scope === "brands";
   const prevTotals = q.data?.previous?.totals;
 
@@ -406,12 +415,23 @@ export default function PnL() {
                 const margin = line.marginKey
                   ? q.data.totals?.[line.marginKey]
                   : undefined;
+                const opexToggle = k === "opex_operating" && (
+                  <button
+                    className="mr-1 text-accent"
+                    title="Постатейная детализация (категории OPEX)"
+                    onClick={() => setOpexOpen(!opexOpen)}
+                  >
+                    {opexOpen ? "▾" : "▸"}
+                  </button>
+                );
                 return (
-                  <tr key={k} className={rowCls}>
+                  <Fragment key={k}>
+                  <tr className={rowCls}>
                     <td
                       className="p-2 sticky left-0 bg-surface"
                       title={line.hint || undefined}
                     >
+                      {opexToggle}
                       {line.label}
                       {line.hint && (
                         <span
@@ -467,6 +487,37 @@ export default function PnL() {
                       );
                     })()}
                   </tr>
+                  {k === "opex_operating" && opexOpen && (
+                    <>
+                      {qOpex.isLoading && (
+                        <tr>
+                          <td className="p-2 pl-8 text-muted text-xs" colSpan={99}>Загружаю категории…</td>
+                        </tr>
+                      )}
+                      {(qOpex.data?.categories ?? [])
+                        .filter((c) => c.in_operating)
+                        .map((c) => (
+                          <tr key={`opex-${c.name}`} className="border-t border-border/40 text-muted">
+                            <td className="p-2 pl-8 sticky left-0 bg-surface text-xs">{c.name}</td>
+                            {q.data.rows.map((r: any) => (
+                              <td key={r.period_start} className="text-right p-2 font-mono text-xs">
+                                {fmtRub(c.by_bucket[r.period_start] ?? 0)}
+                              </td>
+                            ))}
+                            <td className="text-right p-2 font-mono text-xs">{fmtRub(c.total)}</td>
+                            {compare && prevTotals && <td colSpan={3} />}
+                          </tr>
+                        ))}
+                      {qOpex.data && qOpex.data.categories.filter((c) => c.in_operating).length === 0 && (
+                        <tr>
+                          <td className="p-2 pl-8 text-muted text-xs" colSpan={99}>
+                            OPEX-записей за период нет (или все категории cashflow-only).
+                          </td>
+                        </tr>
+                      )}
+                    </>
+                  )}
+                  </Fragment>
                 );
               })}
             </tbody>

@@ -158,6 +158,48 @@ export type TenantCabinet = {
   last_active_at: string | null;
 };
 
+// TASK-DEV-096 — расширенная аналитика РК (зоны показа, воронка корзины, CPL/CPS)
+export type AdCampaignRow = {
+  advert_id: number;
+  name: string;
+  type: string;
+  zone: string;
+  status: string;
+  views: number;
+  clicks: number;
+  ctr: number;
+  cpc: number;
+  cpm: number;
+  spent: number;
+  atbs: number;
+  atb_pct: number;
+  orders: number;
+  order_pct: number;
+  shks: number;
+  cr: number;
+  cpo: number;
+  cpl: number;
+  cps: number;
+  revenue: number;
+  drr: number;
+  nm_count: number;
+  price_before_spp: number | null;
+  price_after_spp: number | null;
+  spp_pct: number | null;
+  stock_wh: number | null;
+};
+
+export type AdZoneRow = Omit<AdCampaignRow,
+  "advert_id" | "name" | "type" | "status" | "nm_count" | "price_before_spp" | "price_after_spp" | "spp_pct" | "stock_wh"
+> & { campaigns: number };
+
+export type AdDailyRow = {
+  date: string;
+  views: number; clicks: number; spent: number; atbs: number; orders: number; shks: number;
+  revenue: number; ctr: number; cpc: number; cpm: number; atb_pct: number; order_pct: number;
+  cr: number; cpo: number; cpl: number; cps: number; drr: number;
+};
+
 // TASK-DEV-095 — ревизии WB-отчётов (журнал переподгрузок истории)
 export type DataRevision = {
   id: number;
@@ -314,6 +356,13 @@ export const api = {
       nm_id: number; vendor_code: string | null; brand: string | null;
       category: string | null; subject: string | null; photo_url: string | null; enabled: boolean;
     }> }>(`/api/rnp/sku-selection`),
+  rnpForecastWindow: () =>
+    request<{ window: "7" | "28" | "period" }>("/api/rnp/forecast-window"),
+  rnpForecastWindowSave: (window: "7" | "28" | "period") =>
+    request<{ window: string }>("/api/rnp/forecast-window", {
+      method: "PUT",
+      body: JSON.stringify({ window }),
+    }),
   rnpSkuSelectionSave: (items: Array<{ nm_id: number; enabled: boolean }>) =>
     request<{ updated: number }>(`/api/rnp/sku-selection`, {
       method: "PUT", body: JSON.stringify({ items }),
@@ -1591,6 +1640,37 @@ paymentOrderDelete: (payment_order_id: string) =>
       profit: number; margin_pct: number; roi_pct: number;
     }> }>(`/api/summary-report?${new URLSearchParams({ start_date: start, end_date: end, reporting_mode, ...(filters || {}) })}`),
 
+  // DEV-096 — постатейная детализация OPEX в P&L (как TS «Сводный по бизнесу»).
+  pnlOpexBreakdown: (from: string, to: string, granularity: "day" | "week" | "month", stores?: string) =>
+    request<{
+      from: string;
+      to: string;
+      granularity: string;
+      categories: Array<{
+        name: string;
+        kind: "expense" | "income";
+        in_operating: boolean;
+        total: number;
+        by_bucket: Record<string, number>;
+      }>;
+    }>(
+      `/api/pnl/opex-breakdown?${new URLSearchParams({ from, to, granularity, ...(stores ? { stores } : {}) })}`,
+    ),
+
+  // DEV-096 — сводный отчёт «По неделям» (как TS /week).
+  summaryReportWeekly: (start: string, end: string, filters?: Record<string, string>) =>
+    request<{
+      reporting_mode: string;
+      period_totals: Record<string, number | null>;
+      weeks: Array<{
+        week_from: string;
+        week_to: string;
+        label: string;
+        closed: boolean;
+        totals: Record<string, number | null>;
+      }>;
+    }>(`/api/summary-report/weekly?${new URLSearchParams({ start_date: start, end_date: end, ...(filters || {}) })}`),
+
   filterOptions: (filters?: Record<string, string>) =>
     request<{
       brands: Array<{ value: string; count: number }>;
@@ -1745,11 +1825,15 @@ paymentOrderDelete: (payment_order_id: string) =>
     ),
 
   adCampaignsAnalytics: (start: string, end: string, filters?: Record<string, string>) =>
-    request<{ totals: Record<string, number>; items: Array<{
-      advert_id: number; name: string; type: string; status: string;
-      views: number; clicks: number; ctr: number; cpc: number; spent: number;
-      atbs: number; orders: number; cr: number; revenue: number; drr: number;
-    }> }>(`/api/ad-campaigns/analytics?start_date=${start}&end_date=${end}${filterSuffix(filters)}`),
+    request<{ totals: Record<string, number>; items: AdCampaignRow[]; zones: AdZoneRow[] }>(
+      `/api/ad-campaigns/analytics?start_date=${start}&end_date=${end}${filterSuffix(filters)}`,
+    ),
+
+  // DEV-096 — drill «Показать по дням» для кампании.
+  adCampaignDaily: (advertId: number, start: string, end: string) =>
+    request<{ advert_id: number; days: AdDailyRow[] }>(
+      `/api/ad-campaigns/analytics/daily?advert_id=${advertId}&start_date=${start}&end_date=${end}`,
+    ),
 
   stocksByWarehouse: () =>
     request<{ snapshot_dt: string | null; warehouses: Array<{ warehouse: string; qty: number }>;

@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import BrandAssignment, Product, User
@@ -13,6 +13,7 @@ from app.services.auth import (
     current_brands_filter,
     get_current_user,
     get_db_tenant_scoped,
+    require_director_or_head,
 )
 from app.services.filter_scope import resolve_nm_scope, resolve_store_scope
 from app.services.tenant_context import set_tenant_filter
@@ -256,6 +257,72 @@ async def get_pnl_yoy(
             "rows": prev["rows"],
             "totals": prev["totals"],
         },
+    }
+
+
+@router.get("/opex-breakdown", dependencies=[Depends(require_director_or_head)])
+async def get_pnl_opex_breakdown(
+    date_from: date = Query(alias="from"),
+    date_to: date = Query(alias="to"),
+    granularity: Literal["day", "week", "month"] = "day",
+    stores: str | None = Query(default=None),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Постатейная детализация строки «OPEX» P&L (TASK-DEV-096, как TS
+    «Сводный по бизнесу»): категории OPEX × бакеты периода. Бакеты — те же
+    `_bucket_key`, что в build_pnl, суммы = разложение `opex_operating`
+    (in_operating=True); отдельно `cashflow_only`-категории (справочно, в
+    EBIT не входят). Company-scope: allocations перераспределяют по SKU, но
+    не меняют сумму — простой GROUP BY по категории точен.
+    """
+    from app.db.models import OpexCategory, OpexEntry
+    from app.services.pnl_builder import _bucket_key
+
+    store_ids = await resolve_store_scope(
+        session, stores=stores, user_id=user.id, fallback_tenant_id=user.tenant_id, rbac_brands=None,
+    )
+    if store_ids:
+        set_tenant_filter(session, store_ids)
+
+    rows = (
+        await session.execute(
+            select(
+                OpexCategory.name,
+                OpexCategory.kind,
+                OpexCategory.in_operating,
+                OpexEntry.entry_date,
+                func.coalesce(func.sum(OpexEntry.amount), 0).label("amount"),
+            )
+            .join(OpexEntry, OpexEntry.category_id == OpexCategory.id)
+            .where(OpexEntry.entry_date >= date_from, OpexEntry.entry_date <= date_to)
+            .group_by(OpexCategory.name, OpexCategory.kind, OpexCategory.in_operating, OpexEntry.entry_date)
+        )
+    ).all()
+
+    cats: dict[str, dict] = {}
+    for r in rows:
+        c = cats.setdefault(r.name, {
+            "name": r.name,
+            "kind": r.kind,
+            "in_operating": bool(r.in_operating),
+            "total": 0.0,
+            "by_bucket": {},
+        })
+        b_start, _b_end = _bucket_key(r.entry_date, granularity)
+        key = b_start.isoformat()
+        amt = float(r.amount or 0)
+        # kind=income уменьшает расходы — показываем со знаком минус.
+        signed = -amt if r.kind == "income" else amt
+        c["by_bucket"][key] = round(c["by_bucket"].get(key, 0.0) + signed, 2)
+        c["total"] = round(c["total"] + signed, 2)
+
+    out = sorted(cats.values(), key=lambda c: -abs(c["total"]))
+    return {
+        "from": date_from.isoformat(),
+        "to": date_to.isoformat(),
+        "granularity": granularity,
+        "categories": out,
     }
 
 

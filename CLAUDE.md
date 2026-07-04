@@ -102,7 +102,7 @@ frontend/src/      api/client.ts, contexts/AuthContext, components/Layout, pages
 docker-compose.yml · .env(.example) · .claude/settings.json (permissions)
 ```
 
-## Миграции БД (77 шт., 0001-0077)
+## Миграции БД (90 шт., 0001-0090)
 
 > **Полный список с деталями — [`FEATURES.md`](FEATURES.md) → «Миграции».** Здесь
 > — одна строка на миграцию. Новую миграцию добавляй и сюда (1 строка), и в FEATURES (детали).
@@ -156,6 +156,7 @@ docker-compose.yml · .env(.example) · .claude/settings.json (permissions)
 | 0087 | **rnp_sku_selection** — выбор артикулов для модуля РНП (DEV-094, «Настройки РНП»): нет строк = показывать все |
 | 0088 | **product_mp_mapping** — «Соответствие товаров» (DEV-094): own_sku (свой учёт) → nm_id, вкладка на /off-platform |
 | 0089 | **wb_sync_revision + wb_sync_change** — ревизии WB-отчётов (DEV-095): переподгрузка истории с diff'ом. Основные таблицы = актуальное; старые значения и FREEZE-отказы (rejected_lower) — в журнале изменений. `services/wb_revision.diff_and_apply`, `sync/tasks_refetch.py` (beat: ad_stats/funnel daily, report_detail/orders/sales weekly), UI `/data-revisions` |
+| 0090 | **cogs.vat_rub** — НДС в себестоимости единицы (DEV-096, TS-паритет /cost): справочная колонка, в прибыль не входит. UI /cost-history (+импорт/экспорт XLSX на странице), excel round-trip |
 
 ## Роли и RBAC
 
@@ -257,6 +258,7 @@ Manager/bookkeeper — без свода. Управление кабинета�
 | `/api/dashboard/extended-kpis`, `/api/summary-report(+/export.xlsx)` | director_or_head | **Движок сводного отчёта `services/summary_metrics.py` (DEV-094)**: ~37 KPI-плиток (GMROI×2, номинальная комиссия из WbTariffCommission, ДРР бонусов/общая, капитализации ×3, оборачиваемость ×2, own-склады) + «Исходная таблица» ~55 колонок per-SKU, `group_by=imt` (склейки), `include_prev` (дельты), ABC по прибыли/выручке. Заказы = wb_orders («Лента», как TS) |
 | `/api/files` | director_or_head | **Единый журнал файлов (DEV-094)**: UNION finance_import_batch + audit_imports + reconciliation_imports. Email-приём выписок — beat `tasks_email.poll_email_statements` (каждые 30 мин, IMAP, настройки `finance_email_*` в AppSetting per-tenant, пароль Fernet) |
 | `/api/metric-plans/{id}/breakdown` | director_or_head | План-факт разбивка по дням/неделям/месяцам (DEV-094): план равномерно, факт из day-серий (+compute_dashboard для тяжёлых метрик на week/month) |
+| `/api/summary-report/weekly`, `/api/pnl/opex-breakdown`, `/api/ad-campaigns/analytics(+/daily)`, `/api/rnp/forecast-window` | director_or_head | **TS-паритет пакет 2 (DEV-096)**: сводный «По неделям» (ISO-недели × totals движка, Redis-кэш закрытых недель 6ч); постатейный OPEX в P&L (категории × бакеты); аналитика РК — зоны показа (6=Поиск/4,5,7,8=Полки/9=Единая), воронка корзины, CPM/CPO/CPL/CPS, цены СПП/остатки per-кампания, drill по дням; окно усреднения прогноза РНП 7/28/period (AppSetting `rnp_forecast_window`). UX-профиль меню «TrueStats» + роут `/truestats` |
 | `/api/data-revisions*` | director_or_head | **Ревизии WB-отчётов (DEV-095)**: список ревизий, `/{id}/changes` (paged, kind=added/updated/rejected_lower), `POST /refetch {source, days_back}` — ручная переподгрузка (report_detail ≤365д, ad_stats ≤92д, orders/sales ≤90д, funnel ≤7д — WB-лимит). UI «Контроль → Ревизии WB». `api/data_revisions.py` |
 | `/api/version`, `/whoami`, `/health` | публ. | служебные |
 
