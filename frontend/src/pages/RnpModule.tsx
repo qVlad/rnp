@@ -69,6 +69,12 @@ function MatrixTab() {
         <Link className="btn" to="/rnp-settings">Настройки РНП</Link>
       </div>
       {q.isLoading && <div className="text-sm text-muted">Загружаю…</div>}
+      {q.isError && (
+        <div className="card p-4 text-sm text-danger">
+          Не удалось загрузить матрицу: {(q.error as Error)?.message ?? "ошибка сервера"}.{" "}
+          <button className="underline" onClick={() => q.refetch()}>Повторить</button>
+        </div>
+      )}
       {q.data && (
         <div className="card overflow-x-auto p-0">
           <table className="w-full text-sm whitespace-nowrap">

@@ -173,8 +173,10 @@ async def build_rnp_matrix(
                 select(
                     func.date(WbStockSnapshot.snapshot_dt).label("d"),
                     func.coalesce(func.sum(WbStockSnapshot.quantity), 0).label("q"),
-                    func.coalesce(func.sum(WbStockSnapshot.in_way_to_client), 0).label("t"),
-                    func.coalesce(func.sum(WbStockSnapshot.in_way_from_client), 0).label("f"),
+                    # НЕ label("t"): Row.t в SQLAlchemy 2 — зарезервированный
+                    # аксессор «row as tuple», r.t вернёт весь кортеж → 500.
+                    func.coalesce(func.sum(WbStockSnapshot.in_way_to_client), 0).label("to_c"),
+                    func.coalesce(func.sum(WbStockSnapshot.in_way_from_client), 0).label("from_c"),
                 )
                 .where(WbStockSnapshot.snapshot_dt.in_(snaps), *nm_pred(WbStockSnapshot.nm_id))
                 .group_by(func.date(WbStockSnapshot.snapshot_dt))
@@ -183,8 +185,8 @@ async def build_rnp_matrix(
         for r in qrows:
             k = r.d.isoformat()
             stock_q[k] = int(r.q)
-            stock_to[k] = int(r.t)
-            stock_from[k] = int(r.f)
+            stock_to[k] = int(r.to_c)
+            stock_from[k] = int(r.from_c)
 
     # ── Реклама по дням с типами кампаний ─────────────────────────────────
     adrows = (
