@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-DEV-095",
-  "agent": "Claude Fable 5 — main session",
-  "started_at": "2026-07-04T09:01:31Z",
-  "expected_minutes": 240,
-  "notes": "Ревизии WB-отчётов: миграция 0089, models.py, sync-таски, client.ts, main.py, docs, VERSION"
-}
