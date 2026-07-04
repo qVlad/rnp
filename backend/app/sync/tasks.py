@@ -469,8 +469,14 @@ async def _sync_stocks_async(tenant_id: int) -> int:
         # keep only the latest snapshot per nm_id+warehouse for the same calendar day
         # (we still keep historical snapshots from previous days)
         today_start = snapshot_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        # BUG-DEV-031: ORM tenant-фильтр НЕ применяется к Core DELETE (listener
+        # только is_select) — без явного предиката sync одного кабинета стирал
+        # сегодняшние снапшоты ВСЕХ кабинетов.
         await session.execute(
-            delete(WbStockSnapshot).where(WbStockSnapshot.snapshot_dt >= today_start)
+            delete(WbStockSnapshot).where(
+                WbStockSnapshot.snapshot_dt >= today_start,
+                WbStockSnapshot.tenant_id == tenant_id,
+            )
         )
 
         values = []
@@ -1650,9 +1656,14 @@ async def _sync_ad_stats_async(tenant_id: int, days_back: int = 60) -> int:
             values = [v for v in values if v["stat_date"] in replace_set]
             try:
                 if replace_dates:
+                    # BUG-DEV-031: явный tenant-предикат — Core DELETE не
+                    # фильтруется ORM-listener'ом (только SELECT). Без него
+                    # sync кабинета N стирал рекламу других кабинетов за
+                    # replace_dates (проявилось с 2+ кабинетами, DEV-092).
                     await session.execute(
                         delete(WbAdStatsDaily).where(
                             WbAdStatsDaily.stat_date.in_(replace_dates),
+                            WbAdStatsDaily.tenant_id == tenant_id,
                         )
                     )
                     await _bulk_insert(session, WbAdStatsDaily, values)
