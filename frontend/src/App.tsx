@@ -126,7 +126,6 @@ function DirectorOrHead({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-export default 
 // TASK-DEV-096: /truestats — включает UX-профиль меню «TrueStats» (только
 // разделы, эквивалентные TS) и ведёт на дашборд. Hard-reload, чтобы Layout
 // перечитал профиль из localStorage.
@@ -138,7 +137,7 @@ function TruestatsEntry() {
   return null;
 }
 
-function App() {
+export default function App() {
   return (
     <AuthProvider>
       <PeriodProvider>
