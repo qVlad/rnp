@@ -18,6 +18,7 @@ celery_app = Celery(
         "app.sync.tasks_product_volume",
         "app.sync.tasks_scoreboard",
         "app.sync.tasks_email",
+        "app.sync.tasks_refetch",
         "app.sync.event_consumers",
     ],
 )
@@ -91,6 +92,22 @@ celery_app.conf.update(
         "app.sync.tasks_abtest.poll_abtest_budgets_for_tenant": {"queue": "advert"},
         "app.sync.tasks_abtest.sync_abtest_stats_full": {"queue": "advert"},
         "app.sync.tasks_abtest.sync_abtest_stats_for_tenant": {"queue": "advert"},
+        # Refetch-ревизии WB-отчётов (TASK-DEV-095) — те же категории
+        # rate-limit'ов, что и обычные sync'и → те же очереди.
+        "refetch.report_detail": {"queue": "stats"},
+        "refetch.report_detail_for_tenant": {"queue": "stats"},
+        "refetch.orders": {"queue": "stats"},
+        "refetch.orders_for_tenant": {"queue": "stats"},
+        "refetch.sales": {"queue": "stats"},
+        "refetch.sales_for_tenant": {"queue": "stats"},
+        "refetch.ad_stats": {"queue": "advert"},
+        "refetch.ad_stats_for_tenant": {"queue": "advert"},
+        "refetch.funnel": {"queue": "default"},
+        "refetch.funnel_for_tenant": {"queue": "default"},
+        # Ручной запуск с UI: source-роутинг невозможен (queue решается до
+        # аргументов) → stats-очередь как самый безопасный вариант (там
+        # worker concurrency=1, WB-лимиты не топчутся параллелизмом).
+        "refetch.source_for_tenant": {"queue": "stats"},
         # WB Tariffs (UNIT-PLAN-005). Один запрос в сутки — default queue.
         "sync.tariffs": {"queue": "default"},
         "sync.prices": {"queue": "default"},
@@ -359,6 +376,37 @@ celery_app.conf.update(
         "sync-funnel-daily": {
             "task": "sync.funnel_daily",
             "schedule": crontab(hour=6, minute=0),
+        },
+        # --- Refetch-ревизии WB-отчётов (TASK-DEV-095) ---
+        # Переподгрузка истории с diff-журналом (wb_sync_revision/_change).
+        # Ночью, вразрез с обычными sync'ами тех же rate-limit категорий:
+        #   ad_stats  — ежедневно 02:20 (advert: ad_stats 00:15 → +2ч05м,
+        #               ad_campaigns 03:30 → +1ч10м; ≥1ч зазор соблюдён);
+        #   funnel    — ежедневно 06:50 (analytics 3/мин; после funnel 06:00);
+        #   report_detail — еженедельно сб 01:45 (finance-api 1/мин, любой
+        #               период; regular 3ч-синк на :15 — зазор 30 мин);
+        #   orders/sales — еженедельно вс 01:25 / 05:25 (Base token ≤1/3ч и
+        #               ≤1/2ч: изредка словим 429 → задача скипнется и
+        #               отработает через неделю, данные не портятся).
+        "refetch-ad-stats-daily": {
+            "task": "refetch.ad_stats",
+            "schedule": crontab(hour=2, minute=20),
+        },
+        "refetch-funnel-daily": {
+            "task": "refetch.funnel",
+            "schedule": crontab(hour=6, minute=50),
+        },
+        "refetch-report-detail-weekly": {
+            "task": "refetch.report_detail",
+            "schedule": crontab(hour=1, minute=45, day_of_week="sat"),
+        },
+        "refetch-orders-weekly": {
+            "task": "refetch.orders",
+            "schedule": crontab(hour=1, minute=25, day_of_week="sun"),
+        },
+        "refetch-sales-weekly": {
+            "task": "refetch.sales",
+            "schedule": crontab(hour=5, minute=25, day_of_week="sun"),
         },
         # --- Manager weekly scoreboard pre-aggregation (TASK-LEAD-087) ---
         # Ежедневно 04:30 МСК — сразу после `sync_report_detail` (04:15),

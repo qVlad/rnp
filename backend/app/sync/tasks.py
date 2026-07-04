@@ -274,6 +274,66 @@ async def _ensure_products(session: AsyncSession, rows: list[dict[str, Any]]) ->
 # ---------------------------------------------------------------------------
 
 
+def _map_order_row(r: dict[str, Any]) -> dict[str, Any] | None:
+    """WB /supplier/orders строка → values для WbOrder (реюз: sync + refetch DEV-095)."""
+    srid = r.get("srid")
+    if not srid:
+        return None
+    return {
+        "srid": str(srid),
+        "order_dt": _parse_dt(r.get("date")),
+        "last_change_date": _parse_dt(r.get("lastChangeDate")),
+        "nm_id": int(r.get("nmId") or 0),
+        "supplier_article": r.get("supplierArticle"),
+        "barcode": r.get("barcode"),
+        "total_price": r.get("totalPrice") or 0,
+        "discount_percent": r.get("discountPercent") or 0,
+        "spp": r.get("spp") or 0,
+        "finished_price": r.get("finishedPrice"),
+        "price_with_disc": r.get("priceWithDisc"),
+        "is_cancel": bool(r.get("isCancel")),
+        "cancel_dt": _parse_dt(r.get("cancelDate")),
+        "warehouse_name": r.get("warehouseName"),
+        "oblast": r.get("oblastOkrugName") or r.get("oblast"),
+        "region_name": r.get("regionName"),
+        "category": r.get("category"),
+        "subject": r.get("subject"),
+        "brand": r.get("brand"),
+        "is_supply": bool(r.get("isSupply")),
+        "is_realization": bool(r.get("isRealization")),
+        "chrt_id": int(r["chrtId"]) if r.get("chrtId") else None,
+        "tech_size": r.get("techSize"),
+    }
+
+
+def _map_sale_row(r: dict[str, Any]) -> dict[str, Any] | None:
+    """WB /supplier/sales строка → values для WbSale (реюз: sync + refetch DEV-095)."""
+    sale_id = r.get("saleID")
+    if not sale_id:
+        return None
+    return {
+        "sale_id": str(sale_id),
+        "srid": r.get("srid"),
+        "sale_dt": _parse_dt(r.get("date")),
+        "last_change_date": _parse_dt(r.get("lastChangeDate")),
+        "nm_id": int(r.get("nmId") or 0),
+        "supplier_article": r.get("supplierArticle"),
+        "total_price": r.get("totalPrice") or 0,
+        "discount_percent": r.get("discountPercent") or 0,
+        "spp": r.get("spp") or 0,
+        "price_with_disc": r.get("priceWithDisc"),
+        "for_pay": r.get("forPay") or 0,
+        "finished_price": r.get("finishedPrice"),
+        "commission_percent": r.get("commissionPercent") or 0,
+        "is_return": str(sale_id).startswith("R"),
+        "warehouse_name": r.get("warehouseName"),
+        "region_name": r.get("regionName"),
+        "oblast": r.get("oblastOkrugName") or r.get("oblast"),
+        "chrt_id": int(r["chrtId"]) if r.get("chrtId") else None,
+        "tech_size": r.get("techSize"),
+    }
+
+
 async def _sync_orders_async(tenant_id: int) -> int:
     async with tenant_sync_context(tenant_id) as ctx:
         if ctx is None:
@@ -298,39 +358,13 @@ async def _sync_orders_async(tenant_id: int) -> int:
         values = []
         max_lcd: datetime | None = None
         for r in rows:
-            srid = r.get("srid")
-            if not srid:
+            v = _map_order_row(r)
+            if v is None:
                 continue
-            lcd = _parse_dt(r.get("lastChangeDate"))
+            lcd = v["last_change_date"]
             if lcd and (max_lcd is None or lcd > max_lcd):
                 max_lcd = lcd
-            values.append(
-                {
-                    "srid": str(srid),
-                    "order_dt": _parse_dt(r.get("date")),
-                    "last_change_date": lcd,
-                    "nm_id": int(r.get("nmId") or 0),
-                    "supplier_article": r.get("supplierArticle"),
-                    "barcode": r.get("barcode"),
-                    "total_price": r.get("totalPrice") or 0,
-                    "discount_percent": r.get("discountPercent") or 0,
-                    "spp": r.get("spp") or 0,
-                    "finished_price": r.get("finishedPrice"),
-                    "price_with_disc": r.get("priceWithDisc"),
-                    "is_cancel": bool(r.get("isCancel")),
-                    "cancel_dt": _parse_dt(r.get("cancelDate")),
-                    "warehouse_name": r.get("warehouseName"),
-                    "oblast": r.get("oblastOkrugName") or r.get("oblast"),
-                    "region_name": r.get("regionName"),
-                    "category": r.get("category"),
-                    "subject": r.get("subject"),
-                    "brand": r.get("brand"),
-                    "is_supply": bool(r.get("isSupply")),
-                    "is_realization": bool(r.get("isRealization")),
-                    "chrt_id": int(r["chrtId"]) if r.get("chrtId") else None,
-                    "tech_size": r.get("techSize"),
-                }
-            )
+            values.append(v)
 
         await _bulk_upsert(session, WbOrder, values, pk_cols=["srid"])
 
@@ -380,35 +414,13 @@ async def _sync_sales_async(tenant_id: int) -> int:
         values = []
         max_lcd: datetime | None = None
         for r in rows:
-            sale_id = r.get("saleID")
-            if not sale_id:
+            v = _map_sale_row(r)
+            if v is None:
                 continue
-            lcd = _parse_dt(r.get("lastChangeDate"))
+            lcd = v["last_change_date"]
             if lcd and (max_lcd is None or lcd > max_lcd):
                 max_lcd = lcd
-            values.append(
-                {
-                    "sale_id": str(sale_id),
-                    "srid": r.get("srid"),
-                    "sale_dt": _parse_dt(r.get("date")),
-                    "last_change_date": lcd,
-                    "nm_id": int(r.get("nmId") or 0),
-                    "supplier_article": r.get("supplierArticle"),
-                    "total_price": r.get("totalPrice") or 0,
-                    "discount_percent": r.get("discountPercent") or 0,
-                    "spp": r.get("spp") or 0,
-                    "price_with_disc": r.get("priceWithDisc"),
-                    "for_pay": r.get("forPay") or 0,
-                    "finished_price": r.get("finishedPrice"),
-                    "commission_percent": r.get("commissionPercent") or 0,
-                    "is_return": str(sale_id).startswith("R"),
-                    "warehouse_name": r.get("warehouseName"),
-                    "region_name": r.get("regionName"),
-                    "oblast": r.get("oblastOkrugName") or r.get("oblast"),
-                    "chrt_id": int(r["chrtId"]) if r.get("chrtId") else None,
-                    "tech_size": r.get("techSize"),
-                }
-            )
+            values.append(v)
 
         await _bulk_upsert(session, WbSale, values, pk_cols=["sale_id"])
 
@@ -613,6 +625,114 @@ def sync_paid_storage() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _map_report_detail_row(r: dict[str, Any]) -> dict[str, Any] | None:
+    """WB finance-api строка → values для WbReportDetail (88 полей).
+    Реюз: sync + refetch-ревизии (DEV-095)."""
+    rrd = r.get("rrd_id")
+    if rrd is None:
+        return None
+    return {
+        # === PK ===
+        "rrd_id": int(rrd),
+        # === Existing ~30 fields ===
+        "realization_id": _to_int(r.get("realizationreport_id")),
+        "report_date_from": _parse_date(r.get("date_from")),
+        "report_date_to": _parse_date(r.get("date_to")),
+        "create_dt": _parse_date(r.get("create_dt")),
+        "nm_id": _to_int(r.get("nm_id")),
+        "sa_name": r.get("sa_name"),
+        "barcode": r.get("barcode"),
+        "doc_type_name": r.get("doc_type_name"),
+        "supplier_oper_name": r.get("supplier_oper_name"),
+        "order_dt": _parse_dt(r.get("order_dt")),
+        "sale_dt": _parse_dt(r.get("sale_dt")),
+        "rr_dt": _parse_date(r.get("rr_dt")),
+        "quantity": _to_int(r.get("quantity")) or 0,
+        "retail_price": _to_decimal(r.get("retail_price")) or 0,
+        "retail_amount": _to_decimal(r.get("retail_amount")) or 0,
+        "sale_percent": _to_decimal(r.get("sale_percent")) or 0,
+        "commission_percent": _to_decimal(r.get("commission_percent")) or 0,
+        "ppvz_for_pay": _to_decimal(r.get("ppvz_for_pay")) or 0,
+        "delivery_rub": _to_decimal(r.get("delivery_rub")) or 0,
+        "storage_fee": _to_decimal(r.get("storage_fee")) or 0,
+        "penalty": _to_decimal(r.get("penalty")) or 0,
+        "additional_payment": _to_decimal(r.get("additional_payment")) or 0,
+        "deduction": _to_decimal(r.get("deduction")) or 0,
+        "acquiring_fee": _to_decimal(r.get("acquiring_fee")) or 0,
+        "retail_price_withdisc_rub": _to_decimal(r.get("retail_price_withdisc_rub")),
+        "kiz": r.get("kiz") or None,
+        "ppvz_vw": _to_decimal(r.get("ppvz_vw")),
+        "ppvz_vw_nds": _to_decimal(r.get("ppvz_vw_nds")),
+        "supplier_reward": _to_decimal(r.get("supplier_reward")),  # legacy, новый API не отдаёт
+        # === New 58 fields (migration 0017, 2026-05) ===
+        # Strings
+        "acquiring_bank": r.get("acquiring_bank"),
+        "article_substitution": r.get("article_substitution") or None,
+        "bonus_type_name": r.get("bonus_type_name"),
+        "brand_name": r.get("brand_name"),
+        "country": r.get("country"),
+        "currency": r.get("currency"),
+        "declaration_number": r.get("declaration_number") or None,
+        "delivery_method": r.get("delivery_method") or None,
+        "fix_tariff_date_from": r.get("fix_tariff_date_from") or None,
+        "fix_tariff_date_to": r.get("fix_tariff_date_to") or None,
+        "gi_box_type_name": r.get("gi_box_type_name"),
+        "office_name": r.get("office_name") or None,
+        "order_uid": r.get("order_uid"),
+        "payment_processing": r.get("payment_processing"),
+        "ppvz_office_name": r.get("ppvz_office_name"),
+        "ppvz_supplier_inn": r.get("ppvz_supplier_inn") or None,
+        "ppvz_supplier_name": r.get("ppvz_supplier_name") or None,
+        "srid": r.get("srid"),
+        "sticker_id": r.get("sticker_id") or None,
+        "subject_name": r.get("subject_name"),
+        "tech_size": r.get("tech_size") or None,
+        "title": r.get("title"),
+        "trbx_id": r.get("trbx_id") or None,
+        "uuid_promocode": r.get("uuid_promocode") or None,
+        "vendor_code": r.get("vendor_code"),
+        # BigInt IDs
+        "gi_id": _to_int(r.get("gi_id")),
+        "order_id": _to_int(r.get("order_id")),
+        "ppvz_office_id": _to_int(r.get("ppvz_office_id")),
+        "shk_id": _to_int(r.get("shk_id")),
+        "loyalty_id": _to_int(r.get("loyalty_id")),
+        "seller_promo_id": _to_int(r.get("seller_promo_id")),
+        # Small ints / enums
+        "report_type": _to_int(r.get("report_type")),
+        "is_kgvp_v2": _to_int(r.get("is_kgvp_v2")),
+        "sup_rating_up": _to_int(r.get("sup_rating_up")),
+        "wibes_discount_percent": _to_decimal(r.get("wibes_discount_percent")),
+        # Numerics
+        "acquiring_percent": _to_decimal(r.get("acquiring_percent")),
+        "cashback_amount": _to_decimal(r.get("cashback_amount")),
+        "cashback_commission_change": _to_decimal(r.get("cashback_commission_change")),
+        "cashback_discount": _to_decimal(r.get("cashback_discount")),
+        "delivery_amount": _to_decimal(r.get("delivery_amount")),
+        "dlv_prc": _to_decimal(r.get("dlv_prc")),
+        "installment_cofinancing_amount": _to_decimal(r.get("installment_cofinancing_amount")),
+        "kvw": _to_decimal(r.get("kvw")),
+        "kvw_base": _to_decimal(r.get("kvw_base")),
+        "loyalty_discount": _to_decimal(r.get("loyalty_discount")),
+        "paid_acceptance": _to_decimal(r.get("paid_acceptance")),
+        "payment_schedule": _to_decimal(r.get("payment_schedule")),
+        "ppvz_reward": _to_decimal(r.get("ppvz_reward")),
+        "ppvz_sales_commission": _to_decimal(r.get("ppvz_sales_commission")),
+        "product_discount_for_report": _to_decimal(r.get("product_discount_for_report")),
+        "rebill_logistic_cost": _to_decimal(r.get("rebill_logistic_cost")),
+        "return_amount": _to_decimal(r.get("return_amount")),
+        "sale_price_affiliated_discount_prc": _to_decimal(r.get("sale_price_affiliated_discount_prc")),
+        "sale_price_promocode_discount_prc": _to_decimal(r.get("sale_price_promocode_discount_prc")),
+        "sale_price_wholesale_discount_prc": _to_decimal(r.get("sale_price_wholesale_discount_prc")),
+        "seller_promo": _to_decimal(r.get("seller_promo")),
+        "seller_promo_discount": _to_decimal(r.get("seller_promo_discount")),
+        "spp": _to_decimal(r.get("spp")),
+        # Booleans
+        "is_b2b": _to_bool(r.get("is_b2b")),
+        "srv_dbs": _to_bool(r.get("srv_dbs")),
+    }
+
+
 async def _sync_report_detail_async(tenant_id: int, days_back: int = 14) -> int:
     """Re-pull report detail for the last `days_back` days (rows continue arriving)."""
     end = datetime.now(timezone.utc)
@@ -644,111 +764,9 @@ async def _sync_report_detail_async(tenant_id: int, days_back: int = 14) -> int:
                 )
                 values = []
                 for r in chunk:
-                    rrd = r.get("rrd_id")
-                    if rrd is None:
-                        continue
-                    values.append(
-                        {
-                            # === PK ===
-                            "rrd_id": int(rrd),
-                            # === Existing ~30 fields ===
-                            "realization_id": _to_int(r.get("realizationreport_id")),
-                            "report_date_from": _parse_date(r.get("date_from")),
-                            "report_date_to": _parse_date(r.get("date_to")),
-                            "create_dt": _parse_date(r.get("create_dt")),
-                            "nm_id": _to_int(r.get("nm_id")),
-                            "sa_name": r.get("sa_name"),
-                            "barcode": r.get("barcode"),
-                            "doc_type_name": r.get("doc_type_name"),
-                            "supplier_oper_name": r.get("supplier_oper_name"),
-                            "order_dt": _parse_dt(r.get("order_dt")),
-                            "sale_dt": _parse_dt(r.get("sale_dt")),
-                            "rr_dt": _parse_date(r.get("rr_dt")),
-                            "quantity": _to_int(r.get("quantity")) or 0,
-                            "retail_price": _to_decimal(r.get("retail_price")) or 0,
-                            "retail_amount": _to_decimal(r.get("retail_amount")) or 0,
-                            "sale_percent": _to_decimal(r.get("sale_percent")) or 0,
-                            "commission_percent": _to_decimal(r.get("commission_percent")) or 0,
-                            "ppvz_for_pay": _to_decimal(r.get("ppvz_for_pay")) or 0,
-                            "delivery_rub": _to_decimal(r.get("delivery_rub")) or 0,
-                            "storage_fee": _to_decimal(r.get("storage_fee")) or 0,
-                            "penalty": _to_decimal(r.get("penalty")) or 0,
-                            "additional_payment": _to_decimal(r.get("additional_payment")) or 0,
-                            "deduction": _to_decimal(r.get("deduction")) or 0,
-                            "acquiring_fee": _to_decimal(r.get("acquiring_fee")) or 0,
-                            "retail_price_withdisc_rub": _to_decimal(r.get("retail_price_withdisc_rub")),
-                            "kiz": r.get("kiz") or None,
-                            "ppvz_vw": _to_decimal(r.get("ppvz_vw")),
-                            "ppvz_vw_nds": _to_decimal(r.get("ppvz_vw_nds")),
-                            "supplier_reward": _to_decimal(r.get("supplier_reward")),  # legacy, новый API не отдаёт
-                            # === New 58 fields (migration 0017, 2026-05) ===
-                            # Strings
-                            "acquiring_bank": r.get("acquiring_bank"),
-                            "article_substitution": r.get("article_substitution") or None,
-                            "bonus_type_name": r.get("bonus_type_name"),
-                            "brand_name": r.get("brand_name"),
-                            "country": r.get("country"),
-                            "currency": r.get("currency"),
-                            "declaration_number": r.get("declaration_number") or None,
-                            "delivery_method": r.get("delivery_method") or None,
-                            "fix_tariff_date_from": r.get("fix_tariff_date_from") or None,
-                            "fix_tariff_date_to": r.get("fix_tariff_date_to") or None,
-                            "gi_box_type_name": r.get("gi_box_type_name"),
-                            "office_name": r.get("office_name") or None,
-                            "order_uid": r.get("order_uid"),
-                            "payment_processing": r.get("payment_processing"),
-                            "ppvz_office_name": r.get("ppvz_office_name"),
-                            "ppvz_supplier_inn": r.get("ppvz_supplier_inn") or None,
-                            "ppvz_supplier_name": r.get("ppvz_supplier_name") or None,
-                            "srid": r.get("srid"),
-                            "sticker_id": r.get("sticker_id") or None,
-                            "subject_name": r.get("subject_name"),
-                            "tech_size": r.get("tech_size") or None,
-                            "title": r.get("title"),
-                            "trbx_id": r.get("trbx_id") or None,
-                            "uuid_promocode": r.get("uuid_promocode") or None,
-                            "vendor_code": r.get("vendor_code"),
-                            # BigInt IDs
-                            "gi_id": _to_int(r.get("gi_id")),
-                            "order_id": _to_int(r.get("order_id")),
-                            "ppvz_office_id": _to_int(r.get("ppvz_office_id")),
-                            "shk_id": _to_int(r.get("shk_id")),
-                            "loyalty_id": _to_int(r.get("loyalty_id")),
-                            "seller_promo_id": _to_int(r.get("seller_promo_id")),
-                            # Small ints / enums
-                            "report_type": _to_int(r.get("report_type")),
-                            "is_kgvp_v2": _to_int(r.get("is_kgvp_v2")),
-                            "sup_rating_up": _to_int(r.get("sup_rating_up")),
-                            "wibes_discount_percent": _to_decimal(r.get("wibes_discount_percent")),
-                            # Numerics
-                            "acquiring_percent": _to_decimal(r.get("acquiring_percent")),
-                            "cashback_amount": _to_decimal(r.get("cashback_amount")),
-                            "cashback_commission_change": _to_decimal(r.get("cashback_commission_change")),
-                            "cashback_discount": _to_decimal(r.get("cashback_discount")),
-                            "delivery_amount": _to_decimal(r.get("delivery_amount")),
-                            "dlv_prc": _to_decimal(r.get("dlv_prc")),
-                            "installment_cofinancing_amount": _to_decimal(r.get("installment_cofinancing_amount")),
-                            "kvw": _to_decimal(r.get("kvw")),
-                            "kvw_base": _to_decimal(r.get("kvw_base")),
-                            "loyalty_discount": _to_decimal(r.get("loyalty_discount")),
-                            "paid_acceptance": _to_decimal(r.get("paid_acceptance")),
-                            "payment_schedule": _to_decimal(r.get("payment_schedule")),
-                            "ppvz_reward": _to_decimal(r.get("ppvz_reward")),
-                            "ppvz_sales_commission": _to_decimal(r.get("ppvz_sales_commission")),
-                            "product_discount_for_report": _to_decimal(r.get("product_discount_for_report")),
-                            "rebill_logistic_cost": _to_decimal(r.get("rebill_logistic_cost")),
-                            "return_amount": _to_decimal(r.get("return_amount")),
-                            "sale_price_affiliated_discount_prc": _to_decimal(r.get("sale_price_affiliated_discount_prc")),
-                            "sale_price_promocode_discount_prc": _to_decimal(r.get("sale_price_promocode_discount_prc")),
-                            "sale_price_wholesale_discount_prc": _to_decimal(r.get("sale_price_wholesale_discount_prc")),
-                            "seller_promo": _to_decimal(r.get("seller_promo")),
-                            "seller_promo_discount": _to_decimal(r.get("seller_promo_discount")),
-                            "spp": _to_decimal(r.get("spp")),
-                            # Booleans
-                            "is_b2b": _to_bool(r.get("is_b2b")),
-                            "srv_dbs": _to_bool(r.get("srv_dbs")),
-                        }
-                    )
+                    v = _map_report_detail_row(r)
+                    if v is not None:
+                        values.append(v)
                 await _bulk_upsert(session, WbReportDetail, values, pk_cols=["rrd_id"])
                 total += len(values)
                 # TASK-LEAD-131: commit per chunk. Without this, exception в
@@ -1436,6 +1454,101 @@ def sync_ad_campaign_details_dispatch() -> dict[str, Any]:
     return _fanout(sync_ad_campaign_details_for_tenant)
 
 
+def _fullstats_values(stats: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """WB fullstats (v3) → строки WbAdStatsDaily, агрегированные по
+    (advert_id, stat_date, nm_id). Реюз: sync + refetch-ревизии (DEV-095).
+
+    WB v3 fullstats can emit the same (advert_id, stat_date, nm_id) tuple in
+    multiple `apps[]` blocks (site + Android + iOS). The DB has a UNIQUE index
+    `uq_ad_stats_advert_date_nm` — naive bulk-insert blows up with
+    UniqueViolation. Aggregate platform breakdowns before insert.
+    """
+    values: list[dict[str, Any]] = []
+    for camp in stats:
+        advert_id = camp.get("advertId")
+        if advert_id is None:
+            continue
+        for day in camp.get("days", []) or []:
+            stat_date = _parse_date(day.get("date"))
+            if not stat_date:
+                continue
+            # `apps` — platform breakdowns; per-product list is `nms` (v3,
+            # since 2025-10) or `nm` (legacy v2 — kept as fallback so old
+            # rows in cached JSON still parse).
+            for app_block in day.get("apps", []) or []:
+                nm_blocks = (
+                    app_block.get("nms")
+                    or app_block.get("nm")
+                    or []
+                )
+                if not nm_blocks:
+                    # No per-product breakdown — store aggregate app-level row
+                    values.append(
+                        {
+                            "advert_id": int(advert_id),
+                            "stat_date": stat_date,
+                            "nm_id": None,
+                            "views": int(app_block.get("views") or 0),
+                            "clicks": int(app_block.get("clicks") or 0),
+                            "ctr": app_block.get("ctr") or 0,
+                            "cpc": app_block.get("cpc") or 0,
+                            # WB response field is `sum`, we store as sum_spent
+                            "sum_spent": app_block.get("sum") or 0,
+                            "atbs": int(app_block.get("atbs") or 0),
+                            "orders": int(app_block.get("orders") or 0),
+                            "cr": app_block.get("cr") or 0,
+                            "shks": int(app_block.get("shks") or 0),
+                            "sum_price": app_block.get("sum_price") or 0,
+                        }
+                    )
+                for nm in nm_blocks:
+                    # nmId field in nm object (not "nm" as key)
+                    raw_nm_id = nm.get("nmId") or nm.get("nmid") or nm.get("nm_id")
+                    values.append(
+                        {
+                            "advert_id": int(advert_id),
+                            "stat_date": stat_date,
+                            "nm_id": int(raw_nm_id) if raw_nm_id else None,
+                            "views": int(nm.get("views") or 0),
+                            "clicks": int(nm.get("clicks") or 0),
+                            "ctr": nm.get("ctr") or 0,
+                            "cpc": nm.get("cpc") or 0,
+                            # WB response field is `sum`, we store as sum_spent
+                            "sum_spent": nm.get("sum") or 0,
+                            "atbs": int(nm.get("atbs") or 0),
+                            "orders": int(nm.get("orders") or 0),
+                            "cr": nm.get("cr") or 0,
+                            "shks": int(nm.get("shks") or 0),
+                            "sum_price": nm.get("sum_price") or 0,
+                        }
+                    )
+
+    agg: dict[tuple[int, date, int | None], dict[str, Any]] = {}
+    for v in values:
+        key = (v["advert_id"], v["stat_date"], v["nm_id"])
+        cur = agg.get(key)
+        if cur is None:
+            agg[key] = dict(v)
+            continue
+        # Sum the count-like fields across platforms; for ratio fields
+        # (ctr/cpc/cr) prefer the first non-zero value — these are usually
+        # identical across same-day platform splits.
+        for f in ("views", "clicks", "atbs", "orders", "shks"):
+            cur[f] = int(cur.get(f, 0)) + int(v.get(f, 0))
+        for f in ("sum_spent", "sum_price"):
+            cur[f] = float(cur.get(f, 0) or 0) + float(v.get(f, 0) or 0)
+        for f in ("ctr", "cpc", "cr"):
+            if not cur.get(f) and v.get(f):
+                cur[f] = v[f]
+    deduped = list(agg.values())
+    if len(deduped) != len(values):
+        log.info(
+            "ad_stats: aggregated %d raw rows → %d unique (advert_id,date,nm_id)",
+            len(values), len(deduped),
+        )
+    return deduped
+
+
 async def _sync_ad_stats_async(tenant_id: int, days_back: int = 60) -> int:
     end = date.today()
     start = end - timedelta(days=days_back)
@@ -1492,97 +1605,7 @@ async def _sync_ad_stats_async(tenant_id: int, days_back: int = 60) -> int:
                 "ad_stats: %d/%d campaigns returned data; missing by status: %s",
                 with_data, len(ids), dict(missing_by_status),
             )
-        values: list[dict[str, Any]] = []
-        for camp in stats:
-            advert_id = camp.get("advertId")
-            if advert_id is None:
-                continue
-            for day in camp.get("days", []) or []:
-                stat_date = _parse_date(day.get("date"))
-                if not stat_date:
-                    continue
-                # `apps` — platform breakdowns; per-product list is `nms` (v3,
-                # since 2025-10) or `nm` (legacy v2 — kept as fallback so old
-                # rows in cached JSON still parse).
-                for app_block in day.get("apps", []) or []:
-                    nm_blocks = (
-                        app_block.get("nms")
-                        or app_block.get("nm")
-                        or []
-                    )
-                    if not nm_blocks:
-                        # No per-product breakdown — store aggregate app-level row
-                        values.append(
-                            {
-                                "advert_id": int(advert_id),
-                                "stat_date": stat_date,
-                                "nm_id": None,
-                                "views": int(app_block.get("views") or 0),
-                                "clicks": int(app_block.get("clicks") or 0),
-                                "ctr": app_block.get("ctr") or 0,
-                                "cpc": app_block.get("cpc") or 0,
-                                # WB response field is `sum`, we store as sum_spent
-                                "sum_spent": app_block.get("sum") or 0,
-                                "atbs": int(app_block.get("atbs") or 0),
-                                "orders": int(app_block.get("orders") or 0),
-                                "cr": app_block.get("cr") or 0,
-                                "shks": int(app_block.get("shks") or 0),
-                                "sum_price": app_block.get("sum_price") or 0,
-                            }
-                        )
-                    for nm in nm_blocks:
-                        # nmId field in nm object (not "nm" as key)
-                        raw_nm_id = nm.get("nmId") or nm.get("nmid") or nm.get("nm_id")
-                        values.append(
-                            {
-                                "advert_id": int(advert_id),
-                                "stat_date": stat_date,
-                                "nm_id": int(raw_nm_id) if raw_nm_id else None,
-                                "views": int(nm.get("views") or 0),
-                                "clicks": int(nm.get("clicks") or 0),
-                                "ctr": nm.get("ctr") or 0,
-                                "cpc": nm.get("cpc") or 0,
-                                # WB response field is `sum`, we store as sum_spent
-                                "sum_spent": nm.get("sum") or 0,
-                                "atbs": int(nm.get("atbs") or 0),
-                                "orders": int(nm.get("orders") or 0),
-                                "cr": nm.get("cr") or 0,
-                                "shks": int(nm.get("shks") or 0),
-                                "sum_price": nm.get("sum_price") or 0,
-                            }
-                        )
-
-        # WB v3 fullstats can emit the same (advert_id, stat_date, nm_id) tuple
-        # in multiple `apps[]` blocks (e.g. same product on site + Android +
-        # iOS). The DB has a UNIQUE index `uq_ad_stats_advert_date_nm` on those
-        # three columns — naive bulk-insert blows up with UniqueViolation and
-        # rolls back the whole batch. Aggregate platform breakdowns into a
-        # single per-product row before insert.
-        agg: dict[tuple[int, date, int | None], dict[str, Any]] = {}
-        for v in values:
-            key = (v["advert_id"], v["stat_date"], v["nm_id"])
-            cur = agg.get(key)
-            if cur is None:
-                agg[key] = dict(v)
-                continue
-            # Sum the count-like fields across platforms; for ratio fields
-            # (ctr/cpc/cr) take the volume-weighted-ish average via re-derivation
-            # after summing. For simplicity, prefer the latest non-zero value
-            # — these are usually identical across same-day platform splits.
-            for f in ("views", "clicks", "atbs", "orders", "shks"):
-                cur[f] = int(cur.get(f, 0)) + int(v.get(f, 0))
-            for f in ("sum_spent", "sum_price"):
-                cur[f] = float(cur.get(f, 0) or 0) + float(v.get(f, 0) or 0)
-            for f in ("ctr", "cpc", "cr"):
-                if not cur.get(f) and v.get(f):
-                    cur[f] = v[f]
-        deduped = list(agg.values())
-        if len(deduped) != len(values):
-            log.info(
-                "ad_stats: aggregated %d raw rows → %d unique (advert_id,date,nm_id)",
-                len(values), len(deduped),
-            )
-        values = deduped
+        values = _fullstats_values(stats)
 
         if values:
             # Replace rows ТОЛЬКО за даты, которые реально перезагрузили. Раньше

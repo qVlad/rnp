@@ -2857,6 +2857,63 @@ class Comment(Base, TenantScopedMixin):
     )
 
 
+class WbSyncRevision(Base, TenantScopedMixin):
+    """Ревизия WB-отчёта (TASK-DEV-095, миграция 0089): журнал переподгрузок
+    исторических данных. Одна запись = один re-fetch источника за период.
+
+    Основная таблица источника всегда держит АКТУАЛЬНЫЕ данные; прежние
+    значения изменённых строк и отклонённые (FREEZE) обновления лежат в
+    `wb_sync_change` — «и старые, и новые, но отдельно».
+    source ∈ report_detail | ad_stats | orders | sales | funnel.
+    triggered_by ∈ beat | manual | catchup.
+    """
+
+    __tablename__ = "wb_sync_revision"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    source: Mapped[str] = mapped_column(String(32), index=True)
+    period_from: Mapped[date] = mapped_column(Date)
+    period_to: Mapped[date] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(16), default="running")  # running|done|error
+    rows_fetched: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    rows_added: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    rows_changed: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # FREEZE-отказы: новое значение ниже сохранённого — в БД не применяем,
+    # но фиксируем в wb_sync_change (change_kind=rejected_lower).
+    rows_rejected: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Сводные дельты ключевых сумм: {"sum_spent": +1234.5, "ppvz_for_pay": ...}
+    totals_delta: Mapped[dict | None] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+    triggered_by: Mapped[str] = mapped_column(String(16), default="beat")
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class WbSyncChange(Base, TenantScopedMixin):
+    """Изменение строки между ревизиями (TASK-DEV-095): entity_key — ключ
+    строки источника ('rrd_id:123' / 'ad:456:2026-06-01:789' / srid),
+    old/new — JSONB только ИЗМЕНЁННЫХ отслеживаемых полей.
+    change_kind ∈ added | updated | rejected_lower (FREEZE: не применено).
+    """
+
+    __tablename__ = "wb_sync_change"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    revision_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("wb_sync_revision.id", ondelete="CASCADE"), index=True
+    )
+    source: Mapped[str] = mapped_column(String(32))
+    entity_key: Mapped[str] = mapped_column(String(128), index=True)
+    change_kind: Mapped[str] = mapped_column(String(16))
+    old: Mapped[dict | None] = mapped_column(JSONB)
+    new: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class ProductMpMapping(Base, TenantScopedMixin):
     """«Соответствие товаров» (TASK-DEV-094, миграция 0088, как TS Склады →
     Соответствие товаров): маппинг артикула своего учёта (own_sku из

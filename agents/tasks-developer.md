@@ -11,6 +11,26 @@
 
 > Lead заполняет этот файл из `ROADMAP.md`, запросов пользователя, найденных багов QA.
 
+### TASK-DEV-095: Ревизии WB-отчётов — переподгрузка истории с версионированием — Выполнено — 2026-07-04 (v0.89.0)
+- **Тип:** feature · запрос пользователя 2026-07-04: «догнать данные + периодические
+  переподгрузки старых отчётов WB, сравнивать версии, хранить и старые и новые
+  отдельно (актуальные данные + история изменений)».
+- **Механика:** миграция 0089 `wb_sync_revision` (журнал переподгрузок: source,
+  период, счётчики added/changed/rejected) + `wb_sync_change` (per-строка diff:
+  entity_key, old/new JSONB изменённых полей). `services/wb_revision.py` —
+  diff-and-apply: новые строки применяются в основную таблицу (актуальность),
+  прежние значения и отклонённые (FREEZE) изменения — в журнал (история).
+- **Refetch-таски** (`sync/tasks_refetch.py`, beat): report_detail (еженедельно,
+  42д), ad_stats (ежедневно, 30д, freeze: понижение → change_kind=rejected_lower,
+  в БД не пишется, в журнале видно), orders/sales (еженедельно, 45д), funnel
+  (ежедневно, окно 7д — глубже WB НЕ отдаёт, backfill невозможен by-API).
+- **UI:** `/data-revisions` (Контроль) — журнал ревизий + диффы + ручной запуск.
+- **Итог:** маппинги синков вынесены в реюз (`_map_order_row`/`_map_sale_row`/
+  `_map_report_detail_row`/`_fullstats_values`); тесты `test_wb_revision.py`
+  (added/updated/freeze/noop/totals_delta); догон данных на проде — manual
+  catchup report_detail 90д + ad_stats 60д + orders/sales 60д (funnel — только
+  7д, WB-лимит).
+
 ### TASK-DEV-094: Полный TS-паритет 1:1 (кроме Ozon/ЯМ) — Выполнено — 2026-07-03 (v0.88.0)
 - **Тип:** feature-пакет · запрос пользователя 2026-07-02. План: `.claude-work/plans/synthetic-dreaming-sunrise.md`.
 - **Аудит:** репо-доки + живой обход mirror-app.truestats.ru (2026-07-02). 5 из 6

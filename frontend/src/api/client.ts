@@ -158,6 +158,32 @@ export type TenantCabinet = {
   last_active_at: string | null;
 };
 
+// TASK-DEV-095 — ревизии WB-отчётов (журнал переподгрузок истории)
+export type DataRevision = {
+  id: number;
+  source: string;
+  period_from: string;
+  period_to: string;
+  status: "running" | "done" | "error";
+  rows_fetched: number;
+  rows_added: number;
+  rows_changed: number;
+  rows_rejected: number;
+  totals_delta: Record<string, number> | null;
+  error: string | null;
+  triggered_by: "beat" | "manual" | "catchup";
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+export type DataRevisionChange = {
+  id: number;
+  entity_key: string;
+  change_kind: "added" | "updated" | "rejected_lower";
+  old: Record<string, unknown> | null;
+  new: Record<string, unknown> | null;
+};
+
 // TASK-LEAD-061 — Multi-manager scoreboard в /weekly-report для head/director
 export interface WeeklyReportByManager {
   manager_user_id: number;
@@ -892,6 +918,30 @@ export const api = {
     }),
   deleteAnnotation: (id: number) =>
     request<{ status: string }>(`/api/annotations/${id}`, { method: "DELETE" }),
+  // DEV-095 — ревизии WB-отчётов (журнал переподгрузок истории).
+  dataRevisions: (source?: string, limit = 50) =>
+    request<{ items: DataRevision[]; sources: string[] }>(
+      `/api/data-revisions?limit=${limit}${source ? `&source=${source}` : ""}`,
+    ),
+  dataRevisionChanges: (
+    revisionId: number,
+    opts?: { kind?: string; offset?: number; limit?: number },
+  ) =>
+    request<{
+      revision: DataRevision;
+      total: number;
+      offset: number;
+      items: DataRevisionChange[];
+    }>(
+      `/api/data-revisions/${revisionId}/changes?offset=${opts?.offset ?? 0}&limit=${
+        opts?.limit ?? 100
+      }${opts?.kind ? `&kind=${opts.kind}` : ""}`,
+    ),
+  triggerRefetch: (source: string, daysBack: number) =>
+    request<{ status: string; task_id: string; source: string; days_back: number }>(
+      "/api/data-revisions/refetch",
+      { method: "POST", body: JSON.stringify({ source, days_back: daysBack }) },
+    ),
   dashboardCompare: (
     aFrom: string,
     aTo: string,

@@ -37,6 +37,23 @@ docker compose exec -T postgres psql -U app -d rnp -c \
   "SELECT id, name, slug, wb_token IS NOT NULL AS has_token FROM tenants;"
 ```
 
+## 2026-07-04 — **Ревизии WB-отчётов: переподгрузка истории с diff-журналом** (TASK-DEV-095, v0.89.0)
+
+WB меняет старые отчёты задним числом (доначисляет выкупы, «теряет» рекламу) —
+теперь история периодически переподгружается и ДИФФИТСЯ с БД:
+- **Миграция 0089**: `wb_sync_revision` (счётчики + totals_delta) +
+  `wb_sync_change` (per-строка old/new JSONB изменённых полей). Основные
+  таблицы = актуальное; старые значения — отдельно в журнале.
+- **`services/wb_revision.diff_and_apply`** — универсальный diff+apply,
+  FREEZE-отказы (понижение `sum_spent`) не применяются, но журналируются
+  (`rejected_lower`).
+- **`sync/tasks_refetch.py`** + beat: ad_stats daily 02:20 (30д), funnel daily
+  06:50 (7д — WB-лимит, глубже НЕЛЬЗЯ), report_detail weekly сб 01:45 (42д),
+  orders/sales weekly вс 01:25/05:25 (45д). Маппинги синков вынесены в реюз.
+- **UI `/data-revisions`** (Контроль → Ревизии WB): журнал, диффы было/стало,
+  ручной запуск per-source.
+- Тесты `backend/tests/test_wb_revision.py` (5 шт, на прод-БД под savepoint).
+
 ## 2026-07-03 — **Полный TS-паритет: 37 KPI, Исходная таблица, комментарии, РНП-матрица, план-факт, /files, email-выписки** (TASK-DEV-094, v0.88.0)
 
 Один релиз по живому осмотру mirror-app.truestats.ru. Важно: 5 из 6 «гэпов»
