@@ -192,6 +192,20 @@ async def test_freeze_allows_growth(db_session, test_tenant):
     assert float(kept.sum_spent) == 120.0
 
 
+def test_norm_datetime_tz_equivalence():
+    """tz-aware из БД (+00:00) и naive от WB с тем же wall-clock — НЕ diff.
+    Регрессия: первый orders-refetch на проде дал 24k фантомных «updated»
+    по cancel_dt только из-за представления таймзоны."""
+    from datetime import datetime, timezone
+    from app.services.wb_revision import _differs, _norm
+
+    aware = datetime(2026, 5, 4, 0, 0, 0, tzinfo=timezone.utc)
+    naive = datetime(2026, 5, 4, 0, 0, 0)
+    assert _norm(aware) == _norm(naive)
+    assert not _differs(aware, naive)
+    assert _differs(aware, datetime(2026, 5, 5, 0, 0, 0))
+
+
 async def test_noop_revision(db_session, test_tenant):
     adv, nm = _rand_id(), _rand_id()
     await _run(db_session, test_tenant.id, [_row(adv, nm, D1)])

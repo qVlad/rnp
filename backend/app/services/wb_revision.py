@@ -29,10 +29,20 @@ MAX_CHANGES_PER_REVISION = 20_000
 
 
 def _norm(v: Any) -> Any:
-    """Нормализация значения для сравнения/JSONB."""
+    """Нормализация значения для сравнения/JSONB.
+
+    datetime приводим к naive-UTC: asyncpg отдаёт из БД tz-aware (+00:00),
+    а свежие строки WB — naive с тем же wall-clock. Без выравнивания каждый
+    заполненный cancel_dt давал фантомный diff (24k шумовых «updated» на
+    первом же прогоне orders-refetch).
+    """
     if isinstance(v, Decimal):
         return float(v)
-    if isinstance(v, (datetime, date)):
+    if isinstance(v, datetime):
+        if v.tzinfo is not None:
+            v = v.astimezone(timezone.utc).replace(tzinfo=None)
+        return v.isoformat()
+    if isinstance(v, date):
         return v.isoformat()
     return v
 
