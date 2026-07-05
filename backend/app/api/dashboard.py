@@ -191,6 +191,149 @@ async def get_extended_kpis(
     }
 
 
+@router.get("/period-chart")
+async def get_period_chart(
+    start_date: Annotated[date, Query()],
+    end_date: Annotated[date, Query()],
+    compare: Annotated[bool, Query()] = False,
+    reporting_mode: Literal["operational", "financial"] = "operational",
+    categories: Annotated[str | None, Query()] = None,
+    groups: Annotated[str | None, Query()] = None,
+    articles: Annotated[str | None, Query()] = None,
+    glob_brands: Annotated[str | None, Query(alias="brands")] = None,
+    stores: Annotated[str | None, Query()] = None,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+    brands: set[str] | None = Depends(current_brands_filter),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """«Период в графике» (TASK-DEV-097, как TS): дневные серии 8 метрик —
+    Продажи ₽ / Ср. цена до скидок МП / Заказы ₽ / ДРРп % / Логистика /
+    Возвраты ₽ / Чистая прибыль / Хранение. `compare=true` добавляет те же
+    серии за предыдущий период той же длины (prev выровнен по индексу дня).
+
+    Источники: wb_report_detail (period_aggregates-предикаты), wb_orders,
+    wb_ad_stats_daily, build_pnl(day) — только для строки прибыли.
+    Director/head (чистая прибыль — company-scope).
+    """
+    if brands is not None:
+        raise HTTPException(403, "period-chart доступен director/head")
+    await _apply_store_filter(session, stores=stores, user=user, rbac_brands=brands)
+    nm_ids = await _resolve_global_filter(
+        session, glob_brands=glob_brands, categories=categories, groups=groups,
+        articles=articles, rbac_brands=brands,
+    )
+
+    from sqlalchemy import case, func
+
+    from app.db.models import WbAdStatsDaily, WbOrder, WbReportDetail
+    from app.services.period_aggregates import (
+        OP_RETURN,
+        OP_SALE,
+        REVENUE_FIELD,
+        get_period_day,
+        get_period_filter,
+    )
+    from app.services.pnl_builder import build_pnl
+
+    nm_pred_rd = [WbReportDetail.nm_id.in_(nm_ids)] if nm_ids is not None else []
+
+    async def day_series(d_from: date, d_to: date) -> list[dict]:
+        day_col = get_period_day(reporting_mode)
+        rd = (
+            await session.execute(
+                select(
+                    day_col.label("d"),
+                    func.coalesce(func.sum(case((OP_SALE, REVENUE_FIELD), else_=0))
+                                  - func.sum(case((OP_RETURN, REVENUE_FIELD), else_=0)), 0).label("sales"),
+                    func.coalesce(func.sum(case((OP_SALE, WbReportDetail.retail_price), else_=0)), 0).label("realisation"),
+                    func.coalesce(func.sum(case((OP_SALE, WbReportDetail.quantity), else_=0)), 0).label("qty"),
+                    func.coalesce(func.sum(case((OP_RETURN, REVENUE_FIELD), else_=0)), 0).label("returns_rub"),
+                    func.coalesce(func.sum(WbReportDetail.delivery_rub), 0).label("logistics"),
+                    func.coalesce(func.sum(WbReportDetail.storage_fee), 0).label("storage"),
+                )
+                .where(*get_period_filter(d_from, d_to, reporting_mode), *nm_pred_rd)
+                .group_by(day_col)
+            )
+        ).all()
+        rd_by_day = {r.d.isoformat(): r for r in rd if r.d}
+
+        orows = (
+            await session.execute(
+                select(
+                    func.date(WbOrder.order_dt).label("d"),
+                    func.coalesce(func.sum(func.coalesce(WbOrder.price_with_disc, WbOrder.total_price)), 0).label("amt"),
+                )
+                .where(
+                    func.date(WbOrder.order_dt) >= d_from,
+                    func.date(WbOrder.order_dt) <= d_to,
+                    WbOrder.is_cancel.is_(False),
+                    *([WbOrder.nm_id.in_(nm_ids)] if nm_ids is not None else []),
+                )
+                .group_by(func.date(WbOrder.order_dt))
+            )
+        ).all()
+        orders_by_day = {r.d.isoformat(): float(r.amt or 0) for r in orows}
+
+        arows = (
+            await session.execute(
+                select(
+                    WbAdStatsDaily.stat_date.label("d"),
+                    func.coalesce(func.sum(WbAdStatsDaily.sum_spent), 0).label("spent"),
+                )
+                .where(
+                    WbAdStatsDaily.stat_date >= d_from,
+                    WbAdStatsDaily.stat_date <= d_to,
+                    *([WbAdStatsDaily.nm_id.in_(nm_ids)] if nm_ids is not None else []),
+                )
+                .group_by(WbAdStatsDaily.stat_date)
+            )
+        ).all()
+        ad_by_day = {r.d.isoformat(): float(r.spent or 0) for r in arows}
+
+        pnl = await build_pnl(
+            session, date_from=d_from, date_to=d_to, granularity="day",
+            brands=None, nm_ids=nm_ids, reporting_mode=reporting_mode,
+        )
+        profit_by_day = {r["period_start"]: r.get("profit") for r in pnl["rows"]}
+
+        out = []
+        cur = d_from
+        while cur <= d_to:
+            k = cur.isoformat()
+            r = rd_by_day.get(k)
+            sales = float(r.sales) if r else 0.0
+            qty = int(r.qty) if r else 0
+            spent = ad_by_day.get(k, 0.0)
+            out.append({
+                "date": k,
+                "sales": round(sales, 2),
+                "avg_price_before_spp": round(float(r.realisation) / qty, 2) if r and qty else None,
+                "orders_rub": round(orders_by_day.get(k, 0.0), 2),
+                "drr_pct": round(spent / sales * 100, 2) if sales else None,
+                "logistics": round(float(r.logistics), 2) if r else 0.0,
+                "returns_rub": round(float(r.returns_rub), 2) if r else 0.0,
+                "net_profit": profit_by_day.get(k),
+                "storage": round(float(r.storage), 2) if r else 0.0,
+            })
+            cur += timedelta(days=1)
+        return out
+
+    days = await day_series(start_date, end_date)
+    result: dict = {
+        "from": start_date.isoformat(),
+        "to": end_date.isoformat(),
+        "reporting_mode": reporting_mode,
+        "days": days,
+    }
+    if compare:
+        n = (end_date - start_date).days
+        prev_to = start_date - timedelta(days=1)
+        prev_from = prev_to - timedelta(days=n)
+        result["prev"] = await day_series(prev_from, prev_to)
+        result["prev_period"] = {"from": prev_from.isoformat(), "to": prev_to.isoformat()}
+    return result
+
+
 @router.get("/timeseries")
 async def get_timeseries(
     days: Annotated[int, Query(ge=1, le=365)] = 30,

@@ -63,6 +63,9 @@ import ViewPresetsBar from "@/components/ViewPresetsBar";
 import { exportToPdf, exportToPng } from "@/lib/exportPdf";
 import { Icon } from "@/components/Icon";
 import { chartTheme, GRID_PROPS, AXIS_PROPS, TOOLTIP_STYLE } from "@/lib/chartTheme";
+import PeriodChart from "@/components/dashboard/PeriodChart";
+import TopMarginPie from "@/components/dashboard/TopMarginPie";
+import RevenueStructureBars from "@/components/dashboard/RevenueStructureBars";
 import { fmtNum, fmtRub } from "@/lib/format";
 
 type Period = "day" | "week" | "month";
@@ -152,9 +155,6 @@ export default function Dashboard() {
   const [customEnd, setCustomEnd] = useState(
     ctxPeriod.kind === "custom" ? ctxPeriod.to : today(),
   );
-  const [tsDays, setTsDays] = useState(30);
-  const [showRevenue, setShowRevenue] = useState(true);
-  const [showOrders, setShowOrders] = useState(true);
   const [topBy, setTopBy] = useState<"revenue" | "margin" | "worst_margin">("revenue");
   // TASK-LEAD-029 — toggle «Сравнить периоды».
   const [compareOpen, setCompareOpen] = useState(false);
@@ -198,10 +198,6 @@ export default function Dashboard() {
     queryKey: ["dashboard", rangeKey, dataMode, reportingMode, gfk],
     queryFn: () => api.dashboard(range, dataMode, reportingMode, gToParams()) as Promise<any>,
   });
-  const tsQ = useQuery({
-    queryKey: ["timeseries", tsDays, dataMode, reportingMode, gfk],
-    queryFn: () => api.timeseries(tsDays, dataMode, reportingMode, gToParams()),
-  });
   const topQ = useQuery({
     queryKey: ["top", rangeKey, topBy, dataMode, reportingMode, gfk],
     queryFn: () => {
@@ -219,18 +215,14 @@ export default function Dashboard() {
   const qc = useQueryClient();
   const canEditAnnotations =
     user?.role === "director" || user?.role === "head_of_sales";
-  const tsFrom = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - tsDays);
-    return d.toISOString().slice(0, 10);
-  }, [tsDays]);
-  const tsTo = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  // DEV-097: pie/бары/period-chart — движок сводного отчёта, director/head.
+  const canSeeExtended = canEditAnnotations;
   const annQ = useQuery({
-    queryKey: ["annotations", tsFrom, tsTo],
-    queryFn: () => api.annotations(tsFrom, tsTo),
+    queryKey: ["annotations", extRange.from, extRange.to],
+    queryFn: () => api.annotations(extRange.from, extRange.to),
   });
   const annotations = annQ.data?.items ?? [];
-  const [annDate, setAnnDate] = useState(tsTo);
+  const [annDate, setAnnDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [annText, setAnnText] = useState("");
   const addAnnMut = useMutation({
     mutationFn: () => api.createAnnotation(annDate, annText.trim()),
@@ -243,10 +235,6 @@ export default function Dashboard() {
     mutationFn: (id: number) => api.deleteAnnotation(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["annotations"] }),
   });
-  // Только аннотации, чья дата попадает в точки графика (иначе ReferenceLine
-  // не привяжется к оси X).
-  const chartDates = new Set<string>((tsQ.data?.rows ?? []).map((r: any) => r.date));
-  const chartAnnotations = annotations.filter((a) => chartDates.has(a.dt));
 
   const applyCustom = () => {
     if (!customStart || !customEnd) return;
@@ -447,7 +435,6 @@ export default function Dashboard() {
                   customStart,
                   customEnd,
                   topBy,
-                  tsDays,
                 }}
                 applyState={(s: any) => {
                   if (s.dataMode) setDataMode(s.dataMode);
@@ -455,7 +442,6 @@ export default function Dashboard() {
                   if (s.customStart) setCustomStart(s.customStart);
                   if (s.customEnd) setCustomEnd(s.customEnd);
                   if (s.topBy) setTopBy(s.topBy);
-                  if (s.tsDays) setTsDays(s.tsDays);
                 }}
               />
             </div>
@@ -539,117 +525,20 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
         <div className="card lg:col-span-2">
-          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-            <div className="font-medium">Динамика выручки</div>
-            <div className="flex items-center gap-3 flex-wrap">
-              <div className="flex gap-1 text-xs">
-                <button
-                  type="button"
-                  onClick={() => setShowRevenue((v: boolean) => !v)}
-                  className={`btn flex items-center gap-1 ${
-                    showRevenue ? "border-accent text-accent" : "opacity-50"
-                  }`}
-                  title="Показать/скрыть линию выручки"
-                >
-                  <span
-                    className="inline-block w-3 h-3 rounded-sm"
-                    style={{ background: "#7c5cff" }}
-                  />
-                  Выручка
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowOrders((v: boolean) => !v)}
-                  className={`btn flex items-center gap-1 ${
-                    showOrders ? "border-accent text-accent" : "opacity-50"
-                  }`}
-                  title="Показать/скрыть линию заказов"
-                >
-                  <span
-                    className="inline-block w-3 h-3 rounded-sm"
-                    style={{ background: "#3ddc97" }}
-                  />
-                  Заказы
-                </button>
-              </div>
-              <div className="flex gap-1">
-                {[7, 30, 90].map((d) => (
-                  <button
-                    key={d}
-                    className={`btn ${tsDays === d ? "border-accent text-accent" : ""}`}
-                    onClick={() => setTsDays(d)}
-                  >
-                    {d} дн
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-          <div style={{ width: "100%", height: 280 }}>
-            {tsQ.data && (
-              <ResponsiveContainer>
-                <LineChart data={tsQ.data.rows}>
-                  <CartesianGrid {...GRID_PROPS} />
-                  <XAxis {...AXIS_PROPS} dataKey="date" />
-                  {/* Двойная Y-ось: revenue (₽, слева) vs orders (шт, справа).
-                      Без этого orders (~70) лежали на дне, потому что одна ось
-                      масштабировалась под revenue (~700k). */}
-                  <YAxis
-                    {...AXIS_PROPS}
-                    yAxisId="revenue"
-                    tickFormatter={(v) =>
-                      Math.abs(v) >= 1000 ? `${Math.round(v / 1000)}k` : String(v)
-                    }
-                    hide={!showRevenue}
-                  />
-                  <YAxis
-                    {...AXIS_PROPS}
-                    yAxisId="orders"
-                    orientation="right"
-                    hide={!showOrders}
-                  />
-                  <Tooltip
-                    contentStyle={TOOLTIP_STYLE}
-                    formatter={(v: any, name: any) =>
-                      name === "revenue" ? fmtRub(v) : fmtNum(v)
-                    }
-                  />
-                  <Line
-                    yAxisId="revenue"
-                    type="monotone"
-                    dataKey="revenue"
-                    stroke={chartTheme.primary}
-                    strokeWidth={2}
-                    dot={false}
-                    hide={!showRevenue}
-                  />
-                  <Line
-                    yAxisId="orders"
-                    type="monotone"
-                    dataKey="orders"
-                    stroke={chartTheme.positive}
-                    strokeWidth={2}
-                    dot={false}
-                    hide={!showOrders}
-                  />
-                  {/* DEV-081 — маркеры команд-аннотаций на оси дат. */}
-                  {chartAnnotations.map((a) => (
-                    <ReferenceLine
-                      key={a.id}
-                      yAxisId="revenue"
-                      x={a.dt}
-                      stroke="var(--accent)"
-                      strokeDasharray="3 3"
-                      label={{
-                        value: "📌",
-                        position: "top",
-                        fontSize: 11,
-                      }}
-                    />
-                  ))}
-                </LineChart>
-              </ResponsiveContainer>
-            )}
+          {/* DEV-097 (TS-паритет): «Период в графике» — мультиметричный график
+              по дням глобального периода вместо прежней «Динамики выручки»
+              (выручка+заказы включаются чекбоксами Продажи/Заказы). */}
+          {canSeeExtended ? (
+            <PeriodChart
+              from={extRange.from}
+              to={extRange.to}
+              filters={gToParams()}
+              annotations={annotations}
+            />
+          ) : (
+            <div className="text-sm text-muted">График периода доступен директору/РОП.</div>
+          )}
+          <div>
             {/* DEV-081 — команд-заметки на датах (маркеры 📌 на графике выше). */}
             <div className="mt-3 border-t border-border pt-2">
               <div className="text-xs text-muted mb-1">
@@ -777,6 +666,14 @@ export default function Dashboard() {
           ) : null}
         </div>
       </div>
+
+      {/* DEV-097 (TS-паритет): Топ-5 маржинальных (pie) + Структура выручки (бары). */}
+      {canSeeExtended && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+          <TopMarginPie from={extRange.from} to={extRange.to} filters={gToParams()} />
+          <RevenueStructureBars from={extRange.from} to={extRange.to} filters={gToParams()} />
+        </div>
+      )}
     </div>
   );
 }

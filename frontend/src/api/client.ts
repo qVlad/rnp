@@ -158,6 +158,19 @@ export type TenantCabinet = {
   last_active_at: string | null;
 };
 
+// TASK-DEV-097 — «Период в графике» на дашборде (как TS)
+export type PeriodChartDay = {
+  date: string;
+  sales: number;
+  avg_price_before_spp: number | null;
+  orders_rub: number;
+  drr_pct: number | null;
+  logistics: number;
+  returns_rub: number;
+  net_profit: number | null;
+  storage: number;
+};
+
 // TASK-DEV-096 — расширенная аналитика РК (зоны показа, воронка корзины, CPL/CPS)
 export type AdCampaignRow = {
   advert_id: number;
@@ -1008,6 +1021,18 @@ export const api = {
     }>(
       `/api/dashboard/compare?a_from=${aFrom}&a_to=${aTo}&b_from=${bFrom}&b_to=${bTo}&mode=${mode}&reporting_mode=${reportingMode}`,
     ),
+  // DEV-097 — «Период в графике» (как TS): дневные серии 8 метрик + prev.
+  periodChart: (start: string, end: string, compare: boolean, filters?: Record<string, string>) =>
+    request<{
+      from: string;
+      to: string;
+      days: PeriodChartDay[];
+      prev?: PeriodChartDay[];
+      prev_period?: { from: string; to: string };
+    }>(
+      `/api/dashboard/period-chart?start_date=${start}&end_date=${end}&compare=${compare}${filterSuffix(filters)}`,
+    ),
+
   topSkus: (
     range: { period: "day" | "week" | "month" } | { start: string; end: string },
     by: "revenue" | "margin",
