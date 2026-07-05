@@ -1,0 +1,7 @@
+{
+  "task_id": "TASK-DEV-097",
+  "agent": "Claude Fable 5 — main session",
+  "started_at": "2026-07-05T09:25:51Z",
+  "expected_minutes": 90,
+  "notes": "TS-графики дашборда: period-chart API, client.ts, Dashboard.tsx"
+}
