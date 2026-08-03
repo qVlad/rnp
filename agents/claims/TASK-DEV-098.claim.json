@@ -1,0 +1,7 @@
+{
+  "task_id": "TASK-DEV-098",
+  "agent": "Claude Opus 5 — main session",
+  "started_at": "2026-08-03T15:29:17Z",
+  "expected_minutes": 90,
+  "notes": "WMS Свой склад — Фаза 1: миграция 0091, модели, сервисы, API, /warehouse"
+}
