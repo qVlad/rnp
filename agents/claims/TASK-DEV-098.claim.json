@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-DEV-098",
-  "agent": "Claude Opus 5 — main session",
-  "started_at": "2026-08-06T10:57:23Z",
-  "expected_minutes": 120,
-  "notes": "WMS Фазы 2-4: размещение, /wh-scan, отбор по FBS, пуш остатков"
-}
