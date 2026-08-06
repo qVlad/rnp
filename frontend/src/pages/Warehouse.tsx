@@ -282,9 +282,16 @@ function WarehousesTab({ onDone, onError }: Cb) {
   const remove = useMutation({
     mutationFn: ({ id, force }: { id: number; force: boolean }) =>
       api.whDeleteWarehouse(id, force),
-    onSuccess: () => {
+    onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ["wh-warehouses"] });
-      onDone("Склад удалён");
+      const lost = [
+        r.boxes_lost ? `коробов ${r.boxes_lost}` : "",
+        r.qty_lost ? `товара ${r.qty_lost} шт` : "",
+        r.movements_lost ? `записей журнала ${r.movements_lost}` : "",
+      ].filter(Boolean);
+      onDone(
+        lost.length ? `Склад удалён · удалено: ${lost.join(", ")}` : "Склад удалён",
+      );
     },
     onError,
   });
@@ -344,25 +351,27 @@ function WarehousesTab({ onDone, onError }: Cb) {
                   <button
                     className="btn text-danger"
                     onClick={() => {
-                      if (
-                        !window.confirm(
-                          `Удалить склад «${w.name}»? Разрешено только если на нём нет коробов.`,
-                        )
-                      )
-                        return;
-                      // Журнал движений привязан к складу каскадом: если по
-                      // складу есть история, backend вернёт 409 — спрашиваем
-                      // отдельно, а не теряем аудит молча.
+                      if (!window.confirm(`Удалить склад «${w.name}»?`)) return;
+                      // Коробы и журнал висят на складе каскадом. Сначала
+                      // пробуем безопасно: backend вернёт 409 с количеством —
+                      // и только тогда переспрашиваем с конкретными цифрами,
+                      // чтобы данные не исчезали молча.
                       remove.mutate(
                         { id: w.id, force: false },
                         {
                           onError: (e) => {
                             const m = String(e);
+                            const boxes = m.match(/warehouse_not_empty:(\d+)/);
                             const hist = m.match(/warehouse_has_history:(\d+)/);
-                            if (!hist) return onError(e);
+                            if (!boxes && !hist) return onError(e);
+                            const what = boxes
+                              ? `${boxes[1]} коробов с остатками`
+                              : `${hist![1]} записей журнала движений`;
                             if (
                               window.confirm(
-                                `По складу есть ${hist[1]} записей в журнале движений — они будут удалены вместе со складом. Обычно вместо удаления достаточно снять «Активен». Всё равно удалить?`,
+                                `На складе «${w.name}» ещё есть ${what} — они будут удалены безвозвратно.\n\n` +
+                                  "Если склад просто больше не используется, лучше снять галочку «Активен» — данные сохранятся.\n\n" +
+                                  "Всё равно удалить со всем содержимым?",
                               )
                             )
                               remove.mutate({ id: w.id, force: true });

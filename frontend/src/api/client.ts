@@ -3572,12 +3572,20 @@ paymentOrderDelete: (payment_order_id: string) =>
       method: "PUT",
       body: JSON.stringify(body),
     }),
-  /** force=true удаляет склад ВМЕСТЕ с журналом движений (история теряется). */
+  /**
+   * force=true удаляет склад ВМЕСТЕ с коробами, остатками и журналом движений.
+   * Временная поблажка на период тестирования (см. docstring эндпоинта).
+   */
   whDeleteWarehouse: (id: number, force = false) =>
-    request<{ ok: boolean; movements_lost: number }>(
-      `/api/warehouse/warehouses/${id}${force ? "?force=true" : ""}`,
-      { method: "DELETE" },
-    ),
+    request<{
+      ok: boolean;
+      boxes_lost: number;
+      positions_lost: number;
+      qty_lost: number;
+      movements_lost: number;
+    }>(`/api/warehouse/warehouses/${id}${force ? "?force=true" : ""}`, {
+      method: "DELETE",
+    }),
 
   whCells: (
     warehouseId: number,

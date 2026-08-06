@@ -178,18 +178,28 @@ async def delete_warehouse(
     request: Request,
     force: bool = Query(
         default=False,
-        description="удалить вместе с журналом движений (история будет потеряна)",
+        description=(
+            "удалить вместе с коробами, остатками и журналом движений "
+            "(данные будут потеряны безвозвратно)"
+        ),
     ),
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     """Удалить склад.
 
-    Запрещено, если на нём есть коробы (сначала разберите), И если по складу
-    есть история движений: FK `wh_movement.warehouse_id` — ON DELETE CASCADE,
-    поэтому удаление склада стёрло бы append-only журнал целиком. Проверено на
-    проде: 1126 записей исчезли молча. Правильный сценарий для отработавшего
-    склада — снять галочку «Активен», а не удалять. Осознанное удаление вместе
-    с историей — `?force=true`.
+    По умолчанию запрещено, если на складе есть коробы (сначала разберите) или
+    по нему есть история движений: FK `wh_box.warehouse_id` и
+    `wh_movement.warehouse_id` — ON DELETE CASCADE, поэтому удаление склада
+    снесло бы и остатки, и append-only журнал. Проверено на проде: 1126 записей
+    журнала исчезли молча. Штатный путь для отработавшего склада — снять галочку
+    «Активен», а не удалять.
+
+    **`?force=true` — ВРЕМЕННАЯ поблажка на период тестирования** (запрос
+    пользователя 2026-08-06): снимает обе защиты, чтобы можно было выбросить
+    пробную загрузку одной кнопкой. Сколько именно потеряно коробов / позиций /
+    записей журнала — возвращается в ответе и пишется в `audit_log`, чтобы это
+    не выглядело как «ничего не было». Когда тестирование закончится — убрать
+    ветку `force` для коробов, оставив её только для журнала.
     """
     wh = (
         await session.execute(select(WhWarehouse).where(WhWarehouse.id == warehouse_id))
@@ -204,8 +214,6 @@ async def delete_warehouse(
         ).scalar()
         or 0
     )
-    if boxes:
-        raise HTTPException(status_code=409, detail=f"warehouse_not_empty:{boxes}")
     movements = int(
         (
             await session.execute(
@@ -216,23 +224,55 @@ async def delete_warehouse(
         ).scalar()
         or 0
     )
-    if movements and not force:
-        raise HTTPException(
-            status_code=409,
-            detail=f"warehouse_has_history:{movements}",
-        )
+    # Позиции и штуки считаем ДО удаления — после каскада узнать уже негде,
+    # а пользователь должен видеть, что именно выбрасывает.
+    positions, qty = 0, 0
+    if boxes:
+        row = (
+            await session.execute(
+                select(
+                    func.count(WhBoxItem.id),
+                    func.coalesce(func.sum(WhBoxItem.qty), 0),
+                )
+                .join(WhBox, WhBox.id == WhBoxItem.box_id)
+                .where(WhBox.warehouse_id == warehouse_id)
+            )
+        ).one()
+        positions, qty = int(row[0] or 0), int(row[1] or 0)
+
+    if not force:
+        if boxes:
+            raise HTTPException(
+                status_code=409, detail=f"warehouse_not_empty:{boxes}"
+            )
+        if movements:
+            raise HTTPException(
+                status_code=409, detail=f"warehouse_has_history:{movements}"
+            )
     await audit_log(
         session,
         "wh_warehouse",
         "delete",
         actor=actor_from_request(request),
         entity_id=str(warehouse_id),
-        before={**_warehouse_dict(wh), "movements_lost": movements if force else 0},
+        before={
+            **_warehouse_dict(wh),
+            "boxes_lost": boxes,
+            "positions_lost": positions,
+            "qty_lost": qty,
+            "movements_lost": movements,
+        },
         comment="force" if force else None,
     )
     await session.execute(delete(WhWarehouse).where(WhWarehouse.id == warehouse_id))
     await session.commit()
-    return {"ok": True, "movements_lost": movements if force else 0}
+    return {
+        "ok": True,
+        "boxes_lost": boxes,
+        "positions_lost": positions,
+        "qty_lost": qty,
+        "movements_lost": movements,
+    }
 
 
 # ===========================================================================
