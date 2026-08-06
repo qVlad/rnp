@@ -166,9 +166,21 @@ async def update_warehouse(
 async def delete_warehouse(
     warehouse_id: int,
     request: Request,
+    force: bool = Query(
+        default=False,
+        description="удалить вместе с журналом движений (история будет потеряна)",
+    ),
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
-    """Удалить склад. Запрещено, если на нём есть коробы — сначала разберите."""
+    """Удалить склад.
+
+    Запрещено, если на нём есть коробы (сначала разберите), И если по складу
+    есть история движений: FK `wh_movement.warehouse_id` — ON DELETE CASCADE,
+    поэтому удаление склада стёрло бы append-only журнал целиком. Проверено на
+    проде: 1126 записей исчезли молча. Правильный сценарий для отработавшего
+    склада — снять галочку «Активен», а не удалять. Осознанное удаление вместе
+    с историей — `?force=true`.
+    """
     wh = (
         await session.execute(select(WhWarehouse).where(WhWarehouse.id == warehouse_id))
     ).scalars().first()
@@ -184,17 +196,33 @@ async def delete_warehouse(
     )
     if boxes:
         raise HTTPException(status_code=409, detail=f"warehouse_not_empty:{boxes}")
+    movements = int(
+        (
+            await session.execute(
+                select(func.count(WhMovement.id)).where(
+                    WhMovement.warehouse_id == warehouse_id
+                )
+            )
+        ).scalar()
+        or 0
+    )
+    if movements and not force:
+        raise HTTPException(
+            status_code=409,
+            detail=f"warehouse_has_history:{movements}",
+        )
     await audit_log(
         session,
         "wh_warehouse",
         "delete",
         actor=actor_from_request(request),
         entity_id=str(warehouse_id),
-        before=_warehouse_dict(wh),
+        before={**_warehouse_dict(wh), "movements_lost": movements if force else 0},
+        comment="force" if force else None,
     )
     await session.execute(delete(WhWarehouse).where(WhWarehouse.id == warehouse_id))
     await session.commit()
-    return {"ok": True}
+    return {"ok": True, "movements_lost": movements if force else 0}
 
 
 # ===========================================================================

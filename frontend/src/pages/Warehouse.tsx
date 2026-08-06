@@ -253,7 +253,8 @@ function WarehousesTab({ onDone, onError }: Cb) {
     onError,
   });
   const remove = useMutation({
-    mutationFn: (id: number) => api.whDeleteWarehouse(id),
+    mutationFn: ({ id, force }: { id: number; force: boolean }) =>
+      api.whDeleteWarehouse(id, force),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["wh-warehouses"] });
       onDone("Склад удалён");
@@ -317,11 +318,30 @@ function WarehousesTab({ onDone, onError }: Cb) {
                     className="btn text-danger"
                     onClick={() => {
                       if (
-                        window.confirm(
+                        !window.confirm(
                           `Удалить склад «${w.name}»? Разрешено только если на нём нет коробов.`,
                         )
                       )
-                        remove.mutate(w.id);
+                        return;
+                      // Журнал движений привязан к складу каскадом: если по
+                      // складу есть история, backend вернёт 409 — спрашиваем
+                      // отдельно, а не теряем аудит молча.
+                      remove.mutate(
+                        { id: w.id, force: false },
+                        {
+                          onError: (e) => {
+                            const m = String(e);
+                            const hist = m.match(/warehouse_has_history:(\d+)/);
+                            if (!hist) return onError(e);
+                            if (
+                              window.confirm(
+                                `По складу есть ${hist[1]} записей в журнале движений — они будут удалены вместе со складом. Обычно вместо удаления достаточно снять «Активен». Всё равно удалить?`,
+                              )
+                            )
+                              remove.mutate({ id: w.id, force: true });
+                          },
+                        },
+                      );
                     }}
                   >
                     Удалить

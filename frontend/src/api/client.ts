@@ -3572,10 +3572,12 @@ paymentOrderDelete: (payment_order_id: string) =>
       method: "PUT",
       body: JSON.stringify(body),
     }),
-  whDeleteWarehouse: (id: number) =>
-    request<{ ok: boolean }>(`/api/warehouse/warehouses/${id}`, {
-      method: "DELETE",
-    }),
+  /** force=true удаляет склад ВМЕСТЕ с журналом движений (история теряется). */
+  whDeleteWarehouse: (id: number, force = false) =>
+    request<{ ok: boolean; movements_lost: number }>(
+      `/api/warehouse/warehouses/${id}${force ? "?force=true" : ""}`,
+      { method: "DELETE" },
+    ),
 
   whCells: (
     warehouseId: number,
