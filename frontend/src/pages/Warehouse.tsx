@@ -1263,21 +1263,50 @@ function PickTab({ warehouseId, onDone, onError }: Cb & { warehouseId: number })
   const stickers = useMutation({
     mutationFn: (id: number) => api.whPickStickers(id),
     onSuccess: (r) => {
-      // Печать: собираем картинки в отдельное окно
-      const imgs = r.stickers
-        .filter((s) => s.file)
+      const files = r.stickers.filter((s) => s.file);
+      // Пустой ответ WB — НЕ открываем окно печати. Раньше открывали всегда, и
+      // при нуле стикеров пользователь получал пустую вкладку + системное окно
+      // печати, из-за которого браузер выглядел зависшим.
+      if (files.length === 0) {
+        return onError(
+          new Error(
+            `WB не вернул стикеры (заданий в листе: ${r.orders}). ` +
+              "Попробуйте позже: WB отдаёт стикеры не сразу после создания задания.",
+          ),
+        );
+      }
+      const w = window.open("", "_blank");
+      if (!w) {
+        return onError(
+          new Error("Браузер заблокировал всплывающее окно — разрешите popup для печати"),
+        );
+      }
+      const imgs = files
         .map(
           (s) =>
             `<img src="data:image/png;base64,${s.file}" style="margin:2mm;width:58mm"/>`,
         )
         .join("");
-      const w = window.open("", "_blank");
-      if (!w) return onError(new Error("Браузер заблокировал окно печати"));
+      // Печать запускаем ТОЛЬКО после того, как картинки декодированы: иначе
+      // `print()` сразу после `document.write` печатает пустой лист.
       w.document.write(
-        `<html><head><title>Стикеры (${r.orders})</title></head><body>${imgs}</body></html>`,
+        `<!doctype html><html><head><title>Стикеры (${files.length})</title></head>` +
+          `<body style="margin:0">${imgs}` +
+          `<script>
+             (function () {
+               var imgs = Array.prototype.slice.call(document.images);
+               var left = imgs.length;
+               function go() { if (--left <= 0) setTimeout(function(){ window.print(); }, 100); }
+               if (!imgs.length) return;
+               imgs.forEach(function (i) {
+                 if (i.complete) go();
+                 else { i.addEventListener("load", go); i.addEventListener("error", go); }
+               });
+             })();
+           <\/script></body></html>`,
       );
       w.document.close();
-      w.print();
+      onDone(`Стикеров получено: ${files.length} — открыто окно печати`);
     },
     onError,
   });
