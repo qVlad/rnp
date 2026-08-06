@@ -1916,6 +1916,15 @@ function CabinetsTab({
     wb_warehouse_name: "",
   });
 
+  // Склады продавца выбранного кабинета — подтягиваются из WB, чтобы
+  // warehouseId не приходилось искать в ЛК руками.
+  const available = useQuery({
+    queryKey: ["wh-wb-available", form.cabinet_tenant_id],
+    queryFn: () => api.whAvailableWbWarehouses(form.cabinet_tenant_id),
+    enabled: !!form.cabinet_tenant_id,
+    retry: false,
+  });
+
   const create = useMutation({
     mutationFn: () =>
       api.whCreateWbLink({
@@ -1966,15 +1975,40 @@ function CabinetsTab({
               </option>
             ))}
           </select>
-          <input
-            className="input"
-            type="number"
-            placeholder="warehouseId в WB"
-            value={form.wb_warehouse_id || ""}
-            onChange={(e) =>
-              setForm({ ...form, wb_warehouse_id: Number(e.target.value) })
-            }
-          />
+          {available.data?.items.length ? (
+            <select
+              className="input"
+              value={form.wb_warehouse_id || ""}
+              onChange={(e) => {
+                const id = Number(e.target.value);
+                const found = available.data?.items.find(
+                  (w) => w.wb_warehouse_id === id,
+                );
+                setForm({
+                  ...form,
+                  wb_warehouse_id: id,
+                  wb_warehouse_name: found?.name ?? "",
+                });
+              }}
+            >
+              <option value="">— склад продавца в WB —</option>
+              {available.data.items.map((w) => (
+                <option key={w.wb_warehouse_id} value={w.wb_warehouse_id}>
+                  {w.name ?? w.wb_warehouse_id} ({w.wb_warehouse_id})
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              className="input"
+              type="number"
+              placeholder="warehouseId в WB"
+              value={form.wb_warehouse_id || ""}
+              onChange={(e) =>
+                setForm({ ...form, wb_warehouse_id: Number(e.target.value) })
+              }
+            />
+          )}
           <input
             className="input"
             placeholder="Название склада в WB"

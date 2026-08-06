@@ -3879,6 +3879,19 @@ paymentOrderDelete: (payment_order_id: string) =>
       }),
     }),
 
+  /** Склады продавца в кабинете — чтобы не искать warehouseId в ЛК WB. */
+  whAvailableWbWarehouses: (cabinetTenantId: number) =>
+    request<{
+      cabinet_tenant_id: number;
+      cabinet_name: string;
+      items: {
+        wb_warehouse_id: number;
+        name: string | null;
+        office_id: number | null;
+        cargo_type: number | null;
+        delivery_type: number | null;
+      }[];
+    }>(`/api/warehouse/wb-links/available?cabinet_tenant_id=${cabinetTenantId}`),
   whWbLinks: (warehouseId?: number) =>
     request<{ items: WhWbLink[] }>(
       `/api/warehouse/wb-links${warehouseId ? `?warehouse_id=${warehouseId}` : ""}`,

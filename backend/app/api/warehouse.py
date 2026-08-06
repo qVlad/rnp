@@ -1363,6 +1363,43 @@ async def list_wb_links(
     }
 
 
+@router.get("/wb-links/available")
+async def available_wb_warehouses(
+    cabinet_tenant_id: int = Query(...),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Склады продавца в указанном кабинете — `GET /api/v3/warehouses`.
+
+    Нужно, чтобы `warehouseId` не приходилось искать в ЛК WB руками: список
+    подтягивается кнопкой, пользователь только сопоставляет со своим складом.
+    """
+    cabinet = await session.get(Tenant, cabinet_tenant_id)
+    if cabinet is None:
+        raise HTTPException(status_code=404, detail="cabinet_not_found")
+    token = await get_tenant_token(session, cabinet_tenant_id)
+    if not token:
+        raise HTTPException(status_code=400, detail="cabinet_has_no_token")
+    try:
+        async with WbApiClient(token=token) as client:
+            warehouses = await marketplace.get_seller_warehouses(client)
+    except Exception as exc:  # noqa: BLE001 — показать причину пользователю
+        raise HTTPException(status_code=502, detail=f"wb_error: {exc}") from exc
+    return {
+        "cabinet_tenant_id": cabinet_tenant_id,
+        "cabinet_name": cabinet.name,
+        "items": [
+            {
+                "wb_warehouse_id": w.get("id"),
+                "name": w.get("name"),
+                "office_id": w.get("officeId"),
+                "cargo_type": w.get("cargoType"),
+                "delivery_type": w.get("deliveryType"),
+            }
+            for w in warehouses
+        ],
+    }
+
+
 @router.post("/wb-links")
 async def create_wb_link(
     payload: WbLinkPayload,
