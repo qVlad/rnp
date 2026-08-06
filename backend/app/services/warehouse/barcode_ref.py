@@ -127,17 +127,30 @@ async def sync_from_wb(session: AsyncSession) -> dict[str, int]:
 
     `wb_orders` + `wb_stocks_snapshot` содержат `(barcode, nm_id, tech_size)`.
     WB-конвенция: один баркод = одна пара (nm_id, размер); берём MIN для
-    детерминизма (как `size_breakdown.py`). Артикул/бренд подтягиваем из
-    `products` по nm_id.
+    детерминизма (как `size_breakdown.py`).
+
+    Артикул/предмет/бренд берём **из самих строк заказов** (`supplier_article` /
+    `subject` / `brand`), а `products` используем лишь как дополнение. Причина
+    проверена на проде: у нового кабинета `wb_orders` уже полон (619 баркодов),
+    а `products` ещё почти пуст (2 строки) — джойн по nm_id давал NULL, и поиск
+    по названию не работал.
     """
     rows: dict[str, dict[str, Any]] = {}
 
     for model in (WbOrder, WbStockSnapshot):
+        # `supplier_article`/`subject`/`brand` есть у обеих моделей, но берём
+        # через getattr — чтобы модуль не падал, если WB уберёт поле у одной.
+        extra = {
+            key: func.min(getattr(model, key)).label(key)
+            for key in ("supplier_article", "subject", "brand")
+            if hasattr(model, key)
+        }
         stmt = (
             select(
                 model.barcode,
                 model.nm_id,
                 func.min(model.tech_size).label("tech_size"),
+                *extra.values(),
             )
             .where(model.barcode.is_not(None))
             .where(model.nm_id.is_not(None))
@@ -147,16 +160,23 @@ async def sync_from_wb(session: AsyncSession) -> dict[str, int]:
             barcode = normalize_barcode(r.barcode)
             if not barcode:
                 continue
-            # wb_orders идёт первым — не перетираем его размером из stocks
+            # wb_orders идёт первым — не перетираем его данными из stocks
             rows.setdefault(
                 barcode,
-                {"barcode": barcode, "nm_id": r.nm_id, "size": r.tech_size},
+                {
+                    "barcode": barcode,
+                    "nm_id": r.nm_id,
+                    "size": r.tech_size,
+                    "vendor_code": getattr(r, "supplier_article", None),
+                    "name": getattr(r, "subject", None),
+                    "brand": getattr(r, "brand", None),
+                },
             )
 
     if not rows:
         return {"inserted": 0, "updated": 0, "skipped": 0, "barcodes": 0}
 
-    # Артикул + бренд по nm_id
+    # `products` — дополнение: заполняем только то, чего не дали строки заказов.
     nm_ids = {r["nm_id"] for r in rows.values() if r["nm_id"]}
     prod_stmt = select(Product.nm_id, Product.vendor_code, Product.brand, Product.subject).where(
         Product.nm_id.in_(nm_ids)
@@ -167,9 +187,9 @@ async def sync_from_wb(session: AsyncSession) -> dict[str, int]:
     }
     for row in rows.values():
         info = products.get(row["nm_id"]) or {}
-        row["vendor_code"] = info.get("vendor_code")
-        row["brand"] = info.get("brand")
-        row["name"] = info.get("name")
+        for key in ("vendor_code", "brand", "name"):
+            if not row.get(key):
+                row[key] = info.get(key)
 
     result = await upsert_refs(session, list(rows.values()), source="wb_orders")
     result["barcodes"] = len(rows)
