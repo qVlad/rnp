@@ -252,3 +252,50 @@ def generate_cells(
                 )
     compute_sort_orders(out)
     return out
+
+
+async def resequence_warehouse_cells(session: Any, warehouse_id: int) -> int:
+    """Пересчитать `sort_order` для ВСЕХ ячеек склада (маршрут обхода).
+
+    Почему нужно: `generate_cells` нумерует переданную ей сетку с нуля, ничего
+    не зная о существующих ячейках. Если зоны генерируют по очереди (сначала A,
+    потом B), обе получают `sort_order` 10, 20, 30… — маршрут начинает петлять
+    между зонами. Найдено на проде: 320 ячеек, зоны A и B полностью совпали по
+    номерам, обход шёл A-01-01-01 → B-01-01-01 → B-01-01-02 → A-01-01-02.
+
+    Вызывается после любой загрузки/генерации ячеек и отдельной кнопкой.
+    Уже выданные листы отбора не ломает: `wh_pick_line.sort_order` — копия
+    маршрута на момент генерации листа.
+
+    Returns:
+        сколько ячеек перенумеровано.
+    """
+    # Локальные импорты: модуль остаётся чистым парсером для остальных вызовов.
+    from sqlalchemy import select  # noqa: WPS433
+
+    from app.db.models import WhCell  # noqa: WPS433
+
+    rows = list(
+        (
+            await session.execute(select(WhCell).where(WhCell.warehouse_id == warehouse_id))
+        )
+        .scalars()
+        .all()
+    )
+    if not rows:
+        return 0
+    payload = [
+        {
+            "code": c.code,
+            "zone": c.zone,
+            "rack": c.rack,
+            "level": c.level,
+            "pos": c.pos,
+            "_obj": c,
+        }
+        for c in rows
+    ]
+    compute_sort_orders(payload)
+    for p in payload:
+        p["_obj"].sort_order = p["sort_order"]
+    return len(payload)

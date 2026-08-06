@@ -3627,6 +3627,12 @@ paymentOrderDelete: (payment_order_id: string) =>
     request<{ ok: boolean }>(`/api/warehouse/cells/${cellId}`, {
       method: "DELETE",
     }),
+  /** Перенумеровать маршрут обхода (лечит склады, где зоны столкнулись). */
+  whResequenceCells: (warehouseId: number) =>
+    request<{ ok: boolean; resequenced: number }>(
+      `/api/warehouse/cells/resequence?warehouse_id=${warehouseId}`,
+      { method: "POST" },
+    ),
   whCellsExportUrl: (warehouseId?: number) =>
     `/api/warehouse/cells/export.xlsx${warehouseId ? `?warehouse_id=${warehouseId}` : ""}`,
 
@@ -4099,7 +4105,11 @@ export interface WhAllocationPlan {
     boxes_placed: number;
     boxes_to_storage: number;
     barcodes_total: number;
+    /** уже стояло в ячейках отбора до этого плана */
+    already_in_pick: number;
     barcodes_covered: number;
+    /** закрыто именно этим планом */
+    newly_covered: number;
     barcodes_uncovered: number;
     covered_by_mono: number;
     covered_by_mixed: number;

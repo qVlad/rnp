@@ -443,6 +443,14 @@ function MapTab({
     },
     onError,
   });
+  const resequence = useMutation({
+    mutationFn: () => api.whResequenceCells(warehouseId),
+    onSuccess: (r) => {
+      invalidate();
+      onDone(`Маршрут пересчитан по ${r.resequenced} ячейкам`);
+    },
+    onError,
+  });
   const toStorage = useMutation({
     mutationFn: (boxCode: string) =>
       api.whToStorage({ box_code: boxCode, warehouse_id: warehouseId }),
@@ -509,6 +517,14 @@ function MapTab({
           <a className="btn" href={api.whCellsExportUrl(warehouseId)}>
             ⬇ Выгрузить сетку
           </a>
+          <button
+            className="btn"
+            disabled={resequence.isPending}
+            title="Пересчитать порядок обхода склада — нужно, если зоны генерировались по очереди и маршрут петляет между ними"
+            onClick={() => resequence.mutate()}
+          >
+            Пересчитать маршрут
+          </button>
         </div>
       </div>
 
@@ -868,21 +884,26 @@ function PlacementTab({
           числе ячеек). Остальное — на хранение без адреса.
         </p>
         {s && (
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+            <Tile
+              label="Уже в отборе"
+              value={`${num(s.already_in_pick)} из ${num(s.barcodes_total)}`}
+              hint="баркоды, которые уже стоят в ячейках — ячейки на них не тратим"
+            />
             <Tile
               label="Ячеек занять / свободно"
               value={`${num(s.cells_used)} / ${num(s.cells_free)}`}
             />
             <Tile
-              label="Покрыто баркодов"
-              value={`${num(s.barcodes_covered)} из ${num(s.barcodes_total)}`}
+              label="Добавит в отбор"
+              value={num(s.newly_covered)}
               hint={`моно: ${s.covered_by_mono}, сборными: ${s.covered_by_mixed}`}
             />
             <Tile label="На хранение" value={num(s.boxes_to_storage)} />
             <Tile
-              label="Не покрыто"
+              label="Не будет в отборе"
               value={num(s.barcodes_uncovered)}
-              hint="этих баркодов не будет в зоне отбора — не хватило ячеек"
+              hint="этих баркодов нет ни в ячейках, ни в плане — не хватило ячеек"
             />
           </div>
         )}
@@ -911,11 +932,18 @@ function PlacementTab({
             Пересчитать
           </button>
         </div>
+        {s && s.cells_free === 0 && s.already_in_pick > 0 && (
+          <div className="text-sm text-muted">
+            Свободных ячеек нет — размещать некуда, поэтому маршрут пустой. Это
+            не значит, что размещение не сработало: в ячейках уже стоит{" "}
+            {num(s.already_in_pick)} баркодов, их видно на вкладке «Карта склада».
+          </div>
+        )}
         {s?.barcodes_uncovered ? (
           <div className="text-warn text-sm">
-            Не хватает ячеек на {num(s.barcodes_uncovered)} баркодов — добавьте
-            ячейки на вкладке «Карта склада», иначе этот товар придётся искать на
-            хранении по номеру короба.
+            {num(s.barcodes_uncovered)} баркодов не будет в зоне отбора — не
+            хватает ячеек. Добавьте ячейки на вкладке «Карта склада», иначе этот
+            товар придётся искать на хранении по номеру короба.
           </div>
         ) : null}
       </div>

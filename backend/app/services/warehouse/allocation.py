@@ -33,7 +33,9 @@ STEP_MIXED = 2
 
 
 def plan_placement(
-    boxes: list[dict[str, Any]], free_cells: list[dict[str, Any]]
+    boxes: list[dict[str, Any]],
+    free_cells: list[dict[str, Any]],
+    already_covered: set[str] | None = None,
 ) -> dict[str, Any]:
     """Распределить коробы по свободным ячейкам отбора.
 
@@ -43,10 +45,20 @@ def plan_placement(
             (статусы `received` / `storage`).
         free_cells: ``[{"cell_id", "cell_code", "zone", "sort_order"}]`` —
             свободные активные ячейки; порядок = маршрут обхода склада.
+        already_covered: баркоды, которые УЖЕ доступны в зоне отбора (лежат в
+            коробах со статусом `pick`). Без этого «не покрыто» врало: на проде
+            показывало 354, хотя 284 из них уже стояли в ячейках, и реально
+            отсутствовало лишь 70. Плюс ячейки теперь не тратятся на то, что
+            в отборе уже есть.
 
     Returns:
         ``{"placements": [...], "to_storage": [...], "uncovered_barcodes": [...],
         "stats": {...}}``. Ничего не пишет — это предпросмотр.
+
+    Note:
+        Пополнение pick-face (баркод в отборе есть, но короб почти пуст) —
+        отдельная задача, здесь не решается: короб считается «покрывающим»
+        независимо от остатка.
     """
     # Маршрут: ячейки строго по sort_order, дальше по коду — порядок должен
     # быть детерминированным, иначе один и тот же preview даёт разный ответ.
@@ -61,7 +73,10 @@ def plan_placement(
             qty_by_barcode[bc] = qty_by_barcode.get(bc, 0) + int(item.get("qty") or 0)
 
     all_barcodes = set(qty_by_barcode)
-    covered: set[str] = set()
+    # Баркоды, уже доступные в зоне отбора, считаем покрытыми: ячейки на них
+    # тратить незачем, и в «не покрыто» они попадать не должны.
+    seeded = {b for b in (already_covered or set())}
+    covered: set[str] = set(seeded)
     placements: list[dict[str, Any]] = []
     used_box_ids: set[Any] = set()
     cell_idx = 0
@@ -196,6 +211,8 @@ def plan_placement(
     covered_by_mixed = sum(
         len(p["covers"]) for p in placements if p["step"] == STEP_MIXED
     )
+    # Всего ассортимента на складе = движимое ∪ уже стоящее в ячейках.
+    total_barcodes = all_barcodes | seeded
     return {
         "placements": placements,
         "to_storage": to_storage,
@@ -208,9 +225,14 @@ def plan_placement(
             "boxes_mono": sum(1 for b in boxes if len(barcodes_of(b)) == 1),
             "boxes_placed": len(placements),
             "boxes_to_storage": len(to_storage),
-            "barcodes_total": len(all_barcodes),
+            # ассортимент склада целиком, а не только в движимых коробах
+            "barcodes_total": len(total_barcodes),
+            # уже стояло в ячейках до этого плана
+            "already_in_pick": len(seeded),
             "barcodes_covered": len(covered),
-            "barcodes_uncovered": len(all_barcodes) - len(covered),
+            # закрыто именно этим планом
+            "newly_covered": len(covered) - len(seeded),
+            "barcodes_uncovered": len(total_barcodes - covered),
             "covered_by_mono": covered_by_mono,
             "covered_by_mixed": covered_by_mixed,
         },

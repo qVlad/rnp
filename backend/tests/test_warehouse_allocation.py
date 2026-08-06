@@ -229,3 +229,54 @@ def test_real_file_scarce_cells_still_prefers_mono() -> None:
     assert s["covered_by_mono"] == 287
     assert s["barcodes_covered"] == 331
     assert s["barcodes_uncovered"] == 120
+
+
+# --------------------------------------------------------------------------
+# Учёт того, что уже стоит в зоне отбора
+# --------------------------------------------------------------------------
+
+
+def test_already_covered_barcodes_are_not_reported_as_uncovered() -> None:
+    """Найдено на проде: «не покрыто 354» при реально отсутствующих 70.
+
+    Метрика считала покрытие только по коробам на хранении и игнорировала 320
+    коробов, уже стоящих в ячейках. Баркод, который в отборе уже есть, не должен
+    попадать ни в «не покрыто», ни тратить на себя ячейку.
+    """
+    boxes = [_box(1, "MONO-A", [("A", 100)]), _box(2, "MONO-B", [("B", 50)])]
+    # «A» уже лежит в ячейке отбора
+    plan = plan_placement(boxes, _cells(1), already_covered={"A"})
+    s = plan["stats"]
+
+    assert s["already_in_pick"] == 1
+    assert s["barcodes_total"] == 2, "ассортимент склада = движимое ∪ уже в ячейках"
+    assert s["barcodes_covered"] == 2
+    assert s["newly_covered"] == 1
+    assert s["barcodes_uncovered"] == 0
+    assert [u["barcode"] for u in plan["uncovered_barcodes"]] == []
+    # единственная ячейка ушла на «B», а не на уже покрытый «A»
+    assert [p["covers"] for p in plan["placements"]] == [["B"]]
+    assert [b["box_code"] for b in plan["to_storage"]] == ["MONO-A"]
+
+
+def test_already_covered_counts_toward_total_even_if_absent_from_storage() -> None:
+    """Баркод, который есть только в ячейках, всё равно часть ассортимента."""
+    boxes = [_box(1, "MONO-B", [("B", 10)])]
+    plan = plan_placement(boxes, _cells(1), already_covered={"A", "B"})
+    s = plan["stats"]
+    assert s["barcodes_total"] == 2  # A только в ячейке, B — и там, и на хранении
+    assert s["barcodes_uncovered"] == 0
+    assert s["newly_covered"] == 0
+    # ячейку не тратим: всё уже покрыто
+    assert plan["placements"] == []
+    assert s["cells_left"] == 1
+
+
+def test_without_already_covered_behaviour_is_unchanged() -> None:
+    """Обратная совместимость: без аргумента метрика считается как раньше."""
+    boxes = [_box(1, "MONO-A", [("A", 5)]), _box(2, "MIX", [("B", 1), ("C", 1)])]
+    plan = plan_placement(boxes, _cells(2))
+    s = plan["stats"]
+    assert s["already_in_pick"] == 0
+    assert s["barcodes_total"] == 3
+    assert s["newly_covered"] == s["barcodes_covered"] == 3

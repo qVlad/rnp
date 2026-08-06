@@ -382,13 +382,17 @@ async def upload_cells(
     if not per_warehouse:
         raise HTTPException(status_code=400, detail="warehouse_required")
 
+    # Маршрут пересчитываем по всему складу: иначе вторая зона получит те же
+    # номера, что первая, и обход начнёт петлять между зонами.
+    for touched_id in per_warehouse:
+        await cells_svc.resequence_warehouse_cells(session, touched_id)
     await audit_log(
         session,
         "wh_cell",
         "create",
         actor=actor_from_request(request),
         entity_id=",".join(str(k) for k in per_warehouse),
-        after={"created": created, "updated": updated},
+        after={"created": created, "updated": updated, "resequenced": True},
     )
     await session.commit()
     return {
@@ -449,6 +453,9 @@ async def generate_cells_endpoint(
         )
         created += 1
 
+    # См. выше: генерация нумерует только свою сетку, поэтому после вставки
+    # перенумеровываем маршрут по всему складу.
+    await cells_svc.resequence_warehouse_cells(session, payload.warehouse_id)
     await audit_log(
         session,
         "wh_cell",
@@ -459,6 +466,33 @@ async def generate_cells_endpoint(
     )
     await session.commit()
     return {"created": created, "skipped_existing": len(grid) - created, "total": len(grid)}
+
+
+@router.post("/cells/resequence")
+async def resequence_cells(
+    request: Request,
+    warehouse_id: int = Query(...),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Перенумеровать маршрут обхода по всем ячейкам склада.
+
+    Нужно для складов, где зоны генерировались по очереди до фикса: у них
+    `sort_order` совпадает между зонами и обход петляет. Уже выданные листы
+    отбора не ломает — там своя копия порядка.
+    """
+    await _require_warehouse(session, warehouse_id)
+    count = await cells_svc.resequence_warehouse_cells(session, warehouse_id)
+    await audit_log(
+        session,
+        "wh_cell",
+        "update",
+        actor=actor_from_request(request),
+        entity_id=str(warehouse_id),
+        after={"resequenced": count},
+        comment="cells.resequence",
+    )
+    await session.commit()
+    return {"ok": True, "resequenced": count}
 
 
 @router.put("/cells/{cell_id}")
@@ -900,7 +934,21 @@ async def _build_plan(session: AsyncSession, warehouse_id: int) -> dict[str, Any
         }
         for c in await stock_svc.free_cells(session, warehouse_id)
     ]
-    plan = allocation.plan_placement(boxes, cells)
+    # Баркоды, уже доступные в зоне отбора: без них «не покрыто» врало —
+    # на проде показывало 354 при реально отсутствующих 70.
+    already = set(
+        (
+            await session.execute(
+                select(WhBoxItem.barcode)
+                .join(WhBox, WhBox.id == WhBoxItem.box_id)
+                .where(WhBox.warehouse_id == warehouse_id)
+                .where(WhBox.status == "pick")
+                .where(WhBoxItem.qty > 0)
+                .distinct()
+            )
+        ).scalars().all()
+    )
+    plan = allocation.plan_placement(boxes, cells, already_covered=already)
     # Свободные ячейки отдаём в ответе: мобильному сканеру нужен выбор вручную,
     # когда отсканированного короба в плане нет (например, его переставляют).
     plan["free_cells"] = cells
