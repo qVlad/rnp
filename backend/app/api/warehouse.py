@@ -1,0 +1,1073 @@
+"""WMS «Свой склад» — адресное хранение, приёмка, поиск, остатки (TASK-DEV-098).
+
+Фаза 1. Workflow: создать склад(ы) → загрузить/сгенерировать сетку ячеек
+отбора → принять коробы из `PackingList.xlsx` (формат B: тот же файл + опц.
+колонки «Склад»/«Код ячейки») → быстрый поиск «где лежит» и остатки.
+
+Инварианты (см. `agents/tasks-developer.md` TASK-DEV-098):
+  - складов несколько, каждый независим — почти каждый эндпоинт принимает
+    `warehouse_id`;
+  - адресуется только зона отбора; хранение — `status='storage'` без адреса;
+  - 1 ячейка = 1 короб (partial-unique индекс `uq_wh_box_cell`);
+  - источник истины остатка — `WhBoxItem.qty`, журнал `WhMovement` — аудит.
+"""
+from __future__ import annotations
+
+from datetime import date, datetime, timezone
+from typing import Any
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import Response
+from pydantic import BaseModel, Field
+from sqlalchemy import delete, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.models import (
+    Tenant,
+    WhBarcodeRef,
+    WhBox,
+    WhBoxItem,
+    WhCell,
+    WhMovement,
+    WhWarehouse,
+    WhWarehouseWbLink,
+)
+from app.services.audit import actor_from_request, audit_log
+from app.services.auth import (
+    get_db_tenant_scoped,
+    require_director_or_head,
+)
+from app.services.tenant_context import get_tenant
+from app.services.warehouse import barcode_ref as ref_svc
+from app.services.warehouse import cells as cells_svc
+from app.services.warehouse import excel as excel_svc
+from app.services.warehouse import movements as mov_svc
+from app.services.warehouse import receive as receive_svc
+from app.services.warehouse import stock as stock_svc
+from app.services.warehouse.packing_list import parse_receive_file
+
+router = APIRouter(
+    prefix="/api/warehouse",
+    tags=["warehouse"],
+    dependencies=[Depends(require_director_or_head)],
+)
+
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _xlsx_response(content: bytes, filename: str) -> Response:
+    return Response(
+        content=content,
+        media_type=XLSX_MIME,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ===========================================================================
+# Склады
+# ===========================================================================
+
+
+class WarehousePayload(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    code: str | None = Field(default=None, max_length=16)
+    address: str | None = None
+    note: str | None = None
+    is_active: bool = True
+
+
+def _warehouse_dict(wh: WhWarehouse) -> dict[str, Any]:
+    return {
+        "id": wh.id,
+        "name": wh.name,
+        "code": wh.code,
+        "address": wh.address,
+        "note": wh.note,
+        "is_active": wh.is_active,
+        "created_at": wh.created_at.isoformat() if wh.created_at else None,
+    }
+
+
+@router.get("/warehouses")
+async def list_warehouses(
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    rows = (
+        await session.execute(select(WhWarehouse).order_by(WhWarehouse.name))
+    ).scalars().all()
+    return {"items": [_warehouse_dict(w) for w in rows]}
+
+
+@router.post("/warehouses")
+async def create_warehouse(
+    payload: WarehousePayload,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    existing = (
+        await session.execute(select(WhWarehouse).where(WhWarehouse.name.ilike(payload.name.strip())))
+    ).scalars().first()
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="warehouse_exists")
+    wh = WhWarehouse(
+        tenant_id=get_tenant(session),
+        name=payload.name.strip(),
+        code=(payload.code or None),
+        address=payload.address,
+        note=payload.note,
+        is_active=payload.is_active,
+    )
+    session.add(wh)
+    await session.flush()
+    await audit_log(
+        session,
+        "wh_warehouse",
+        "create",
+        actor=actor_from_request(request),
+        entity_id=str(wh.id),
+        after={"name": wh.name},
+    )
+    await session.commit()
+    return _warehouse_dict(wh)
+
+
+@router.put("/warehouses/{warehouse_id}")
+async def update_warehouse(
+    warehouse_id: int,
+    payload: WarehousePayload,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    wh = (
+        await session.execute(select(WhWarehouse).where(WhWarehouse.id == warehouse_id))
+    ).scalars().first()
+    if wh is None:
+        raise HTTPException(status_code=404, detail="warehouse_not_found")
+    before = _warehouse_dict(wh)
+    wh.name = payload.name.strip()
+    wh.code = payload.code or None
+    wh.address = payload.address
+    wh.note = payload.note
+    wh.is_active = payload.is_active
+    await audit_log(
+        session,
+        "wh_warehouse",
+        "update",
+        actor=actor_from_request(request),
+        entity_id=str(wh.id),
+        before=before,
+        after=_warehouse_dict(wh),
+    )
+    await session.commit()
+    return _warehouse_dict(wh)
+
+
+@router.delete("/warehouses/{warehouse_id}")
+async def delete_warehouse(
+    warehouse_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Удалить склад. Запрещено, если на нём есть коробы — сначала разберите."""
+    wh = (
+        await session.execute(select(WhWarehouse).where(WhWarehouse.id == warehouse_id))
+    ).scalars().first()
+    if wh is None:
+        raise HTTPException(status_code=404, detail="warehouse_not_found")
+    boxes = int(
+        (
+            await session.execute(
+                select(func.count(WhBox.id)).where(WhBox.warehouse_id == warehouse_id)
+            )
+        ).scalar()
+        or 0
+    )
+    if boxes:
+        raise HTTPException(status_code=409, detail=f"warehouse_not_empty:{boxes}")
+    await audit_log(
+        session,
+        "wh_warehouse",
+        "delete",
+        actor=actor_from_request(request),
+        entity_id=str(warehouse_id),
+        before=_warehouse_dict(wh),
+    )
+    await session.execute(delete(WhWarehouse).where(WhWarehouse.id == warehouse_id))
+    await session.commit()
+    return {"ok": True}
+
+
+# ===========================================================================
+# Ячейки (зона отбора)
+# ===========================================================================
+
+
+class GenerateCellsPayload(BaseModel):
+    warehouse_id: int
+    zone: str = Field(min_length=1, max_length=32)
+    racks: int = Field(ge=1, le=200)
+    levels: int = Field(ge=1, le=50)
+    positions: int = Field(ge=1, le=200)
+    rack_from: int = Field(default=1, ge=1)
+    level_from: int = Field(default=1, ge=1)
+    pos_from: int = Field(default=1, ge=1)
+
+
+class CellPayload(BaseModel):
+    is_active: bool | None = None
+    note: str | None = None
+    zone: str | None = None
+
+
+async def _require_warehouse(session: AsyncSession, warehouse_id: int) -> WhWarehouse:
+    wh = (
+        await session.execute(select(WhWarehouse).where(WhWarehouse.id == warehouse_id))
+    ).scalars().first()
+    if wh is None:
+        raise HTTPException(status_code=404, detail="warehouse_not_found")
+    return wh
+
+
+@router.get("/cells")
+async def get_cells(
+    warehouse_id: int = Query(...),
+    zone: str | None = None,
+    occupied: bool | None = None,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Карта склада: ячейки + что в них лежит."""
+    await _require_warehouse(session, warehouse_id)
+    return await stock_svc.cells_map(
+        session, warehouse_id=warehouse_id, zone=zone, occupied=occupied
+    )
+
+
+@router.post("/cells/upload")
+async def upload_cells(
+    request: Request,
+    file: UploadFile = File(...),
+    default_warehouse_id: int | None = Query(default=None),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Загрузить сетку ячеек (формат A: Склад | Код ячейки | Зона | Активна)."""
+    content = await file.read()
+    try:
+        parsed = cells_svc.parse_cells_file(content)
+    except Exception as exc:  # noqa: BLE001 — пользовательский файл может быть любым
+        raise HTTPException(status_code=400, detail=f"unreadable_file: {exc}") from exc
+    if not parsed["cells"]:
+        raise HTTPException(status_code=400, detail="no_cells_found")
+
+    created = 0
+    updated = 0
+    per_warehouse: dict[int, int] = {}
+    for row in parsed["cells"]:
+        wh_name = row.get("warehouse")
+        wh = await receive_svc.resolve_warehouse(session, wh_name) if wh_name else None
+        warehouse_id = (wh.id if wh else None) or default_warehouse_id
+        if warehouse_id is None:
+            continue
+        existing = (
+            await session.execute(
+                select(WhCell)
+                .where(WhCell.warehouse_id == warehouse_id)
+                .where(WhCell.code == row["code"])
+            )
+        ).scalars().first()
+        if existing is None:
+            session.add(
+                WhCell(
+                    tenant_id=get_tenant(session),
+                    warehouse_id=warehouse_id,
+                    code=row["code"],
+                    zone=row["zone"],
+                    rack=row["rack"],
+                    level=row["level"],
+                    pos=row["pos"],
+                    sort_order=row["sort_order"],
+                    is_active=row["is_active"],
+                    note=row["note"],
+                )
+            )
+            created += 1
+        else:
+            existing.zone = row["zone"] or existing.zone
+            existing.rack = row["rack"] or existing.rack
+            existing.level = row["level"] or existing.level
+            existing.pos = row["pos"] or existing.pos
+            existing.sort_order = row["sort_order"]
+            existing.is_active = row["is_active"]
+            existing.note = row["note"] or existing.note
+            updated += 1
+        per_warehouse[warehouse_id] = per_warehouse.get(warehouse_id, 0) + 1
+
+    if not per_warehouse:
+        raise HTTPException(status_code=400, detail="warehouse_required")
+
+    await audit_log(
+        session,
+        "wh_cell",
+        "create",
+        actor=actor_from_request(request),
+        entity_id=",".join(str(k) for k in per_warehouse),
+        after={"created": created, "updated": updated},
+    )
+    await session.commit()
+    return {
+        "created": created,
+        "updated": updated,
+        "per_warehouse": per_warehouse,
+        "stats": parsed["stats"],
+        "warnings": parsed["warnings"],
+    }
+
+
+@router.post("/cells/generate")
+async def generate_cells_endpoint(
+    payload: GenerateCellsPayload,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Сгенерировать сетку ячеек без Excel (напр. 5 стеллажей × 4 яруса × 10 позиций)."""
+    await _require_warehouse(session, payload.warehouse_id)
+    try:
+        grid = cells_svc.generate_cells(
+            payload.zone,
+            racks=payload.racks,
+            levels=payload.levels,
+            positions=payload.positions,
+            rack_from=payload.rack_from,
+            level_from=payload.level_from,
+            pos_from=payload.pos_from,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    existing_codes = {
+        c.code
+        for c in (
+            await session.execute(
+                select(WhCell).where(WhCell.warehouse_id == payload.warehouse_id)
+            )
+        ).scalars().all()
+    }
+    tenant_id = get_tenant(session)
+    created = 0
+    for row in grid:
+        if row["code"] in existing_codes:
+            continue
+        session.add(
+            WhCell(
+                tenant_id=tenant_id,
+                warehouse_id=payload.warehouse_id,
+                code=row["code"],
+                zone=row["zone"],
+                rack=row["rack"],
+                level=row["level"],
+                pos=row["pos"],
+                sort_order=row["sort_order"],
+                is_active=True,
+            )
+        )
+        created += 1
+
+    await audit_log(
+        session,
+        "wh_cell",
+        "create",
+        actor=actor_from_request(request),
+        entity_id=str(payload.warehouse_id),
+        after={"zone": payload.zone, "created": created, "requested": len(grid)},
+    )
+    await session.commit()
+    return {"created": created, "skipped_existing": len(grid) - created, "total": len(grid)}
+
+
+@router.put("/cells/{cell_id}")
+async def update_cell(
+    cell_id: int,
+    payload: CellPayload,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    cell = (await session.execute(select(WhCell).where(WhCell.id == cell_id))).scalars().first()
+    if cell is None:
+        raise HTTPException(status_code=404, detail="cell_not_found")
+    if payload.is_active is not None:
+        cell.is_active = payload.is_active
+    if payload.note is not None:
+        cell.note = payload.note or None
+    if payload.zone is not None:
+        cell.zone = payload.zone or None
+    await audit_log(
+        session,
+        "wh_cell",
+        "update",
+        actor=actor_from_request(request),
+        entity_id=str(cell_id),
+        after={"is_active": cell.is_active, "zone": cell.zone},
+    )
+    await session.commit()
+    return {"ok": True, "cell_id": cell_id}
+
+
+@router.delete("/cells/{cell_id}")
+async def delete_cell(
+    cell_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Удалить ячейку. Запрещено, если в ней стоит короб."""
+    cell = (await session.execute(select(WhCell).where(WhCell.id == cell_id))).scalars().first()
+    if cell is None:
+        raise HTTPException(status_code=404, detail="cell_not_found")
+    holder = (
+        await session.execute(select(WhBox.box_code).where(WhBox.cell_id == cell_id))
+    ).scalars().first()
+    if holder:
+        raise HTTPException(status_code=409, detail=f"cell_occupied:{holder}")
+    await audit_log(
+        session,
+        "wh_cell",
+        "delete",
+        actor=actor_from_request(request),
+        entity_id=str(cell_id),
+        before={"code": cell.code},
+    )
+    await session.execute(delete(WhCell).where(WhCell.id == cell_id))
+    await session.commit()
+    return {"ok": True}
+
+
+@router.get("/cells/export.xlsx")
+async def export_cells(
+    warehouse_id: int | None = Query(default=None),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> Response:
+    stmt = (
+        select(WhCell, WhWarehouse.name)
+        .join(WhWarehouse, WhWarehouse.id == WhCell.warehouse_id)
+        .order_by(WhWarehouse.name, WhCell.sort_order, WhCell.code)
+    )
+    if warehouse_id is not None:
+        stmt = stmt.where(WhCell.warehouse_id == warehouse_id)
+    rows = (await session.execute(stmt)).all()
+    payload = [
+        {
+            "warehouse_name": name,
+            "code": cell.code,
+            "zone": cell.zone,
+            "rack": cell.rack,
+            "level": cell.level,
+            "pos": cell.pos,
+            "is_active": cell.is_active,
+            "note": cell.note,
+        }
+        for cell, name in rows
+    ]
+    return _xlsx_response(excel_svc.build_cells_xlsx(payload), "wh-cells.xlsx")
+
+
+# ===========================================================================
+# Приёмка
+# ===========================================================================
+
+
+@router.post("/receive")
+async def receive(
+    request: Request,
+    file: UploadFile = File(...),
+    warehouse_id: int | None = Query(default=None, description="склад по умолчанию"),
+    supply_ref: str | None = Query(default=None, description="номер/имя поставки"),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Принять коробы из PackingList (формат B).
+
+    Склад берётся из колонки «Склад», иначе из `warehouse_id`. Без склада
+    принять некуда — склады независимы.
+    """
+    content = await file.read()
+    ref = (supply_ref or file.filename or "").strip() or None
+    try:
+        parsed = parse_receive_file(content, supply_ref=ref)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"unreadable_file: {exc}") from exc
+    if not parsed["boxes"] and not parsed["empty_cells"]:
+        raise HTTPException(status_code=400, detail="no_boxes_found")
+
+    if warehouse_id is not None:
+        await _require_warehouse(session, warehouse_id)
+
+    result = await receive_svc.persist_boxes(
+        session,
+        parsed,
+        default_warehouse_id=warehouse_id,
+        supply_ref=ref,
+        actor=actor_from_request(request),
+    )
+    if result["boxes_created"] == 0 and result["boxes_updated"] == 0:
+        # ни один короб не удалось привязать к складу
+        raise HTTPException(status_code=400, detail="warehouse_required")
+
+    await audit_log(
+        session,
+        "wh_box",
+        "create",
+        actor=actor_from_request(request),
+        entity_id=ref or "-",
+        after={
+            "created": result["boxes_created"],
+            "updated": result["boxes_updated"],
+            "placed": result["boxes_placed"],
+            "total_qty": parsed["stats"]["total_qty"],
+        },
+    )
+    await session.commit()
+    return result
+
+
+class PlacePayload(BaseModel):
+    box_code: str = Field(min_length=1)
+    cell_code: str = Field(min_length=1)
+    warehouse_id: int
+
+
+@router.post("/place")
+async def place_box(
+    payload: PlacePayload,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Поставить короб в ячейку отбора (или переставить между ячейками)."""
+    box = (
+        await session.execute(
+            select(WhBox)
+            .where(WhBox.warehouse_id == payload.warehouse_id)
+            .where(WhBox.box_code == payload.box_code.strip())
+        )
+    ).scalars().first()
+    if box is None:
+        raise HTTPException(status_code=404, detail="box_not_found")
+
+    cell = (
+        await session.execute(
+            select(WhCell)
+            .where(WhCell.warehouse_id == payload.warehouse_id)
+            .where(WhCell.code == payload.cell_code.strip())
+        )
+    ).scalars().first()
+    if cell is None:
+        raise HTTPException(status_code=404, detail="cell_not_found")
+    if not cell.is_active:
+        raise HTTPException(status_code=409, detail="cell_inactive")
+
+    holder = (
+        await session.execute(
+            select(WhBox.box_code).where(WhBox.cell_id == cell.id).where(WhBox.id != box.id)
+        )
+    ).scalars().first()
+    if holder:
+        raise HTTPException(status_code=409, detail=f"cell_occupied:{holder}")
+
+    cell_from = box.cell_id
+    now = datetime.now(timezone.utc)
+    box.cell_id = cell.id
+    box.status = "pick"
+    box.placed_at = now
+    session.add(
+        WhMovement(
+            tenant_id=get_tenant(session),
+            warehouse_id=payload.warehouse_id,
+            dt=now,
+            kind="relocate" if cell_from else "place",
+            box_id=box.id,
+            qty=0,
+            cell_from_id=cell_from,
+            cell_to_id=cell.id,
+            actor=actor_from_request(request),
+        )
+    )
+    await session.commit()
+    return {
+        "ok": True,
+        "box_code": box.box_code,
+        "cell_code": cell.code,
+        "moved_from": cell_from,
+    }
+
+
+class ToStoragePayload(BaseModel):
+    box_code: str = Field(min_length=1)
+    warehouse_id: int
+
+
+@router.post("/to-storage")
+async def to_storage(
+    payload: ToStoragePayload,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Убрать короб из ячейки отбора на хранение (адрес освобождается)."""
+    box = (
+        await session.execute(
+            select(WhBox)
+            .where(WhBox.warehouse_id == payload.warehouse_id)
+            .where(WhBox.box_code == payload.box_code.strip())
+        )
+    ).scalars().first()
+    if box is None:
+        raise HTTPException(status_code=404, detail="box_not_found")
+    cell_from = box.cell_id
+    box.cell_id = None
+    box.status = "storage"
+    session.add(
+        WhMovement(
+            tenant_id=get_tenant(session),
+            warehouse_id=payload.warehouse_id,
+            dt=datetime.now(timezone.utc),
+            kind="to_storage",
+            box_id=box.id,
+            qty=0,
+            cell_from_id=cell_from,
+            actor=actor_from_request(request),
+        )
+    )
+    await session.commit()
+    return {"ok": True, "box_code": box.box_code}
+
+
+@router.get("/boxes")
+async def list_boxes(
+    warehouse_id: int | None = Query(default=None),
+    status: str | None = Query(default=None),
+    q: str | None = Query(default=None, description="часть ШК короба"),
+    limit: int = Query(default=200, le=2000),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    stmt = (
+        select(
+            WhBox.id,
+            WhBox.box_code,
+            WhBox.brand,
+            WhBox.status,
+            WhBox.is_mono,
+            WhBox.supply_ref,
+            WhBox.src_no,
+            WhCell.code.label("cell_code"),
+            WhWarehouse.id.label("warehouse_id"),
+            WhWarehouse.name.label("warehouse_name"),
+            func.coalesce(func.sum(WhBoxItem.qty), 0).label("qty"),
+            func.count(WhBoxItem.id).label("positions"),
+        )
+        .join(WhWarehouse, WhWarehouse.id == WhBox.warehouse_id)
+        .outerjoin(WhCell, WhCell.id == WhBox.cell_id)
+        .outerjoin(WhBoxItem, WhBoxItem.box_id == WhBox.id)
+        .group_by(
+            WhBox.id,
+            WhBox.box_code,
+            WhBox.brand,
+            WhBox.status,
+            WhBox.is_mono,
+            WhBox.supply_ref,
+            WhBox.src_no,
+            WhCell.code,
+            WhWarehouse.id,
+            WhWarehouse.name,
+        )
+        .order_by(WhBox.src_no.nulls_last(), WhBox.box_code)
+        .limit(limit)
+    )
+    if warehouse_id is not None:
+        stmt = stmt.where(WhBox.warehouse_id == warehouse_id)
+    if status:
+        stmt = stmt.where(WhBox.status == status)
+    if q:
+        stmt = stmt.where(WhBox.box_code.ilike(f"%{q.strip()}%"))
+    rows = (await session.execute(stmt)).all()
+    return {
+        "items": [
+            {
+                "box_id": r.id,
+                "box_code": r.box_code,
+                "brand": r.brand,
+                "status": r.status,
+                "status_label": stock_svc.STATUS_LABELS.get(r.status, r.status),
+                "is_mono": r.is_mono,
+                "supply_ref": r.supply_ref,
+                "src_no": r.src_no,
+                "cell_code": r.cell_code,
+                "warehouse_id": r.warehouse_id,
+                "warehouse_name": r.warehouse_name,
+                "qty": int(r.qty or 0),
+                "positions": int(r.positions or 0),
+            }
+            for r in rows
+        ]
+    }
+
+
+@router.get("/boxes/{box_code}")
+async def box_detail(
+    box_code: str,
+    warehouse_id: int | None = Query(default=None),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Содержимое короба — для скана на мобильной странице."""
+    stmt = select(WhBox).where(WhBox.box_code == box_code.strip())
+    if warehouse_id is not None:
+        stmt = stmt.where(WhBox.warehouse_id == warehouse_id)
+    box = (await session.execute(stmt)).scalars().first()
+    if box is None:
+        raise HTTPException(status_code=404, detail="box_not_found")
+
+    items = (
+        await session.execute(
+            select(WhBoxItem).where(WhBoxItem.box_id == box.id).order_by(WhBoxItem.barcode)
+        )
+    ).scalars().all()
+    refs = await ref_svc.lookup(session, [i.barcode for i in items])
+    cell = None
+    if box.cell_id:
+        cell = (
+            await session.execute(select(WhCell).where(WhCell.id == box.cell_id))
+        ).scalars().first()
+    wh = await _require_warehouse(session, box.warehouse_id)
+    return {
+        "box_id": box.id,
+        "box_code": box.box_code,
+        "brand": box.brand,
+        "status": box.status,
+        "status_label": stock_svc.STATUS_LABELS.get(box.status, box.status),
+        "is_mono": box.is_mono,
+        "supply_ref": box.supply_ref,
+        "src_no": box.src_no,
+        "warehouse_id": wh.id,
+        "warehouse_name": wh.name,
+        "cell_code": cell.code if cell else None,
+        "total_qty": sum(int(i.qty or 0) for i in items),
+        "items": [
+            {
+                "barcode": i.barcode,
+                "size": i.size or (refs.get(i.barcode) or {}).get("size"),
+                "qty": int(i.qty or 0),
+                "qty_initial": int(i.qty_initial or 0),
+                **{
+                    k: (refs.get(i.barcode) or {}).get(k)
+                    for k in ("nm_id", "vendor_code", "name")
+                },
+            }
+            for i in items
+        ],
+    }
+
+
+# ===========================================================================
+# Поиск, остатки, движения
+# ===========================================================================
+
+
+@router.get("/search")
+async def search(
+    q: str = Query(..., min_length=1),
+    warehouse_id: int | None = Query(default=None),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Единый поиск: код ячейки / ШК короба / баркод / nmID / артикул / название."""
+    return await stock_svc.search(session, q=q, warehouse_id=warehouse_id)
+
+
+@router.get("/stock")
+async def get_stock(
+    warehouse_id: int | None = Query(default=None),
+    group_by: str = Query(default="barcode"),
+    zone: str | None = Query(default=None),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    try:
+        return await stock_svc.stock(
+            session, warehouse_id=warehouse_id, group_by=group_by, zone=zone
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/stock/export.xlsx")
+async def export_stock(
+    warehouse_id: int | None = Query(default=None),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> Response:
+    """Состояние склада в формате B — round-trip с приёмкой."""
+    rows = await stock_svc.state_rows(session, warehouse_id=warehouse_id)
+    return _xlsx_response(excel_svc.build_state_xlsx(rows), "wh-stock.xlsx")
+
+
+@router.get("/movements")
+async def get_movements(
+    warehouse_id: int | None = Query(default=None),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+    kind: str | None = Query(default=None),
+    barcode: str | None = Query(default=None),
+    box_code: str | None = Query(default=None),
+    limit: int = Query(default=500, le=2000),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    return await mov_svc.list_movements(
+        session,
+        warehouse_id=warehouse_id,
+        date_from=date_from,
+        date_to=date_to,
+        kind=kind,
+        barcode=barcode,
+        box_code=box_code,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/status")
+async def status(
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Сводка для шапки страницы: склады, ячейки, коробы по статусам, Σ шт."""
+    return await stock_svc.status_summary(session)
+
+
+# ===========================================================================
+# Справочник баркодов
+# ===========================================================================
+
+
+class BarcodeRefPayload(BaseModel):
+    barcode: str = Field(min_length=1, max_length=64)
+    nm_id: int | None = None
+    size: str | None = None
+    vendor_code: str | None = None
+    name: str | None = None
+    brand: str | None = None
+
+
+@router.get("/barcode-ref")
+async def list_barcode_ref(
+    q: str | None = Query(default=None),
+    only_unresolved: bool = Query(default=False, description="только без nmID"),
+    limit: int = Query(default=200, le=2000),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    stmt = select(WhBarcodeRef)
+    count_stmt = select(func.count(WhBarcodeRef.id))
+    if q:
+        like = f"%{q.strip()}%"
+        cond = (
+            WhBarcodeRef.barcode.ilike(like)
+            | WhBarcodeRef.vendor_code.ilike(like)
+            | WhBarcodeRef.name.ilike(like)
+        )
+        stmt = stmt.where(cond)
+        count_stmt = count_stmt.where(cond)
+    if only_unresolved:
+        stmt = stmt.where(WhBarcodeRef.nm_id.is_(None))
+        count_stmt = count_stmt.where(WhBarcodeRef.nm_id.is_(None))
+
+    total = int((await session.execute(count_stmt)).scalar() or 0)
+    rows = (
+        await session.execute(
+            stmt.order_by(WhBarcodeRef.barcode).limit(limit).offset(offset)
+        )
+    ).scalars().all()
+    return {
+        "items": [
+            {
+                "barcode": r.barcode,
+                "nm_id": r.nm_id,
+                "size": r.size,
+                "vendor_code": r.vendor_code,
+                "name": r.name,
+                "brand": r.brand,
+                "source": r.source,
+                "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+            }
+            for r in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "source_priority": ref_svc.SOURCE_PRIORITY,
+    }
+
+
+@router.put("/barcode-ref")
+async def upsert_barcode_ref(
+    payload: BarcodeRefPayload,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Ручная правка справочника — высший приоритет (`source='manual'`)."""
+    result = await ref_svc.upsert_refs(session, [payload.model_dump()], source="manual")
+    await audit_log(
+        session,
+        "wh_barcode_ref",
+        "update",
+        actor=actor_from_request(request),
+        entity_id=payload.barcode,
+        after=payload.model_dump(),
+    )
+    await session.commit()
+    return result
+
+
+@router.post("/barcode-ref/sync-wb")
+async def sync_barcode_ref(
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Наполнить справочник из уже синхронизированных wb_orders / wb_stocks."""
+    result = await ref_svc.sync_from_wb(session)
+    await audit_log(
+        session,
+        "wh_barcode_ref",
+        "update",
+        actor=actor_from_request(request),
+        entity_id="-",
+        after=result,
+    )
+    await session.commit()
+    return result
+
+
+@router.post("/barcode-ref/import-order")
+async def import_order(
+    request: Request,
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Импорт `ЗАКАЗ №N.xlsx` — связка баркод→nmID до первых продаж на WB."""
+    content = await file.read()
+    try:
+        result = await ref_svc.import_order_file(session, content)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"unreadable_file: {exc}") from exc
+    await audit_log(
+        session,
+        "wh_barcode_ref",
+        "create",
+        actor=actor_from_request(request),
+        entity_id=file.filename or "-",
+        after={k: v for k, v in result.items() if k != "warnings"},
+    )
+    await session.commit()
+    return result
+
+
+# ===========================================================================
+# Связка складов с кабинетами WB (готовим Фазу 3 — отбор по FBS)
+# ===========================================================================
+
+
+class WbLinkPayload(BaseModel):
+    warehouse_id: int
+    cabinet_tenant_id: int
+    wb_warehouse_id: int
+    wb_warehouse_name: str | None = None
+    office_id: int | None = None
+
+
+@router.get("/wb-links")
+async def list_wb_links(
+    warehouse_id: int | None = Query(default=None),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Связки «физический склад ↔ склад продавца в кабинете WB».
+
+    Один физический склад зарегистрирован в каждом кабинете отдельно и имеет
+    там свой `warehouseId` — по нему в Фазе 3 распознаются FBS-задания.
+    """
+    stmt = (
+        select(WhWarehouseWbLink, WhWarehouse.name, Tenant.name.label("cabinet_name"))
+        .join(WhWarehouse, WhWarehouse.id == WhWarehouseWbLink.warehouse_id)
+        .outerjoin(Tenant, Tenant.id == WhWarehouseWbLink.cabinet_tenant_id)
+        .order_by(WhWarehouse.name, WhWarehouseWbLink.cabinet_tenant_id)
+    )
+    if warehouse_id is not None:
+        stmt = stmt.where(WhWarehouseWbLink.warehouse_id == warehouse_id)
+    rows = (await session.execute(stmt)).all()
+    return {
+        "items": [
+            {
+                "id": link.id,
+                "warehouse_id": link.warehouse_id,
+                "warehouse_name": wh_name,
+                "cabinet_tenant_id": link.cabinet_tenant_id,
+                "cabinet_name": cabinet_name,
+                "wb_warehouse_id": link.wb_warehouse_id,
+                "wb_warehouse_name": link.wb_warehouse_name,
+                "office_id": link.office_id,
+                "is_active": link.is_active,
+            }
+            for link, wh_name, cabinet_name in rows
+        ]
+    }
+
+
+@router.post("/wb-links")
+async def create_wb_link(
+    payload: WbLinkPayload,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    await _require_warehouse(session, payload.warehouse_id)
+    existing = (
+        await session.execute(
+            select(WhWarehouseWbLink)
+            .where(WhWarehouseWbLink.cabinet_tenant_id == payload.cabinet_tenant_id)
+            .where(WhWarehouseWbLink.wb_warehouse_id == payload.wb_warehouse_id)
+        )
+    ).scalars().first()
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="link_exists")
+    link = WhWarehouseWbLink(
+        tenant_id=get_tenant(session),
+        warehouse_id=payload.warehouse_id,
+        cabinet_tenant_id=payload.cabinet_tenant_id,
+        wb_warehouse_id=payload.wb_warehouse_id,
+        wb_warehouse_name=payload.wb_warehouse_name,
+        office_id=payload.office_id,
+    )
+    session.add(link)
+    await session.flush()
+    await audit_log(
+        session,
+        "wh_warehouse_wb_link",
+        "create",
+        actor=actor_from_request(request),
+        entity_id=str(link.id),
+        after=payload.model_dump(),
+    )
+    await session.commit()
+    return {"id": link.id, "ok": True}
+
+
+@router.delete("/wb-links/{link_id}")
+async def delete_wb_link(
+    link_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    link = (
+        await session.execute(select(WhWarehouseWbLink).where(WhWarehouseWbLink.id == link_id))
+    ).scalars().first()
+    if link is None:
+        raise HTTPException(status_code=404, detail="link_not_found")
+    await audit_log(
+        session,
+        "wh_warehouse_wb_link",
+        "delete",
+        actor=actor_from_request(request),
+        entity_id=str(link_id),
+        before={"wb_warehouse_id": link.wb_warehouse_id},
+    )
+    await session.execute(delete(WhWarehouseWbLink).where(WhWarehouseWbLink.id == link_id))
+    await session.commit()
+    return {"ok": True}

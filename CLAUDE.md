@@ -102,7 +102,7 @@ frontend/src/      api/client.ts, contexts/AuthContext, components/Layout, pages
 docker-compose.yml · .env(.example) · .claude/settings.json (permissions)
 ```
 
-## Миграции БД (90 шт., 0001-0090)
+## Миграции БД (91 шт., 0001-0091)
 
 > **Полный список с деталями — [`FEATURES.md`](FEATURES.md) → «Миграции».** Здесь
 > — одна строка на миграцию. Новую миграцию добавляй и сюда (1 строка), и в FEATURES (детали).
@@ -157,6 +157,7 @@ docker-compose.yml · .env(.example) · .claude/settings.json (permissions)
 | 0088 | **product_mp_mapping** — «Соответствие товаров» (DEV-094): own_sku (свой учёт) → nm_id, вкладка на /off-platform |
 | 0089 | **wb_sync_revision + wb_sync_change** — ревизии WB-отчётов (DEV-095): переподгрузка истории с diff'ом. Основные таблицы = актуальное; старые значения и FREEZE-отказы (rejected_lower) — в журнале изменений. `services/wb_revision.diff_and_apply`, `sync/tasks_refetch.py` (beat: ad_stats/funnel daily, report_detail/orders/sales weekly), UI `/data-revisions` |
 | 0090 | **cogs.vat_rub** — НДС в себестоимости единицы (DEV-096, TS-паритет /cost): справочная колонка, в прибыль не входит. UI /cost-history (+импорт/экспорт XLSX на странице), excel round-trip |
+| 0091 | **WMS «Свой склад»** — адресное хранение (DEV-098): `wh_warehouse` (складов несколько, каждый независим) / `wh_cell` (адресуется ТОЛЬКО зона отбора; занятость вычисляется из `wh_box.cell_id`, флага нет) / `wh_box` (+`status` received/pick/storage/shipped/empty, partial-unique `uq_wh_box_cell` = 1 ячейка ↔ 1 короб) / `wh_box_item` (`qty` = текущий остаток, источник истины) / `wh_movement` (append-only журнал) / `wh_barcode_ref` (barcode→nm_id/размер/артикул; приоритет manual > order_file > wb_orders > packing_list) / `wh_warehouse_wb_link` (склад ↔ кабинет × `warehouseId` WB — под отбор по FBS). UI `/warehouse`, `api/warehouse.py`, `services/warehouse/*` |
 
 ## Роли и RBAC
 
@@ -261,6 +262,7 @@ Manager/bookkeeper — без свода. Управление кабинета�
 | `/api/summary-report/weekly`, `/api/pnl/opex-breakdown`, `/api/ad-campaigns/analytics(+/daily)`, `/api/rnp/forecast-window` | director_or_head | **TS-паритет пакет 2 (DEV-096)**: сводный «По неделям» (ISO-недели × totals движка, Redis-кэш закрытых недель 6ч); постатейный OPEX в P&L (категории × бакеты); аналитика РК — зоны показа (6=Поиск/4,5,7,8=Полки/9=Единая), воронка корзины, CPM/CPO/CPL/CPS, цены СПП/остатки per-кампания, drill по дням; окно усреднения прогноза РНП 7/28/period (AppSetting `rnp_forecast_window`). UX-профиль меню «TrueStats» + роут `/truestats` |
 | `/api/dashboard/period-chart` | director_or_head | **«Период в графике» (DEV-097, как TS)**: дневные серии 8 метрик (продажи/ср.цена до СПП/заказы ₽/ДРРп/логистика/возвраты/чистая прибыль/хранение) + `compare` (prev-период по индексу дня). Блоки Топ-5 маржинальных (pie) и Структура выручки (бары) — фронт из /top-skus и /extended-kpis |
 | `/api/data-revisions*` | director_or_head | **Ревизии WB-отчётов (DEV-095)**: список ревизий, `/{id}/changes` (paged, kind=added/updated/rejected_lower), `POST /refetch {source, days_back}` — ручная переподгрузка (report_detail ≤365д, ad_stats ≤92д, orders/sales ≤90д, funnel ≤7д — WB-лимит). UI «Контроль → Ревизии WB». `api/data_revisions.py` |
+| `/api/warehouse/*` | director_or_head | **WMS «Свой склад» (DEV-098)**: склады (CRUD), сетка ячеек (`/cells/upload` формат A, `/cells/generate`, export), приёмка `/receive` (формат B = `PackingList.xlsx` + опц. колонки «Склад»/«Код ячейки»; границы короба по колонке `No`, а не по `Box Code`), `/place` · `/to-storage` · `/boxes[/{code}]`, `/search` (ячейка/ШК короба/баркод/nmID/артикул/название), `/stock` (+`export.xlsx` round-trip с приёмкой), `/movements`, `/barcode-ref` (+`sync-wb`, `import-order` из `ЗАКАЗ №N.xlsx`), `/wb-links`, `/status`. `services/warehouse/*` |
 | `/api/version`, `/whoami`, `/health` | публ. | служебные |
 
 ## Инварианты корректности (НЕ нарушать)

@@ -81,6 +81,7 @@ const GROUPS: Group[] = [
       { to: "/inventory", label: "Капитализация WB" },
       { to: "/supply", label: "Поставки" },
       { to: "/supplies", label: "Закупки", directorOrHead: true },
+      { to: "/warehouse", label: "Свой склад (WMS)", directorOrHead: true },
       { to: "/dimensions-history", label: "Перемерки WB" },
     ],
   },

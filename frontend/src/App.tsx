@@ -13,6 +13,7 @@ import Redistribution from "./pages/Redistribution";
 import PnLReconciliation from "./pages/PnLReconciliation";
 import Reconciliation4Way from "./pages/Reconciliation4Way";
 import ReconciliationAuto from "./pages/ReconciliationAuto";
+import Warehouse from "./pages/Warehouse";
 import Taxes from "./pages/Taxes";
 import Supplies from "./pages/Supplies";
 import Units from "./pages/Units";
@@ -189,6 +190,7 @@ export default function App() {
             }
           />
           <Route path="reconciliation-auto" element={<ReconciliationAuto />} />
+          <Route path="warehouse" element={<DirectorOrHead><Warehouse /></DirectorOrHead>} />
           <Route
             path="audit"
             element={

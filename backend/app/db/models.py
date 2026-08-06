@@ -3409,3 +3409,250 @@ class BoxDistributionWbItem(Base, TenantScopedMixin):
     __table_args__ = (
         UniqueConstraint("wb_box_id", "barcode", name="uq_box_dist_wb_item"),
     )
+
+
+# ---------------------------------------------------------------------------
+# WMS «Свой склад» — адресное хранение (TASK-DEV-098, миграция 0091)
+#
+# Складов несколько, каждый работает независимо. Адресуется ТОЛЬКО зона отбора
+# (`WhCell`); хранение — без адреса (`WhBox.status='storage'`). 1 ячейка = 1
+# короб (ячейка под короб 60×40×40). Занятость ячейки НЕ хранится флагом —
+# вычисляется из `WhBox.cell_id`, иначе рассинхрон двух источников истины.
+# ---------------------------------------------------------------------------
+
+
+class WhWarehouse(Base, TenantScopedMixin):
+    """Свой (физический) склад. Склады независимы: ячейки, коробы и остатки
+    всегда в разрезе одного склада."""
+
+    __tablename__ = "wh_warehouse"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    code: Mapped[str | None] = mapped_column(String(16))
+    address: Mapped[str | None] = mapped_column(Text)
+    note: Mapped[str | None] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_wh_warehouse_name"),
+        Index("ix_wh_warehouse_tenant", "tenant_id"),
+    )
+
+
+class WhCell(Base, TenantScopedMixin):
+    """Место хранения в зоне отбора (pick-face). `sort_order` — порядок обхода
+    склада (zone→rack→level→pos), по нему строится маршрут отбора."""
+
+    __tablename__ = "wh_cell"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    warehouse_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("wh_warehouse.id", ondelete="CASCADE"), nullable=False
+    )
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    zone: Mapped[str | None] = mapped_column(String(32))
+    rack: Mapped[str | None] = mapped_column(String(16))
+    level: Mapped[str | None] = mapped_column(String(16))
+    pos: Mapped[str | None] = mapped_column(String(16))
+    sort_order: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    note: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "warehouse_id", "code", name="uq_wh_cell_code"),
+        Index("ix_wh_cell_tenant_wh_sort", "tenant_id", "warehouse_id", "sort_order"),
+    )
+
+
+class WhBox(Base, TenantScopedMixin):
+    """Физический короб на складе (из PackingList).
+
+    `status`: `received` (принят, не размещён) | `pick` (в ячейке отбора,
+    `cell_id` заполнен) | `storage` (на хранении, без адреса) | `shipped` |
+    `empty` (весь товар отобран). `src_no` — колонка `No` из PackingList:
+    границы физического короба идут по ней, а не по `box_code` (в реальном
+    файле 6 коробов приходят с `Box Code = «—»`).
+    """
+
+    __tablename__ = "wh_box"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    warehouse_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("wh_warehouse.id", ondelete="CASCADE"), nullable=False
+    )
+    box_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    brand: Mapped[str | None] = mapped_column(String(64))
+    supply_ref: Mapped[str | None] = mapped_column(String(128))
+    src_no: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'received'")
+    )
+    cell_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("wh_cell.id", ondelete="SET NULL")
+    )
+    is_mono: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    gross_weight_kg: Mapped[Decimal | None] = mapped_column(Numeric(10, 3))
+    cbm: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    placed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "warehouse_id", "box_code", name="uq_wh_box_code"),
+        Index("ix_wh_box_tenant_wh_status", "tenant_id", "warehouse_id", "status"),
+        Index("ix_wh_box_tenant_code", "tenant_id", "box_code"),
+        # 1 ячейка = 1 короб: partial-unique, NULL-адреса (хранение) не мешают
+        Index(
+            "uq_wh_box_cell",
+            "cell_id",
+            unique=True,
+            postgresql_where=text("cell_id IS NOT NULL"),
+        ),
+    )
+
+
+class WhBoxItem(Base, TenantScopedMixin):
+    """Содержимое короба. `qty` — ТЕКУЩИЙ остаток (источник истины для поиска и
+    остатков), `qty_initial` — сколько было при приёмке."""
+
+    __tablename__ = "wh_box_item"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    box_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("wh_box.id", ondelete="CASCADE"), nullable=False
+    )
+    barcode: Mapped[str] = mapped_column(String(64), nullable=False)
+    size: Mapped[str | None] = mapped_column(String(64))
+    qty_initial: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    qty: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+
+    __table_args__ = (
+        UniqueConstraint("box_id", "barcode", name="uq_wh_box_item"),
+        Index("ix_wh_box_item_box", "box_id"),
+        Index("ix_wh_box_item_tenant_barcode", "tenant_id", "barcode"),
+    )
+
+
+class WhMovement(Base, TenantScopedMixin):
+    """Append-only журнал движений склада (аудит + база для капитализации).
+
+    `qty` всегда положительный, знак задаёт `kind` — как в
+    `services/off_platform.signed_qty`.
+    """
+
+    __tablename__ = "wh_movement"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    warehouse_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("wh_warehouse.id", ondelete="CASCADE"), nullable=False
+    )
+    dt: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    box_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("wh_box.id", ondelete="SET NULL")
+    )
+    barcode: Mapped[str | None] = mapped_column(String(64))
+    qty: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    cell_from_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("wh_cell.id", ondelete="SET NULL")
+    )
+    cell_to_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("wh_cell.id", ondelete="SET NULL")
+    )
+    doc_ref: Mapped[str | None] = mapped_column(String(128))
+    actor: Mapped[str | None] = mapped_column(String(64))
+    comment: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (
+        Index("ix_wh_movement_tenant_wh_dt", "tenant_id", "warehouse_id", "dt"),
+        Index("ix_wh_movement_tenant_barcode", "tenant_id", "barcode"),
+    )
+
+
+class WhBarcodeRef(Base, TenantScopedMixin):
+    """Справочник баркодов: barcode → nm_id / размер / артикул.
+
+    PackingList не содержит ни nm_id, ни артикула — только баркод и размер,
+    поэтому связка нужна отдельной таблицей. `source` задаёт приоритет мёржа:
+    `manual` > `order_file` > `wb_orders` > `packing_list` — менее достоверный
+    источник НЕ затирает более достоверный (тот же принцип, что FREEZE в
+    `agents/RULES.md` 3.5).
+    """
+
+    __tablename__ = "wh_barcode_ref"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    barcode: Mapped[str] = mapped_column(String(64), nullable=False)
+    nm_id: Mapped[int | None] = mapped_column(BigInteger)
+    size: Mapped[str | None] = mapped_column(String(64))
+    vendor_code: Mapped[str | None] = mapped_column(String(255))
+    name: Mapped[str | None] = mapped_column(String(255))
+    brand: Mapped[str | None] = mapped_column(String(64))
+    source: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'packing_list'")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "barcode", name="uq_wh_barcode_ref"),
+        Index("ix_wh_barcode_ref_tenant_nm", "tenant_id", "nm_id"),
+    )
+
+
+class WhWarehouseWbLink(Base, TenantScopedMixin):
+    """Связка физический склад ↔ «склад продавца» в конкретном кабинете WB.
+
+    Один физический склад зарегистрирован в каждом из 4-5 кабинетов как
+    отдельный склад продавца со своим `warehouseId` (см. `GET /api/v3/warehouses`
+    в Marketplace API) — поэтому связь many-to-many. Нужна для отбора по
+    FBS-заказам: в `GET /api/v3/orders/new` приходит `warehouseId`, по нему
+    определяем, на какой физический склад пришло задание.
+
+    ВНИМАНИЕ: `cabinet_tenant_id` — отдельная колонка, НЕ путать с `tenant_id`
+    (скоуп владельца WMS = основной кабинет).
+    """
+
+    __tablename__ = "wh_warehouse_wb_link"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    warehouse_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("wh_warehouse.id", ondelete="CASCADE"), nullable=False
+    )
+    cabinet_tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    wb_warehouse_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    wb_warehouse_name: Mapped[str | None] = mapped_column(String(200))
+    office_id: Mapped[int | None] = mapped_column(BigInteger)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "cabinet_tenant_id", "wb_warehouse_id", name="uq_wh_wb_link"
+        ),
+        Index("ix_wh_wb_link_tenant_wh", "tenant_id", "warehouse_id"),
+    )

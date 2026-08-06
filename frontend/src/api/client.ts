@@ -3554,7 +3554,511 @@ paymentOrderDelete: (payment_order_id: string) =>
       `/api/leak-report${qs.toString() ? `?${qs}` : ""}`,
     );
   },
+
+  // ── WMS «Свой склад» (TASK-DEV-098) ────────────────────────────────────
+  // Складов несколько и каждый независим → почти каждый вызов принимает
+  // warehouseId. Адресуется только зона отбора; хранение — без адреса.
+  whStatus: () => request<WhStatus>("/api/warehouse/status"),
+
+  whWarehouses: () =>
+    request<{ items: WhWarehouse[] }>("/api/warehouse/warehouses"),
+  whCreateWarehouse: (body: WhWarehousePayload) =>
+    request<WhWarehouse>("/api/warehouse/warehouses", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  whUpdateWarehouse: (id: number, body: WhWarehousePayload) =>
+    request<WhWarehouse>(`/api/warehouse/warehouses/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  whDeleteWarehouse: (id: number) =>
+    request<{ ok: boolean }>(`/api/warehouse/warehouses/${id}`, {
+      method: "DELETE",
+    }),
+
+  whCells: (
+    warehouseId: number,
+    params: { zone?: string; occupied?: boolean } = {},
+  ) => {
+    const qs = new URLSearchParams({ warehouse_id: String(warehouseId) });
+    if (params.zone) qs.set("zone", params.zone);
+    if (params.occupied !== undefined)
+      qs.set("occupied", String(params.occupied));
+    return request<WhCellsMap>(`/api/warehouse/cells?${qs}`);
+  },
+  whUploadCells: async (file: File, defaultWarehouseId?: number) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const qs = new URLSearchParams();
+    if (defaultWarehouseId)
+      qs.set("default_warehouse_id", String(defaultWarehouseId));
+    const resp = await fetch(
+      `/api/warehouse/cells/upload${qs.toString() ? `?${qs}` : ""}`,
+      { method: "POST", body: fd, credentials: "include" },
+    );
+    if (!resp.ok) throw new Error(await resp.text());
+    return resp.json() as Promise<WhCellsUploadResult>;
+  },
+  whGenerateCells: (body: WhGenerateCellsPayload) =>
+    request<{ created: number; skipped_existing: number; total: number }>(
+      "/api/warehouse/cells/generate",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  whUpdateCell: (
+    cellId: number,
+    body: { is_active?: boolean; note?: string; zone?: string },
+  ) =>
+    request<{ ok: boolean }>(`/api/warehouse/cells/${cellId}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  whDeleteCell: (cellId: number) =>
+    request<{ ok: boolean }>(`/api/warehouse/cells/${cellId}`, {
+      method: "DELETE",
+    }),
+  whCellsExportUrl: (warehouseId?: number) =>
+    `/api/warehouse/cells/export.xlsx${warehouseId ? `?warehouse_id=${warehouseId}` : ""}`,
+
+  /** Приёмка PackingList (формат B: тот же файл + опц. «Склад»/«Код ячейки»). */
+  whReceive: async (
+    file: File,
+    params: { warehouseId?: number; supplyRef?: string } = {},
+  ) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const qs = new URLSearchParams();
+    if (params.warehouseId) qs.set("warehouse_id", String(params.warehouseId));
+    if (params.supplyRef) qs.set("supply_ref", params.supplyRef);
+    const resp = await fetch(
+      `/api/warehouse/receive${qs.toString() ? `?${qs}` : ""}`,
+      { method: "POST", body: fd, credentials: "include" },
+    );
+    if (!resp.ok) throw new Error(await resp.text());
+    return resp.json() as Promise<WhReceiveResult>;
+  },
+
+  whBoxes: (
+    params: {
+      warehouseId?: number;
+      status?: string;
+      q?: string;
+      limit?: number;
+    } = {},
+  ) => {
+    const qs = new URLSearchParams();
+    if (params.warehouseId) qs.set("warehouse_id", String(params.warehouseId));
+    if (params.status) qs.set("status", params.status);
+    if (params.q) qs.set("q", params.q);
+    if (params.limit) qs.set("limit", String(params.limit));
+    return request<{ items: WhBoxRow[] }>(
+      `/api/warehouse/boxes${qs.toString() ? `?${qs}` : ""}`,
+    );
+  },
+  whBoxDetail: (boxCode: string, warehouseId?: number) => {
+    const qs = new URLSearchParams();
+    if (warehouseId) qs.set("warehouse_id", String(warehouseId));
+    return request<WhBoxDetail>(
+      `/api/warehouse/boxes/${encodeURIComponent(boxCode)}${qs.toString() ? `?${qs}` : ""}`,
+    );
+  },
+  whPlace: (body: {
+    box_code: string;
+    cell_code: string;
+    warehouse_id: number;
+  }) =>
+    request<{ ok: boolean; box_code: string; cell_code: string }>(
+      "/api/warehouse/place",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  whToStorage: (body: { box_code: string; warehouse_id: number }) =>
+    request<{ ok: boolean; box_code: string }>("/api/warehouse/to-storage", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  /** Единый поиск: ячейка / ШК короба / баркод / nmID / артикул / название. */
+  whSearch: (q: string, warehouseId?: number) => {
+    const qs = new URLSearchParams({ q });
+    if (warehouseId) qs.set("warehouse_id", String(warehouseId));
+    return request<WhSearchResult>(`/api/warehouse/search?${qs}`);
+  },
+  whStock: (
+    params: {
+      warehouseId?: number;
+      groupBy?: WhStockGroupBy;
+      zone?: string;
+    } = {},
+  ) => {
+    const qs = new URLSearchParams();
+    if (params.warehouseId) qs.set("warehouse_id", String(params.warehouseId));
+    if (params.groupBy) qs.set("group_by", params.groupBy);
+    if (params.zone) qs.set("zone", params.zone);
+    return request<WhStockResult>(
+      `/api/warehouse/stock${qs.toString() ? `?${qs}` : ""}`,
+    );
+  },
+  whStockExportUrl: (warehouseId?: number) =>
+    `/api/warehouse/stock/export.xlsx${warehouseId ? `?warehouse_id=${warehouseId}` : ""}`,
+
+  whMovements: (
+    params: {
+      warehouseId?: number;
+      from?: string;
+      to?: string;
+      kind?: string;
+      barcode?: string;
+      boxCode?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) => {
+    const qs = new URLSearchParams();
+    if (params.warehouseId) qs.set("warehouse_id", String(params.warehouseId));
+    if (params.from) qs.set("date_from", params.from);
+    if (params.to) qs.set("date_to", params.to);
+    if (params.kind) qs.set("kind", params.kind);
+    if (params.barcode) qs.set("barcode", params.barcode);
+    if (params.boxCode) qs.set("box_code", params.boxCode);
+    if (params.limit) qs.set("limit", String(params.limit));
+    if (params.offset) qs.set("offset", String(params.offset));
+    return request<WhMovementsResult>(
+      `/api/warehouse/movements${qs.toString() ? `?${qs}` : ""}`,
+    );
+  },
+
+  whBarcodeRef: (
+    params: { q?: string; onlyUnresolved?: boolean; limit?: number; offset?: number } = {},
+  ) => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set("q", params.q);
+    if (params.onlyUnresolved) qs.set("only_unresolved", "true");
+    if (params.limit) qs.set("limit", String(params.limit));
+    if (params.offset) qs.set("offset", String(params.offset));
+    return request<WhBarcodeRefResult>(
+      `/api/warehouse/barcode-ref${qs.toString() ? `?${qs}` : ""}`,
+    );
+  },
+  whSaveBarcodeRef: (body: WhBarcodeRefRow) =>
+    request<{ inserted: number; updated: number; skipped: number }>(
+      "/api/warehouse/barcode-ref",
+      { method: "PUT", body: JSON.stringify(body) },
+    ),
+  whSyncBarcodeRef: () =>
+    request<{ inserted: number; updated: number; skipped: number; barcodes: number }>(
+      "/api/warehouse/barcode-ref/sync-wb",
+      { method: "POST" },
+    ),
+  whImportOrderFile: async (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const resp = await fetch("/api/warehouse/barcode-ref/import-order", {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    return resp.json() as Promise<{
+      inserted: number;
+      updated: number;
+      skipped: number;
+      stats: { barcodes: number; with_nm_id: number; total_qty: number };
+      warnings: string[];
+    }>;
+  },
+
+  whWbLinks: (warehouseId?: number) =>
+    request<{ items: WhWbLink[] }>(
+      `/api/warehouse/wb-links${warehouseId ? `?warehouse_id=${warehouseId}` : ""}`,
+    ),
+  whCreateWbLink: (body: {
+    warehouse_id: number;
+    cabinet_tenant_id: number;
+    wb_warehouse_id: number;
+    wb_warehouse_name?: string;
+    office_id?: number;
+  }) =>
+    request<{ id: number; ok: boolean }>("/api/warehouse/wb-links", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  whDeleteWbLink: (id: number) =>
+    request<{ ok: boolean }>(`/api/warehouse/wb-links/${id}`, {
+      method: "DELETE",
+    }),
 };
+
+// ── WMS «Свой склад» (TASK-DEV-098) ──
+export interface WhWarehouse {
+  id: number;
+  name: string;
+  code: string | null;
+  address: string | null;
+  note: string | null;
+  is_active: boolean;
+  created_at: string | null;
+}
+
+export interface WhWarehousePayload {
+  name: string;
+  code?: string | null;
+  address?: string | null;
+  note?: string | null;
+  is_active?: boolean;
+}
+
+export interface WhStatusWarehouse {
+  warehouse_id: number;
+  name: string;
+  is_active: boolean;
+  cells_total: number;
+  cells_occupied: number;
+  cells_free: number;
+  boxes_by_status: Record<string, number>;
+  total_qty: number;
+}
+
+export interface WhStatus {
+  warehouses: WhStatusWarehouse[];
+  totals: {
+    warehouses: number;
+    cells_total: number;
+    cells_free: number;
+    total_qty: number;
+  };
+}
+
+export interface WhBoxItemRow {
+  barcode: string;
+  size: string | null;
+  qty: number;
+  qty_initial?: number;
+  nm_id: number | null;
+  vendor_code: string | null;
+  name: string | null;
+}
+
+export interface WhCellEntry {
+  cell_id: number;
+  cell_code: string;
+  zone: string | null;
+  rack: string | null;
+  level: string | null;
+  pos: string | null;
+  sort_order: number;
+  is_active: boolean;
+  note: string | null;
+  occupied: boolean;
+  box: {
+    box_id: number;
+    box_code: string;
+    brand: string | null;
+    is_mono: boolean;
+    supply_ref: string | null;
+    total_qty: number;
+    items: WhBoxItemRow[];
+  } | null;
+}
+
+export interface WhCellsMap {
+  cells: WhCellEntry[];
+  stats: {
+    cells_total: number;
+    occupied: number;
+    free: number;
+    zones: string[];
+  };
+}
+
+export interface WhCellsUploadResult {
+  created: number;
+  updated: number;
+  per_warehouse: Record<string, number>;
+  stats: {
+    cells_total: number;
+    warehouses: string[];
+    zones: string[];
+    rows_dropped: number;
+    duplicates: number;
+  };
+  warnings: string[];
+}
+
+export interface WhGenerateCellsPayload {
+  warehouse_id: number;
+  zone: string;
+  racks: number;
+  levels: number;
+  positions: number;
+  rack_from?: number;
+  level_from?: number;
+  pos_from?: number;
+}
+
+export interface WhReceiveResult {
+  boxes_created: number;
+  boxes_updated: number;
+  boxes_placed: number;
+  empty_cells_created: number;
+  skipped_no_warehouse: string[];
+  cell_conflicts: { cell_code: string; occupied_by: string; box_code: string }[];
+  warehouses_touched: number[];
+  barcode_ref: { inserted: number; updated: number; skipped: number };
+  stats: {
+    boxes_total: number;
+    boxes_mono: number;
+    boxes_mixed: number;
+    boxes_without_code: number;
+    barcodes_unique: number;
+    total_qty: number;
+    empty_cells: number;
+    rows_dropped: number;
+    sheets: string[];
+  };
+  warnings: string[];
+}
+
+export interface WhBoxRow {
+  box_id: number;
+  box_code: string;
+  brand: string | null;
+  status: string;
+  status_label: string;
+  is_mono: boolean;
+  supply_ref: string | null;
+  src_no: number | null;
+  cell_code: string | null;
+  warehouse_id: number;
+  warehouse_name: string;
+  qty: number;
+  positions: number;
+}
+
+export interface WhBoxDetail {
+  box_id: number;
+  box_code: string;
+  brand: string | null;
+  status: string;
+  status_label: string;
+  is_mono: boolean;
+  supply_ref: string | null;
+  src_no: number | null;
+  warehouse_id: number;
+  warehouse_name: string;
+  cell_code: string | null;
+  total_qty: number;
+  items: WhBoxItemRow[];
+}
+
+export interface WhStockRow {
+  barcode: string;
+  size: string | null;
+  qty: number;
+  nm_id: number | null;
+  vendor_code: string | null;
+  name: string | null;
+  brand: string | null;
+  warehouse_id: number;
+  warehouse_name: string;
+  cell_id: number | null;
+  cell_code: string | null;
+  zone: string | null;
+  box_id: number;
+  box_code: string;
+  status: string;
+  status_label: string;
+  supply_ref: string | null;
+}
+
+export interface WhSearchResult {
+  query: string;
+  matched_as: string[] | null;
+  items: WhStockRow[];
+  total_qty: number;
+  truncated?: boolean;
+}
+
+export type WhStockGroupBy =
+  | "barcode"
+  | "nm_id"
+  | "cell"
+  | "box"
+  | "brand"
+  | "warehouse";
+
+export interface WhStockResult {
+  group_by: WhStockGroupBy;
+  items: Record<string, unknown>[];
+  by_warehouse: {
+    warehouse_id: number;
+    warehouse_name: string;
+    qty: number;
+    barcodes_count: number;
+    boxes_count: number;
+  }[];
+  totals: { qty: number; barcodes: number; boxes: number; rows: number };
+}
+
+export interface WhMovementRow {
+  id: number;
+  dt: string | null;
+  kind: string;
+  kind_label: string;
+  warehouse_id: number;
+  warehouse_name: string;
+  box_code: string | null;
+  barcode: string | null;
+  nm_id: number | null;
+  vendor_code: string | null;
+  name: string | null;
+  qty: number;
+  signed_qty: number;
+  cell_from: string | null;
+  cell_to: string | null;
+  doc_ref: string | null;
+  actor: string | null;
+  comment: string | null;
+}
+
+export interface WhMovementsResult {
+  items: WhMovementRow[];
+  total: number;
+  limit: number;
+  offset: number;
+  kinds: string[];
+  kind_labels: Record<string, string>;
+}
+
+export interface WhBarcodeRefRow {
+  barcode: string;
+  nm_id?: number | null;
+  size?: string | null;
+  vendor_code?: string | null;
+  name?: string | null;
+  brand?: string | null;
+  source?: string;
+  updated_at?: string | null;
+}
+
+export interface WhBarcodeRefResult {
+  items: WhBarcodeRefRow[];
+  total: number;
+  limit: number;
+  offset: number;
+  source_priority: Record<string, number>;
+}
+
+export interface WhWbLink {
+  id: number;
+  warehouse_id: number;
+  warehouse_name: string;
+  cabinet_tenant_id: number;
+  cabinet_name: string | null;
+  wb_warehouse_id: number;
+  wb_warehouse_name: string | null;
+  office_id: number | null;
+  is_active: boolean;
+}
 
 // TASK-DEV-030: результат матрицы сравнения акций.
 export interface PromoCompareCell {

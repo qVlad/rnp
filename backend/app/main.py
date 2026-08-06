@@ -75,6 +75,7 @@ from app.api import (
     units,
     users,
     view_presets,
+    warehouse,
     weekly_report,
 )
 from app.core.config import settings as cfg
@@ -295,3 +296,4 @@ app.include_router(promo_calculator.router)
 app.include_router(box_distribution.router)
 app.include_router(reconciliation_4way.router)
 app.include_router(reconciliation_auto.router)
+app.include_router(warehouse.router)
