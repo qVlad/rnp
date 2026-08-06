@@ -1,0 +1,7 @@
+{
+  "task_id": "TASK-DEV-098",
+  "agent": "Claude Opus 5 — main session",
+  "started_at": "2026-08-06T12:31:30Z",
+  "expected_minutes": 20,
+  "notes": "временное force-удаление склада с коробами"
+}
