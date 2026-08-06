@@ -38,6 +38,7 @@ from app.services.auth import (
     require_director_or_head,
 )
 from app.services.tenant_context import get_tenant
+from app.services.warehouse import allocation
 from app.services.warehouse import barcode_ref as ref_svc
 from app.services.warehouse import cells as cells_svc
 from app.services.warehouse import excel as excel_svc
@@ -787,6 +788,208 @@ async def box_detail(
             for i in items
         ],
     }
+
+
+# ===========================================================================
+# Размещение: подбор коробов в ячейки отбора (Фаза 2)
+# ===========================================================================
+
+
+async def _movable_boxes(session: AsyncSession, warehouse_id: int) -> list[dict[str, Any]]:
+    """Коробы, которые можно двигать: принятые и лежащие на хранении.
+
+    Коробы, уже стоящие в ячейках (`pick`), не трогаем — иначе preview
+    предлагал бы переставлять то, что кладовщик уже разложил.
+    """
+    boxes = (
+        await session.execute(
+            select(WhBox)
+            .where(WhBox.warehouse_id == warehouse_id)
+            .where(WhBox.status.in_(("received", "storage")))
+            .order_by(WhBox.src_no.nulls_last(), WhBox.box_code)
+        )
+    ).scalars().all()
+    if not boxes:
+        return []
+    items = (
+        await session.execute(
+            select(WhBoxItem)
+            .where(WhBoxItem.box_id.in_([b.id for b in boxes]))
+            .where(WhBoxItem.qty > 0)
+        )
+    ).scalars().all()
+    by_box: dict[int, list[WhBoxItem]] = {}
+    for it in items:
+        by_box.setdefault(it.box_id, []).append(it)
+    out: list[dict[str, Any]] = []
+    for b in boxes:
+        box_items = by_box.get(b.id, [])
+        if not box_items:
+            # пустой короб (весь товар отобран) — размещать нечего
+            continue
+        out.append(
+            {
+                "box_id": b.id,
+                "box_code": b.box_code,
+                "brand": b.brand,
+                "is_mono": b.is_mono,
+                "total_qty": sum(int(i.qty or 0) for i in box_items),
+                "items": [{"barcode": i.barcode, "qty": int(i.qty or 0)} for i in box_items],
+            }
+        )
+    return out
+
+
+async def _build_plan(session: AsyncSession, warehouse_id: int) -> dict[str, Any]:
+    boxes = await _movable_boxes(session, warehouse_id)
+    cells = [
+        {
+            "cell_id": c.id,
+            "cell_code": c.code,
+            "zone": c.zone,
+            "sort_order": c.sort_order,
+        }
+        for c in await stock_svc.free_cells(session, warehouse_id)
+    ]
+    plan = allocation.plan_placement(boxes, cells)
+    # Свободные ячейки отдаём в ответе: мобильному сканеру нужен выбор вручную,
+    # когда отсканированного короба в плане нет (например, его переставляют).
+    plan["free_cells"] = cells
+    # Обогащаем непокрытые баркоды справочником — чтобы в UI/xlsx было видно,
+    # что именно не попало в отбор (баркод сам по себе ничего не говорит).
+    refs = await ref_svc.lookup(
+        session, [u["barcode"] for u in plan["uncovered_barcodes"]]
+    )
+    for u in plan["uncovered_barcodes"]:
+        info = refs.get(u["barcode"]) or {}
+        u["nm_id"] = info.get("nm_id")
+        u["vendor_code"] = info.get("vendor_code")
+        u["name"] = info.get("name")
+    return plan
+
+
+@router.get("/allocation/preview")
+async def allocation_preview(
+    warehouse_id: int = Query(...),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Предпросмотр: какой короб в какую ячейку, что уйдёт на хранение.
+
+    Ничего не пишет. Порядок — «строго моно-короба вперёд», затем сборные
+    greedy-набором, остальное на хранение (см. `services/warehouse/allocation.py`).
+    """
+    wh = await _require_warehouse(session, warehouse_id)
+    plan = await _build_plan(session, warehouse_id)
+    return {
+        "warehouse": {"id": wh.id, "name": wh.name},
+        **plan,
+    }
+
+
+class AllocationApplyPayload(BaseModel):
+    warehouse_id: int
+    # Если передан — применяем только эти коробы (кладовщик может согласиться
+    # частично). Пусто = применить весь предпросмотр.
+    box_codes: list[str] | None = None
+
+
+@router.post("/allocation/apply")
+async def allocation_apply(
+    payload: AllocationApplyPayload,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Применить размещение: расставить коробы по ячейкам, остальное — хранение.
+
+    План строится заново на актуальном состоянии (а не берётся с клиента),
+    поэтому повторный вызов идемпотентен: уже размещённые коробы имеют статус
+    `pick` и в план не попадают.
+    """
+    await _require_warehouse(session, payload.warehouse_id)
+    plan = await _build_plan(session, payload.warehouse_id)
+
+    only = {c.strip() for c in (payload.box_codes or []) if c.strip()} or None
+    placements = [p for p in plan["placements"] if only is None or p["box_code"] in only]
+    if not placements:
+        return {"placed": 0, "to_storage": 0, "skipped": len(plan["placements"])}
+
+    now = datetime.now(timezone.utc)
+    actor = actor_from_request(request)
+    tenant_id = get_tenant(session)
+    placed = 0
+    for p in placements:
+        box = await session.get(WhBox, p["box_id"])
+        if box is None:
+            continue
+        cell_from = box.cell_id
+        box.cell_id = p["cell_id"]
+        box.status = "pick"
+        box.placed_at = now
+        session.add(
+            WhMovement(
+                tenant_id=tenant_id,
+                warehouse_id=payload.warehouse_id,
+                dt=now,
+                kind="relocate" if cell_from else "place",
+                box_id=box.id,
+                qty=0,
+                cell_from_id=cell_from,
+                cell_to_id=p["cell_id"],
+                actor=actor,
+                comment=f"Авторазмещение, шаг {p['step']}",
+            )
+        )
+        placed += 1
+
+    # Остальные принятые коробы явно переводим на хранение — чтобы статус
+    # `received` («принят, не разобран») не оставался висеть после разбора.
+    to_storage = 0
+    if only is None:
+        for b in plan["to_storage"]:
+            box = await session.get(WhBox, b["box_id"])
+            if box is None or box.status != "received":
+                continue
+            box.status = "storage"
+            session.add(
+                WhMovement(
+                    tenant_id=tenant_id,
+                    warehouse_id=payload.warehouse_id,
+                    dt=now,
+                    kind="to_storage",
+                    box_id=box.id,
+                    qty=0,
+                    actor=actor,
+                )
+            )
+            to_storage += 1
+
+    await audit_log(
+        session,
+        "wh_box",
+        "update",
+        actor=actor,
+        entity_id=str(payload.warehouse_id),
+        after={"placed": placed, "to_storage": to_storage},
+        comment="allocation.apply",
+    )
+    await session.commit()
+    return {"placed": placed, "to_storage": to_storage, "skipped": 0}
+
+
+@router.get("/allocation/export.xlsx")
+async def allocation_export(
+    warehouse_id: int = Query(...),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> Response:
+    """«Лист размещения» для кладовщика: 3 листа — размещение / хранение / не покрыто."""
+    await _require_warehouse(session, warehouse_id)
+    plan = await _build_plan(session, warehouse_id)
+    return _xlsx_response(
+        excel_svc.build_placement_xlsx(
+            plan["placements"], plan["to_storage"], plan["uncovered_barcodes"]
+        ),
+        "wh-placement.xlsx",
+    )
 
 
 @router.delete("/boxes/{box_code}")

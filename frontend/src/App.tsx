@@ -14,6 +14,7 @@ import PnLReconciliation from "./pages/PnLReconciliation";
 import Reconciliation4Way from "./pages/Reconciliation4Way";
 import ReconciliationAuto from "./pages/ReconciliationAuto";
 import Warehouse from "./pages/Warehouse";
+import WarehouseScan from "./pages/WarehouseScan";
 import Taxes from "./pages/Taxes";
 import Supplies from "./pages/Supplies";
 import Units from "./pages/Units";
@@ -154,6 +155,15 @@ export default function App() {
           element={
             <ProtectedRoute>
               <BoxDistribution />
+            </ProtectedRoute>
+          }
+        />
+        {/* TASK-DEV-098: рабочее место кладовщика — тоже полноэкранное */}
+        <Route
+          path="/wh-scan"
+          element={
+            <ProtectedRoute>
+              <WarehouseScan />
             </ProtectedRoute>
           }
         />

@@ -145,6 +145,7 @@ const GROUPS: Group[] = [
       { to: "/checklist", label: "Чек-лист" },
       { to: "/brands", label: "Бренды", directorOrHead: true },
       { to: "/box-scan", label: "Раскладка коробов (QR)", directorOrHead: true },
+      { to: "/wh-scan", label: "Склад — сканер (QR)", directorOrHead: true },
       { to: "/files", label: "Файлы", directorOrHead: true },
       { to: "/data-revisions", label: "Ревизии WB", directorOrHead: true },
     ],

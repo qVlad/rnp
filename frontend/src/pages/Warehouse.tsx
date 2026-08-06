@@ -21,6 +21,7 @@ type Tab =
   | "warehouses"
   | "map"
   | "receive"
+  | "placement"
   | "stock"
   | "barcodes"
   | "movements"
@@ -30,6 +31,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "warehouses", label: "Склады" },
   { key: "map", label: "Карта склада" },
   { key: "receive", label: "Приёмка" },
+  { key: "placement", label: "Размещение" },
   { key: "stock", label: "Остатки и поиск" },
   { key: "barcodes", label: "Справочник ШК" },
   { key: "movements", label: "Движения" },
@@ -188,6 +190,13 @@ export default function Warehouse() {
       )}
       {tab === "receive" && (
         <ReceiveTab
+          warehouseId={effectiveWarehouseId}
+          onDone={(t) => (flash(t), refreshAll())}
+          onError={fail}
+        />
+      )}
+      {tab === "placement" && effectiveWarehouseId && (
+        <PlacementTab
           warehouseId={effectiveWarehouseId}
           onDone={(t) => (flash(t), refreshAll())}
           onError={fail}
@@ -792,6 +801,170 @@ function ReceiveTab({
           </table>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────── Размещение
+function PlacementTab({
+  warehouseId,
+  onDone,
+  onError,
+}: Cb & { warehouseId: number }) {
+  const qc = useQueryClient();
+  const plan = useQuery({
+    queryKey: ["wh-plan", warehouseId],
+    queryFn: () => api.whAllocationPreview(warehouseId),
+  });
+
+  const apply = useMutation({
+    mutationFn: () => api.whAllocationApply(warehouseId),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["wh-plan"] });
+      onDone(
+        `Размещено коробов: ${r.placed}, переведено на хранение: ${r.to_storage}`,
+      );
+    },
+    onError,
+  });
+
+  const s = plan.data?.stats;
+
+  return (
+    <div className="space-y-4">
+      <div className="card space-y-3">
+        <div className="font-medium">Подбор коробов в ячейки отбора</div>
+        <p className="text-sm text-muted">
+          Сначала моно-короба — по одному на баркод, по убыванию количества.
+          Затем сборные: берётся тот, что закрывает больше всего ещё не
+          покрытых баркодов (так ассортимент в отборе получается шире при том же
+          числе ячеек). Остальное — на хранение без адреса.
+        </p>
+        {s && (
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Tile
+              label="Ячеек занять / свободно"
+              value={`${num(s.cells_used)} / ${num(s.cells_free)}`}
+            />
+            <Tile
+              label="Покрыто баркодов"
+              value={`${num(s.barcodes_covered)} из ${num(s.barcodes_total)}`}
+              hint={`моно: ${s.covered_by_mono}, сборными: ${s.covered_by_mixed}`}
+            />
+            <Tile label="На хранение" value={num(s.boxes_to_storage)} />
+            <Tile
+              label="Не покрыто"
+              value={num(s.barcodes_uncovered)}
+              hint="этих баркодов не будет в зоне отбора — не хватило ячеек"
+            />
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            className="btn btn-primary"
+            disabled={!s?.cells_used || apply.isPending}
+            onClick={() => {
+              if (
+                window.confirm(
+                  `Применить размещение: ${s?.cells_used} коробов в ячейки, ${s?.boxes_to_storage} на хранение?`,
+                )
+              )
+                apply.mutate();
+            }}
+          >
+            Применить размещение
+          </button>
+          <a className="btn" href={api.whAllocationExportUrl(warehouseId)}>
+            ⬇ Лист размещения (xlsx)
+          </a>
+          <button
+            className="btn"
+            onClick={() => qc.invalidateQueries({ queryKey: ["wh-plan"] })}
+          >
+            Пересчитать
+          </button>
+        </div>
+        {s?.barcodes_uncovered ? (
+          <div className="text-warn text-sm">
+            Не хватает ячеек на {num(s.barcodes_uncovered)} баркодов — добавьте
+            ячейки на вкладке «Карта склада», иначе этот товар придётся искать на
+            хранении по номеру короба.
+          </div>
+        ) : null}
+      </div>
+
+      <div className="card space-y-2">
+        <div className="font-medium">
+          Маршрут размещения ({plan.data?.placements.length ?? 0})
+        </div>
+        <div className="max-h-[32rem] overflow-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-bg">
+              <tr className="text-left text-muted">
+                <th className="py-1">Ячейка</th>
+                <th>Зона</th>
+                <th>ШК короба</th>
+                <th>Тип</th>
+                <th className="text-right">Шт</th>
+                <th>Закрывает баркодов</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(plan.data?.placements ?? []).map((p) => (
+                <tr key={p.cell_id} className="border-t border-muted/20">
+                  <td className="py-1 font-mono">{p.cell_code}</td>
+                  <td>{p.zone ?? "—"}</td>
+                  <td className="font-mono">{p.box_code}</td>
+                  <td>{p.step === 1 ? "моно" : "сборный"}</td>
+                  <td className="text-right">{num(p.total_qty)}</td>
+                  <td className="text-xs text-muted">
+                    {p.covers.length} · {p.covers.slice(0, 4).join(", ")}
+                    {p.covers.length > 4 ? " …" : ""}
+                  </td>
+                </tr>
+              ))}
+              {!plan.data?.placements.length && (
+                <tr>
+                  <td colSpan={6} className="py-3 text-muted">
+                    Размещать нечего: нет свободных ячеек или все коробы уже
+                    разложены.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {!!plan.data?.uncovered_barcodes.length && (
+        <div className="card space-y-2">
+          <div className="font-medium text-warn">
+            Не попали в отбор ({plan.data.uncovered_barcodes.length})
+          </div>
+          <div className="max-h-64 overflow-auto">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-bg">
+                <tr className="text-left text-muted">
+                  <th className="py-1">Баркод</th>
+                  <th>nmID</th>
+                  <th>Артикул</th>
+                  <th className="text-right">Шт на складе</th>
+                </tr>
+              </thead>
+              <tbody>
+                {plan.data.uncovered_barcodes.map((u) => (
+                  <tr key={u.barcode} className="border-t border-muted/20">
+                    <td className="py-1 font-mono">{u.barcode}</td>
+                    <td>{u.nm_id ?? "—"}</td>
+                    <td className="text-xs">{u.vendor_code ?? u.name ?? "—"}</td>
+                    <td className="text-right">{num(u.total_qty)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

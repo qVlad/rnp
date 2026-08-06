@@ -7,83 +7,12 @@
  * и не даёт распределить дважды. «Заполнено» — в списке WB-коробов. В конце —
  * скачивание shk-excel. Камера требует HTTPS.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Html5Qrcode } from "html5-qrcode";
 import { api, type BoxDistScan } from "@/api/client";
-
-const QR_DIV_ID = "box-qr-reader";
-
-function Scanner({ onDecode }: { onDecode: (text: string) => void }) {
-  const [running, setRunning] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const ref = useRef<Html5Qrcode | null>(null);
-
-  const stop = async () => {
-    const inst = ref.current;
-    ref.current = null;
-    setRunning(false);
-    if (inst) {
-      try {
-        await inst.stop();
-        inst.clear();
-      } catch {
-        /* ignore */
-      }
-    }
-  };
-
-  const start = async () => {
-    setErr(null);
-    if (!window.isSecureContext) {
-      setErr(
-        "Камера доступна только по HTTPS. Откройте https://rnp.sellerfriends.ru на телефоне.",
-      );
-      return;
-    }
-    try {
-      const inst = new Html5Qrcode(QR_DIV_ID);
-      ref.current = inst;
-      setRunning(true);
-      await inst.start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 240, height: 240 } },
-        (decoded) => {
-          stop();
-          onDecode(decoded.trim());
-        },
-        () => {
-          /* per-frame decode failures — игнор */
-        },
-      );
-    } catch (e) {
-      setRunning(false);
-      setErr(`Не удалось включить камеру: ${String((e as Error).message || e)}`);
-    }
-  };
-
-  useEffect(() => () => void stop(), []);
-
-  return (
-    <div className="space-y-2">
-      <div
-        id={QR_DIV_ID}
-        className={`w-full max-w-sm mx-auto rounded-lg overflow-hidden ${running ? "" : "hidden"}`}
-      />
-      {!running ? (
-        <button className="btn-primary w-full py-3 text-base" onClick={start}>
-          📷 Сканировать QR короба
-        </button>
-      ) : (
-        <button className="btn w-full py-3" onClick={stop}>
-          Остановить камеру
-        </button>
-      )}
-      {err && <div className="text-danger text-sm">{err}</div>}
-    </div>
-  );
-}
+// Сканер вынесен в общий компонент (TASK-DEV-098) — его же использует /wh-scan.
+import { BarcodeScanner } from "@/components/BarcodeScanner";
 
 export default function BoxDistribution() {
   const qc = useQueryClient();
@@ -289,7 +218,7 @@ export default function BoxDistribution() {
       {/* Сканер (без ручного ввода) */}
       {status?.has_data && (
         <div className="card space-y-3">
-          <Scanner onDecode={(t) => scanMut.mutate(t)} />
+          <BarcodeScanner domId="box-qr-reader" label="📷 Сканировать QR короба" onDecode={(t) => scanMut.mutate(t)} />
 
           {/* Ручной поиск короба по части ШК */}
           <div>

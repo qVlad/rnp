@@ -3622,6 +3622,25 @@ paymentOrderDelete: (payment_order_id: string) =>
   whCellsExportUrl: (warehouseId?: number) =>
     `/api/warehouse/cells/export.xlsx${warehouseId ? `?warehouse_id=${warehouseId}` : ""}`,
 
+  /** Предпросмотр размещения: моно вперёд → сборные greedy → хранение. */
+  whAllocationPreview: (warehouseId: number) =>
+    request<WhAllocationPlan>(
+      `/api/warehouse/allocation/preview?warehouse_id=${warehouseId}`,
+    ),
+  whAllocationApply: (warehouseId: number, boxCodes?: string[]) =>
+    request<{ placed: number; to_storage: number; skipped: number }>(
+      "/api/warehouse/allocation/apply",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          warehouse_id: warehouseId,
+          box_codes: boxCodes ?? null,
+        }),
+      },
+    ),
+  whAllocationExportUrl: (warehouseId: number) =>
+    `/api/warehouse/allocation/export.xlsx?warehouse_id=${warehouseId}`,
+
   /** Приёмка PackingList (формат B: тот же файл + опц. «Склад»/«Код ячейки»). */
   whReceive: async (
     file: File,
@@ -3932,6 +3951,61 @@ export interface WhReceiveResult {
     sheets: string[];
   };
   warnings: string[];
+}
+
+export interface WhPlacement {
+  step: 1 | 2;
+  box_id: number;
+  box_code: string;
+  brand: string | null;
+  is_mono: boolean;
+  cell_id: number;
+  cell_code: string;
+  zone: string | null;
+  sort_order: number;
+  covers: string[];
+  total_qty: number;
+}
+
+export interface WhFreeCell {
+  cell_id: number;
+  cell_code: string;
+  zone: string | null;
+  sort_order: number;
+}
+
+export interface WhAllocationPlan {
+  warehouse: { id: number; name: string };
+  placements: WhPlacement[];
+  free_cells: WhFreeCell[];
+  to_storage: {
+    box_id: number;
+    box_code: string;
+    brand: string | null;
+    total_qty: number;
+    barcodes: string[];
+  }[];
+  uncovered_barcodes: {
+    barcode: string;
+    total_qty: number;
+    nm_id: number | null;
+    vendor_code: string | null;
+    name: string | null;
+  }[];
+  stats: {
+    cells_free: number;
+    cells_used: number;
+    cells_left: number;
+    boxes_total: number;
+    boxes_mono: number;
+    boxes_placed: number;
+    boxes_to_storage: number;
+    barcodes_total: number;
+    barcodes_covered: number;
+    barcodes_uncovered: number;
+    covered_by_mono: number;
+    covered_by_mixed: number;
+  };
 }
 
 export interface WhBoxRow {

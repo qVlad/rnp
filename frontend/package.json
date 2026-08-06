@@ -1,7 +1,7 @@
 {
   "name": "rnp-frontend",
   "private": true,
-  "version": "0.92.3",
+  "version": "0.93.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
