@@ -11,6 +11,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import type {
   WhCellEntry,
+  WhPushMode,
   WhStockGroupBy,
   WhWarehousePayload,
 } from "../api/client";
@@ -1633,9 +1634,13 @@ function FbsStocksTab({
   const [preview, setPreview] = useState<
     Awaited<ReturnType<typeof api.whFbsStocksPreview>> | null
   >(null);
+  // Сколько отправлять: весь остаток / по N шт на баркод / P% от остатка.
+  // Единица — баркод (размер), не артикул: в WB остаток ведётся так же.
+  const [mode, setMode] = useState<WhPushMode>("all");
+  const [value, setValue] = useState(10);
 
   const load = useMutation({
-    mutationFn: () => api.whFbsStocksPreview(warehouseId),
+    mutationFn: () => api.whFbsStocksPreview(warehouseId, mode, value),
     onSuccess: (r) => {
       setPreview(r);
       if (r.errors.length) onError(new Error(r.errors.join("; ")));
@@ -1644,7 +1649,7 @@ function FbsStocksTab({
   });
   const push = useMutation({
     mutationFn: (cabinetTenantIds?: number[]) =>
-      api.whFbsStocksPush(warehouseId, { cabinetTenantIds }),
+      api.whFbsStocksPush(warehouseId, { cabinetTenantIds, mode, value }),
     onSuccess: (r) => {
       onDone(
         `Отправлено позиций: ${r.summary.positions} по ${r.summary.cabinets} кабинетам`,
@@ -1663,8 +1668,32 @@ function FbsStocksTab({
           Сравнение наших остатков с тем, что показывает WB по каждому кабинету.
           Запись включается только вручную: автопуш означал бы, что ошибка в
           приёмке молча обнулит витрину. Отправляются лишь расходящиеся позиции.
+          <b> Единица — баркод (размер)</b>, а не артикул: в WB остаток ведётся
+          так же, поэтому «по 10 шт» из 9 размеров даст 90 шт.
         </p>
         <div className="flex flex-wrap items-center gap-2">
+          <select
+            className="input"
+            value={mode}
+            onChange={(e) => setMode(e.target.value as WhPushMode)}
+          >
+            <option value="all">Весь остаток</option>
+            <option value="fixed">По N шт на баркод</option>
+            <option value="percent">Процент от остатка</option>
+          </select>
+          {mode !== "all" && (
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="number"
+                className="input w-24"
+                min={0}
+                max={mode === "percent" ? 100 : 100000}
+                value={value}
+                onChange={(e) => setValue(Number(e.target.value))}
+              />
+              {mode === "percent" ? "% от остатка" : "шт на баркод"}
+            </label>
+          )}
           <button
             className="btn"
             disabled={load.isPending}
@@ -1681,9 +1710,15 @@ function FbsStocksTab({
             onClick={() => {
               const total =
                 preview?.cabinets.reduce((a, c) => a + c.diff_count, 0) ?? 0;
+              const what =
+                mode === "all"
+                  ? "весь остаток"
+                  : mode === "fixed"
+                    ? `по ${value} шт на баркод`
+                    : `${value}% от остатка`;
               if (
                 window.confirm(
-                  `Записать наши остатки в WB? Будет обновлено ${total} расходящихся позиций по ${preview?.cabinets.length} кабинетам. Витрина WB изменится сразу.`,
+                  `Записать остатки в WB (${what})? Будет обновлено ${total} расходящихся позиций по ${preview?.cabinets.length} кабинетам, всего ${num(preview?.target_total_qty ?? 0)} шт на кабинет. Витрина WB изменится сразу.`,
                 )
               )
                 push.mutate(undefined);
@@ -1693,9 +1728,12 @@ function FbsStocksTab({
           </button>
           {preview && (
             <span className="text-sm text-muted">
-              наших баркодов: {num(preview.our_barcodes)}
+              баркодов: {num(preview.our_barcodes)}
               {preview.our_total_qty
-                ? ` · ${num(preview.our_total_qty)} шт`
+                ? ` · на складе ${num(preview.our_total_qty)} шт`
+                : ""}
+              {preview.target_total_qty !== undefined
+                ? ` · отправим ${num(preview.target_total_qty)} шт`
                 : ""}
             </span>
           )}
@@ -1738,7 +1776,8 @@ function FbsStocksTab({
                   <tr className="text-left text-muted">
                     <th className="py-1">Баркод</th>
                     <th className="text-right">В WB</th>
-                    <th className="text-right">У нас</th>
+                    <th className="text-right">На складе</th>
+                    <th className="text-right">Отправим</th>
                     <th className="text-right">Δ</th>
                   </tr>
                 </thead>
@@ -1747,7 +1786,8 @@ function FbsStocksTab({
                     <tr key={d.barcode} className="border-t border-muted/20">
                       <td className="py-1 font-mono">{d.barcode}</td>
                       <td className="text-right">{num(d.in_wb)}</td>
-                      <td className="text-right">{num(d.ours)}</td>
+                      <td className="text-right text-muted">{num(d.ours)}</td>
+                      <td className="text-right font-medium">{num(d.target)}</td>
                       <td
                         className={`text-right ${d.delta < 0 ? "text-danger" : "text-success"}`}
                       >

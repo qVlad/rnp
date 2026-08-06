@@ -9,6 +9,15 @@
 статусах наличия (`received` / `pick` / `storage`). Пустые и отгруженные коробы
 не участвуют.
 
+Сколько отправлять — три режима (запрос пользователя 2026-08-06):
+  - `all`     — весь фактический остаток;
+  - `fixed`   — по N штук на баркод (если на складе меньше — сколько есть);
+  - `percent` — P% от остатка баркода.
+
+**Единица — баркод (размер), а не артикул** (решение пользователя): в WB остаток
+ведётся именно так, и каждый размер остаётся в продаже. «10 шт на артикул» из 9
+размеров = 90 шт всего.
+
 Лимиты (`specs/02-items.yaml`): `POST /api/v3/stocks/{warehouseId}` — читать,
 `PUT` — писать, оба по 1000 sku за запрос, 300 запросов/мин на кабинет.
 """
@@ -22,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Tenant, WhBox, WhBoxItem, WhWarehouseWbLink
 from app.integrations.wb import marketplace
 from app.integrations.wb.client import WbApiClient
+from app.services.warehouse.fbs_stock_policy import PUSH_MODES, compute_target  # noqa: F401
 from app.services.warehouse.stock import IN_STOCK_STATUSES
 from app.sync.tenants import get_tenant_token
 
@@ -58,16 +68,25 @@ async def preview(
     session: AsyncSession,
     warehouse_id: int,
     cabinet_tenant_ids: list[int] | None = None,
+    mode: str = "all",
+    value: int = 0,
 ) -> dict[str, Any]:
-    """Сверка наших остатков с FBS-остатками WB по каждому кабинету.
+    """Сверка «в WB / у нас на складе / отправим» по каждому кабинету.
 
-    Ничего не пишет. В `diff` попадают только расхождения — их и предлагаем
-    пушить; совпадающие позиции трогать незачем.
+    Ничего не пишет. В `diff` попадают только расхождения между тем, что в WB, и
+    тем, что отправим по выбранному режиму — совпадающие позиции трогать незачем.
     """
     ours = await our_stock(session, warehouse_id)
+    target = compute_target(ours, mode, value)
     links = await _links(session, warehouse_id, cabinet_tenant_ids)
     if not links:
-        return {"cabinets": [], "our_barcodes": len(ours), "errors": ["no_wb_links"]}
+        return {
+            "cabinets": [],
+            "our_barcodes": len(ours),
+            "mode": mode,
+            "value": value,
+            "errors": ["no_wb_links"],
+        }
 
     cabinets: list[dict[str, Any]] = []
     errors: list[str] = []
@@ -93,13 +112,17 @@ async def preview(
         for barcode in barcodes:
             wb_qty = int(in_wb.get(barcode, 0))
             our_qty = int(ours.get(barcode, 0))
-            if wb_qty != our_qty:
+            send_qty = int(target.get(barcode, 0))
+            if wb_qty != send_qty:
                 diff.append(
                     {
                         "barcode": barcode,
                         "in_wb": wb_qty,
+                        # фактический остаток склада — чтобы видеть, из чего считали
                         "ours": our_qty,
-                        "delta": our_qty - wb_qty,
+                        # сколько отправим по выбранному режиму
+                        "target": send_qty,
+                        "delta": send_qty - wb_qty,
                     }
                 )
         diff.sort(key=lambda d: (-abs(d["delta"]), d["barcode"]))
@@ -121,6 +144,10 @@ async def preview(
         "cabinets": cabinets,
         "our_barcodes": len(ours),
         "our_total_qty": sum(ours.values()),
+        "mode": mode,
+        "value": value,
+        # сколько всего штук уйдёт по выбранному режиму (на один кабинет)
+        "target_total_qty": sum(target.values()),
         "errors": errors,
     }
 
@@ -130,18 +157,22 @@ async def push(
     warehouse_id: int,
     cabinet_tenant_ids: list[int] | None = None,
     barcodes: list[str] | None = None,
+    mode: str = "all",
+    value: int = 0,
 ) -> dict[str, Any]:
-    """Записать наши остатки в WB (`PUT /api/v3/stocks/{warehouseId}`).
+    """Записать остатки в WB (`PUT /api/v3/stocks/{warehouseId}`).
 
-    Пушим ТОЛЬКО расходящиеся позиции (или явно выбранные `barcodes`) — так и
-    запросов меньше, и в audit_log видно, что именно поменяли.
+    Отправляем ТОЛЬКО расходящиеся позиции (или явно выбранные `barcodes`) — так
+    и запросов меньше, и в audit_log видно, что именно поменяли. Сколько именно
+    отправлять, решает `mode`/`value` (см. `compute_target`).
     """
     ours = await our_stock(session, warehouse_id)
+    target = compute_target(ours, mode, value)
     links = await _links(session, warehouse_id, cabinet_tenant_ids)
     if not links:
         return {
             "cabinets": [],
-            "summary": {"cabinets": 0, "positions": 0},
+            "summary": {"cabinets": 0, "positions": 0, "mode": mode, "value": value},
             "errors": ["no_wb_links"],
         }
 
@@ -165,7 +196,7 @@ async def push(
                 )
                 to_push = {
                     barcode: qty
-                    for barcode, qty in ours.items()
+                    for barcode, qty in target.items()
                     if (wanted is None or barcode in wanted)
                     and int(in_wb.get(barcode, 0)) != int(qty)
                 }
@@ -197,6 +228,9 @@ async def push(
             "cabinets": len(cabinets),
             "positions": total_positions,
             "our_barcodes": len(ours),
+            "mode": mode,
+            "value": value,
+            "target_total_qty": sum(target.values()),
         },
         "errors": errors,
     }

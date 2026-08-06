@@ -3883,13 +3883,23 @@ paymentOrderDelete: (payment_order_id: string) =>
     }),
 
   // ── Остатки FBS в WB (Фаза 4) ──
-  whFbsStocksPreview: (warehouseId: number) =>
+  /** mode: all — весь остаток, fixed — по N шт на баркод, percent — P% от остатка. */
+  whFbsStocksPreview: (
+    warehouseId: number,
+    mode: WhPushMode = "all",
+    value = 0,
+  ) =>
     request<WhFbsStocksPreview>(
-      `/api/warehouse/fbs-stocks/preview?warehouse_id=${warehouseId}`,
+      `/api/warehouse/fbs-stocks/preview?warehouse_id=${warehouseId}&mode=${mode}&value=${value}`,
     ),
   whFbsStocksPush: (
     warehouseId: number,
-    opts: { cabinetTenantIds?: number[]; barcodes?: string[] } = {},
+    opts: {
+      cabinetTenantIds?: number[];
+      barcodes?: string[];
+      mode?: WhPushMode;
+      value?: number;
+    } = {},
   ) =>
     request<WhFbsStocksPushResult>("/api/warehouse/fbs-stocks/push", {
       method: "POST",
@@ -3897,6 +3907,8 @@ paymentOrderDelete: (payment_order_id: string) =>
         warehouse_id: warehouseId,
         cabinet_tenant_ids: opts.cabinetTenantIds ?? null,
         barcodes: opts.barcodes ?? null,
+        mode: opts.mode ?? "all",
+        value: opts.value ?? 0,
       }),
     }),
 
@@ -4340,6 +4352,8 @@ export interface WhSticker {
   file?: string;
 }
 
+export type WhPushMode = "all" | "fixed" | "percent";
+
 export interface WhFbsStocksPreview {
   cabinets: {
     cabinet_tenant_id: number;
@@ -4349,11 +4363,22 @@ export interface WhFbsStocksPreview {
     checked: number;
     matching: number;
     diff_count: number;
-    diff: { barcode: string; in_wb: number; ours: number; delta: number }[];
+    diff: {
+      barcode: string;
+      in_wb: number;
+      /** фактический остаток склада */
+      ours: number;
+      /** сколько отправим по выбранному режиму */
+      target: number;
+      delta: number;
+    }[];
     diff_truncated: boolean;
   }[];
   our_barcodes: number;
   our_total_qty?: number;
+  mode?: WhPushMode;
+  value?: number;
+  target_total_qty?: number;
   errors: string[];
 }
 
@@ -4365,7 +4390,14 @@ export interface WhFbsStocksPushResult {
     pushed: number;
     examples: { barcode: string; qty: number }[];
   }[];
-  summary: { cabinets: number; positions: number; our_barcodes?: number };
+  summary: {
+    cabinets: number;
+    positions: number;
+    our_barcodes?: number;
+    mode?: WhPushMode;
+    value?: number;
+    target_total_qty?: number;
+  };
   errors: string[];
 }
 

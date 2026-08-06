@@ -1984,14 +1984,24 @@ async def cancel_pick_order(
 @router.get("/fbs-stocks/preview")
 async def fbs_stocks_preview(
     warehouse_id: int = Query(...),
+    mode: str = Query(
+        default="all",
+        description="all — весь остаток, fixed — по N шт на баркод, percent — P% от остатка",
+    ),
+    value: int = Query(default=0, ge=0, le=100000),
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
-    """Сверка «в WB / у нас / Δ» по каждому связанному кабинету.
+    """Сверка «в WB / у нас на складе / отправим» по каждому связанному кабинету.
 
     Читает `POST /api/v3/stocks/{warehouseId}` батчами ≤1000 — ничего не пишет.
     """
     await _require_warehouse(session, warehouse_id)
-    return await fbs_stocks.preview(session, warehouse_id)
+    try:
+        return await fbs_stocks.preview(
+            session, warehouse_id, mode=mode, value=value
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 class FbsStocksPushPayload(BaseModel):
@@ -2000,6 +2010,10 @@ class FbsStocksPushPayload(BaseModel):
     cabinet_tenant_ids: list[int] | None = None
     # Пусто = все расходящиеся баркоды
     barcodes: list[str] | None = None
+    # Сколько отправлять: весь остаток / по N шт на баркод / P% от остатка.
+    # Единица — баркод (размер), не артикул: в WB остаток ведётся так же.
+    mode: str = Field(default="all", pattern="^(all|fixed|percent)$")
+    value: int = Field(default=0, ge=0, le=100000)
 
 
 @router.post("/fbs-stocks/push")
@@ -2008,18 +2022,24 @@ async def fbs_stocks_push(
     request: Request,
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
-    """Записать наши остатки в WB (`PUT /api/v3/stocks/{warehouseId}`).
+    """Записать остатки в WB (`PUT /api/v3/stocks/{warehouseId}`).
 
     Только по явному действию пользователя: автопуш означал бы, что ошибка в
-    приёмке молча обнуляет витрину WB. Результат и Δ пишутся в audit_log.
+    приёмке молча обнуляет витрину WB. Режим (`all`/`fixed`/`percent`) и результат
+    пишутся в audit_log.
     """
     await _require_warehouse(session, payload.warehouse_id)
-    result = await fbs_stocks.push(
-        session,
-        payload.warehouse_id,
-        cabinet_tenant_ids=payload.cabinet_tenant_ids,
-        barcodes=payload.barcodes,
-    )
+    try:
+        result = await fbs_stocks.push(
+            session,
+            payload.warehouse_id,
+            cabinet_tenant_ids=payload.cabinet_tenant_ids,
+            barcodes=payload.barcodes,
+            mode=payload.mode,
+            value=payload.value,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     await audit_log(
         session,
         "wh_fbs_stocks",
