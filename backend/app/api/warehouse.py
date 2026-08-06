@@ -1440,6 +1440,9 @@ class WbLinkPayload(BaseModel):
     wb_warehouse_id: int
     wb_warehouse_name: str | None = None
     office_id: int | None = None
+    # Перенести связку с другого нашего склада на этот. Один WB-склад продавца
+    # может относиться только к одному физическому складу.
+    move: bool = False
 
 
 @router.get("/wb-links")
@@ -1531,7 +1534,46 @@ async def create_wb_link(
         )
     ).scalars().first()
     if existing is not None:
-        raise HTTPException(status_code=409, detail="link_exists")
+        if existing.warehouse_id == payload.warehouse_id:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "link_exists_here", "link_id": existing.id},
+            )
+        # Один WB-склад продавца = одно физическое место, иначе непонятно, с
+        # какого склада отбирать FBS-задание. Поэтому не создаём вторую связку,
+        # а предлагаем перенести существующую (`move=true`).
+        holder = await session.get(WhWarehouse, existing.warehouse_id)
+        if not payload.move:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "link_taken",
+                    "link_id": existing.id,
+                    "warehouse_id": existing.warehouse_id,
+                    "warehouse_name": holder.name if holder else None,
+                },
+            )
+        existing.warehouse_id = payload.warehouse_id
+        existing.wb_warehouse_name = (
+            payload.wb_warehouse_name or existing.wb_warehouse_name
+        )
+        existing.office_id = payload.office_id or existing.office_id
+        await audit_log(
+            session,
+            "wh_warehouse_wb_link",
+            "update",
+            actor=actor_from_request(request),
+            entity_id=str(existing.id),
+            before={"warehouse_id": holder.id if holder else None},
+            after={"warehouse_id": payload.warehouse_id},
+            comment="link.move",
+        )
+        await session.commit()
+        return {
+            "id": existing.id,
+            "ok": True,
+            "moved_from": holder.name if holder else None,
+        }
     link = WhWarehouseWbLink(
         tenant_id=get_tenant(session),
         warehouse_id=payload.warehouse_id,

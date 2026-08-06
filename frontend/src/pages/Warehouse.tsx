@@ -17,6 +17,7 @@ import type {
 } from "../api/client";
 import { DateRangePicker } from "../components/DateRangePicker";
 import { ProductThumb } from "../components/ProductThumb";
+import { warehouseErrorText } from "./warehouseErrors";
 import type { DateRange } from "../components/DateRangePicker";
 
 type Tab =
@@ -81,7 +82,8 @@ export default function Warehouse() {
   };
   const fail = (e: unknown) => {
     setMsg(null);
-    setErr(e instanceof Error ? e.message : String(e));
+    // Сырое `API 409: {"detail":...}` пользователю ничего не говорит — переводим.
+    setErr(warehouseErrorText(e));
   };
 
   const warehouses = useQuery({
@@ -809,7 +811,7 @@ function ReceiveTab({
         </div>
         <div className="max-h-[28rem] overflow-auto">
           <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-bg">
+            <thead className="sticky top-0 z-10 bg-surface">
               <tr className="text-left text-muted">
                 <th className="py-1">№</th>
                 <th>ШК короба</th>
@@ -990,7 +992,7 @@ function PlacementTab({
         </div>
         <div className="max-h-[32rem] overflow-auto">
           <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-bg">
+            <thead className="sticky top-0 z-10 bg-surface">
               <tr className="text-left text-muted">
                 <th className="py-1">Ячейка</th>
                 <th>Зона</th>
@@ -1050,7 +1052,7 @@ function PlacementTab({
           </div>
           <div className="max-h-64 overflow-auto">
             <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-bg">
+              <thead className="sticky top-0 z-10 bg-surface">
                 <tr className="text-left text-muted">
                   <th className="py-1">Баркод</th>
                   <th>nmID</th>
@@ -1126,7 +1128,7 @@ function StockTab({ warehouseId }: { warehouseId: number | null }) {
             </div>
             <div className="max-h-80 overflow-auto">
               <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-bg">
+                <thead className="sticky top-0 z-10 bg-surface">
                   <tr className="text-left text-muted">
                     <th className="py-1">Фото</th>
                     <th>Склад</th>
@@ -1205,7 +1207,7 @@ function StockTab({ warehouseId }: { warehouseId: number | null }) {
 
         <div className="max-h-[32rem] overflow-auto">
           <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-bg">
+            <thead className="sticky top-0 z-10 bg-surface">
               <tr className="text-left text-muted">
                 {stock.data?.items[0] &&
                   Object.keys(stock.data.items[0]).map((k) => (
@@ -1568,7 +1570,7 @@ function PickTab({ warehouseId, onDone, onError }: Cb & { warehouseId: number })
           </div>
           <div className="max-h-[28rem] overflow-auto">
             <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-bg">
+              <thead className="sticky top-0 z-10 bg-surface">
                 <tr className="text-left text-muted">
                   <th className="py-1">Фото</th>
                   <th>Ячейка</th>
@@ -1772,7 +1774,7 @@ function FbsStocksTab({
           {c.diff_count > 0 && (
             <div className="max-h-64 overflow-auto">
               <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-bg">
+                <thead className="sticky top-0 z-10 bg-surface">
                   <tr className="text-left text-muted">
                     <th className="py-1">Баркод</th>
                     <th className="text-right">В WB</th>
@@ -1916,7 +1918,7 @@ function BarcodesTab({ onDone, onError }: Cb) {
 
       <div className="card max-h-[32rem] overflow-auto">
         <table className="w-full text-sm">
-          <thead className="sticky top-0 bg-bg">
+          <thead className="sticky top-0 z-10 bg-surface">
             <tr className="text-left text-muted">
               <th className="py-1">Баркод</th>
               <th>Размер</th>
@@ -2029,7 +2031,7 @@ function MovementsTab({ warehouseId }: { warehouseId: number | null }) {
 
       <div className="max-h-[32rem] overflow-auto">
         <table className="w-full text-sm">
-          <thead className="sticky top-0 bg-bg">
+          <thead className="sticky top-0 z-10 bg-surface">
             <tr className="text-left text-muted">
               <th className="py-1">Дата</th>
               <th>Операция</th>
@@ -2113,17 +2115,22 @@ function CabinetsTab({
   });
 
   const create = useMutation({
-    mutationFn: () =>
+    mutationFn: (move: boolean) =>
       api.whCreateWbLink({
         warehouse_id: warehouseId!,
         cabinet_tenant_id: form.cabinet_tenant_id,
         wb_warehouse_id: form.wb_warehouse_id,
         wb_warehouse_name: form.wb_warehouse_name || undefined,
+        move,
       }),
-    onSuccess: () => {
+    onSuccess: (r) => {
       setForm({ cabinet_tenant_id: 0, wb_warehouse_id: 0, wb_warehouse_name: "" });
       qc.invalidateQueries({ queryKey: ["wh-wb-links"] });
-      onDone("Связка добавлена");
+      onDone(
+        r.moved_from
+          ? `Связка перенесена со склада «${r.moved_from}»`
+          : "Связка добавлена",
+      );
     },
     onError,
   });
@@ -2212,7 +2219,29 @@ function CabinetsTab({
               !form.wb_warehouse_id ||
               create.isPending
             }
-            onClick={() => create.mutate()}
+            onClick={() =>
+              create.mutate(false, {
+                onError: (e) => {
+                  // Склад WB уже привязан к другому нашему складу — предлагаем
+                  // перенести связку, а не оставляем пользователя с 409.
+                  const m = String(e);
+                  if (!m.includes("link_taken")) return onError(e);
+                  let holder = "другому складу";
+                  try {
+                    const d = JSON.parse(m.slice(m.indexOf("{")))?.detail;
+                    if (d?.warehouse_name) holder = `«${d.warehouse_name}»`;
+                  } catch {
+                    /* оставим общий текст */
+                  }
+                  if (
+                    window.confirm(
+                      `Этот склад продавца WB уже привязан к ${holder}. Один склад WB может относиться только к одному нашему складу.\n\nПеренести связку сюда?`,
+                    )
+                  )
+                    create.mutate(true);
+                },
+              })
+            }
           >
             Связать
           </button>

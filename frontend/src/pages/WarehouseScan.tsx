@@ -21,6 +21,7 @@ import { api } from "@/api/client";
 import type { WhBoxDetail, WhPickOrderDetail, WhSearchResult } from "@/api/client";
 import { BarcodeScanner } from "@/components/BarcodeScanner";
 import { ProductThumb } from "@/components/ProductThumb";
+import { warehouseErrorText } from "./warehouseErrors";
 
 type Mode = "place" | "find" | "pick";
 
@@ -54,7 +55,7 @@ export default function WarehouseScan() {
   };
   const fail = (e: unknown) => {
     setMsg(null);
-    setErr(e instanceof Error ? e.message : String(e));
+    setErr(warehouseErrorText(e));
   };
 
   const warehouses = useQuery({

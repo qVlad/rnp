@@ -3929,17 +3929,19 @@ paymentOrderDelete: (payment_order_id: string) =>
     request<{ items: WhWbLink[] }>(
       `/api/warehouse/wb-links${warehouseId ? `?warehouse_id=${warehouseId}` : ""}`,
     ),
+  /** move=true переносит связку с другого нашего склада на этот. */
   whCreateWbLink: (body: {
     warehouse_id: number;
     cabinet_tenant_id: number;
     wb_warehouse_id: number;
     wb_warehouse_name?: string;
     office_id?: number;
+    move?: boolean;
   }) =>
-    request<{ id: number; ok: boolean }>("/api/warehouse/wb-links", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
+    request<{ id: number; ok: boolean; moved_from?: string | null }>(
+      "/api/warehouse/wb-links",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
   whDeleteWbLink: (id: number) =>
     request<{ ok: boolean }>(`/api/warehouse/wb-links/${id}`, {
       method: "DELETE",
