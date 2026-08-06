@@ -88,6 +88,27 @@ def plan_placement(
             bc = item["barcode"]
             qty_by_barcode[bc] = qty_by_barcode.get(bc, 0) + int(item.get("qty") or 0)
 
+    # Глубина зоны отбора в штуках. Ведём как рабочую копию и обновляем на
+    # КАЖДОМ размещении: иначе шаг 3 не знает про короба, назначенные шагами
+    # 1-2, считает такие баркоды «просевшими до нуля» и везёт им второй короб,
+    # пока реально просевшие (1-8 шт) ждут. Найдено на проде: на складе с 128
+    # свободными ячейками пополнение начиналось с баркодов, которым шаг 1
+    # только что выдал ячейку.
+    pick_qty: dict[str, int] = dict(pick_qty_by_barcode or {})
+
+    def qty_in_box(box: dict[str, Any], barcode: str) -> int:
+        return sum(
+            int(i.get("qty") or 0)
+            for i in box.get("items", [])
+            if i["barcode"] == barcode
+        )
+
+    def account_placed(box: dict[str, Any]) -> None:
+        """Учесть короб как уже стоящий в отборе (для расчёта глубины)."""
+        for item in box.get("items", []):
+            bc = item["barcode"]
+            pick_qty[bc] = pick_qty.get(bc, 0) + int(item.get("qty") or 0)
+
     all_barcodes = set(qty_by_barcode)
     # Баркоды, уже доступные в зоне отбора, считаем покрытыми: ячейки на них
     # тратить незачем, и в «не покрыто» они попадать не должны.
@@ -138,6 +159,7 @@ def plan_placement(
             break
         used_box_ids.add(box["box_id"])
         covered.add(barcode)
+        account_placed(box)
         placements.append(
             {
                 "step": STEP_MONO,
@@ -188,6 +210,7 @@ def plan_placement(
             break
         used_box_ids.add(best["box_id"])
         covered |= best_gain
+        account_placed(best)
         placements.append(
             {
                 "step": STEP_MIXED,
@@ -208,7 +231,6 @@ def plan_placement(
     # Ассортимент покрыт, но ячейки ещё свободны (например, короб опустел при
     # отборе). Привозим то, что в отборе кончается: самый «просевший» баркод
     # первым. Раньше такие ячейки просто оставались пустыми.
-    pick_qty = dict(pick_qty_by_barcode or {})
     if replenish:
         while cell_idx < len(cells):
             # кандидаты: баркоды, по которым ещё есть что привезти со хранения
@@ -231,18 +253,11 @@ def plan_placement(
             )
             # для баркода берём моно-короб (не тащим лишний ассортимент в
             # ячейку), иначе — сборный с наибольшим запасом этого баркода
-            def qty_of(box: dict[str, Any], barcode: str = target) -> int:
-                return sum(
-                    int(i.get("qty") or 0)
-                    for i in box.get("items", [])
-                    if i["barcode"] == barcode
-                )
-
             candidates = sorted(
                 available[target],
                 key=lambda b: (
                     0 if len(barcodes_of(b)) == 1 else 1,
-                    -qty_of(b),
+                    -qty_in_box(b, target),
                     str(b.get("box_code") or ""),
                 ),
             )
@@ -251,7 +266,8 @@ def plan_placement(
             if cell is None:
                 break
             used_box_ids.add(box["box_id"])
-            brought = qty_of(box)
+            brought = qty_in_box(box, target)
+            before = pick_qty.get(target, 0)
             placements.append(
                 {
                     "step": STEP_REPLENISH,
@@ -265,15 +281,15 @@ def plan_placement(
                     "sort_order": cell.get("sort_order"),
                     "covers": sorted(barcodes_of(box)),
                     "total_qty": int(box.get("total_qty") or 0),
-                    # почему привозим: было столько в отборе, станет столько
-                    "pick_qty_before": pick_qty.get(target, 0),
+                    # почему привозим: столько было в отборе (с учётом коробов,
+                    # назначенных шагами 1-2 в этом же плане)
+                    "pick_qty_before": before,
                     "replenish_barcode": target,
                     "replenish_qty": brought,
                 }
             )
             # учитываем привезённое, чтобы следующая ячейка ушла другому баркоду
-            for bc in barcodes_of(box):
-                pick_qty[bc] = pick_qty.get(bc, 0) + qty_of(box, bc)
+            account_placed(box)
             covered.add(target)
 
     # ── Шаг 4: остальное — на хранение ────────────────────────────────────

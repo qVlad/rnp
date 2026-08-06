@@ -378,3 +378,31 @@ def test_replenish_can_be_disabled() -> None:
     assert plan["placements"] == []
     assert plan["stats"]["replenish_cells"] == 0
     assert plan["stats"]["cells_left"] == 3
+
+
+def test_replenish_accounts_for_boxes_placed_by_steps_1_2() -> None:
+    """Шаг 3 не должен удваивать баркод, которому шаг 1 только что дал ячейку.
+
+    Найдено на проде: склад с 128 свободными ячейками начинал пополнение с
+    баркодов, у которых «в отборе было 0» — а это ровно те, что шаг 1 разместил
+    в этом же плане. Реально просевшие (1-8 шт) при этом ждали.
+    """
+    boxes = [
+        _box(1, "NEW-1", [("NEW", 500)]),      # шаг 1: NEW ещё не в отборе
+        _box(2, "NEW-2", [("NEW", 400)]),      # второй короб того же NEW
+        _box(3, "OLD-1", [("OLD", 300)]),      # OLD в отборе, но остался 1 шт
+    ]
+    plan = plan_placement(
+        boxes,
+        _cells(2),
+        already_covered={"OLD"},
+        pick_qty_by_barcode={"OLD": 1},
+    )
+    steps = [(p["step"], p["box_code"]) for p in plan["placements"]]
+    assert steps[0] == (1, "NEW-1"), "сначала расширяем ассортимент"
+    # вторая ячейка должна уйти просевшему OLD (1 шт), а не второму коробу NEW,
+    # у которого после шага 1 в отборе уже 500 шт
+    assert steps[1] == (3, "OLD-1"), f"ожидали пополнение OLD, получили {steps[1]}"
+    rep = plan["placements"][1]
+    assert rep["replenish_barcode"] == "OLD"
+    assert rep["pick_qty_before"] == 1
