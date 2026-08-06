@@ -868,13 +868,14 @@ function PlacementTab({
   onError,
 }: Cb & { warehouseId: number }) {
   const qc = useQueryClient();
+  const [replenish, setReplenish] = useState(true);
   const plan = useQuery({
-    queryKey: ["wh-plan", warehouseId],
-    queryFn: () => api.whAllocationPreview(warehouseId),
+    queryKey: ["wh-plan", warehouseId, replenish],
+    queryFn: () => api.whAllocationPreview(warehouseId, replenish),
   });
 
   const apply = useMutation({
-    mutationFn: () => api.whAllocationApply(warehouseId),
+    mutationFn: () => api.whAllocationApply(warehouseId, { replenish }),
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ["wh-plan"] });
       onDone(
@@ -892,9 +893,11 @@ function PlacementTab({
         <div className="font-medium">Подбор коробов в ячейки отбора</div>
         <p className="text-sm text-muted">
           Сначала моно-короба — по одному на баркод, по убыванию количества.
-          Затем сборные: берётся тот, что закрывает больше всего ещё не
-          покрытых баркодов (так ассортимент в отборе получается шире при том же
-          числе ячеек). Остальное — на хранение без адреса.
+          Затем сборные: берётся тот, что закрывает больше всего ещё не покрытых
+          баркодов (так ассортимент в отборе шире при том же числе ячеек). Затем
+          <b> пополнение</b>: если ячейка свободна, а по какому-то баркоду товар в
+          отборе кончается — привозим именно его, начиная с самого просевшего.
+          Остальное — на хранение без адреса.
         </p>
         {s && (
           <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
@@ -912,7 +915,15 @@ function PlacementTab({
               value={num(s.newly_covered)}
               hint={`моно: ${s.covered_by_mono}, сборными: ${s.covered_by_mixed}`}
             />
-            <Tile label="На хранение" value={num(s.boxes_to_storage)} />
+            <Tile
+              label="Пополнение"
+              value={num(s.replenish_cells)}
+              hint={
+                s.replenish_qty
+                  ? `привезём ${s.replenish_qty} шт в глубину зоны отбора`
+                  : "свободных ячеек под пополнение нет"
+              }
+            />
             <Tile
               label="Не будет в отборе"
               value={num(s.barcodes_uncovered)}
@@ -944,6 +955,17 @@ function PlacementTab({
           >
             Пересчитать
           </button>
+          <label
+            className="flex items-center gap-2 text-sm"
+            title="Занимать освободившиеся ячейки товаром, который в отборе кончается. Выключите, если свободные ячейки нужно оставить под новый ассортимент"
+          >
+            <input
+              type="checkbox"
+              checked={replenish}
+              onChange={(e) => setReplenish(e.target.checked)}
+            />
+            пополнять зону отбора
+          </label>
         </div>
         {s && s.cells_free === 0 && s.already_in_pick > 0 && (
           <div className="text-sm text-muted">
@@ -983,11 +1005,27 @@ function PlacementTab({
                   <td className="py-1 font-mono">{p.cell_code}</td>
                   <td>{p.zone ?? "—"}</td>
                   <td className="font-mono">{p.box_code}</td>
-                  <td>{p.step === 1 ? "моно" : "сборный"}</td>
+                  <td>
+                    {p.step === 1
+                      ? "моно"
+                      : p.step === 2
+                        ? "сборный"
+                        : "пополнение"}
+                  </td>
                   <td className="text-right">{num(p.total_qty)}</td>
                   <td className="text-xs text-muted">
-                    {p.covers.length} · {p.covers.slice(0, 4).join(", ")}
-                    {p.covers.length > 4 ? " …" : ""}
+                    {p.step === 3 ? (
+                      <span className="text-warn">
+                        {p.replenish_barcode}: в отборе было{" "}
+                        {num(p.pick_qty_before)} шт → привезём{" "}
+                        {num(p.replenish_qty)}
+                      </span>
+                    ) : (
+                      <>
+                        {p.covers.length} · {p.covers.slice(0, 4).join(", ")}
+                        {p.covers.length > 4 ? " …" : ""}
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}

@@ -109,12 +109,14 @@ def test_no_free_cells_sends_everything_to_storage() -> None:
 
 
 def test_duplicate_mono_boxes_of_same_barcode_go_to_storage() -> None:
-    """Второй моно-короб того же баркода не должен занимать ячейку."""
+    """На шаге расширения ассортимента второй моно-короб того же баркода ячейку
+    не занимает. (Он может попасть туда позже — шагом пополнения, который здесь
+    отключён, чтобы проверять именно шаг 1.)"""
     boxes = [
         _box(1, "MONO-A-1", [("A", 100)]),
         _box(2, "MONO-A-2", [("A", 90)]),
     ]
-    plan = plan_placement(boxes, _cells(5))
+    plan = plan_placement(boxes, _cells(5), replenish=False)
     assert len(plan["placements"]) == 1
     # в отбор идёт более полный короб
     assert plan["placements"][0]["box_code"] == "MONO-A-1"
@@ -194,7 +196,9 @@ def test_real_file_full_coverage_needs_fewer_cells_than_barcodes() -> None:
         }
         for i, b in enumerate(parsed["boxes"], start=1)
     ]
-    plan = plan_placement(boxes, _cells(500))
+    # replenish=False — эталон именно по расширению ассортимента: с пополнением
+    # алгоритм занял бы и остальные свободные ячейки «в глубину».
+    plan = plan_placement(boxes, _cells(500), replenish=False)
     s = plan["stats"]
     assert s["barcodes_total"] == 451
     assert s["barcodes_covered"] == 451
@@ -223,7 +227,7 @@ def test_real_file_scarce_cells_still_prefers_mono() -> None:
         }
         for i, b in enumerate(parsed["boxes"], start=1)
     ]
-    plan = plan_placement(boxes, _cells(300))
+    plan = plan_placement(boxes, _cells(300), replenish=False)
     s = plan["stats"]
     assert s["cells_used"] == 300
     assert s["covered_by_mono"] == 287
@@ -262,7 +266,9 @@ def test_already_covered_barcodes_are_not_reported_as_uncovered() -> None:
 def test_already_covered_counts_toward_total_even_if_absent_from_storage() -> None:
     """Баркод, который есть только в ячейках, всё равно часть ассортимента."""
     boxes = [_box(1, "MONO-B", [("B", 10)])]
-    plan = plan_placement(boxes, _cells(1), already_covered={"A", "B"})
+    plan = plan_placement(
+        boxes, _cells(1), already_covered={"A", "B"}, replenish=False
+    )
     s = plan["stats"]
     assert s["barcodes_total"] == 2  # A только в ячейке, B — и там, и на хранении
     assert s["barcodes_uncovered"] == 0
@@ -280,3 +286,95 @@ def test_without_already_covered_behaviour_is_unchanged() -> None:
     assert s["already_in_pick"] == 0
     assert s["barcodes_total"] == 3
     assert s["newly_covered"] == s["barcodes_covered"] == 3
+
+
+# --------------------------------------------------------------------------
+# Шаг 3 — пополнение зоны отбора
+# --------------------------------------------------------------------------
+
+
+def test_replenish_fills_freed_cell_when_assortment_already_covered() -> None:
+    """Ассортимент покрыт, ячейка освободилась → привозим то, что кончается.
+
+    До этого шага такая ячейка оставалась пустой: шаги 1-2 закрывают только
+    отсутствующие баркоды.
+    """
+    boxes = [_box(1, "STOR-A", [("A", 300)]), _box(2, "STOR-B", [("B", 300)])]
+    # оба баркода уже в отборе, но «A» почти кончился
+    plan = plan_placement(
+        boxes,
+        _cells(1),
+        already_covered={"A", "B"},
+        pick_qty_by_barcode={"A": 3, "B": 250},
+    )
+    assert len(plan["placements"]) == 1
+    p = plan["placements"][0]
+    assert p["step"] == 3
+    assert p["replenish_barcode"] == "A", "пополнять надо самый просевший баркод"
+    assert p["pick_qty_before"] == 3
+    assert p["replenish_qty"] == 300
+    assert plan["stats"]["replenish_cells"] == 1
+    assert plan["stats"]["replenish_qty"] == 300
+
+
+def test_replenish_spreads_across_barcodes_not_all_into_one() -> None:
+    """Две свободные ячейки → два разных баркода, а не два короба одного."""
+    boxes = [
+        _box(1, "A-1", [("A", 100)]),
+        _box(2, "A-2", [("A", 100)]),
+        _box(3, "B-1", [("B", 100)]),
+    ]
+    plan = plan_placement(
+        boxes,
+        _cells(2),
+        already_covered={"A", "B"},
+        pick_qty_by_barcode={"A": 1, "B": 2},
+    )
+    targets = [p["replenish_barcode"] for p in plan["placements"]]
+    assert sorted(targets) == ["A", "B"]
+
+
+def test_replenish_runs_only_after_assortment_is_covered() -> None:
+    """Пока баркода в отборе нет совсем, второй короб имеющегося не привозим."""
+    boxes = [
+        _box(1, "MONO-NEW", [("NEW", 10)]),
+        _box(2, "MONO-OLD", [("OLD", 500)]),
+    ]
+    plan = plan_placement(
+        boxes,
+        _cells(1),
+        already_covered={"OLD"},
+        pick_qty_by_barcode={"OLD": 1},
+    )
+    assert len(plan["placements"]) == 1
+    assert plan["placements"][0]["step"] == 1
+    assert plan["placements"][0]["covers"] == ["NEW"]
+
+
+def test_replenish_prefers_mono_box() -> None:
+    """На пополнение берём моно-короб, чтобы не тащить в ячейку лишний ассортимент."""
+    boxes = [
+        _box(1, "MIX", [("A", 100), ("Z", 100)]),
+        _box(2, "MONO", [("A", 50)]),
+    ]
+    plan = plan_placement(
+        boxes,
+        _cells(1),
+        already_covered={"A", "Z"},
+        pick_qty_by_barcode={"A": 1, "Z": 900},
+    )
+    assert plan["placements"][0]["box_code"] == "MONO"
+
+
+def test_replenish_can_be_disabled() -> None:
+    boxes = [_box(1, "STOR-A", [("A", 300)])]
+    plan = plan_placement(
+        boxes,
+        _cells(3),
+        already_covered={"A"},
+        pick_qty_by_barcode={"A": 1},
+        replenish=False,
+    )
+    assert plan["placements"] == []
+    assert plan["stats"]["replenish_cells"] == 0
+    assert plan["stats"]["cells_left"] == 3

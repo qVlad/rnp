@@ -30,12 +30,21 @@ from typing import Any
 # Шаг алгоритма, на котором короб получил ячейку (попадает в ответ и в xlsx).
 STEP_MONO = 1
 STEP_MIXED = 2
+STEP_REPLENISH = 3  # пополнение: ассортимент уже покрыт, но товар в отборе кончается
+
+STEP_LABELS = {
+    STEP_MONO: "моно-короб",
+    STEP_MIXED: "сборный короб",
+    STEP_REPLENISH: "пополнение",
+}
 
 
 def plan_placement(
     boxes: list[dict[str, Any]],
     free_cells: list[dict[str, Any]],
     already_covered: set[str] | None = None,
+    pick_qty_by_barcode: dict[str, int] | None = None,
+    replenish: bool = True,
 ) -> dict[str, Any]:
     """Распределить коробы по свободным ячейкам отбора.
 
@@ -50,15 +59,22 @@ def plan_placement(
             показывало 354, хотя 284 из них уже стояли в ячейках, и реально
             отсутствовало лишь 70. Плюс ячейки теперь не тратятся на то, что
             в отборе уже есть.
+        pick_qty_by_barcode: сколько штук каждого баркода СЕЙЧАС лежит в зоне
+            отбора. Нужно для шага пополнения: ячейка освободилась, ассортимент
+            формально покрыт, но по какому-то баркоду в отборе осталось 3 шт при
+            500 на хранении — именно его и надо привезти.
+        replenish: включает шаг 3 (пополнение). Выключается, когда нужен «чистый»
+            план только на расширение ассортимента.
 
     Returns:
         ``{"placements": [...], "to_storage": [...], "uncovered_barcodes": [...],
         "stats": {...}}``. Ничего не пишет — это предпросмотр.
 
     Note:
-        Пополнение pick-face (баркод в отборе есть, но короб почти пуст) —
-        отдельная задача, здесь не решается: короб считается «покрывающим»
-        независимо от остатка.
+        Шаги 1-2 расширяют АССОРТИМЕНТ (какие баркоды вообще доступны в отборе),
+        шаг 3 — ГЛУБИНУ (сколько штук доступно). Порядок именно такой: пока
+        какого-то баркода в отборе нет совсем, привозить второй короб уже
+        имеющегося смысла нет.
     """
     # Маршрут: ячейки строго по sort_order, дальше по коду — порядок должен
     # быть детерминированным, иначе один и тот же preview даёт разный ответ.
@@ -188,7 +204,79 @@ def plan_placement(
             }
         )
 
-    # ── Шаг 3: остальное — на хранение ────────────────────────────────────
+    # ── Шаг 3: пополнение зоны отбора ─────────────────────────────────────
+    # Ассортимент покрыт, но ячейки ещё свободны (например, короб опустел при
+    # отборе). Привозим то, что в отборе кончается: самый «просевший» баркод
+    # первым. Раньше такие ячейки просто оставались пустыми.
+    pick_qty = dict(pick_qty_by_barcode or {})
+    if replenish:
+        while cell_idx < len(cells):
+            # кандидаты: баркоды, по которым ещё есть что привезти со хранения
+            available: dict[str, list[dict[str, Any]]] = {}
+            for box in boxes:
+                if box["box_id"] in used_box_ids:
+                    continue
+                for bc in barcodes_of(box):
+                    available.setdefault(bc, []).append(box)
+            if not available:
+                break
+            # самый просевший в отборе; при равенстве — где больше запаса
+            target = min(
+                available,
+                key=lambda bc: (
+                    pick_qty.get(bc, 0),
+                    -qty_by_barcode.get(bc, 0),
+                    bc,
+                ),
+            )
+            # для баркода берём моно-короб (не тащим лишний ассортимент в
+            # ячейку), иначе — сборный с наибольшим запасом этого баркода
+            def qty_of(box: dict[str, Any], barcode: str = target) -> int:
+                return sum(
+                    int(i.get("qty") or 0)
+                    for i in box.get("items", [])
+                    if i["barcode"] == barcode
+                )
+
+            candidates = sorted(
+                available[target],
+                key=lambda b: (
+                    0 if len(barcodes_of(b)) == 1 else 1,
+                    -qty_of(b),
+                    str(b.get("box_code") or ""),
+                ),
+            )
+            box = candidates[0]
+            cell = take_cell()
+            if cell is None:
+                break
+            used_box_ids.add(box["box_id"])
+            brought = qty_of(box)
+            placements.append(
+                {
+                    "step": STEP_REPLENISH,
+                    "box_id": box["box_id"],
+                    "box_code": box["box_code"],
+                    "brand": box.get("brand"),
+                    "is_mono": len(barcodes_of(box)) == 1,
+                    "cell_id": cell["cell_id"],
+                    "cell_code": cell["cell_code"],
+                    "zone": cell.get("zone"),
+                    "sort_order": cell.get("sort_order"),
+                    "covers": sorted(barcodes_of(box)),
+                    "total_qty": int(box.get("total_qty") or 0),
+                    # почему привозим: было столько в отборе, станет столько
+                    "pick_qty_before": pick_qty.get(target, 0),
+                    "replenish_barcode": target,
+                    "replenish_qty": brought,
+                }
+            )
+            # учитываем привезённое, чтобы следующая ячейка ушла другому баркоду
+            for bc in barcodes_of(box):
+                pick_qty[bc] = pick_qty.get(bc, 0) + qty_of(box, bc)
+            covered.add(target)
+
+    # ── Шаг 4: остальное — на хранение ────────────────────────────────────
     to_storage = [
         {
             "box_id": b["box_id"],
@@ -211,6 +299,7 @@ def plan_placement(
     covered_by_mixed = sum(
         len(p["covers"]) for p in placements if p["step"] == STEP_MIXED
     )
+    replenished = [p for p in placements if p["step"] == STEP_REPLENISH]
     # Всего ассортимента на складе = движимое ∪ уже стоящее в ячейках.
     total_barcodes = all_barcodes | seeded
     return {
@@ -235,5 +324,8 @@ def plan_placement(
             "barcodes_uncovered": len(total_barcodes - covered),
             "covered_by_mono": covered_by_mono,
             "covered_by_mixed": covered_by_mixed,
+            # шаг 3: сколько ячеек ушло на пополнение и сколько штук привезём
+            "replenish_cells": len(replenished),
+            "replenish_qty": sum(int(p["replenish_qty"]) for p in replenished),
         },
     }

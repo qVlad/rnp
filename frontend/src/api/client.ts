@@ -3637,18 +3637,22 @@ paymentOrderDelete: (payment_order_id: string) =>
     `/api/warehouse/cells/export.xlsx${warehouseId ? `?warehouse_id=${warehouseId}` : ""}`,
 
   /** Предпросмотр размещения: моно вперёд → сборные greedy → хранение. */
-  whAllocationPreview: (warehouseId: number) =>
+  whAllocationPreview: (warehouseId: number, replenish = true) =>
     request<WhAllocationPlan>(
-      `/api/warehouse/allocation/preview?warehouse_id=${warehouseId}`,
+      `/api/warehouse/allocation/preview?warehouse_id=${warehouseId}&replenish=${replenish}`,
     ),
-  whAllocationApply: (warehouseId: number, boxCodes?: string[]) =>
+  whAllocationApply: (
+    warehouseId: number,
+    opts: { boxCodes?: string[]; replenish?: boolean } = {},
+  ) =>
     request<{ placed: number; to_storage: number; skipped: number }>(
       "/api/warehouse/allocation/apply",
       {
         method: "POST",
         body: JSON.stringify({
           warehouse_id: warehouseId,
-          box_codes: boxCodes ?? null,
+          box_codes: opts.boxCodes ?? null,
+          replenish: opts.replenish ?? true,
         }),
       },
     ),
@@ -3851,6 +3855,8 @@ paymentOrderDelete: (payment_order_id: string) =>
       qty_required: number;
       box_emptied: boolean;
       cell_freed: number | null;
+      /** короб, который стоит привезти в освободившуюся ячейку */
+      replacement?: WhPlacement | null;
     }>(`/api/warehouse/pick-lines/${lineId}/pick`, {
       method: "POST",
       body: JSON.stringify({ qty }),
@@ -4059,7 +4065,8 @@ export interface WhReceiveResult {
 }
 
 export interface WhPlacement {
-  step: 1 | 2;
+  /** 1 — моно-короб, 2 — сборный (greedy), 3 — пополнение зоны отбора */
+  step: 1 | 2 | 3;
   box_id: number;
   box_code: string;
   brand: string | null;
@@ -4070,6 +4077,10 @@ export interface WhPlacement {
   sort_order: number;
   covers: string[];
   total_qty: number;
+  /** только для step=3: по какому баркоду пополняем и сколько было/привезём */
+  replenish_barcode?: string;
+  replenish_qty?: number;
+  pick_qty_before?: number;
 }
 
 export interface WhFreeCell {
@@ -4114,6 +4125,8 @@ export interface WhAllocationPlan {
     barcodes_uncovered: number;
     covered_by_mono: number;
     covered_by_mixed: number;
+    replenish_cells: number;
+    replenish_qty: number;
   };
 }
 

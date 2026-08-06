@@ -39,6 +39,13 @@ export default function WarehouseScan() {
   const [found, setFound] = useState<WhSearchResult | null>(null);
   const [manual, setManual] = useState("");
   const [pickOrderId, setPickOrderId] = useState<number | null>(null);
+  // Короб опустел при отборе → показываем, что привезти в освободившуюся ячейку.
+  const [refill, setRefill] = useState<{
+    cell: string;
+    box: string;
+    barcode?: string;
+    qty?: number;
+  } | null>(null);
 
   const flash = (t: string) => {
     setErr(null);
@@ -100,8 +107,19 @@ export default function WarehouseScan() {
         `Отобрано ${r.picked} шт (${r.qty_picked}/${r.qty_required})` +
           (r.box_emptied ? " · короб пуст, ячейка свободна" : ""),
       );
+      if (r.box_emptied && r.replacement) {
+        setRefill({
+          cell: r.replacement.cell_code,
+          box: r.replacement.box_code,
+          barcode: r.replacement.replenish_barcode,
+          qty: r.replacement.replenish_qty ?? r.replacement.total_qty,
+        });
+      } else if (r.box_emptied) {
+        setRefill(null);
+      }
       qc.invalidateQueries({ queryKey: ["wh-pick-order"] });
       qc.invalidateQueries({ queryKey: ["wh-pick-orders"] });
+      qc.invalidateQueries({ queryKey: ["wh-plan"] });
     },
     onError: fail,
   });
@@ -407,6 +425,28 @@ export default function WarehouseScan() {
             <div className="text-sm text-muted">
               Открытых листов нет. Лист создаётся кнопкой «Собрать отбор» на
               странице склада.
+            </div>
+          )}
+
+          {refill && (
+            <div className="rounded-lg border border-accent p-3">
+              <div className="text-xs text-muted">
+                Ячейка освободилась — привезите на замену
+              </div>
+              <div className="font-mono text-xl font-bold text-accent">
+                {refill.cell}
+              </div>
+              <div className="text-sm">
+                короб <span className="font-mono">{refill.box}</span>
+                {refill.barcode ? ` · ${refill.barcode}` : ""}
+                {refill.qty ? ` · ${num(refill.qty)} шт` : ""}
+              </div>
+              <button
+                className="btn mt-2 w-full py-2"
+                onClick={() => setRefill(null)}
+              >
+                Понятно
+              </button>
             </div>
           )}
 

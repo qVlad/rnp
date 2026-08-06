@@ -923,7 +923,9 @@ async def _movable_boxes(session: AsyncSession, warehouse_id: int) -> list[dict[
     return out
 
 
-async def _build_plan(session: AsyncSession, warehouse_id: int) -> dict[str, Any]:
+async def _build_plan(
+    session: AsyncSession, warehouse_id: int, *, replenish: bool = True
+) -> dict[str, Any]:
     boxes = await _movable_boxes(session, warehouse_id)
     cells = [
         {
@@ -936,19 +938,27 @@ async def _build_plan(session: AsyncSession, warehouse_id: int) -> dict[str, Any
     ]
     # Баркоды, уже доступные в зоне отбора: без них «не покрыто» врало —
     # на проде показывало 354 при реально отсутствующих 70.
-    already = set(
-        (
-            await session.execute(
-                select(WhBoxItem.barcode)
-                .join(WhBox, WhBox.id == WhBoxItem.box_id)
-                .where(WhBox.warehouse_id == warehouse_id)
-                .where(WhBox.status == "pick")
-                .where(WhBoxItem.qty > 0)
-                .distinct()
-            )
-        ).scalars().all()
+    # Что и сколько СЕЙЧАС лежит в зоне отбора: множество баркодов нужно, чтобы
+    # не тратить ячейки на уже покрытое, а количества — чтобы шаг пополнения
+    # знал, по какому баркоду товар в отборе кончается.
+    pick_rows = (
+        await session.execute(
+            select(WhBoxItem.barcode, func.coalesce(func.sum(WhBoxItem.qty), 0))
+            .join(WhBox, WhBox.id == WhBoxItem.box_id)
+            .where(WhBox.warehouse_id == warehouse_id)
+            .where(WhBox.status == "pick")
+            .where(WhBoxItem.qty > 0)
+            .group_by(WhBoxItem.barcode)
+        )
+    ).all()
+    pick_qty = {r[0]: int(r[1] or 0) for r in pick_rows if r[0]}
+    plan = allocation.plan_placement(
+        boxes,
+        cells,
+        already_covered=set(pick_qty),
+        pick_qty_by_barcode=pick_qty,
+        replenish=replenish,
     )
-    plan = allocation.plan_placement(boxes, cells, already_covered=already)
     # Свободные ячейки отдаём в ответе: мобильному сканеру нужен выбор вручную,
     # когда отсканированного короба в плане нет (например, его переставляют).
     plan["free_cells"] = cells
@@ -968,15 +978,21 @@ async def _build_plan(session: AsyncSession, warehouse_id: int) -> dict[str, Any
 @router.get("/allocation/preview")
 async def allocation_preview(
     warehouse_id: int = Query(...),
+    replenish: bool = Query(
+        default=True,
+        description="занимать освободившиеся ячейки пополнением зоны отбора",
+    ),
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> dict[str, Any]:
     """Предпросмотр: какой короб в какую ячейку, что уйдёт на хранение.
 
-    Ничего не пишет. Порядок — «строго моно-короба вперёд», затем сборные
-    greedy-набором, остальное на хранение (см. `services/warehouse/allocation.py`).
+    Ничего не пишет. Порядок: моно-короба на непокрытые баркоды → сборные
+    greedy-набором → **пополнение** (ячейка свободна, ассортимент покрыт, но
+    товар в отборе кончается) → остальное на хранение.
+    См. `services/warehouse/allocation.py`.
     """
     wh = await _require_warehouse(session, warehouse_id)
-    plan = await _build_plan(session, warehouse_id)
+    plan = await _build_plan(session, warehouse_id, replenish=replenish)
     return {
         "warehouse": {"id": wh.id, "name": wh.name},
         **plan,
@@ -988,6 +1004,8 @@ class AllocationApplyPayload(BaseModel):
     # Если передан — применяем только эти коробы (кладовщик может согласиться
     # частично). Пусто = применить весь предпросмотр.
     box_codes: list[str] | None = None
+    # Включать ли шаг пополнения зоны отбора.
+    replenish: bool = True
 
 
 @router.post("/allocation/apply")
@@ -1003,7 +1021,9 @@ async def allocation_apply(
     `pick` и в план не попадают.
     """
     await _require_warehouse(session, payload.warehouse_id)
-    plan = await _build_plan(session, payload.warehouse_id)
+    plan = await _build_plan(
+        session, payload.warehouse_id, replenish=payload.replenish
+    )
 
     only = {c.strip() for c in (payload.box_codes or []) if c.strip()} or None
     placements = [p for p in plan["placements"] if only is None or p["box_code"] in only]
@@ -1033,7 +1053,15 @@ async def allocation_apply(
                 cell_from_id=cell_from,
                 cell_to_id=p["cell_id"],
                 actor=actor,
-                comment=f"Авторазмещение, шаг {p['step']}",
+                comment=(
+                    "Авторазмещение: "
+                    + allocation.STEP_LABELS.get(p["step"], str(p["step"]))
+                    + (
+                        f" ({p['replenish_barcode']}: было {p['pick_qty_before']} шт)"
+                        if p.get("replenish_barcode")
+                        else ""
+                    )
+                ),
             )
         )
         placed += 1
@@ -1728,6 +1756,28 @@ async def pick_line_endpoint(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Короб опустел → ячейка освободилась. Сразу подсказываем, какой короб
+    # привезти на замену, чтобы кладовщик не ходил дважды.
+    if result.get("box_emptied"):
+        line = await session.get(WhPickLine, line_id)
+        pick_order = await session.get(WhPickOrder, line.pick_order_id) if line else None
+        if pick_order is not None:
+            await session.flush()
+            plan = await _build_plan(session, pick_order.warehouse_id)
+            freed_cell = result.get("cell_freed")
+            suggestion = next(
+                (p for p in plan["placements"] if p["cell_id"] == freed_cell),
+                None,
+            ) or next(
+                (
+                    p
+                    for p in plan["placements"]
+                    if line is not None and line.barcode in p["covers"]
+                ),
+                None,
+            )
+            result["replacement"] = suggestion
     await session.commit()
     return result
 
