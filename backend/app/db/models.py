@@ -3656,3 +3656,130 @@ class WhWarehouseWbLink(Base, TenantScopedMixin):
         ),
         Index("ix_wh_wb_link_tenant_wh", "tenant_id", "warehouse_id"),
     )
+
+
+# ---------------------------------------------------------------------------
+# WMS: отбор по FBS-заказам WB (TASK-DEV-098, миграция 0092)
+#
+# Источник заданий — сборочные задания FBS (`GET /api/v3/orders/new`), запуск по
+# кнопке. В задании `skus[0]` = баркод, одно задание = одна единица товара.
+# Лист отбора — ОТДЕЛЬНЫЙ на каждый кабинет (кабинетов 4-5).
+# ---------------------------------------------------------------------------
+
+
+class WhPickOrder(Base, TenantScopedMixin):
+    """Лист отбора. Один лист = один кабинет (чтобы не путать при упаковке)."""
+
+    __tablename__ = "wh_pick_order"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    warehouse_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("wh_warehouse.id", ondelete="CASCADE"), nullable=False
+    )
+    # Кабинет, чьи задания собираем. ОТДЕЛЬНАЯ колонка — не путать с
+    # `tenant_id` (скоуп владельца WMS = основной кабинет).
+    cabinet_tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'draft'")
+    )  # draft | in_progress | done | cancelled
+    wb_supply_id: Mapped[str | None] = mapped_column(String(64))
+    actor: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("ix_wh_pick_order_tenant_wh", "tenant_id", "warehouse_id", "status"),
+    )
+
+
+class WhPickLine(Base, TenantScopedMixin):
+    """Строка листа отбора: откуда и сколько взять.
+
+    `sort_order` — копия маршрута обхода на момент генерации: если короб потом
+    переставят, уже выданный кладовщику лист не должен «поехать».
+    """
+
+    __tablename__ = "wh_pick_line"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    pick_order_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("wh_pick_order.id", ondelete="CASCADE"), nullable=False
+    )
+    barcode: Mapped[str] = mapped_column(String(64), nullable=False)
+    cell_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("wh_cell.id", ondelete="SET NULL")
+    )
+    box_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("wh_box.id", ondelete="SET NULL")
+    )
+    qty_required: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    qty_picked: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    # Недостача: заданий больше, чем товара на складе.
+    shortage: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    sort_order: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+
+    __table_args__ = (
+        Index("ix_wh_pick_line_order_sort", "tenant_id", "pick_order_id", "sort_order"),
+    )
+
+
+class WhFbsOrder(Base, TenantScopedMixin):
+    """Снапшот сборочного задания FBS (кросс-кабинетный).
+
+    Наполняется ТОЛЬКО по кнопке «Собрать отбор» — фонового beat-опроса нет
+    (решение пользователя). `barcode` берётся из `skus[0]` задания и напрямую
+    матчится с `WhBoxItem.barcode`.
+    """
+
+    __tablename__ = "wh_fbs_order"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    cabinet_tenant_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    wb_order_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    rid: Mapped[str | None] = mapped_column(String(64))
+    barcode: Mapped[str] = mapped_column(String(64), nullable=False)
+    nm_id: Mapped[int | None] = mapped_column(BigInteger)
+    chrt_id: Mapped[int | None] = mapped_column(BigInteger)
+    article: Mapped[str | None] = mapped_column(String(255))
+    wb_warehouse_id: Mapped[int | None] = mapped_column(BigInteger)
+    office_id: Mapped[int | None] = mapped_column(BigInteger)
+    office_name: Mapped[str | None] = mapped_column(String(200))
+    price_kop: Mapped[int | None] = mapped_column(Integer)
+    cargo_type: Mapped[int | None] = mapped_column(Integer)
+    # requiredMeta: sgtin (КиЗ) / uin / imei / gtin — без них WB не примет поставку
+    required_meta: Mapped[dict | None] = mapped_column(JSONB)
+    supplier_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'new'")
+    )
+    wb_status: Mapped[str | None] = mapped_column(String(24))
+    wb_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    supply_wb_id: Mapped[str | None] = mapped_column(String(64))
+    pick_order_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("wh_pick_order.id", ondelete="SET NULL")
+    )
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "cabinet_tenant_id", "wb_order_id", name="uq_wh_fbs_order"
+        ),
+        Index("ix_wh_fbs_order_tenant_bc", "tenant_id", "barcode"),
+        Index("ix_wh_fbs_order_tenant_status", "tenant_id", "supplier_status"),
+    )

@@ -182,3 +182,72 @@ def build_placement_xlsx(
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def build_pick_xlsx(pick_orders: list[dict[str, Any]]) -> bytes:
+    """Лист отбора: ОТДЕЛЬНЫЙ лист Excel на каждый кабинет.
+
+    Решение пользователя — не сваливать кабинеты в один список: при упаковке и
+    отгрузке их легко перепутать. Внутри листа строки идут по маршруту обхода
+    склада, недостача — в конце и выделена текстом.
+    """
+    wb = Workbook()
+    first = True
+    header = [
+        "№",
+        "Ячейка",
+        "ШК короба",
+        "Баркод",
+        "Артикул",
+        "Название",
+        "Взять, шт",
+        "Отобрано",
+        "Отметка",
+    ]
+    for order in pick_orders or []:
+        title = str(order.get("cabinet_name") or "Отбор")[:31]
+        ws = wb.active if first else wb.create_sheet(title)
+        if first:
+            ws.title = title
+            first = False
+        ws.append([f"Лист отбора — кабинет {order.get('cabinet_name')}"])
+        ws.append(
+            [
+                f"заданий: {order.get('orders', 0)} · к отбору: {order.get('qty_required', 0)} шт"
+                + (
+                    f" · НЕДОСТАЧА: {order['shortage']} шт"
+                    if order.get("shortage")
+                    else ""
+                )
+            ]
+        )
+        ws.append([])
+        ws.append(header)
+        for cell in ws[4]:
+            cell.font = Font(bold=True)
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
+        for i, line in enumerate(order.get("lines") or [], start=1):
+            shortage = int(line.get("shortage") or 0)
+            ws.append(
+                [
+                    i,
+                    line.get("cell_code") or ("НЕТ НА СКЛАДЕ" if shortage else "хранение"),
+                    line.get("box_code") or "",
+                    str(line.get("barcode") or ""),
+                    line.get("vendor_code") or "",
+                    line.get("name") or "",
+                    int(line.get("qty_required") or 0),
+                    int(line.get("qty_picked") or 0),
+                    "",
+                ]
+            )
+        _autosize(ws, header)
+        ws.freeze_panes = "A5"
+
+    if first:  # ни одного листа не добавили
+        ws = wb.active
+        ws.title = "Отбор"
+        ws.append(["Нечего отбирать"])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()

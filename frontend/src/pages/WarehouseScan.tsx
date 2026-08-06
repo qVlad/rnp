@@ -1,10 +1,12 @@
 /**
- * WMS «Свой склад» — мобильное рабочее место кладовщика (TASK-DEV-098, Фаза 2).
+ * WMS «Свой склад» — мобильное рабочее место кладовщика (TASK-DEV-098).
  *
  * Полноэкранная страница вне десктоп-Layout (маршрут `/wh-scan`), как `/box-scan`.
- * Два режима:
+ * Три режима:
  *   - **Разместить** — скан ШК короба → система говорит, в какую ячейку его
  *     поставить (по маршруту обхода) → подтверждение;
+ *   - **Отбор** — выбранный лист отбора по FBS-заказам: строки по маршруту,
+ *     скан баркода товара закрывает 1 шт, кнопка «Взял всё» — остаток строки;
  *   - **Найти** — скан баркода товара или ШК короба → где лежит и сколько.
  *
  * Ячейки пока без QR-этикеток, поэтому ячейка выбирается из подсказанного
@@ -16,10 +18,10 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/api/client";
-import type { WhBoxDetail, WhSearchResult } from "@/api/client";
+import type { WhBoxDetail, WhPickOrderDetail, WhSearchResult } from "@/api/client";
 import { BarcodeScanner } from "@/components/BarcodeScanner";
 
-type Mode = "place" | "find";
+type Mode = "place" | "find" | "pick";
 
 function num(n: number | null | undefined): string {
   return (n ?? 0).toLocaleString("ru-RU");
@@ -35,6 +37,7 @@ export default function WarehouseScan() {
   const [box, setBox] = useState<WhBoxDetail | null>(null);
   const [found, setFound] = useState<WhSearchResult | null>(null);
   const [manual, setManual] = useState("");
+  const [pickOrderId, setPickOrderId] = useState<number | null>(null);
 
   const flash = (t: string) => {
     setErr(null);
@@ -75,6 +78,50 @@ export default function WarehouseScan() {
   }, [plan.data]);
 
   const [cellChoice, setCellChoice] = useState("");
+
+  // ── Отбор: открытые листы и маршрут выбранного ──
+  const pickOrders = useQuery({
+    queryKey: ["wh-pick-orders", wid],
+    queryFn: () => api.whPickOrders(wid!, "draft,in_progress"),
+    enabled: mode === "pick" && !!wid,
+  });
+  const pickDetail = useQuery({
+    queryKey: ["wh-pick-order", pickOrderId],
+    queryFn: () => api.whPickOrder(pickOrderId!),
+    enabled: mode === "pick" && !!pickOrderId,
+  });
+
+  const pickLine = useMutation({
+    mutationFn: ({ lineId, qty }: { lineId: number; qty: number }) =>
+      api.whPickLine(lineId, qty),
+    onSuccess: (r) => {
+      flash(
+        `Отобрано ${r.picked} шт (${r.qty_picked}/${r.qty_required})` +
+          (r.box_emptied ? " · короб пуст, ячейка свободна" : ""),
+      );
+      qc.invalidateQueries({ queryKey: ["wh-pick-order"] });
+      qc.invalidateQueries({ queryKey: ["wh-pick-orders"] });
+    },
+    onError: fail,
+  });
+
+  /** В режиме отбора скан баркода закрывает первую незакрытую строку с ним. */
+  const pickByBarcode = (barcode: string) => {
+    const lines = pickDetail.data?.lines ?? [];
+    const line = lines.find(
+      (l) =>
+        l.barcode === barcode && !l.shortage && l.qty_picked < l.qty_required,
+    );
+    if (!line) {
+      fail(
+        new Error(
+          `Баркод ${barcode} не найден в открытых строках этого листа отбора`,
+        ),
+      );
+      return;
+    }
+    pickLine.mutate({ lineId: line.line_id!, qty: 1 });
+  };
 
   const scanBox = useMutation({
     mutationFn: (code: string) => api.whBoxDetail(code, wid ?? undefined),
@@ -129,6 +176,7 @@ export default function WarehouseScan() {
     const code = text.trim();
     if (!code) return;
     if (mode === "place") scanBox.mutate(code);
+    else if (mode === "pick") pickByBarcode(code);
     else doSearch.mutate(code);
   };
 
@@ -156,6 +204,16 @@ export default function WarehouseScan() {
           }}
         >
           Разместить
+        </button>
+        <button
+          className={`btn flex-1 py-3 ${mode === "pick" ? "btn-primary" : ""}`}
+          onClick={() => {
+            setMode("pick");
+            setBox(null);
+            setFound(null);
+          }}
+        >
+          Отбор
         </button>
         <button
           className={`btn flex-1 py-3 ${mode === "find" ? "btn-primary" : ""}`}
@@ -188,7 +246,13 @@ export default function WarehouseScan() {
       <div className="card space-y-2">
         <BarcodeScanner
           domId="wh-scan-reader"
-          label={mode === "place" ? "📷 Скан ШК короба" : "📷 Скан баркода / короба"}
+          label={
+            mode === "place"
+              ? "📷 Скан ШК короба"
+              : mode === "pick"
+                ? "📷 Скан баркода товара"
+                : "📷 Скан баркода / короба"
+          }
           onDecode={onDecode}
         />
         <form
@@ -201,7 +265,13 @@ export default function WarehouseScan() {
           <input
             className="input flex-1"
             inputMode="text"
-            placeholder={mode === "place" ? "ШК короба вручную" : "баркод / короб / ячейка"}
+            placeholder={
+              mode === "place"
+                ? "ШК короба вручную"
+                : mode === "pick"
+                  ? "баркод товара вручную"
+                  : "баркод / короб / ячейка"
+            }
             value={manual}
             onChange={(e) => setManual(e.target.value)}
           />
@@ -307,6 +377,42 @@ export default function WarehouseScan() {
         </div>
       )}
 
+
+      {/* ── Режим «Отбор» ──────────────────────────────────────────────── */}
+      {mode === "pick" && (
+        <div className="card space-y-3">
+          <select
+            className="input w-full"
+            value={pickOrderId ?? ""}
+            onChange={(e) =>
+              setPickOrderId(e.target.value ? Number(e.target.value) : null)
+            }
+          >
+            <option value="">— выберите лист отбора —</option>
+            {(pickOrders.data?.items ?? []).map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.name} · {o.qty_picked}/{o.qty_required} шт
+              </option>
+            ))}
+          </select>
+
+          {!pickOrders.data?.items.length && (
+            <div className="text-sm text-muted">
+              Открытых листов нет. Лист создаётся кнопкой «Собрать отбор» на
+              странице склада.
+            </div>
+          )}
+
+          {pickDetail.data && (
+            <PickRoute
+              detail={pickDetail.data}
+              busy={pickLine.isPending}
+              onPick={(lineId, qty) => pickLine.mutate({ lineId, qty })}
+            />
+          )}
+        </div>
+      )}
+
       {/* ── Режим «Найти» ──────────────────────────────────────────────── */}
       {mode === "find" && found && (
         <div className="card space-y-2">
@@ -338,6 +444,84 @@ export default function WarehouseScan() {
                   на хранении — адреса нет, искать по номеру короба
                 </div>
               )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Маршрут отбора: строки по порядку обхода, крупные кнопки под палец. */
+function PickRoute({
+  detail,
+  busy,
+  onPick,
+}: {
+  detail: WhPickOrderDetail;
+  busy: boolean;
+  onPick: (lineId: number, qty: number) => void;
+}) {
+  const open = detail.lines.filter(
+    (l) => !l.shortage && l.qty_picked < l.qty_required,
+  );
+  const shortage = detail.lines.filter((l) => l.shortage);
+  return (
+    <div className="space-y-2">
+      <div className="text-sm text-muted">
+        {detail.cabinet_name} · отобрано {num(detail.qty_picked)} из{" "}
+        {num(detail.qty_required)} шт
+        {detail.shortage ? ` · недостача ${num(detail.shortage)}` : ""}
+      </div>
+
+      {open.length === 0 && (
+        <div className="text-success text-sm">
+          Всё отобрано. Дальше — стикеры и поставка на странице склада.
+        </div>
+      )}
+
+      {open.map((l) => (
+        <div key={l.line_id} className="rounded border border-muted/30 p-2">
+          <div className="flex items-baseline justify-between">
+            <span className="font-mono text-lg font-bold text-accent">
+              {l.cell_code ?? "хранение"}
+            </span>
+            <span className="font-semibold">
+              {num(l.qty_required - l.qty_picked)} шт
+            </span>
+          </div>
+          <div className="text-xs text-muted">
+            {l.barcode}
+            {l.size ? ` · разм. ${l.size}` : ""}
+            {l.vendor_code ? ` · ${l.vendor_code}` : ""} · короб {l.box_code}
+          </div>
+          <div className="mt-2 flex gap-2">
+            <button
+              className="btn flex-1 py-2"
+              disabled={busy}
+              onClick={() => onPick(l.line_id!, 1)}
+            >
+              +1
+            </button>
+            <button
+              className="btn-primary flex-1 py-2"
+              disabled={busy}
+              onClick={() => onPick(l.line_id!, l.qty_required - l.qty_picked)}
+            >
+              Взял всё
+            </button>
+          </div>
+        </div>
+      ))}
+
+      {shortage.length > 0 && (
+        <div className="rounded border border-danger p-2 text-sm">
+          <div className="font-medium text-danger">Нет на складе</div>
+          {shortage.map((l) => (
+            <div key={l.line_id} className="text-xs text-muted">
+              {l.barcode}
+              {l.vendor_code ? ` · ${l.vendor_code}` : ""} — не хватает{" "}
+              {num(l.shortage)} шт
             </div>
           ))}
         </div>

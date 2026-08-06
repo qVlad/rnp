@@ -646,6 +646,47 @@ nmIds is expected - max 20»).
 
 ---
 
+### Marketplace API (FBS) — `https://marketplace-api.wildberries.ru`
+
+Добавлено в TASK-DEV-098. Спеки брать не с сайта (`dev.wildberries.ru` отдаёт
+498 на автозапросы), а из `github.com/eslazarev/wildberries-sdk` →
+`specs/03-orders-fbs.yaml` + `specs/02-items.yaml` (там же лимиты и схемы).
+
+**Лимит: 300 запросов/мин на аккаунт продавца**, интервал 200 мс, всплеск 20.
+**Ответ 4XX учитывается как 10 запросов** — поэтому проверяем данные до
+отправки, а не «пробуем и смотрим». Исключение: `DELETE /api/v3/stocks/{id}` —
+10/мин, интервал 6 с. Лимит **per-кабинет**, поэтому 4-5 кабинетов = 4-5
+независимых бюджетов.
+
+| Метод | Путь | Что | Батч |
+|---|---|---|---|
+| GET | `/api/v3/orders/new` | новые сборочные задания (без пагинации) | — |
+| POST | `/api/v3/orders/status` | статусы заданий | 1000 |
+| POST | `/api/v3/orders/stickers` | стикеры заданий (base64) | **100** |
+| POST | `/api/v3/supplies` | создать поставку → `{id: "WB-GI-…"}` | — |
+| PATCH | `/api/marketplace/v3/supplies/{id}/orders` | добавить задания = перевод в `confirm` | **100** |
+| PATCH | `/api/v3/supplies/{id}/deliver` | в доставку → задания в `complete` | — |
+| GET | `/api/v3/supplies/{id}/barcode` | QR поставки | — |
+| GET/POST | `/api/v3/warehouses` | склады продавца (`id` = `warehouseId` в задании) | — |
+| GET | `/api/v3/offices` | склады WB | — |
+| POST | `/api/v3/stocks/{warehouseId}` | **читать** остатки FBS | 1000 |
+| PUT | `/api/v3/stocks/{warehouseId}` | писать остатки FBS | 1000 |
+
+**Подводные камни:**
+1. **`skus[]` в задании — это баркод**, а не внутренний ID. Прямой матч с нашим
+   `wh_box_item.barcode`, `nm_id` для отбора не нужен.
+2. **Одно задание = одна единица товара.** Количество к отбору по баркоду =
+   число заданий, а не сумма какого-то `qty`.
+3. **Отдельной ручки `confirm` у задания НЕТ** — под `/orders/{orderId}` живут
+   только `cancel` и `meta/*`. Задание переходит в `confirm` при добавлении в
+   поставку, в `complete` — когда поставка уходит в доставку.
+4. Остатки FBS читаются **POST**-ом, а не GET.
+5. `warehouseId` в задании — склад продавца **конкретного кабинета**: один
+   физический склад имеет свой ID в каждом из 4-5 кабинетов.
+6. Статусы: `supplierStatus: new|confirm|complete|cancel`,
+   `wbStatus: waiting|sorted|sold|canceled|canceled_by_client|declined_by_client|
+   defect|ready_for_pickup|postponed_delivery|accepted_by_carrier|sent_to_carrier`.
+
 ### Common API — Ping
 
 #### `GET /ping` (на каждом host-е)

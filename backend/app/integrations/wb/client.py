@@ -22,6 +22,7 @@ Category = Literal[
     "content",
     "tariffs",
     "prices",
+    "marketplace",
 ]
 
 
@@ -131,6 +132,13 @@ class WbApiClient:
             # 6/min with min 10s between calls — safe headroom; sync runs every
             # 30 min as one paginated burst. См. WB_API_REFERENCE §3.
             "prices": TokenBucketLimiter(6, min_interval_s=10.0),
+            # marketplace-api (FBS, TASK-DEV-098): официально 300 req/мин на
+            # аккаунт продавца при интервале 200 мс и всплеске 20. Держим
+            # заметный запас — 120/мин с интервалом 0.3 с: отбор делает
+            # десятки запросов, а не сотни, зато **ответ 4XX WB считает за 10
+            # запросов**, поэтому лететь в потолок нельзя.
+            # См. WB_API_REFERENCE.md §3 и specs/03-orders-fbs.yaml.
+            "marketplace": TokenBucketLimiter(120, min_interval_s=0.3),
         }
         self._bases: dict[Category, str] = {
             "statistics": settings.wb_statistics_base,
@@ -145,6 +153,7 @@ class WbApiClient:
             # task не съедал бюджет других common-вызовов (ping и пр.).
             "tariffs": settings.wb_common_base,
             "prices": settings.wb_prices_base,
+            "marketplace": settings.wb_marketplace_base,
         }
         self._client: httpx.AsyncClient | None = None
 
@@ -369,3 +378,6 @@ class WbApiClient:
 
     async def put(self, path: str, category: Category, **kwargs) -> Any:
         return await self.request("PUT", path, category, **kwargs)
+
+    async def patch(self, path: str, category: Category, **kwargs) -> Any:
+        return await self.request("PATCH", path, category, **kwargs)

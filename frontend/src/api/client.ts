@@ -3802,6 +3802,83 @@ paymentOrderDelete: (payment_order_id: string) =>
     }>;
   },
 
+  // ── Отбор по FBS-заказам (Фаза 3) ──
+  /** «Собрать отбор»: тянет /orders/new по кабинетам и строит листы. */
+  whPickCollect: (
+    warehouseId: number,
+    opts: { cabinetTenantIds?: number[]; dryRun?: boolean } = {},
+  ) =>
+    request<WhPickCollectResult>(
+      `/api/warehouse/pick/collect${opts.dryRun ? "?dry_run=true" : ""}`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          warehouse_id: warehouseId,
+          cabinet_tenant_ids: opts.cabinetTenantIds ?? null,
+        }),
+      },
+    ),
+  whPickOrders: (warehouseId?: number, status?: string) => {
+    const qs = new URLSearchParams();
+    if (warehouseId) qs.set("warehouse_id", String(warehouseId));
+    if (status) qs.set("status", status);
+    return request<{ items: WhPickOrderRow[] }>(
+      `/api/warehouse/pick-orders${qs.toString() ? `?${qs}` : ""}`,
+    );
+  },
+  whPickOrder: (id: number) =>
+    request<WhPickOrderDetail>(`/api/warehouse/pick-orders/${id}`),
+  whPickLine: (lineId: number, qty: number) =>
+    request<{
+      picked: number;
+      line_id: number;
+      qty_picked: number;
+      qty_required: number;
+      box_emptied: boolean;
+      cell_freed: number | null;
+    }>(`/api/warehouse/pick-lines/${lineId}/pick`, {
+      method: "POST",
+      body: JSON.stringify({ qty }),
+    }),
+  whPickExportUrl: (warehouseId: number, status = "draft,in_progress") =>
+    `/api/warehouse/pick-orders/export.xlsx?warehouse_id=${warehouseId}&status=${encodeURIComponent(status)}`,
+  whPickStickers: (id: number) =>
+    request<{ stickers: WhSticker[]; orders: number }>(
+      `/api/warehouse/pick-orders/${id}/stickers`,
+    ),
+  whPickCreateSupply: (id: number) =>
+    request<{ wb_supply_id: string; orders: number }>(
+      `/api/warehouse/pick-orders/${id}/supply`,
+      { method: "POST" },
+    ),
+  whPickDeliverSupply: (id: number) =>
+    request<{ ok: boolean; wb_supply_id: string; barcode: Record<string, unknown> }>(
+      `/api/warehouse/pick-orders/${id}/supply/deliver`,
+      { method: "POST" },
+    ),
+  whPickCancel: (id: number) =>
+    request<{ ok: boolean }>(`/api/warehouse/pick-orders/${id}/cancel`, {
+      method: "POST",
+    }),
+
+  // ── Остатки FBS в WB (Фаза 4) ──
+  whFbsStocksPreview: (warehouseId: number) =>
+    request<WhFbsStocksPreview>(
+      `/api/warehouse/fbs-stocks/preview?warehouse_id=${warehouseId}`,
+    ),
+  whFbsStocksPush: (
+    warehouseId: number,
+    opts: { cabinetTenantIds?: number[]; barcodes?: string[] } = {},
+  ) =>
+    request<WhFbsStocksPushResult>("/api/warehouse/fbs-stocks/push", {
+      method: "POST",
+      body: JSON.stringify({
+        warehouse_id: warehouseId,
+        cabinet_tenant_ids: opts.cabinetTenantIds ?? null,
+        barcodes: opts.barcodes ?? null,
+      }),
+    }),
+
   whWbLinks: (warehouseId?: number) =>
     request<{ items: WhWbLink[] }>(
       `/api/warehouse/wb-links${warehouseId ? `?warehouse_id=${warehouseId}` : ""}`,
@@ -4136,6 +4213,109 @@ export interface WhBarcodeRefResult {
   limit: number;
   offset: number;
   source_priority: Record<string, number>;
+}
+
+export interface WhPickLineRow {
+  line_id?: number;
+  barcode: string;
+  cell_code: string | null;
+  box_code: string | null;
+  qty_required: number;
+  qty_picked: number;
+  shortage: number;
+  sort_order: number;
+  nm_id?: number | null;
+  vendor_code?: string | null;
+  name?: string | null;
+  size?: string | null;
+}
+
+export interface WhPickOrderRow {
+  id: number;
+  name: string;
+  status: "draft" | "in_progress" | "done" | "cancelled";
+  warehouse_id: number;
+  cabinet_tenant_id: number;
+  cabinet_name: string | null;
+  wb_supply_id: string | null;
+  created_at: string | null;
+  closed_at: string | null;
+  lines: number;
+  qty_required: number;
+  qty_picked: number;
+  shortage: number;
+}
+
+export interface WhPickOrderDetail
+  extends Omit<WhPickOrderRow, "lines" | "closed_at"> {
+  lines: WhPickLineRow[];
+}
+
+export interface WhPickCollectResult {
+  fetch: {
+    fetched: number;
+    cabinets: {
+      cabinet_tenant_id: number;
+      cabinet_name: string;
+      orders_total: number;
+      orders_for_warehouse: number;
+      skipped_other_warehouse: number;
+    }[];
+    errors: string[];
+  };
+  pick_orders: {
+    pick_order_id: number | null;
+    cabinet_tenant_id: number;
+    cabinet_name: string;
+    name: string;
+    orders: number;
+    lines: WhPickLineRow[];
+    qty_required: number;
+    shortage: number;
+  }[];
+  stats: {
+    orders: number;
+    cabinets: number;
+    qty_required?: number;
+    shortage?: number;
+  };
+}
+
+export interface WhSticker {
+  orderId: number;
+  partA?: number;
+  partB?: number;
+  barcode?: string;
+  file?: string;
+}
+
+export interface WhFbsStocksPreview {
+  cabinets: {
+    cabinet_tenant_id: number;
+    cabinet_name: string;
+    wb_warehouse_id: number;
+    wb_warehouse_name: string | null;
+    checked: number;
+    matching: number;
+    diff_count: number;
+    diff: { barcode: string; in_wb: number; ours: number; delta: number }[];
+    diff_truncated: boolean;
+  }[];
+  our_barcodes: number;
+  our_total_qty?: number;
+  errors: string[];
+}
+
+export interface WhFbsStocksPushResult {
+  cabinets: {
+    cabinet_tenant_id: number;
+    cabinet_name: string;
+    wb_warehouse_id: number;
+    pushed: number;
+    examples: { barcode: string; qty: number }[];
+  }[];
+  summary: { cabinets: number; positions: number; our_barcodes?: number };
+  errors: string[];
 }
 
 export interface WhWbLink {

@@ -23,6 +23,8 @@ type Tab =
   | "receive"
   | "placement"
   | "stock"
+  | "pick"
+  | "fbsstocks"
   | "barcodes"
   | "movements"
   | "cabinets";
@@ -33,6 +35,8 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "receive", label: "Приёмка" },
   { key: "placement", label: "Размещение" },
   { key: "stock", label: "Остатки и поиск" },
+  { key: "pick", label: "Отбор (FBS)" },
+  { key: "fbsstocks", label: "Остатки FBS в WB" },
   { key: "barcodes", label: "Справочник ШК" },
   { key: "movements", label: "Движения" },
   { key: "cabinets", label: "Кабинеты WB" },
@@ -203,6 +207,20 @@ export default function Warehouse() {
         />
       )}
       {tab === "stock" && <StockTab warehouseId={effectiveWarehouseId} />}
+      {tab === "pick" && effectiveWarehouseId && (
+        <PickTab
+          warehouseId={effectiveWarehouseId}
+          onDone={(t) => (flash(t), refreshAll())}
+          onError={fail}
+        />
+      )}
+      {tab === "fbsstocks" && effectiveWarehouseId && (
+        <FbsStocksTab
+          warehouseId={effectiveWarehouseId}
+          onDone={(t) => (flash(t), refreshAll())}
+          onError={fail}
+        />
+      )}
       {tab === "barcodes" && (
         <BarcodesTab onDone={(t) => (flash(t), refreshAll())} onError={fail} />
       )}
@@ -1131,6 +1149,475 @@ function StockTab({ warehouseId }: { warehouseId: number | null }) {
           </table>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────── Отбор (FBS)
+function PickTab({ warehouseId, onDone, onError }: Cb & { warehouseId: number }) {
+  const qc = useQueryClient();
+  const [openId, setOpenId] = useState<number | null>(null);
+  const [collectResult, setCollectResult] = useState<
+    Awaited<ReturnType<typeof api.whPickCollect>> | null
+  >(null);
+
+  const orders = useQuery({
+    queryKey: ["wh-pick-orders", warehouseId],
+    queryFn: () => api.whPickOrders(warehouseId),
+  });
+  const detail = useQuery({
+    queryKey: ["wh-pick-order", openId],
+    queryFn: () => api.whPickOrder(openId!),
+    enabled: !!openId,
+  });
+  const links = useQuery({
+    queryKey: ["wh-wb-links", warehouseId],
+    queryFn: () => api.whWbLinks(warehouseId),
+  });
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["wh-pick-orders"] });
+    qc.invalidateQueries({ queryKey: ["wh-pick-order"] });
+  };
+
+  const collect = useMutation({
+    mutationFn: (dryRun: boolean) =>
+      api.whPickCollect(warehouseId, { dryRun }),
+    onSuccess: (r, dryRun) => {
+      setCollectResult(r);
+      if (!dryRun) {
+        invalidate();
+        onDone(
+          `Заданий забрано: ${r.fetch.fetched}, листов создано: ${r.stats.cabinets}` +
+            (r.stats.shortage ? ` · недостача ${r.stats.shortage} шт` : ""),
+        );
+      }
+      if (r.fetch.errors.length) onError(new Error(r.fetch.errors.join("; ")));
+    },
+    onError,
+  });
+
+  const createSupply = useMutation({
+    mutationFn: (id: number) => api.whPickCreateSupply(id),
+    onSuccess: (r) => {
+      invalidate();
+      onDone(`Поставка FBS создана: ${r.wb_supply_id} (заданий ${r.orders})`);
+    },
+    onError,
+  });
+  const deliver = useMutation({
+    mutationFn: (id: number) => api.whPickDeliverSupply(id),
+    onSuccess: (r) => {
+      invalidate();
+      onDone(`Поставка ${r.wb_supply_id} передана в доставку — печатайте QR`);
+    },
+    onError,
+  });
+  const cancel = useMutation({
+    mutationFn: (id: number) => api.whPickCancel(id),
+    onSuccess: () => {
+      invalidate();
+      setOpenId(null);
+      onDone("Лист отбора отменён, задания вернулись в пул");
+    },
+    onError,
+  });
+  const stickers = useMutation({
+    mutationFn: (id: number) => api.whPickStickers(id),
+    onSuccess: (r) => {
+      // Печать: собираем картинки в отдельное окно
+      const imgs = r.stickers
+        .filter((s) => s.file)
+        .map(
+          (s) =>
+            `<img src="data:image/png;base64,${s.file}" style="margin:2mm;width:58mm"/>`,
+        )
+        .join("");
+      const w = window.open("", "_blank");
+      if (!w) return onError(new Error("Браузер заблокировал окно печати"));
+      w.document.write(
+        `<html><head><title>Стикеры (${r.orders})</title></head><body>${imgs}</body></html>`,
+      );
+      w.document.close();
+      w.print();
+    },
+    onError,
+  });
+  const pickLine = useMutation({
+    mutationFn: ({ lineId, qty }: { lineId: number; qty: number }) =>
+      api.whPickLine(lineId, qty),
+    onSuccess: (r) => {
+      invalidate();
+      onDone(
+        `Отобрано ${r.picked} шт (${r.qty_picked}/${r.qty_required})` +
+          (r.box_emptied ? " · короб опустел, ячейка свободна" : ""),
+      );
+    },
+    onError,
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="card space-y-3">
+        <div className="font-medium">Отбор по заказам WB (FBS)</div>
+        <p className="text-sm text-muted">
+          Задания берутся из WB только по нажатию кнопки — фонового опроса нет.
+          Фильтр по складу — через связку «Кабинеты WB»: задание попадает в отбор,
+          если его <code>warehouseId</code> относится к этому складу. Лист отбора
+          создаётся <b>отдельный на каждый кабинет</b>. В задании FBS одна единица
+          товара, поэтому количество к отбору = число заданий.
+        </p>
+        {!links.data?.items.length && (
+          <div className="text-warn text-sm">
+            Нет связок с кабинетами WB — заполните вкладку «Кабинеты WB», иначе
+            непонятно, какие задания относятся к этому складу.
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            className="btn btn-primary"
+            disabled={collect.isPending || !links.data?.items.length}
+            onClick={() => collect.mutate(false)}
+          >
+            {collect.isPending ? "Забираю из WB…" : "Собрать отбор"}
+          </button>
+          <button
+            className="btn"
+            disabled={collect.isPending || !links.data?.items.length}
+            title="Показать, что получится, ничего не создавая"
+            onClick={() => collect.mutate(true)}
+          >
+            Предпросмотр
+          </button>
+          <a className="btn" href={api.whPickExportUrl(warehouseId)}>
+            ⬇ Листы отбора (xlsx)
+          </a>
+        </div>
+        {collectResult && (
+          <div className="space-y-1 text-sm">
+            {collectResult.fetch.cabinets.map((c) => (
+              <div key={c.cabinet_tenant_id} className="text-muted">
+                {c.cabinet_name}: заданий в WB {c.orders_total}, на этот склад{" "}
+                {c.orders_for_warehouse}
+                {c.skipped_other_warehouse
+                  ? `, на другие склады ${c.skipped_other_warehouse}`
+                  : ""}
+              </div>
+            ))}
+            {collectResult.fetch.errors.map((e) => (
+              <div key={e} className="text-danger">
+                {e}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="card space-y-2">
+        <div className="font-medium">Листы отбора</div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-muted">
+                <th className="py-1">Лист</th>
+                <th>Кабинет</th>
+                <th>Статус</th>
+                <th className="text-right">Строк</th>
+                <th className="text-right">К отбору</th>
+                <th className="text-right">Отобрано</th>
+                <th className="text-right">Недостача</th>
+                <th>Поставка WB</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {(orders.data?.items ?? []).map((o) => (
+                <tr key={o.id} className="border-t border-muted/20">
+                  <td className="py-1">
+                    <button
+                      className="text-accent underline"
+                      onClick={() => setOpenId(openId === o.id ? null : o.id)}
+                    >
+                      {o.name}
+                    </button>
+                  </td>
+                  <td>{o.cabinet_name ?? o.cabinet_tenant_id}</td>
+                  <td>{o.status}</td>
+                  <td className="text-right">{num(o.lines)}</td>
+                  <td className="text-right">{num(o.qty_required)}</td>
+                  <td className="text-right">{num(o.qty_picked)}</td>
+                  <td className={`text-right ${o.shortage ? "text-danger" : ""}`}>
+                    {num(o.shortage)}
+                  </td>
+                  <td className="font-mono text-xs">{o.wb_supply_id ?? "—"}</td>
+                  <td className="space-x-1 text-right">
+                    <button
+                      className="btn"
+                      title="Стикеры сборочных заданий на печать"
+                      onClick={() => stickers.mutate(o.id)}
+                    >
+                      🏷
+                    </button>
+                    {!o.wb_supply_id ? (
+                      <>
+                        <button
+                          className="btn"
+                          disabled={createSupply.isPending}
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                "Создать поставку FBS в WB и добавить в неё задания? Задания перейдут в статус «на сборке».",
+                              )
+                            )
+                              createSupply.mutate(o.id);
+                          }}
+                        >
+                          Поставка
+                        </button>
+                        <button
+                          className="btn text-danger"
+                          onClick={() => {
+                            if (window.confirm("Отменить лист отбора?"))
+                              cancel.mutate(o.id);
+                          }}
+                        >
+                          ✕
+                        </button>
+                      </>
+                    ) : (
+                      o.status !== "done" && (
+                        <button
+                          className="btn btn-primary"
+                          disabled={deliver.isPending}
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                "Передать поставку в доставку? WB откажет, если у заданий не заполнены обязательные КиЗ/УИН.",
+                              )
+                            )
+                              deliver.mutate(o.id);
+                          }}
+                        >
+                          В доставку + QR
+                        </button>
+                      )
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {!orders.data?.items.length && (
+                <tr>
+                  <td colSpan={9} className="py-3 text-muted">
+                    Листов нет — нажмите «Собрать отбор».
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {openId && detail.data && (
+        <div className="card space-y-2">
+          <div className="font-medium">
+            {detail.data.name} — маршрут отбора ({detail.data.lines.length} строк)
+          </div>
+          <div className="max-h-[28rem] overflow-auto">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-bg">
+                <tr className="text-left text-muted">
+                  <th className="py-1">Ячейка</th>
+                  <th>Короб</th>
+                  <th>Баркод</th>
+                  <th>Артикул</th>
+                  <th className="text-right">Взять</th>
+                  <th className="text-right">Отобрано</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {detail.data.lines.map((ln) => (
+                  <tr key={ln.line_id} className="border-t border-muted/20">
+                    <td className="py-1 font-mono">
+                      {ln.shortage ? (
+                        <span className="text-danger">нет на складе</span>
+                      ) : (
+                        (ln.cell_code ?? "хранение")
+                      )}
+                    </td>
+                    <td className="font-mono">{ln.box_code ?? "—"}</td>
+                    <td className="font-mono">{ln.barcode}</td>
+                    <td className="text-xs">{ln.vendor_code ?? ln.name ?? "—"}</td>
+                    <td className="text-right">{num(ln.qty_required)}</td>
+                    <td className="text-right">{num(ln.qty_picked)}</td>
+                    <td className="text-right">
+                      {!ln.shortage && ln.qty_picked < ln.qty_required && (
+                        <button
+                          className="btn"
+                          disabled={pickLine.isPending}
+                          onClick={() =>
+                            pickLine.mutate({
+                              lineId: ln.line_id!,
+                              qty: ln.qty_required - ln.qty_picked,
+                            })
+                          }
+                        >
+                          Отобрал всё
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────── Остатки FBS в WB
+function FbsStocksTab({
+  warehouseId,
+  onDone,
+  onError,
+}: Cb & { warehouseId: number }) {
+  const [preview, setPreview] = useState<
+    Awaited<ReturnType<typeof api.whFbsStocksPreview>> | null
+  >(null);
+
+  const load = useMutation({
+    mutationFn: () => api.whFbsStocksPreview(warehouseId),
+    onSuccess: (r) => {
+      setPreview(r);
+      if (r.errors.length) onError(new Error(r.errors.join("; ")));
+    },
+    onError,
+  });
+  const push = useMutation({
+    mutationFn: (cabinetTenantIds?: number[]) =>
+      api.whFbsStocksPush(warehouseId, { cabinetTenantIds }),
+    onSuccess: (r) => {
+      onDone(
+        `Отправлено позиций: ${r.summary.positions} по ${r.summary.cabinets} кабинетам`,
+      );
+      load.mutate();
+      if (r.errors.length) onError(new Error(r.errors.join("; ")));
+    },
+    onError,
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="card space-y-3">
+        <div className="font-medium">Остатки FBS в WB</div>
+        <p className="text-sm text-muted">
+          Сравнение наших остатков с тем, что показывает WB по каждому кабинету.
+          Запись включается только вручную: автопуш означал бы, что ошибка в
+          приёмке молча обнулит витрину. Отправляются лишь расходящиеся позиции.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            className="btn"
+            disabled={load.isPending}
+            onClick={() => load.mutate()}
+          >
+            {load.isPending ? "Сверяю с WB…" : "Сверить с WB"}
+          </button>
+          <button
+            className="btn btn-primary"
+            disabled={
+              push.isPending ||
+              !preview?.cabinets.some((c) => c.diff_count > 0)
+            }
+            onClick={() => {
+              const total =
+                preview?.cabinets.reduce((a, c) => a + c.diff_count, 0) ?? 0;
+              if (
+                window.confirm(
+                  `Записать наши остатки в WB? Будет обновлено ${total} расходящихся позиций по ${preview?.cabinets.length} кабинетам. Витрина WB изменится сразу.`,
+                )
+              )
+                push.mutate(undefined);
+            }}
+          >
+            Записать в WB
+          </button>
+          {preview && (
+            <span className="text-sm text-muted">
+              наших баркодов: {num(preview.our_barcodes)}
+              {preview.our_total_qty
+                ? ` · ${num(preview.our_total_qty)} шт`
+                : ""}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {(preview?.cabinets ?? []).map((c) => (
+        <div key={c.cabinet_tenant_id} className="card space-y-2">
+          <div className="flex flex-wrap items-baseline gap-2">
+            <span className="font-medium">{c.cabinet_name}</span>
+            <span className="text-xs text-muted">
+              WB-склад {c.wb_warehouse_id}
+              {c.wb_warehouse_name ? ` (${c.wb_warehouse_name})` : ""}
+            </span>
+            <span className="text-sm text-muted">
+              совпало {num(c.matching)} из {num(c.checked)} · расходится{" "}
+              <b className={c.diff_count ? "text-warn" : ""}>{num(c.diff_count)}</b>
+            </span>
+            {c.diff_count > 0 && (
+              <button
+                className="btn"
+                disabled={push.isPending}
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      `Записать остатки только в кабинет «${c.cabinet_name}» (${c.diff_count} позиций)?`,
+                    )
+                  )
+                    push.mutate([c.cabinet_tenant_id]);
+                }}
+              >
+                Записать только этот кабинет
+              </button>
+            )}
+          </div>
+          {c.diff_count > 0 && (
+            <div className="max-h-64 overflow-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-bg">
+                  <tr className="text-left text-muted">
+                    <th className="py-1">Баркод</th>
+                    <th className="text-right">В WB</th>
+                    <th className="text-right">У нас</th>
+                    <th className="text-right">Δ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {c.diff.map((d) => (
+                    <tr key={d.barcode} className="border-t border-muted/20">
+                      <td className="py-1 font-mono">{d.barcode}</td>
+                      <td className="text-right">{num(d.in_wb)}</td>
+                      <td className="text-right">{num(d.ours)}</td>
+                      <td
+                        className={`text-right ${d.delta < 0 ? "text-danger" : "text-success"}`}
+                      >
+                        {d.delta > 0 ? "+" : ""}
+                        {num(d.delta)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {c.diff_truncated && (
+                <div className="text-xs text-muted">показаны первые 500</div>
+              )}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

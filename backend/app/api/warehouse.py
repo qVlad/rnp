@@ -1,8 +1,9 @@
 """WMS «Свой склад» — адресное хранение, приёмка, поиск, остатки (TASK-DEV-098).
 
-Фаза 1. Workflow: создать склад(ы) → загрузить/сгенерировать сетку ячеек
-отбора → принять коробы из `PackingList.xlsx` (формат B: тот же файл + опц.
-колонки «Склад»/«Код ячейки») → быстрый поиск «где лежит» и остатки.
+Workflow: создать склад(ы) → сетка ячеек отбора → приёмка `PackingList.xlsx`
+(формат B: тот же файл + опц. колонки «Склад»/«Код ячейки») → авторазмещение
+(моно вперёд → сборные greedy) → быстрый поиск «где лежит» и остатки →
+отбор по FBS-заказам WB → поставка FBS → пуш остатков FBS в WB по кнопке.
 
 Инварианты (см. `agents/tasks-developer.md` TASK-DEV-098):
   - складов несколько, каждый независим — почти каждый эндпоинт принимает
@@ -28,10 +29,15 @@ from app.db.models import (
     WhBox,
     WhBoxItem,
     WhCell,
+    WhFbsOrder,
     WhMovement,
+    WhPickLine,
+    WhPickOrder,
     WhWarehouse,
     WhWarehouseWbLink,
 )
+from app.integrations.wb import marketplace
+from app.integrations.wb.client import WbApiClient
 from app.services.audit import actor_from_request, audit_log
 from app.services.auth import (
     get_db_tenant_scoped,
@@ -42,10 +48,13 @@ from app.services.warehouse import allocation
 from app.services.warehouse import barcode_ref as ref_svc
 from app.services.warehouse import cells as cells_svc
 from app.services.warehouse import excel as excel_svc
+from app.services.warehouse import fbs_pick
+from app.services.warehouse import fbs_stocks
 from app.services.warehouse import movements as mov_svc
 from app.services.warehouse import receive as receive_svc
 from app.services.warehouse import stock as stock_svc
 from app.services.warehouse.packing_list import parse_receive_file
+from app.sync.tenants import get_tenant_token
 
 router = APIRouter(
     prefix="/api/warehouse",
@@ -1414,3 +1423,424 @@ async def delete_wb_link(
     await session.execute(delete(WhWarehouseWbLink).where(WhWarehouseWbLink.id == link_id))
     await session.commit()
     return {"ok": True}
+
+
+# ===========================================================================
+# Отбор по FBS-заказам WB (Фаза 3)
+# ===========================================================================
+
+
+class CollectPickPayload(BaseModel):
+    warehouse_id: int
+    # Пусто = все связанные кабинеты
+    cabinet_tenant_ids: list[int] | None = None
+
+
+@router.post("/pick/collect")
+async def pick_collect(
+    payload: CollectPickPayload,
+    request: Request,
+    dry_run: bool = Query(default=False, description="только показать, не создавать листы"),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """«Собрать отбор»: забрать новые задания FBS из WB и построить листы.
+
+    Обращение к WB происходит ТОЛЬКО здесь, по нажатию кнопки — фонового
+    beat-опроса `/orders/new` нет. Задания фильтруются по `warehouseId` из
+    связок склада с кабинетами, лист создаётся отдельный на каждый кабинет.
+    """
+    await _require_warehouse(session, payload.warehouse_id)
+    fetch = await fbs_pick.fetch_fbs_orders(
+        session,
+        payload.warehouse_id,
+        cabinet_tenant_ids=payload.cabinet_tenant_ids,
+    )
+    built = await fbs_pick.build_pick_orders(
+        session,
+        payload.warehouse_id,
+        cabinet_tenant_ids=payload.cabinet_tenant_ids,
+        actor=actor_from_request(request),
+        dry_run=dry_run,
+    )
+    if dry_run:
+        await session.rollback()
+    else:
+        await audit_log(
+            session,
+            "wh_pick_order",
+            "create",
+            actor=actor_from_request(request),
+            entity_id=str(payload.warehouse_id),
+            after={"fetched": fetch["fetched"], **built["stats"]},
+        )
+        await session.commit()
+    return {"fetch": fetch, **built}
+
+
+@router.get("/pick-orders")
+async def list_pick_orders(
+    warehouse_id: int | None = Query(default=None),
+    status: str | None = Query(default=None),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    stmt = (
+        select(
+            WhPickOrder,
+            Tenant.name.label("cabinet_name"),
+            func.coalesce(func.sum(WhPickLine.qty_required), 0).label("qty_required"),
+            func.coalesce(func.sum(WhPickLine.qty_picked), 0).label("qty_picked"),
+            func.coalesce(func.sum(WhPickLine.shortage), 0).label("shortage"),
+            func.count(WhPickLine.id).label("lines"),
+        )
+        .outerjoin(Tenant, Tenant.id == WhPickOrder.cabinet_tenant_id)
+        .outerjoin(WhPickLine, WhPickLine.pick_order_id == WhPickOrder.id)
+        .group_by(WhPickOrder.id, Tenant.name)
+        .order_by(WhPickOrder.created_at.desc())
+    )
+    if warehouse_id is not None:
+        stmt = stmt.where(WhPickOrder.warehouse_id == warehouse_id)
+    if status:
+        stmt = stmt.where(WhPickOrder.status == status)
+    rows = (await session.execute(stmt)).all()
+    return {
+        "items": [
+            {
+                "id": po.id,
+                "name": po.name,
+                "status": po.status,
+                "warehouse_id": po.warehouse_id,
+                "cabinet_tenant_id": po.cabinet_tenant_id,
+                "cabinet_name": cabinet_name,
+                "wb_supply_id": po.wb_supply_id,
+                "created_at": po.created_at.isoformat() if po.created_at else None,
+                "closed_at": po.closed_at.isoformat() if po.closed_at else None,
+                "lines": int(lines or 0),
+                "qty_required": int(qty_required or 0),
+                "qty_picked": int(qty_picked or 0),
+                "shortage": int(shortage or 0),
+            }
+            for po, cabinet_name, qty_required, qty_picked, shortage, lines in rows
+        ]
+    }
+
+
+async def _pick_order_detail(session: AsyncSession, pick_order_id: int) -> dict[str, Any]:
+    po = await session.get(WhPickOrder, pick_order_id)
+    if po is None:
+        raise HTTPException(status_code=404, detail="pick_order_not_found")
+    cabinet = await session.get(Tenant, po.cabinet_tenant_id)
+    rows = (
+        await session.execute(
+            select(WhPickLine, WhCell.code.label("cell_code"), WhBox.box_code)
+            .outerjoin(WhCell, WhCell.id == WhPickLine.cell_id)
+            .outerjoin(WhBox, WhBox.id == WhPickLine.box_id)
+            .where(WhPickLine.pick_order_id == pick_order_id)
+            .order_by(WhPickLine.sort_order, WhPickLine.barcode)
+        )
+    ).all()
+    refs = await ref_svc.lookup(session, [ln.barcode for ln, _, _ in rows])
+    lines = [
+        {
+            "line_id": ln.id,
+            "barcode": ln.barcode,
+            "cell_code": cell_code,
+            "box_code": box_code,
+            "qty_required": int(ln.qty_required or 0),
+            "qty_picked": int(ln.qty_picked or 0),
+            "shortage": int(ln.shortage or 0),
+            "sort_order": int(ln.sort_order or 0),
+            **{
+                k: (refs.get(ln.barcode) or {}).get(k)
+                for k in ("nm_id", "vendor_code", "name", "size")
+            },
+        }
+        for ln, cell_code, box_code in rows
+    ]
+    return {
+        "id": po.id,
+        "name": po.name,
+        "status": po.status,
+        "warehouse_id": po.warehouse_id,
+        "cabinet_tenant_id": po.cabinet_tenant_id,
+        "cabinet_name": cabinet.name if cabinet else None,
+        "wb_supply_id": po.wb_supply_id,
+        "created_at": po.created_at.isoformat() if po.created_at else None,
+        "lines": lines,
+        "qty_required": sum(x["qty_required"] for x in lines),
+        "qty_picked": sum(x["qty_picked"] for x in lines),
+        "shortage": sum(x["shortage"] for x in lines),
+    }
+
+
+@router.get("/pick-orders/{pick_order_id}")
+async def get_pick_order(
+    pick_order_id: int,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    return await _pick_order_detail(session, pick_order_id)
+
+
+class PickLinePayload(BaseModel):
+    qty: int = Field(ge=0)
+
+
+@router.post("/pick-lines/{line_id}/pick")
+async def pick_line_endpoint(
+    line_id: int,
+    payload: PickLinePayload,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Отметить фактический отбор по строке (списывает товар из короба)."""
+    try:
+        result = await fbs_pick.pick_line(
+            session, line_id, payload.qty, actor=actor_from_request(request)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await session.commit()
+    return result
+
+
+@router.get("/pick-orders/export.xlsx")
+async def export_pick_orders(
+    warehouse_id: int = Query(...),
+    status: str = Query(default="draft,in_progress"),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> Response:
+    """Листы отбора в xlsx — отдельный лист Excel на каждый кабинет."""
+    statuses = [s.strip() for s in status.split(",") if s.strip()]
+    ids = (
+        await session.execute(
+            select(WhPickOrder.id)
+            .where(WhPickOrder.warehouse_id == warehouse_id)
+            .where(WhPickOrder.status.in_(statuses))
+            .order_by(WhPickOrder.created_at)
+        )
+    ).scalars().all()
+    orders = [await _pick_order_detail(session, i) for i in ids]
+    return _xlsx_response(excel_svc.build_pick_xlsx(orders), "wh-pick.xlsx")
+
+
+@router.get("/pick-orders/{pick_order_id}/stickers")
+async def pick_order_stickers(
+    pick_order_id: int,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Стикеры сборочных заданий листа — их клеят на товар при отборе.
+
+    `POST /api/v3/orders/stickers` батчами по 100 (лимит спеки). Возвращаем
+    base64-картинки как есть — печать делает фронт.
+    """
+    po = await session.get(WhPickOrder, pick_order_id)
+    if po is None:
+        raise HTTPException(status_code=404, detail="pick_order_not_found")
+    order_ids = (
+        await session.execute(
+            select(WhFbsOrder.wb_order_id).where(WhFbsOrder.pick_order_id == pick_order_id)
+        )
+    ).scalars().all()
+    if not order_ids:
+        return {"stickers": [], "orders": 0}
+    token = await get_tenant_token(session, po.cabinet_tenant_id)
+    if not token:
+        raise HTTPException(status_code=400, detail="cabinet_has_no_token")
+    async with WbApiClient(token=token) as client:
+        stickers = await marketplace.get_order_stickers(client, list(order_ids))
+    return {"stickers": stickers, "orders": len(order_ids)}
+
+
+@router.post("/pick-orders/{pick_order_id}/supply")
+async def pick_order_create_supply(
+    pick_order_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Создать поставку FBS и добавить в неё задания листа.
+
+    Добавление заданий к поставке — это и есть перевод их в `confirm`
+    («на сборке»): отдельной ручки `confirm` у задания в WB API нет.
+    """
+    po = await session.get(WhPickOrder, pick_order_id)
+    if po is None:
+        raise HTTPException(status_code=404, detail="pick_order_not_found")
+    if po.wb_supply_id:
+        raise HTTPException(status_code=409, detail=f"supply_exists:{po.wb_supply_id}")
+    fbs_orders = list(
+        (
+            await session.execute(
+                select(WhFbsOrder).where(WhFbsOrder.pick_order_id == pick_order_id)
+            )
+        ).scalars().all()
+    )
+    if not fbs_orders:
+        raise HTTPException(status_code=400, detail="no_orders_in_pick")
+    token = await get_tenant_token(session, po.cabinet_tenant_id)
+    if not token:
+        raise HTTPException(status_code=400, detail="cabinet_has_no_token")
+
+    async with WbApiClient(token=token) as client:
+        supply_id = await marketplace.create_supply(client, po.name)
+        await marketplace.add_orders_to_supply(
+            client, supply_id, [o.wb_order_id for o in fbs_orders]
+        )
+
+    po.wb_supply_id = supply_id
+    po.status = "in_progress"
+    for o in fbs_orders:
+        o.supply_wb_id = supply_id
+        o.supplier_status = "confirm"
+    await audit_log(
+        session,
+        "wh_pick_order",
+        "update",
+        actor=actor_from_request(request),
+        entity_id=str(pick_order_id),
+        after={"wb_supply_id": supply_id, "orders": len(fbs_orders)},
+        comment="fbs.supply.create",
+    )
+    await session.commit()
+    return {"wb_supply_id": supply_id, "orders": len(fbs_orders)}
+
+
+@router.post("/pick-orders/{pick_order_id}/supply/deliver")
+async def pick_order_deliver_supply(
+    pick_order_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Передать поставку в доставку и вернуть QR на печать.
+
+    Здесь задания переходят в `complete`. WB откажет, если у заданий не
+    заполнены обязательные идентификаторы маркировки (`requiredMeta`).
+    """
+    po = await session.get(WhPickOrder, pick_order_id)
+    if po is None:
+        raise HTTPException(status_code=404, detail="pick_order_not_found")
+    if not po.wb_supply_id:
+        raise HTTPException(status_code=400, detail="supply_not_created")
+    token = await get_tenant_token(session, po.cabinet_tenant_id)
+    if not token:
+        raise HTTPException(status_code=400, detail="cabinet_has_no_token")
+
+    async with WbApiClient(token=token) as client:
+        await marketplace.deliver_supply(client, po.wb_supply_id)
+        barcode = await marketplace.get_supply_barcode(client, po.wb_supply_id)
+
+    now = datetime.now(timezone.utc)
+    po.status = "done"
+    po.closed_at = now
+    await session.execute(
+        select(WhFbsOrder).where(WhFbsOrder.pick_order_id == pick_order_id)
+    )
+    for o in (
+        await session.execute(
+            select(WhFbsOrder).where(WhFbsOrder.pick_order_id == pick_order_id)
+        )
+    ).scalars().all():
+        o.supplier_status = "complete"
+    await audit_log(
+        session,
+        "wh_pick_order",
+        "update",
+        actor=actor_from_request(request),
+        entity_id=str(pick_order_id),
+        after={"wb_supply_id": po.wb_supply_id, "status": "done"},
+        comment="fbs.supply.deliver",
+    )
+    await session.commit()
+    return {"ok": True, "wb_supply_id": po.wb_supply_id, "barcode": barcode}
+
+
+@router.post("/pick-orders/{pick_order_id}/cancel")
+async def cancel_pick_order(
+    pick_order_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Отменить лист отбора у нас (в WB задания не трогаем).
+
+    Отбор уже сделанных строк не откатывается — товар физически взят; строки
+    остаются в журнале. Задания освобождаются и попадут в следующий «Собрать
+    отбор».
+    """
+    po = await session.get(WhPickOrder, pick_order_id)
+    if po is None:
+        raise HTTPException(status_code=404, detail="pick_order_not_found")
+    if po.wb_supply_id:
+        raise HTTPException(status_code=409, detail="supply_already_created")
+    po.status = "cancelled"
+    po.closed_at = datetime.now(timezone.utc)
+    for o in (
+        await session.execute(
+            select(WhFbsOrder).where(WhFbsOrder.pick_order_id == pick_order_id)
+        )
+    ).scalars().all():
+        o.pick_order_id = None
+    await audit_log(
+        session,
+        "wh_pick_order",
+        "update",
+        actor=actor_from_request(request),
+        entity_id=str(pick_order_id),
+        after={"status": "cancelled"},
+    )
+    await session.commit()
+    return {"ok": True}
+
+
+# ===========================================================================
+# Остатки FBS в WB: сверка и пуш по кнопке (Фаза 4)
+# ===========================================================================
+
+
+@router.get("/fbs-stocks/preview")
+async def fbs_stocks_preview(
+    warehouse_id: int = Query(...),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Сверка «в WB / у нас / Δ» по каждому связанному кабинету.
+
+    Читает `POST /api/v3/stocks/{warehouseId}` батчами ≤1000 — ничего не пишет.
+    """
+    await _require_warehouse(session, warehouse_id)
+    return await fbs_stocks.preview(session, warehouse_id)
+
+
+class FbsStocksPushPayload(BaseModel):
+    warehouse_id: int
+    # Пусто = все связанные кабинеты; иначе — только выбранные
+    cabinet_tenant_ids: list[int] | None = None
+    # Пусто = все расходящиеся баркоды
+    barcodes: list[str] | None = None
+
+
+@router.post("/fbs-stocks/push")
+async def fbs_stocks_push(
+    payload: FbsStocksPushPayload,
+    request: Request,
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Записать наши остатки в WB (`PUT /api/v3/stocks/{warehouseId}`).
+
+    Только по явному действию пользователя: автопуш означал бы, что ошибка в
+    приёмке молча обнуляет витрину WB. Результат и Δ пишутся в audit_log.
+    """
+    await _require_warehouse(session, payload.warehouse_id)
+    result = await fbs_stocks.push(
+        session,
+        payload.warehouse_id,
+        cabinet_tenant_ids=payload.cabinet_tenant_ids,
+        barcodes=payload.barcodes,
+    )
+    await audit_log(
+        session,
+        "wh_fbs_stocks",
+        "update",
+        actor=actor_from_request(request),
+        entity_id=str(payload.warehouse_id),
+        after=result["summary"],
+        comment="fbs.stocks.push",
+    )
+    await session.commit()
+    return result
