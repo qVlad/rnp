@@ -20,6 +20,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import type { WhBoxDetail, WhPickOrderDetail, WhSearchResult } from "@/api/client";
 import { BarcodeScanner } from "@/components/BarcodeScanner";
+import { ProductThumb } from "@/components/ProductThumb";
 
 type Mode = "place" | "find" | "pick";
 
@@ -357,7 +358,13 @@ export default function WarehouseScan() {
               <tbody>
                 {box.items.map((i) => (
                   <tr key={i.barcode} className="border-t border-muted/20">
-                    <td className="py-1 font-mono">{i.barcode}</td>
+                    <td className="py-1">
+                      <ProductThumb
+                        nmId={i.nm_id}
+                        className="h-8 w-6 shrink-0 rounded border border-muted/30 object-cover"
+                      />
+                    </td>
+                    <td className="font-mono">{i.barcode}</td>
                     <td>{i.size ?? "—"}</td>
                     <td className="text-muted">{i.vendor_code ?? i.name ?? ""}</td>
                     <td className="text-right">{num(i.qty)}</td>
@@ -428,6 +435,12 @@ export default function WarehouseScan() {
           )}
           {found.items.map((r, i) => (
             <div key={i} className="rounded border border-muted/30 p-2 text-sm">
+              <div className="flex items-start gap-2">
+                <ProductThumb
+                  nmId={r.nm_id}
+                  className="h-14 w-11 shrink-0 rounded border border-muted/30 object-cover"
+                />
+                <div className="min-w-0 flex-1">
               <div className="flex items-baseline justify-between">
                 <span className="font-mono text-base font-semibold text-accent">
                   {r.cell_code ?? "хранение"}
@@ -444,6 +457,8 @@ export default function WarehouseScan() {
                   на хранении — адреса нет, искать по номеру короба
                 </div>
               )}
+                </div>
+              </div>
             </div>
           ))}
         </div>
@@ -482,18 +497,26 @@ function PickRoute({
 
       {open.map((l) => (
         <div key={l.line_id} className="rounded border border-muted/30 p-2">
-          <div className="flex items-baseline justify-between">
-            <span className="font-mono text-lg font-bold text-accent">
-              {l.cell_code ?? "хранение"}
-            </span>
-            <span className="font-semibold">
-              {num(l.qty_required - l.qty_picked)} шт
-            </span>
-          </div>
-          <div className="text-xs text-muted">
-            {l.barcode}
-            {l.size ? ` · разм. ${l.size}` : ""}
-            {l.vendor_code ? ` · ${l.vendor_code}` : ""} · короб {l.box_code}
+          <div className="flex items-start gap-2">
+            <ProductThumb
+              nmId={l.nm_id}
+              className="h-20 w-16 shrink-0 rounded border border-muted/30 object-cover"
+            />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-baseline justify-between">
+                <span className="font-mono text-lg font-bold text-accent">
+                  {l.cell_code ?? "хранение"}
+                </span>
+                <span className="font-semibold">
+                  {num(l.qty_required - l.qty_picked)} шт
+                </span>
+              </div>
+              <div className="text-xs text-muted">
+                {l.barcode}
+                {l.size ? ` · разм. ${l.size}` : ""}
+                {l.vendor_code ? ` · ${l.vendor_code}` : ""} · короб {l.box_code}
+              </div>
+            </div>
           </div>
           <div className="mt-2 flex gap-2">
             <button

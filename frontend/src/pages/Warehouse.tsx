@@ -15,6 +15,7 @@ import type {
   WhWarehousePayload,
 } from "../api/client";
 import { DateRangePicker } from "../components/DateRangePicker";
+import { ProductThumb } from "../components/ProductThumb";
 import type { DateRange } from "../components/DateRangePicker";
 
 type Tab =
@@ -581,12 +582,24 @@ function MapTab({
                   </td>
                   <td className="text-right">{num(c.box?.total_qty)}</td>
                   <td className="text-xs text-muted">
-                    {c.box?.items
-                      .map(
-                        (i) =>
-                          `${i.barcode}${i.size ? ` (${i.size})` : ""} × ${i.qty}`,
-                      )
-                      .join(", ") ?? ""}
+                    <div className="flex flex-wrap items-center gap-1">
+                      {(c.box?.items ?? []).map((i) => (
+                        <span
+                          key={i.barcode}
+                          className="flex items-center gap-1"
+                          title={`${i.barcode}${i.size ? ` разм. ${i.size}` : ""} × ${i.qty}`}
+                        >
+                          <ProductThumb
+                            nmId={i.nm_id}
+                            className="h-7 w-6 shrink-0 rounded border border-muted/30 object-cover"
+                          />
+                          <span>
+                            {i.size ? `${i.size}: ` : ""}
+                            {i.qty}
+                          </span>
+                        </span>
+                      ))}
+                    </div>
                   </td>
                   <td className="text-right">
                     {c.box && (
@@ -1076,7 +1089,8 @@ function StockTab({ warehouseId }: { warehouseId: number | null }) {
               <table className="w-full text-sm">
                 <thead className="sticky top-0 bg-bg">
                   <tr className="text-left text-muted">
-                    <th className="py-1">Склад</th>
+                    <th className="py-1">Фото</th>
+                    <th>Склад</th>
                     <th>Ячейка</th>
                     <th>Короб</th>
                     <th>Баркод</th>
@@ -1089,7 +1103,10 @@ function StockTab({ warehouseId }: { warehouseId: number | null }) {
                 <tbody>
                   {search.data.items.map((r, i) => (
                     <tr key={i} className="border-t border-muted/20">
-                      <td className="py-1">{r.warehouse_name}</td>
+                      <td className="py-1">
+                        <ProductThumb nmId={r.nm_id} />
+                      </td>
+                      <td>{r.warehouse_name}</td>
                       <td className="font-mono">{r.cell_code ?? "хранение"}</td>
                       <td className="font-mono">{r.box_code}</td>
                       <td className="font-mono">{r.barcode}</td>
@@ -1514,7 +1531,8 @@ function PickTab({ warehouseId, onDone, onError }: Cb & { warehouseId: number })
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-bg">
                 <tr className="text-left text-muted">
-                  <th className="py-1">Ячейка</th>
+                  <th className="py-1">Фото</th>
+                  <th>Ячейка</th>
                   <th>Короб</th>
                   <th>Баркод</th>
                   <th>Артикул</th>
@@ -1526,7 +1544,10 @@ function PickTab({ warehouseId, onDone, onError }: Cb & { warehouseId: number })
               <tbody>
                 {detail.data.lines.map((ln) => (
                   <tr key={ln.line_id} className="border-t border-muted/20">
-                    <td className="py-1 font-mono">
+                    <td className="py-1">
+                      <ProductThumb nmId={ln.nm_id} />
+                    </td>
+                    <td className="font-mono">
                       {ln.shortage ? (
                         <span className="text-danger">нет на складе</span>
                       ) : (
