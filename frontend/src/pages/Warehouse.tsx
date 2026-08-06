@@ -1217,9 +1217,10 @@ function PickTab({ warehouseId, onDone, onError }: Cb & { warehouseId: number })
     qc.invalidateQueries({ queryKey: ["wh-pick-order"] });
   };
 
+  const [daysBack, setDaysBack] = useState(7);
   const collect = useMutation({
     mutationFn: (dryRun: boolean) =>
-      api.whPickCollect(warehouseId, { dryRun }),
+      api.whPickCollect(warehouseId, { dryRun, daysBack }),
     onSuccess: (r, dryRun) => {
       setCollectResult(r);
       if (!dryRun) {
@@ -1299,10 +1300,11 @@ function PickTab({ warehouseId, onDone, onError }: Cb & { warehouseId: number })
         <div className="font-medium">Отбор по заказам WB (FBS)</div>
         <p className="text-sm text-muted">
           Задания берутся из WB только по нажатию кнопки — фонового опроса нет.
-          Фильтр по складу — через связку «Кабинеты WB»: задание попадает в отбор,
-          если его <code>warehouseId</code> относится к этому складу. Лист отбора
-          создаётся <b>отдельный на каждый кабинет</b>. В задании FBS одна единица
-          товара, поэтому количество к отбору = число заданий.
+          Собираются и «Новые», и «На сборке»: как только задание попадает в
+          поставку, WB убирает его из «новых», хотя товар ещё не собран. Фильтр по
+          складу — через связку «Кабинеты WB» (по <code>warehouseId</code> задания).
+          Лист отбора создаётся <b>отдельный на каждый кабинет</b>. В задании FBS
+          одна единица товара, поэтому количество к отбору = число заданий.
         </p>
         {!links.data?.items.length && (
           <div className="text-warn text-sm">
@@ -1329,15 +1331,34 @@ function PickTab({ warehouseId, onDone, onError }: Cb & { warehouseId: number })
           <a className="btn" href={api.whPickExportUrl(warehouseId)}>
             ⬇ Листы отбора (xlsx)
           </a>
+          <label className="flex items-center gap-2 text-sm text-muted">
+            за
+            <input
+              type="number"
+              className="input w-20"
+              min={1}
+              max={30}
+              value={daysBack}
+              onChange={(e) => setDaysBack(Number(e.target.value))}
+            />
+            дней
+          </label>
         </div>
         {collectResult && (
           <div className="space-y-1 text-sm">
             {collectResult.fetch.cabinets.map((c) => (
               <div key={c.cabinet_tenant_id} className="text-muted">
-                {c.cabinet_name}: заданий в WB {c.orders_total}, на этот склад{" "}
-                {c.orders_for_warehouse}
+                {c.cabinet_name}: заданий в WB {c.orders_total}, к отбору на этот
+                склад {c.orders_for_warehouse}
                 {c.skipped_other_warehouse
                   ? `, на другие склады ${c.skipped_other_warehouse}`
+                  : ""}
+                {c.skipped_by_status &&
+                Object.keys(c.skipped_by_status).length > 0
+                  ? " · уже не требуют сборки: " +
+                    Object.entries(c.skipped_by_status)
+                      .map(([k, v]) => `${k} ${v}`)
+                      .join(", ")
                   : ""}
               </div>
             ))}
@@ -1400,6 +1421,7 @@ function PickTab({ warehouseId, onDone, onError }: Cb & { warehouseId: number })
                         <button
                           className="btn"
                           disabled={createSupply.isPending}
+                          title="Создать поставку FBS в WB. Если задания уже лежат в поставке из ЛК, кнопка вернёт ошибку — новую создавать нельзя"
                           onClick={() => {
                             if (
                               window.confirm(

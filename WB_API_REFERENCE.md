@@ -660,7 +660,8 @@ nmIds is expected - max 20»).
 
 | Метод | Путь | Что | Батч |
 |---|---|---|---|
-| GET | `/api/v3/orders/new` | новые сборочные задания (без пагинации) | — |
+| GET | `/api/v3/orders/new` | **только** задания в статусе `new`, без пагинации | — |
+| GET | `/api/v3/orders` | все задания за период (`dateFrom`/`dateTo` unix, ≤30 дней, `limit`/`next`), **без статуса**, но с `supplyId` | 1000/стр |
 | POST | `/api/v3/orders/status` | статусы заданий | 1000 |
 | POST | `/api/v3/orders/stickers` | стикеры заданий (base64) | **100** |
 | POST | `/api/v3/supplies` | создать поставку → `{id: "WB-GI-…"}` | — |
@@ -683,7 +684,13 @@ nmIds is expected - max 20»).
 4. Остатки FBS читаются **POST**-ом, а не GET.
 5. `warehouseId` в задании — склад продавца **конкретного кабинета**: один
    физический склад имеет свой ID в каждом из 4-5 кабинетов.
-6. Статусы: `supplierStatus: new|confirm|complete|cancel`,
+6. **`/orders/new` не отдаёт задания «на сборке».** Как только задание попадает
+   в поставку (в т.ч. созданную в ЛК руками), оно становится `confirm` и из
+   `/orders/new` исчезает — хотя товар физически не собран. Проверено на проде:
+   в кабинете 0 «новых» и 10 «на сборке». Чтобы получить всё, что нужно
+   собрать: `GET /api/v3/orders` за период → `POST /orders/status` батчем →
+   оставить `new` + `confirm`.
+7. Статусы: `supplierStatus: new|confirm|complete|cancel`,
    `wbStatus: waiting|sorted|sold|canceled|canceled_by_client|declined_by_client|
    defect|ready_for_pickup|postponed_delivery|accepted_by_carrier|sent_to_carrier`.
 

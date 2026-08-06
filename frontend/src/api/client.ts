@@ -3820,7 +3820,7 @@ paymentOrderDelete: (payment_order_id: string) =>
   /** «Собрать отбор»: тянет /orders/new по кабинетам и строит листы. */
   whPickCollect: (
     warehouseId: number,
-    opts: { cabinetTenantIds?: number[]; dryRun?: boolean } = {},
+    opts: { cabinetTenantIds?: number[]; dryRun?: boolean; daysBack?: number } = {},
   ) =>
     request<WhPickCollectResult>(
       `/api/warehouse/pick/collect${opts.dryRun ? "?dry_run=true" : ""}`,
@@ -3829,6 +3829,7 @@ paymentOrderDelete: (payment_order_id: string) =>
         body: JSON.stringify({
           warehouse_id: warehouseId,
           cabinet_tenant_ids: opts.cabinetTenantIds ?? null,
+          days_back: opts.daysBack ?? 7,
         }),
       },
     ),
@@ -4291,6 +4292,9 @@ export interface WhPickCollectResult {
       orders_total: number;
       orders_for_warehouse: number;
       skipped_other_warehouse: number;
+      /** сколько отброшено по статусу (complete/cancel — собирать нечего) */
+      skipped_by_status?: Record<string, number>;
+      days_back?: number;
     }[];
     errors: string[];
   };
@@ -4300,6 +4304,9 @@ export interface WhPickCollectResult {
     cabinet_name: string;
     name: string;
     orders: number;
+    /** поставка WB, если задания уже в ней (создана в ЛК) */
+    wb_supply_id?: string | null;
+    wb_supplies?: string[];
     lines: WhPickLineRow[];
     qty_required: number;
     shortage: number;

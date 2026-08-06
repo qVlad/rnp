@@ -3,8 +3,10 @@
 Поток, запускаемый кнопкой «Собрать отбор» (фонового опроса WB нет — решение
 пользователя):
 
-  1. по каждому связанному кабинету дёргаем `GET /api/v3/orders/new` его
-     собственным токеном;
+  1. по каждому связанному кабинету его собственным токеном дёргаем
+     `GET /api/v3/orders/new` И `GET /api/v3/orders` за последние N дней —
+     второе обязательно, потому что задание, попавшее в поставку, становится
+     `confirm` и из `/orders/new` исчезает, хотя товар ещё не собран;
   2. оставляем только задания на наш физический склад — по `warehouseId` из
      `wh_warehouse_wb_link` (у одного склада свой ID в каждом кабинете);
   3. группируем по кабинету и баркоду: qty = число заданий (одно задание =
@@ -70,12 +72,29 @@ async def cabinet_links(
     )
 
 
+# Сколько дней истории заданий тянем по умолчанию. WB разрешает ≤30 дней за
+# запрос и хранит задания 3 месяца.
+DEFAULT_DAYS_BACK = 7
+MAX_DAYS_BACK = 30
+
+# Статусы, при которых товар ещё нужно физически отобрать: `new` (не в поставке)
+# и `confirm` (уже в поставке — в т.ч. созданной в ЛК WB руками, но не собранной).
+PICKABLE_STATUSES = ("new", "confirm")
+
+
 async def fetch_fbs_orders(
     session: AsyncSession,
     warehouse_id: int,
     cabinet_tenant_ids: list[int] | None = None,
+    days_back: int = DEFAULT_DAYS_BACK,
 ) -> dict[str, Any]:
-    """Забрать новые сборочные задания по всем связанным кабинетам.
+    """Забрать сборочные задания, которые ещё нужно отобрать.
+
+    Берём НЕ только `/orders/new`: как только задание попадает в поставку, оно
+    становится `confirm` и из `/orders/new` исчезает, хотя товар не собран.
+    Найдено на проде: в кабинете 0 «новых» и 10 «на сборке» — отбор строился
+    пустым. Поэтому тянем `/api/v3/orders` за период + статусы батчем и
+    оставляем `new` + `confirm`.
 
     Кабинеты обходим последовательно: лимит WB (300/мин) — **на аккаунт
     продавца**, поэтому бюджеты кабинетов независимы, но открывать 5 клиентов
@@ -110,16 +129,49 @@ async def fetch_fbs_orders(
         if not token:
             errors.append(f"{cabinet_name}: нет WB-токена")
             continue
+        window = max(1, min(int(days_back or DEFAULT_DAYS_BACK), MAX_DAYS_BACK))
         try:
             async with WbApiClient(token=token) as client:
-                orders = await marketplace.get_new_orders(client)
+                # `/orders/new` — быстрый путь; `/api/v3/orders` добирает то, что
+                # уже в поставках. Мёржим по id, статусы запрашиваем один раз.
+                fresh = await marketplace.get_new_orders(client)
+                ts_to = int(datetime.now(timezone.utc).timestamp())
+                ts_from = ts_to - window * 86400
+                history = await marketplace.get_orders(client, ts_from, ts_to)
+                by_id: dict[int, dict[str, Any]] = {}
+                for o in [*history, *fresh]:  # fresh последним — он приоритетнее
+                    oid = int(o.get("id") or 0)
+                    if oid:
+                        by_id[oid] = o
+                statuses: dict[int, dict[str, Any]] = {}
+                if by_id:
+                    for row in await marketplace.get_orders_status(
+                        client, list(by_id)
+                    ):
+                        rid = int(row.get("id") or 0)
+                        if rid:
+                            statuses[rid] = row
+                # `/orders/new` статуса не содержит, но он по определению `new`
+                for o in fresh:
+                    oid = int(o.get("id") or 0)
+                    statuses.setdefault(oid, {"supplierStatus": "new"})
+                orders = list(by_id.values())
         except Exception as exc:  # noqa: BLE001 — один кабинет не валит остальные
             errors.append(f"{cabinet_name}: {exc}")
             continue
 
         matched = 0
         skipped_other_wh = 0
+        skipped_status: dict[str, int] = {}
         for order in orders:
+            status_row = statuses.get(int(order.get("id") or 0), {})
+            supplier_status = str(status_row.get("supplierStatus") or "new")
+            if supplier_status not in PICKABLE_STATUSES:
+                # complete / cancel — собирать нечего
+                skipped_status[supplier_status] = (
+                    skipped_status.get(supplier_status, 0) + 1
+                )
+                continue
             wb_wh = order.get("warehouseId")
             if wb_wh is not None and int(wb_wh) not in allowed_wh:
                 skipped_other_wh += 1
@@ -156,6 +208,9 @@ async def fetch_fbs_orders(
                     "optional": order.get("optionalMeta") or [],
                 },
                 "wb_created_at": _parse_wb_dt(order.get("createdAt")),
+                "supply_wb_id": order.get("supplyId") or None,
+                "supplier_status": supplier_status,
+                "wb_status": status_row.get("wbStatus"),
                 "fetched_at": now,
             }
             if existing is None:
@@ -164,7 +219,6 @@ async def fetch_fbs_orders(
                         tenant_id=tenant_id,
                         cabinet_tenant_id=cabinet_tenant_id,
                         wb_order_id=wb_order_id,
-                        supplier_status="new",
                         **values,
                     )
                 )
@@ -181,6 +235,8 @@ async def fetch_fbs_orders(
                 "orders_total": len(orders),
                 "orders_for_warehouse": matched,
                 "skipped_other_warehouse": skipped_other_wh,
+                "skipped_by_status": skipped_status,
+                "days_back": window,
             }
         )
 
@@ -262,7 +318,7 @@ async def build_pick_orders(
     tenant_id = get_tenant(session)
     stmt = (
         select(WhFbsOrder)
-        .where(WhFbsOrder.supplier_status == "new")
+        .where(WhFbsOrder.supplier_status.in_(PICKABLE_STATUSES))
         .where(WhFbsOrder.pick_order_id.is_(None))
     )
     if cabinet_tenant_ids:
@@ -367,8 +423,16 @@ async def build_pick_orders(
                         )
                     )
 
+        cabinet_orders = [x for lst in per_barcode.values() for x in lst]
+        # Если задания уже лежат в поставке WB (созданной в ЛК), новую создавать
+        # нельзя — подхватываем существующую, чтобы кнопка «Поставка» не плодила
+        # дубли, а сразу предлагала «В доставку».
+        existing_supplies = {o.supply_wb_id for o in cabinet_orders if o.supply_wb_id}
         if pick_order is not None:
-            for o in [x for lst in per_barcode.values() for x in lst]:
+            if len(existing_supplies) == 1:
+                pick_order.wb_supply_id = next(iter(existing_supplies))
+                pick_order.status = "in_progress"
+            for o in cabinet_orders:
                 o.pick_order_id = pick_order.id
 
         lines.sort(key=lambda x: (x["sort_order"], x["barcode"]))
@@ -379,6 +443,10 @@ async def build_pick_orders(
                 "cabinet_name": cabinet_name,
                 "name": pick_order.name if pick_order else f"Отбор {cabinet_name}",
                 "orders": sum(len(v) for v in per_barcode.values()),
+                "wb_supply_id": (
+                    next(iter(existing_supplies)) if len(existing_supplies) == 1 else None
+                ),
+                "wb_supplies": sorted(x for x in existing_supplies if x),
                 "lines": lines,
                 "qty_required": sum(x["qty_required"] for x in lines),
                 "shortage": sum(x["shortage"] for x in lines),

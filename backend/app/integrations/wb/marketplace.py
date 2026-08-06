@@ -62,6 +62,47 @@ async def get_new_orders(client: WbApiClient) -> list[dict[str, Any]]:
     return _as_list(payload, "orders")
 
 
+async def get_orders(
+    client: WbApiClient,
+    date_from: int,
+    date_to: int,
+    *,
+    page_limit: int = 1000,
+    max_pages: int = 20,
+) -> list[dict[str, Any]]:
+    """`GET /api/v3/orders` — ВСЕ сборочные задания за период, с пагинацией.
+
+    Нужно потому, что `/orders/new` отдаёт только задания в статусе `new`: как
+    только задание попало в поставку (в т.ч. созданную в ЛК WB руками), оно
+    становится `confirm` и из `/orders/new` исчезает. Отбирать при этом ещё
+    нужно — товар физически не собран.
+
+    Ограничения WB: период ≤ 30 календарных дней за запрос, задания не старше
+    3 месяцев (для более старых — `/api/marketplace/v3/fbs/orders/archive`).
+    Актуального статуса метод НЕ отдаёт — статусы берутся `get_orders_status`.
+    В ответе есть `supplyId`, если задание уже в поставке.
+    """
+    out: list[dict[str, Any]] = []
+    cursor = 0
+    for _ in range(max_pages):
+        payload = await client.get(
+            "/api/v3/orders",
+            CATEGORY,
+            params={
+                "limit": min(page_limit, 1000),
+                "next": cursor,
+                "dateFrom": int(date_from),
+                "dateTo": int(date_to),
+            },
+        )
+        batch = _as_list(payload, "orders")
+        out.extend(batch)
+        cursor = (payload or {}).get("next") or 0
+        if not batch or not cursor:
+            break
+    return out
+
+
 async def get_orders_status(
     client: WbApiClient, order_ids: list[int]
 ) -> list[dict[str, Any]]:

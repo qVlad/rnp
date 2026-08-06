@@ -1559,6 +1559,8 @@ class CollectPickPayload(BaseModel):
     warehouse_id: int
     # Пусто = все связанные кабинеты
     cabinet_tenant_ids: list[int] | None = None
+    # За сколько дней смотреть задания. WB отдаёт ≤30 дней за запрос.
+    days_back: int = Field(default=fbs_pick.DEFAULT_DAYS_BACK, ge=1, le=fbs_pick.MAX_DAYS_BACK)
 
 
 @router.post("/pick/collect")
@@ -1571,14 +1573,17 @@ async def pick_collect(
     """«Собрать отбор»: забрать новые задания FBS из WB и построить листы.
 
     Обращение к WB происходит ТОЛЬКО здесь, по нажатию кнопки — фонового
-    beat-опроса `/orders/new` нет. Задания фильтруются по `warehouseId` из
-    связок склада с кабинетами, лист создаётся отдельный на каждый кабинет.
+    beat-опроса нет. Берутся задания в статусах `new` и `confirm`: второе —
+    те, что уже в поставке (в т.ч. созданной в ЛК WB руками), но физически не
+    собраны. Задания фильтруются по `warehouseId` из связок склада с
+    кабинетами, лист создаётся отдельный на каждый кабинет.
     """
     await _require_warehouse(session, payload.warehouse_id)
     fetch = await fbs_pick.fetch_fbs_orders(
         session,
         payload.warehouse_id,
         cabinet_tenant_ids=payload.cabinet_tenant_ids,
+        days_back=payload.days_back,
     )
     built = await fbs_pick.build_pick_orders(
         session,
@@ -1790,6 +1795,8 @@ async def pick_order_create_supply(
     if po is None:
         raise HTTPException(status_code=404, detail="pick_order_not_found")
     if po.wb_supply_id:
+        # Поставка уже есть — либо мы её создали, либо задания пришли из
+        # поставки, созданной в ЛК WB. Новую создавать нельзя: получим дубль.
         raise HTTPException(status_code=409, detail=f"supply_exists:{po.wb_supply_id}")
     fbs_orders = list(
         (
@@ -1800,6 +1807,11 @@ async def pick_order_create_supply(
     )
     if not fbs_orders:
         raise HTTPException(status_code=400, detail="no_orders_in_pick")
+    already = sorted({o.supply_wb_id for o in fbs_orders if o.supply_wb_id})
+    if already:
+        raise HTTPException(
+            status_code=409, detail=f"orders_already_in_supply:{','.join(already)}"
+        )
     token = await get_tenant_token(session, po.cabinet_tenant_id)
     if not token:
         raise HTTPException(status_code=400, detail="cabinet_has_no_token")
