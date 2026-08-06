@@ -1,7 +1,0 @@
-{
-  "task_id": "TASK-DEV-098",
-  "agent": "Claude Opus 5 — main session",
-  "started_at": "2026-08-06T13:09:09Z",
-  "expected_minutes": 20,
-  "notes": "фикс метрики покрытия + маршрут между зонами"
-}
