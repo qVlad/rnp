@@ -576,6 +576,29 @@ function ReceiveTab({
     onError,
   });
 
+  const resetSupply = useMutation({
+    mutationFn: () => api.whResetSupply(warehouseId!, supplyRef.trim()),
+    onSuccess: (r) => {
+      setResult(null);
+      qc.invalidateQueries({ queryKey: ["wh-boxes"] });
+      qc.invalidateQueries({ queryKey: ["wh-cells"] });
+      qc.invalidateQueries({ queryKey: ["wh-status"] });
+      onDone(`Поставка откатана: удалено коробов ${r.boxes_removed}`);
+    },
+    onError,
+  });
+
+  const deleteBox = useMutation({
+    mutationFn: (boxCode: string) => api.whDeleteBox(boxCode, warehouseId!),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["wh-boxes"] });
+      qc.invalidateQueries({ queryKey: ["wh-cells"] });
+      qc.invalidateQueries({ queryKey: ["wh-status"] });
+      onDone("Короб удалён");
+    },
+    onError,
+  });
+
   const boxes = useQuery({
     queryKey: ["wh-boxes", warehouseId, boxQuery],
     queryFn: () =>
@@ -621,6 +644,21 @@ function ReceiveTab({
             onClick={() => fileRef.current?.click()}
           >
             {receive.isPending ? "Загружаю…" : "Загрузить PackingList"}
+          </button>
+          <button
+            className="btn text-danger"
+            disabled={!warehouseId || !supplyRef.trim() || resetSupply.isPending}
+            title="Удалить все коробы указанной поставки — если залили ошибочный файл"
+            onClick={() => {
+              if (
+                window.confirm(
+                  `Откатить приёмку «${supplyRef.trim()}» целиком? Коробы этой поставки будут удалены (журнал движений сохранится).`,
+                )
+              )
+                resetSupply.mutate();
+            }}
+          >
+            Откатить поставку
           </button>
         </div>
       </div>
@@ -695,6 +733,7 @@ function ReceiveTab({
                 <th className="text-right">Позиций</th>
                 <th className="text-right">Шт</th>
                 <th>Поставка</th>
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -708,11 +747,23 @@ function ReceiveTab({
                   <td className="text-right">{num(b.positions)}</td>
                   <td className="text-right">{num(b.qty)}</td>
                   <td className="text-xs text-muted">{b.supply_ref ?? "—"}</td>
+                  <td className="text-right">
+                    <button
+                      className="btn text-danger"
+                      title="Удалить короб со склада"
+                      onClick={() => {
+                        if (window.confirm(`Удалить короб ${b.box_code}?`))
+                          deleteBox.mutate(b.box_code);
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </td>
                 </tr>
               ))}
               {!boxes.data?.items.length && (
                 <tr>
-                  <td colSpan={8} className="py-3 text-muted">
+                  <td colSpan={9} className="py-3 text-muted">
                     Коробов нет — загрузите PackingList.
                   </td>
                 </tr>

@@ -761,6 +761,118 @@ async def box_detail(
     }
 
 
+@router.delete("/boxes/{box_code}")
+async def delete_box(
+    box_code: str,
+    request: Request,
+    warehouse_id: int = Query(...),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Удалить короб со склада (ошибочная приёмка / короб физически уехал).
+
+    Журнал движений НЕ трогаем — он append-only: перед удалением пишем
+    списывающее движение `adjust` на остаток каждой позиции, а у прежних
+    записей `box_id` станет NULL (FK ON DELETE SET NULL). ШК короба остаётся
+    в `doc_ref`, чтобы история читалась.
+    """
+    box = (
+        await session.execute(
+            select(WhBox)
+            .where(WhBox.warehouse_id == warehouse_id)
+            .where(WhBox.box_code == box_code.strip())
+        )
+    ).scalars().first()
+    if box is None:
+        raise HTTPException(status_code=404, detail="box_not_found")
+
+    items = (
+        await session.execute(select(WhBoxItem).where(WhBoxItem.box_id == box.id))
+    ).scalars().all()
+    now = datetime.now(timezone.utc)
+    actor = actor_from_request(request)
+    tenant_id = get_tenant(session)
+    for item in items:
+        if int(item.qty or 0) <= 0:
+            continue
+        session.add(
+            WhMovement(
+                tenant_id=tenant_id,
+                warehouse_id=warehouse_id,
+                dt=now,
+                kind="adjust",
+                barcode=item.barcode,
+                qty=int(item.qty),
+                cell_from_id=box.cell_id,
+                doc_ref=box.box_code,
+                actor=actor,
+                comment=f"Удаление короба {box.box_code}",
+            )
+        )
+    await audit_log(
+        session,
+        "wh_box",
+        "delete",
+        actor=actor,
+        entity_id=box.box_code,
+        before={
+            "box_code": box.box_code,
+            "status": box.status,
+            "qty": sum(int(i.qty or 0) for i in items),
+            "positions": len(items),
+        },
+    )
+    await session.execute(delete(WhBox).where(WhBox.id == box.id))
+    await session.commit()
+    return {
+        "ok": True,
+        "box_code": box_code.strip(),
+        "positions_removed": len(items),
+    }
+
+
+class ResetSupplyPayload(BaseModel):
+    warehouse_id: int
+    supply_ref: str = Field(min_length=1)
+
+
+@router.post("/reset-supply")
+async def reset_supply(
+    payload: ResetSupplyPayload,
+    request: Request,
+    confirm: bool = Query(default=False),
+    session: AsyncSession = Depends(get_db_tenant_scoped),
+) -> dict[str, Any]:
+    """Откатить приёмку целиком по номеру поставки (`supply_ref`).
+
+    Нужно, когда поставку залили ошибочным файлом. Требует `confirm=true`,
+    как `box_distribution/reset`. Журнал движений сохраняется.
+    """
+    if not confirm:
+        raise HTTPException(status_code=400, detail="confirm_required")
+    boxes = (
+        await session.execute(
+            select(WhBox)
+            .where(WhBox.warehouse_id == payload.warehouse_id)
+            .where(WhBox.supply_ref == payload.supply_ref.strip())
+        )
+    ).scalars().all()
+    if not boxes:
+        raise HTTPException(status_code=404, detail="supply_not_found")
+
+    await audit_log(
+        session,
+        "wh_box",
+        "delete",
+        actor=actor_from_request(request),
+        entity_id=payload.supply_ref.strip(),
+        before={"boxes": len(boxes), "supply_ref": payload.supply_ref.strip()},
+        comment="reset-supply",
+    )
+    await session.execute(delete(WhBox).where(WhBox.id.in_([b.id for b in boxes])))
+    await session.commit()
+    return {"ok": True, "boxes_removed": len(boxes)}
+
+
 # ===========================================================================
 # Поиск, остатки, движения
 # ===========================================================================

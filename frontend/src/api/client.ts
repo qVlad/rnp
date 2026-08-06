@@ -3662,6 +3662,20 @@ paymentOrderDelete: (payment_order_id: string) =>
       `/api/warehouse/boxes/${encodeURIComponent(boxCode)}${qs.toString() ? `?${qs}` : ""}`,
     );
   },
+  whDeleteBox: (boxCode: string, warehouseId: number) =>
+    request<{ ok: boolean; box_code: string; positions_removed: number }>(
+      `/api/warehouse/boxes/${encodeURIComponent(boxCode)}?warehouse_id=${warehouseId}`,
+      { method: "DELETE" },
+    ),
+  /** Откат приёмки целиком по номеру поставки (ошибочный файл). */
+  whResetSupply: (warehouseId: number, supplyRef: string) =>
+    request<{ ok: boolean; boxes_removed: number }>(
+      "/api/warehouse/reset-supply?confirm=true",
+      {
+        method: "POST",
+        body: JSON.stringify({ warehouse_id: warehouseId, supply_ref: supplyRef }),
+      },
+    ),
   whPlace: (body: {
     box_code: string;
     cell_code: string;
