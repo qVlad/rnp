@@ -1107,11 +1107,26 @@ async def allocation_export(
     session: AsyncSession = Depends(get_db_tenant_scoped),
 ) -> Response:
     """«Лист размещения» для кладовщика: 3 листа — размещение / хранение / не покрыто."""
-    await _require_warehouse(session, warehouse_id)
+    wh = await _require_warehouse(session, warehouse_id)
     plan = await _build_plan(session, warehouse_id)
+    # Склад и цифры уходят в файл: пустой лист должен объяснять, ПОЧЕМУ он пуст.
+    total_cells = int(
+        (
+            await session.execute(
+                select(func.count(WhCell.id)).where(WhCell.warehouse_id == warehouse_id)
+            )
+        ).scalar()
+        or 0
+    )
     return _xlsx_response(
         excel_svc.build_placement_xlsx(
-            plan["placements"], plan["to_storage"], plan["uncovered_barcodes"]
+            plan["placements"],
+            plan["to_storage"],
+            plan["uncovered_barcodes"],
+            meta={
+                "warehouse_name": wh.name,
+                "stats": {**plan["stats"], "cells_total": total_cells},
+            },
         ),
         "wh-placement.xlsx",
     )

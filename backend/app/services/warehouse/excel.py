@@ -122,36 +122,98 @@ def build_placement_xlsx(
     placements: list[dict[str, Any]],
     to_storage: list[dict[str, Any]],
     uncovered: list[dict[str, Any]],
+    meta: dict[str, Any] | None = None,
 ) -> bytes:
     """«Лист размещения» для кладовщика (Фаза 2).
 
     Три листа: что куда поставить (по маршруту), что убрать на хранение, какие
     баркоды не попали в отбор.
+
+    Каждый лист подписан складом и цифрами, а пустой лист ОБЯЗАН объяснить
+    причину: файл с одной шапкой выглядит как сбой выгрузки, хотя чаще всего
+    это штатное «свободных ячеек нет» или «весь ассортимент уже в отборе».
     """
+    meta = meta or {}
+    stats = meta.get("stats") or {}
+    wh = meta.get("warehouse_name") or ""
+
+    def head(ws: Any, title: str, note: str) -> None:
+        ws.append([f"{title}{f' — склад «{wh}»' if wh else ''}"])
+        ws["A1"].font = Font(bold=True, size=12)
+        if note:
+            ws.append([note])
+        ws.append([])
+
+    def table(ws: Any, header: list[str]) -> None:
+        ws.append(header)
+        for cell in ws[ws.max_row]:
+            cell.font = Font(bold=True)
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
+        ws.freeze_panes = f"A{ws.max_row + 1}"
+
+    def explain_empty(ws: Any, text: str) -> None:
+        ws.append([])
+        ws.append([text])
+
+    cells_free = int(stats.get("cells_free") or 0)
+    cells_total = int(stats.get("cells_total") or 0)
+    covered = int(stats.get("barcodes_covered") or 0)
+    total_bc = int(stats.get("barcodes_total") or 0)
+
     wb = Workbook()
 
+    # ── Размещение ────────────────────────────────────────────────────────
     ws = wb.active
     ws.title = "Размещение"
-    header = ["Код ячейки", "Зона", "ШК короба", "Моно", "Баркоды", "Кол-во"]
-    ws.append(header)
-    _style_header(ws)
+    head(
+        ws,
+        "Лист размещения",
+        f"ячеек {cells_total}, свободно {cells_free} · "
+        f"в зоне отбора {covered} из {total_bc} баркодов",
+    )
+    header = ["Код ячейки", "Зона", "ШК короба", "Тип", "Баркоды", "Кол-во"]
+    table(ws, header)
     for p in placements:
+        step = int(p.get("step") or 0)
         ws.append(
             [
                 p.get("cell_code") or "",
                 p.get("zone") or "",
                 p.get("box_code") or "",
-                "да" if p.get("is_mono") else "нет",
-                ", ".join(str(b) for b in (p.get("covers") or [])),
+                {1: "моно", 2: "сборный", 3: "пополнение"}.get(step, ""),
+                (
+                    f"{p.get('replenish_barcode')} (было {p.get('pick_qty_before')} шт)"
+                    if step == 3
+                    else ", ".join(str(b) for b in (p.get("covers") or []))
+                ),
                 int(p.get("total_qty") or 0),
             ]
         )
+    if not placements:
+        # Самая частая причина — 0 свободных ячеек. Пишем её словами.
+        if cells_free == 0 and cells_total:
+            why = (
+                f"Размещать нечего: свободных ячеек нет — все {cells_total} заняты. "
+                "Ячейки освободятся при отборе, тогда пополнение само подберёт "
+                "короб на замену. Либо добавьте ячейки на «Карте склада»."
+            )
+        elif not cells_total:
+            why = "Размещать нечего: на складе ещё не создано ни одной ячейки отбора."
+        elif total_bc and covered >= total_bc:
+            why = (
+                "Размещать нечего: весь ассортимент уже доступен в зоне отбора, "
+                "а пополнение отключено."
+            )
+        else:
+            why = "Размещать нечего: нет коробов, которые можно переставить."
+        explain_empty(ws, why)
     _autosize(ws, header)
 
+    # ── На хранение ───────────────────────────────────────────────────────
     ws2 = wb.create_sheet("На хранение")
+    head(ws2, "На хранении (без адреса)", f"коробов {len(to_storage)}")
     header2 = ["ШК короба", "Бренд", "Кол-во", "Баркоды"]
-    ws2.append(header2)
-    _style_header(ws2)
+    table(ws2, header2)
     for b in to_storage:
         ws2.append(
             [
@@ -161,12 +223,15 @@ def build_placement_xlsx(
                 ", ".join(str(x) for x in (b.get("barcodes") or [])),
             ]
         )
+    if not to_storage:
+        explain_empty(ws2, "Все коробы разложены по ячейкам — на хранении ничего нет.")
     _autosize(ws2, header2)
 
+    # ── Не покрыто ────────────────────────────────────────────────────────
     ws3 = wb.create_sheet("Не покрыто")
+    head(ws3, "Не попали в зону отбора", f"баркодов {len(uncovered)}")
     header3 = ["Баркод", "nmID", "Артикул", "Название", "Кол-во на складе"]
-    ws3.append(header3)
-    _style_header(ws3)
+    table(ws3, header3)
     for u in uncovered:
         ws3.append(
             [
@@ -176,6 +241,11 @@ def build_placement_xlsx(
                 u.get("name") or "",
                 int(u.get("total_qty") or 0),
             ]
+        )
+    if not uncovered:
+        explain_empty(
+            ws3,
+            "Пусто — это хорошо: весь ассортимент склада доступен в зоне отбора.",
         )
     _autosize(ws3, header3)
 
