@@ -208,17 +208,23 @@ async def import_order_file(session: AsyncSession, content: bytes) -> dict[str, 
 
 
 async def ensure_refs_for_barcodes(
-    session: AsyncSession, barcodes: list[str], sizes: dict[str, str | None] | None = None
+    session: AsyncSession,
+    barcodes: list[str],
+    sizes: dict[str, str | None] | None = None,
+    names: dict[str, str | None] | None = None,
 ) -> dict[str, int]:
     """Создать заготовки справочника для новых баркодов приёмки.
 
-    Вызывается из приёмки PackingList: баркод попадает в справочник сразу
+    Вызывается из приёмки: баркод попадает в справочник сразу
     (source=`packing_list`, `nm_id=NULL`), чтобы он был виден в UI и его можно
-    было дозаполнить вручную или следующим sync-ом из WB.
+    было дозаполнить вручную или следующим sync-ом из WB. Если в файле была
+    колонка «Наименование» (формат «короба»), название тоже сохраняем — иначе
+    справочник остаётся без названий, потому что `wb_orders` их не отдаёт.
     """
     sizes = sizes or {}
+    names = names or {}
     rows = [
-        {"barcode": bc, "size": sizes.get(bc)}
+        {"barcode": bc, "size": sizes.get(bc), "name": names.get(bc)}
         for bc in dict.fromkeys(barcodes)  # dedup, порядок сохранён
         if bc
     ]

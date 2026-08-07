@@ -337,3 +337,137 @@ def test_real_packing_list_mono_coverage_gap() -> None:
     assert len(all_barcodes) == 451
     assert len(mono_barcodes) == 287
     assert len(all_barcodes - mono_barcodes) == 164
+
+
+# --------------------------------------------------------------------------
+# Второй формат: лист «короба» своего склада
+# --------------------------------------------------------------------------
+
+REAL_STORAGE_FILE = Path("/Users/user/Downloads/Хранение собственный склад ИНК.xlsx")
+
+
+def _boxes_sheet_like() -> bytes:
+    """Формат «короба»: `Дата упаковки | Номер короба | Баркод | Количество | Наименование | Размер`.
+
+    Отличия от PackingList: другие названия колонок, номер короба числовой и
+    стоит только в первой строке короба (в PackingList он продублирован).
+    """
+    return _xlsx(
+        [
+            [
+                "Дата упаковки",
+                "Номер короба",
+                "Баркод",
+                "Количество",
+                None,
+                "Наименование",
+                "Размер",
+            ],
+            ["09.04", 7, 2038228335909, 65, None, "Пижама_комплект_леопард", "44-46"],
+            ["09.04", None, 2038228335633, 15, None, "Пижама_комплект_леопард", "42-44"],
+            ["09.04", 11, 2039836192632, 60, None, "Пижама_брюк_леопард", "52-54"],
+        ],
+        title="короба",
+    )
+
+
+def test_boxes_sheet_format_is_recognized() -> None:
+    result = parse_receive_file(_boxes_sheet_like(), supply_ref="ИНК")
+    stats = result["stats"]
+    assert stats["boxes_total"] == 2
+    assert stats["total_qty"] == 140
+    assert stats["barcodes_unique"] == 3
+    assert stats["rows_dropped"] == 0
+    by_code = {b["box_code"]: b for b in result["boxes"]}
+    # номер короба числовой → без хвоста `.0`, иначе повторная загрузка дала бы дубли
+    assert set(by_code) == {"7", "11"}
+    # пустой «Номер короба» = строка-продолжение того же короба
+    assert len(by_code["7"]["items"]) == 2
+    assert by_code["7"]["is_mono"] is False
+    assert by_code["11"]["is_mono"] is True
+    # «Наименование» подхватывается — им дозаполняется справочник ШК
+    assert by_code["11"]["items"][0]["name"] == "Пижама_брюк_леопард"
+    # имя листа «короба» — не бренд
+    assert by_code["7"]["brand"] is None
+
+
+def test_numeric_box_code_loses_float_tail() -> None:
+    from app.services.warehouse.packing_list import normalize_box_code
+
+    assert normalize_box_code(7.0) == "7"
+    assert normalize_box_code("7.0") == "7"
+    assert normalize_box_code(7) == "7"
+    assert normalize_box_code("ALT-002-ORD001-002") == "ALT-002-ORD001-002"
+    assert normalize_box_code(None) == ""
+
+
+def test_copy_sheets_are_skipped_to_avoid_overwriting_boxes() -> None:
+    """Лист-копия опасен: номера коробов в нём те же.
+
+    Ключ короба — его ШК, поэтому короб «7» из копии перезаписал бы короб «7» из
+    основного листа. Проверено на реальном файле: там есть «короба» и
+    «короба (копия)» с пересекающимися номерами.
+    """
+    wb = Workbook()
+    main = wb.active
+    main.title = "короба"
+    main.append(["Номер короба", "Баркод", "Количество"])
+    main.append([7, "2038228335909", 65])
+    copy = wb.create_sheet("короба (копия)")
+    copy.append(["Номер короба", "Баркод", "Количество"])
+    copy.append([7, "2046585023346", 110])
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    result = parse_receive_file(buf.getvalue())
+    assert result["stats"]["sheets"] == ["короба"]
+    assert result["stats"]["boxes_total"] == 1
+    assert result["stats"]["total_qty"] == 65
+
+
+def test_duplicate_box_codes_are_reported() -> None:
+    """Один номер на два разных короба — молча объединять нельзя, предупреждаем."""
+    content = _xlsx(
+        [
+            ["Номер короба", "Баркод", "Количество"],
+            [7, "1111111111111", 10],
+            [8, "2222222222222", 10],
+            [7, "3333333333333", 10],  # снова 7 — коллизия
+        ],
+        title="короба",
+    )
+    result = parse_receive_file(content)
+    assert any("повторяющихся номеров короба" in w for w in result["warnings"])
+
+
+def test_unlabelled_box_column_is_guessed_with_warning() -> None:
+    """Колонка короба без подписи (в реальном файле там дата) — берём слева от баркода."""
+    content = _xlsx(
+        [
+            [None, None, "Баркод", "Кол-во", "Наименование", "Размер"],
+            [None, 1, "2046585023346", 110, "сорочка_черн", "60-62"],
+            [None, 2, "2038168119416", 60, "сорочка_черн", "48-50"],
+            [None, None, "2046585023346", 30, "сорочка_черн", "60-62"],
+        ],
+        title="короба2",
+    )
+    result = parse_receive_file(content)
+    assert result["stats"]["boxes_total"] == 2
+    assert result["stats"]["total_qty"] == 200
+    assert any("не подписана" in w for w in result["warnings"])
+
+
+@pytest.mark.skipif(
+    not REAL_STORAGE_FILE.exists(),
+    reason="реальный файл «Хранение собственный склад» недоступен",
+)
+def test_real_storage_file_boxes_sheet() -> None:
+    """Эталон на живом файле: 52 короба, 24 баркода, 4193 шт, копия пропущена."""
+    result = parse_receive_file(REAL_STORAGE_FILE.read_bytes(), supply_ref="ИНК")
+    stats = result["stats"]
+    assert stats["sheets"] == ["короба"], "лист-копия не должен попадать в разбор"
+    assert stats["boxes_total"] == 52
+    assert stats["boxes_mono"] == 29
+    assert stats["barcodes_unique"] == 24
+    assert stats["total_qty"] == 4193
+    assert stats["rows_dropped"] == 0

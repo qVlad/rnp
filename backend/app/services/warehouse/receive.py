@@ -112,6 +112,9 @@ async def persist_boxes(
     warehouses_touched: set[int] = set()
     all_barcodes: list[str] = []
     sizes: dict[str, str | None] = {}
+    # «Наименование» из файла «короба» — им дозаполняем справочник ШК: у него
+    # названия почти всегда пустые, потому что wb_orders не отдаёт subject.
+    names: dict[str, str | None] = {}
 
     # Кеш складов по имени + предварительное создание ячеек по складам
     wh_cache: dict[str, WhWarehouse | None] = {}
@@ -235,6 +238,8 @@ async def persist_boxes(
             bc = item["barcode"]
             all_barcodes.append(bc)
             sizes.setdefault(bc, item.get("size"))
+            if item.get("name") and not names.get(bc):
+                names[bc] = item["name"]
             cur = current_items.get(bc)
             new_qty = _merge_item_qty(int(item["qty"]), cur)
             if cur is None:
@@ -287,7 +292,9 @@ async def persist_boxes(
         empty_created += 1
 
     # Справочник ШК: заготовки для новых баркодов (nm_id дозаполнится sync-ом)
-    ref_result = await ref_svc.ensure_refs_for_barcodes(session, all_barcodes, sizes)
+    ref_result = await ref_svc.ensure_refs_for_barcodes(
+        session, all_barcodes, sizes, names
+    )
 
     return {
         "boxes_created": created,

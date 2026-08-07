@@ -1,7 +1,16 @@
 """Парсер приёмки/размещения — формат B (TASK-DEV-098).
 
-Формат B = файл поставщика `PackingList.xlsx` как есть, плюс ОПЦИОНАЛЬНЫЕ
-колонки `Склад` и `Код ячейки`. Так один формат покрывает три сценария:
+Поддерживаются ДВА формата входного файла — распознаются автоматически по шапке:
+
+  1. **PackingList поставщика** — `No | Box Code | Barcode | Size | Qty | …`;
+  2. **«короба» своего склада** — `Дата упаковки | Номер короба | Баркод |
+     Количество | Наименование | Размер` (файл «Хранение собственный склад»).
+
+Различаются только названиями колонок; структура одна и та же: номер короба
+стоит в первой строке короба, дальше идут строки-продолжения с баркодами.
+
+К любому из них можно добавить ОПЦИОНАЛЬНЫЕ колонки `Склад` и `Код ячейки`.
+Так один парсер покрывает три сценария:
 
   - чистый PackingList              → все коробы принимаются на хранение;
   - PackingList + «Код ячейки»      → короб сразу в ячейку отбора;
@@ -37,6 +46,15 @@ _MISSING_BOX_CODES = {"", "—", "–", "-", "--", "н/д", "нет", "none", "n
 # Строки-итоги, которые надо отбросить (рус./кит./англ.).
 _TOTAL_MARKERS = ("итого", "合计", "总计", "total")
 
+# Листы-дубликаты и сводные: их данные повторяют основной лист. Опасны не тем,
+# что лишние, а тем, что номера коробов в копии те же — при записи короб «7» из
+# копии перезатёр бы короб «7» из основного листа (ключ = ШК короба).
+_SKIP_SHEET_MARKERS = ("свод", "копия", "copy", "архив", "backup")
+
+# Заголовки листов, которые НЕ являются брендом: это листы данных, а не бренды
+# (в файле «Распределение» листы называются Ink/Ld/Lk — там имя листа = бренд).
+_NOT_BRAND_MARKERS = ("короб", "packing", "хранен", "размещ", "свод")
+
 # Сколько первых строк сканируем в поисках шапки (в реальном файле — 6-я).
 _HEADER_SCAN_ROWS = 10
 
@@ -46,6 +64,24 @@ def _norm(value: Any) -> str:
     if value is None:
         return ""
     return re.sub(r"\s+", " ", str(value)).strip()
+
+
+def normalize_box_code(raw: Any) -> str:
+    """Номер короба → строка без хвоста `.0`.
+
+    В PackingList код текстовый (`ALT-002-ORD001-002`), а в файле «короба»
+    своего склада — обычное число, и openpyxl отдаёт его как float: `7.0`.
+    Без нормализации короб назывался бы «7.0», и повторная загрузка того же
+    файла создавала бы дубли.
+    """
+    s = _norm(raw)
+    if not s:
+        return ""
+    try:
+        f = float(s)
+    except (TypeError, ValueError):
+        return s
+    return str(int(f)) if f == int(f) else s
 
 
 def _is_missing_box_code(raw: Any) -> bool:
@@ -69,7 +105,14 @@ def _find_header(rows: list[tuple]) -> tuple[int, dict[str, int]] | None:
         if not row:
             continue
         joined = " ".join(_norm(c).lower() for c in row if c is not None)
-        if "box code" not in joined and "короб" not in joined:
+        has_box_word = "box code" in joined or "короб" in joined
+        # Шапка годится либо когда есть слово «короб»/«box code», либо когда
+        # есть баркод И количество — тогда колонку короба ищем эвристикой ниже
+        # (в реальном файле «короба (копия)» она подписана датой).
+        has_bc_qty = ("баркод" in joined or "barcode" in joined) and (
+            "кол" in joined or "qty" in joined
+        )
+        if not has_box_word and not has_bc_qty:
             continue
 
         cols: dict[str, int] = {}
@@ -84,6 +127,8 @@ def _find_header(rows: list[tuple]) -> tuple[int, dict[str, int]] | None:
                 cols.setdefault("box", j)
             elif "barcode" in s or "баркод" in s:
                 cols.setdefault("bc", j)
+            elif "наименование" in s or "название" in s:
+                cols.setdefault("name", j)
             elif "ячейк" in s:
                 cols.setdefault("cell", j)
             elif "склад" in s:
@@ -104,6 +149,41 @@ def _find_header(rows: list[tuple]) -> tuple[int, dict[str, int]] | None:
 
         if "box" in cols and "bc" in cols and "qty" in cols:
             return i, cols
+        # Фолбэк: баркод и количество есть, а колонка короба не подписана.
+        # Встречается в реальном файле («короба (копия)»: в шапке номера короба
+        # стоит дата). Берём ближайшую слева от баркода колонку, если её
+        # значения — числа или пусто. Догадка попадает в warnings, чтобы не
+        # выглядело магией.
+        if "bc" in cols and "qty" in cols and "box" not in cols:
+            guess = _guess_box_column(rows, i, cols["bc"])
+            if guess is not None:
+                cols["box"] = guess
+                cols["_box_guessed"] = 1
+                return i, cols
+    return None
+
+
+def _guess_box_column(rows: list[tuple], header_idx: int, bc_col: int) -> int | None:
+    """Найти неподписанную колонку с номером короба слева от баркода.
+
+    Требования к колонке: непустых значений хотя бы 2, все они — числа, и
+    различных значений больше одного (иначе это похоже на дату/константу).
+    """
+    body = rows[header_idx + 1 : header_idx + 60]
+    for col in range(bc_col - 1, -1, -1):
+        values = [r[col] for r in body if col < len(r) and r[col] is not None]
+        if len(values) < 2:
+            continue
+        numeric: list[float] = []
+        for v in values:
+            try:
+                numeric.append(float(str(v).replace(",", ".").strip()))
+            except (TypeError, ValueError):
+                numeric = []
+                break
+        if not numeric or len(set(numeric)) < 2:
+            continue
+        return col
     return None
 
 
@@ -148,6 +228,13 @@ def parse_receive_file(content: bytes, supply_ref: str | None = None) -> dict[st
         return row[idx]
 
     for ws in wb.worksheets:
+        title_low = ws.title.strip().lower()
+        # Копии и сводные пропускаем ДО разбора: в копии те же номера коробов,
+        # и при записи короб «7» из копии перезатёр бы короб «7» из основного
+        # листа (натуральный ключ — ШК короба).
+        if any(m in title_low for m in _SKIP_SHEET_MARKERS):
+            skipped_sheets.append(ws.title)
+            continue
         rows = list(ws.iter_rows(values_only=True))
         header = _find_header(rows)
         if header is None:
@@ -155,6 +242,11 @@ def parse_receive_file(content: bytes, supply_ref: str | None = None) -> dict[st
             continue
         header_idx, cols = header
         sheets_used.append(ws.title)
+        if cols.pop("_box_guessed", None):
+            warnings.append(
+                f"Лист «{ws.title}»: колонка с номером короба не подписана — "
+                "взяли колонку слева от баркода. Проверьте разбивку по коробам."
+            )
 
         # Текущий короб + forward-fill значений, заполненных только в 1-й строке.
         current: dict[str, Any] | None = None
@@ -198,7 +290,7 @@ def parse_receive_file(content: bytes, supply_ref: str | None = None) -> dict[st
                 except (TypeError, ValueError):
                     src_no = None
 
-            box_code_raw = _norm(raw_box)
+            box_code_raw = normalize_box_code(raw_box)
             # Новый короб, если:
             #   - у строки есть свой `No` — главный признак, только он умеет
             #     разделить два подряд идущих короба с одинаковым кодом `—`;
@@ -246,11 +338,20 @@ def parse_receive_file(content: bytes, supply_ref: str | None = None) -> dict[st
                     current["warehouse"] = warehouse
 
             size = _norm(cell_at(row, "size", cols)) or None
+            # «Наименование» есть в файле «короба» — им дозаполняем справочник ШК,
+            # у которого названия почти всегда пустые (wb_orders их не отдаёт).
+            name = _norm(cell_at(row, "name", cols)) or None
             items: dict[str, dict[str, Any]] = current["items"]
             if barcode in items:
                 items[barcode]["qty"] += qty
+                items[barcode]["name"] = items[barcode].get("name") or name
             else:
-                items[barcode] = {"barcode": barcode, "size": size, "qty": qty}
+                items[barcode] = {
+                    "barcode": barcode,
+                    "size": size,
+                    "qty": qty,
+                    "name": name,
+                }
 
     wb.close()
 
@@ -258,12 +359,31 @@ def parse_receive_file(content: bytes, supply_ref: str | None = None) -> dict[st
     multi_sheet = len(sheets_used) > 1
     for box in boxes:
         sheet = box.pop("_sheet", None)
-        if box["brand"] is None and multi_sheet:
+        # Имя листа = бренд только в файле «Распределение» (листы Ink/Ld/Lk).
+        # Листы данных («короба», «Packing List») брендом не являются.
+        looks_like_data = sheet is not None and any(
+            m in sheet.strip().lower() for m in _NOT_BRAND_MARKERS
+        )
+        if box["brand"] is None and multi_sheet and not looks_like_data:
             box["brand"] = sheet
         items = list(box.pop("items").values())
         box["items"] = items
         box["total_qty"] = sum(i["qty"] for i in items)
         box["is_mono"] = len(items) == 1
+
+    # Коллизии номеров коробов: натуральный ключ — ШК короба, поэтому дубль
+    # означал бы, что один короб перезапишет другой. Молча этого не допускаем.
+    seen_codes: dict[str, int] = {}
+    for box in boxes:
+        seen_codes[box["box_code"]] = seen_codes.get(box["box_code"], 0) + 1
+    dupes = sorted(code for code, n in seen_codes.items() if n > 1)
+    if dupes:
+        warnings.append(
+            f"В файле {len(dupes)} повторяющихся номеров короба "
+            f"({', '.join(dupes[:10])}{' …' if len(dupes) > 10 else ''}) — "
+            "строки объединены в один короб. Если это разные коробы, "
+            "им нужны разные номера."
+        )
 
     all_barcodes = {i["barcode"] for b in boxes for i in b["items"]}
     mono_boxes = [b for b in boxes if b["is_mono"]]
